@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ductsal - CRM & Operaciones</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen" class="modal" style="display:flex; z-index: 1000; background: var(--bg-dark);">
+        <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
+            <div class="hexagon-logo fallback" style="margin: 0 auto 1rem;"></div>
+            <h2>Ingresar al Sistema</h2>
+            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Ductsal ERP Financials</p>
+            <form id="login-form" onsubmit="processLogin(event)">
+                <div class="form-group"><input type="email" id="login-email" placeholder="Correo electrónico" required style="text-align:center;"></div>
+                <div class="form-group"><input type="password" id="login-password" placeholder="Contraseña (en blanco si es primera vez)" style="text-align:center;"></div>
+                <button type="submit" class="btn-primary" style="width:100%;">Iniciar Sesión</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- First Time Setup Screen -->
+    <div id="setup-screen" class="modal" style="display:none; z-index: 1000; background: var(--bg-dark);">
+        <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
+            <h2 style="color:var(--brand-gold);">Bienvenido a Ductsal</h2>
+            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Como es tu primera vez iniciando sesión, por favor configura tu contraseña.</p>
+            <form id="setup-form" onsubmit="processFirstTimeSetup(event)">
+                <div class="form-group"><input type="password" id="setup-password" placeholder="Nueva Contraseña" required style="text-align:center;"></div>
+                <div class="form-group"><input type="password" id="setup-password-confirm" placeholder="Confirmar Contraseña" required style="text-align:center;"></div>
+                <button type="submit" class="btn-success" style="width:100%;">Guardar y Entrar</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="app-container" id="main-app" style="display:none;">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo-container">
+                <img src="logo.png" alt="Ductsal Logo" class="main-logo" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='block';">
+                <div class="hexagon-logo fallback" style="display:none;"></div>
+                <h2>Ductsal</h2>
+            </div>
+            
+            <div class="user-profile" style="margin-bottom: 2rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid var(--panel-border);">
+                <div style="font-weight: 600; font-size: 1rem; color: white;" id="ui-user-name">Cargando...</div>
+                <div style="font-size: 0.8rem; color: var(--brand-gold); margin-bottom: 0.5rem; text-transform: uppercase;" id="ui-user-role">Rol</div>
+                <button class="btn-secondary" style="width:100%; font-size:0.75rem; padding: 4px;" onclick="processLogout()">🚪 Cerrar Sesión</button>
+            </div>
+
+            <ul class="nav-links">
+                <li id="nav-list" class="active" onclick="showView('list-view')">
+                    <span class="icon">💼</span> Mis Oportunidades
+                </li>
+                <li id="nav-clients" onclick="showView('clients-view')">
+                    <span class="icon">👥</span> Directorio de Clientes
+                </li>
+                <li id="nav-projects" onclick="showView('projects-view')" style="display: none;">
+                    <span class="icon">🏗️</span> Proyectos y Cobros
+                </li>
+                <li id="nav-dashboard" onclick="showView('dashboard-view')" style="display: none;">
+                    <span class="icon">📊</span> Dashboard
+                </li>
+                <li id="nav-users" onclick="showView('users-view')" style="display: none;">
+                    <span class="icon">🛡️</span> Gestión de Usuarios
+                </li>
+                <li id="nav-settings" onclick="openSettingsModal()" style="display: none; border-top: 1px solid var(--panel-border); margin-top: 10px; padding-top: 10px;">
+                    <span class="icon">⚙️</span> Configuración
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            
+            <!-- List View (Sales Rep) -->
+            <section id="list-view" class="view-section active">
+                <header class="header-flex">
+                    <div>
+                        <h1>Oportunidades de Venta</h1>
+                        <p>Gestiona tus prospectos y avanza los tratos.</p>
+                    </div>
+                    <button class="btn-primary" onclick="openNewModal()">+ Nuevo Prospecto</button>
+                </header>
+
+                <div class="table-container glass-panel">
+                    <table id="opportunitiesTable">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Cliente</th>
+                                <th>Proyecto</th>
+                                <th>Etapa Actual</th>
+                                <th>Precio Cotizado</th>
+                                <th>Estado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="opp-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Projects & Billing View (Gestor & Manager) -->
+            <section id="projects-view" class="view-section">
+                <header class="header-flex">
+                    <div>
+                        <h1>Proyectos y Control de Cobros</h1>
+                        <p>Gestión operativa y financiera de ventas cerradas.</p>
+                    </div>
+                </header>
+
+                <div class="table-container glass-panel">
+                    <table id="projectsTable">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Cliente</th>
+                                <th>Proyecto</th>
+                                <th>Encargado</th>
+                                <th>Total (Inc. IVA)</th>
+                                <th>Condición</th>
+                                <th>% Facturado</th>
+                                <th>% Cobrado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="proj-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Clients View -->
+            <section id="clients-view" class="view-section">
+                <header class="header-flex">
+                    <div>
+                        <h1>Directorio de Clientes</h1>
+                        <p>Gestión de información de empresas y contactos.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-new-client-view" onclick="openClientModal()">+ Agregar Cliente</button>
+                </header>
+
+                <div class="table-container glass-panel">
+                    <table id="clientsTable">
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Nombre / Razón Social</th>
+                                <th>Contacto Principal</th>
+                                <th>Teléfono</th>
+                                <th>Correo</th>
+                                <th id="client-action-header">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="clients-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Dashboard View (Manager) -->
+            <section id="dashboard-view" class="view-section">
+                <header class="header-flex">
+                    <div>
+                        <h1>Dashboard Ejecutivo</h1>
+                        <p>Inteligencia de negocio y métricas financieras.</p>
+                    </div>
+                    <div class="dashboard-filters">
+                        <select id="dash-time-filter" onchange="renderDashboard()">
+                            <!-- Dynamically populated by JS -->
+                        </select>
+                    </div>
+                </header>
+
+                <!-- Top KPIs (Row 1) -->
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--success); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Ventas Ganadas Totales</div>
+                        <div class="value" id="metric-ganadas" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: white;">$0</div>
+                        <div style="font-size: 0.85rem; color: var(--success); display: flex; justify-content: space-between; align-items: center;">
+                            <span>Margen: <strong id="metric-margen">$0</strong></span>
+                            <span id="metric-margen-pct" style="font-weight:bold; background: rgba(16, 185, 129, 0.2); padding: 2px 6px; border-radius: 4px;">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--brand-gold); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Pipeline Ponderado</div>
+                        <div class="value" id="metric-pipeline-ponderado" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: white;">$0</div>
+                        <div style="font-size: 0.85rem; color: var(--brand-gold); display: flex; justify-content: space-between; align-items: center;">
+                            <span>Margen Proy.: <strong id="metric-pipeline-margen">$0</strong></span>
+                            <span id="metric-pipeline-margen-pct" style="font-weight:bold; background: rgba(255, 204, 77, 0.2); padding: 2px 6px; border-radius: 4px;">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--danger); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Ventas Perdidas</div>
+                        <div class="value" id="metric-perdidas" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: var(--danger);">$0</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted);">Impacto negativo en el cierre global</div>
+                    </div>
+
+                    <div class="metric-card glass-panel" style="border-top: 4px solid #8b5cf6; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">CxC Global (Saldo Pend.)</div>
+                        <div class="value" id="metric-total-cxc" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: #8b5cf6;">$0</div>
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 4px;">
+                                <div style="color:var(--text-secondary)">Facturado: <strong id="metric-total-facturado" style="color:white">$0</strong></div>
+                                <div style="color:var(--text-secondary)">Cobrado: <strong id="metric-total-cobrado" style="color:var(--success)">$0</strong></div>
+                            </div>
+                            <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow:hidden;">
+                                <div id="cxc-bar-cobrado" style="height: 100%; background: var(--success); width: 0%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Layout (Row 2) -->
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                    
+                    <!-- Left: Funnel -->
+                    <div class="chart-card glass-panel" style="display: flex; flex-direction: column;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem;">
+                            <h3 style="margin: 0; font-size: 1.1rem;">Embudo de Ventas Activas</h3>
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">Cantidad y Monto Total</span>
+                        </div>
+                        <div style="flex-grow: 1; min-height: 350px; position: relative;" id="css-funnel-container">
+                            <!-- CSS Funnel injected here -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Times & Top Pie Charts -->
+                    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                        <!-- KPI Times -->
+                        <div class="glass-panel" style="padding: 1.2rem;">
+                            <h3 style="margin: 0 0 1rem 0; font-size: 0.9rem; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.5px;">Tiempos Promedio en Etapa</h3>
+                            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;" id="kpi-times-grid">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+
+                        <!-- Origen y Motivos Pies -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; flex-grow: 1;">
+                            <div class="chart-card glass-panel" style="padding: 1rem;">
+                                <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Origen Ops.</h3>
+                                <div style="height: 180px; position: relative;"><canvas id="originChart"></canvas></div>
+                            </div>
+                            <div class="chart-card glass-panel" style="padding: 1rem;">
+                                <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Motivos de Pérdida</h3>
+                                <div style="height: 180px; position: relative;"><canvas id="lossChart"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Secondary Charts Grid (Row 3) -->
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+                    <div class="chart-card glass-panel" style="padding: 1rem;">
+                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Pipeline - Producto</h3>
+                        <div style="height: 200px; position: relative;"><canvas id="oppProductChart"></canvas></div>
+                    </div>
+                    <div class="chart-card glass-panel" style="padding: 1rem;">
+                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Pipeline - Proyecto</h3>
+                        <div style="height: 200px; position: relative;"><canvas id="oppProjectChart"></canvas></div>
+                    </div>
+                    <div class="chart-card glass-panel" style="padding: 1rem;">
+                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Cierres - Producto</h3>
+                        <div style="height: 200px; position: relative;"><canvas id="productChart"></canvas></div>
+                    </div>
+                    <div class="chart-card glass-panel" style="padding: 1rem;">
+                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Cierres - Proyecto</h3>
+                        <div style="height: 200px; position: relative;"><canvas id="projectChart"></canvas></div>
+                    </div>
+                </div>
+
+                <!-- Audit Panel (Only Managers) -->
+                <div id="audit-panel" class="glass-panel" style="display:none; padding: 1.5rem; margin-bottom: 1.5rem; border-left: 4px solid var(--danger);">
+                    <h3 style="margin: 0 0 1rem 0; font-size: 1.1rem; color: var(--danger);">Auditoría de Eliminaciones (Solo Gerencia)</h3>
+                    <div id="audit-logs-container" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+
+                <div class="table-container glass-panel">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem;">
+                        <h3 style="margin: 0;">Oportunidades Activas - Tiempos en Etapa</h3>
+                        <span class="badge bg-neutral" style="color:var(--text-secondary); font-size:0.75rem;">Alertas de estancamiento</span>
+                    </div>
+                    <table id="dashActiveTimesTable">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Cliente</th>
+                                <th>Proyecto</th>
+                                <th>Etapa Actual</th>
+                                <th>Días Estancado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dash-active-times-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Users View (Admin only) -->
+            <section id="users-view" class="view-section">
+                <header class="header-flex">
+                    <div>
+                        <h1>Gestión de Usuarios</h1>
+                        <p>Administra los accesos y roles del sistema.</p>
+                    </div>
+                    <button class="btn-primary" onclick="openUserModal()">+ Nuevo Usuario</button>
+                </header>
+
+                <div class="table-container glass-panel">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Correo</th>
+                                <th>Rol</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Detail View -->
+            <section id="detail-view" class="view-section">
+                <header class="header-flex">
+                    <div>
+                        <button class="btn-secondary mb-2" onclick="goBackFromDetail()">← Volver</button>
+                        <h1 id="detail-cliente">Cliente</h1>
+                        <p id="detail-proyecto">Proyecto <span id="detail-codigo" class="badge bg-neutral ml-2"></span></p>
+                    </div>
+                    <div class="status-badges" id="detail-badges">
+                        <!-- Badges -->
+                    </div>
+                </header>
+
+                <div class="detail-grid">
+                    <div class="main-detail glass-panel">
+                        <!-- Accounts Receivable / Billing Tracker (Only for Won Projects) -->
+                        <div id="financial-tracker-container" class="mb-2" style="display: none; padding-bottom: 1.5rem;">
+                            <div style="border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1rem;">
+                                <h3 style="color:var(--brand-gold); margin-bottom:1rem;">Balance Financiero del Proyecto</h3>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; font-size: 0.9rem;">
+                                    <!-- Columna 1: Ventas -->
+                                    <div>
+                                        <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Ventas (Ingresos)</h4>
+                                        <div>Precio Original: <strong id="fin-precio-original">$0</strong> <span class="cursor-pointer" style="margin-left:8px; font-size:0.8rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar]</span></div>
+                                        <div id="fin-ordenes-container" style="color:var(--brand-gold);"></div>
+                                        <div style="margin-top:4px; padding-top:4px; border-top:1px dashed var(--panel-border);">Subtotal Final: <strong id="fin-subtotal">$0</strong></div>
+                                        <div>IVA (13%): <strong id="fin-iva">$0</strong></div>
+                                        <div style="color:white; margin-top:4px;">Total con IVA: <strong id="fin-total" style="font-size:1.1rem;">$0</strong></div>
+                                        <button class="btn-secondary mt-2" style="font-size:0.75rem; padding:0.25rem 0.5rem;" onclick="openChangeOrderModal()">+ Orden de Cambio</button>
+                                    </div>
+                                    <!-- Columna 2: Costos -->
+                                    <div>
+                                        <h4 style="color:var(--danger); margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Presupuesto (Costos)</h4>
+                                        <div>Costo Base: <strong id="fin-costo-original">$0</strong></div>
+                                        <div id="fin-costos-ordenes-container" style="color:var(--danger);"></div>
+                                        <div style="margin-top:4px; padding-top:4px; border-top:1px dashed var(--panel-border);">Costo Total: <strong id="fin-costo-total">$0</strong></div>
+                                        <div style="color:white; margin-top:10px; padding-top:4px; border-top:1px solid var(--brand-gold);">Margen Bruto: <strong id="fin-margen" style="color:var(--brand-gold); font-size:1.1rem;">$0</strong> <span id="fin-margen-pct" style="font-size:0.8rem;">(0%)</span></div>
+                                    </div>
+                                    <!-- Columna 3: Facturación -->
+                                    <div style="text-align: right; background: rgba(0,0,0,0.15); padding: 1rem; border-radius: 8px;">
+                                        <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px; text-align:right;">Cuentas por Cobrar</h4>
+                                        <div>Total Facturado: <strong id="fin-facturado">$0</strong></div>
+                                        <div>Total Cobrado: <strong id="fin-cobrado" style="color:var(--success);">$0</strong></div>
+                                        <div style="margin-top:4px; margin-bottom:4px; padding-bottom:4px; border-bottom:1px dashed var(--panel-border);">Pendiente de Facturar: <strong id="fin-por-facturar">$0</strong></div>
+                                        <div><strong>CxC (Saldo Vivo): <span id="fin-saldo" style="color:var(--danger); font-size:1.1rem;">$0</span></strong></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Invoices List -->
+                            <div id="invoices-list" style="display: flex; flex-direction: column; gap: 1rem;">
+                                <!-- Invoices injected here -->
+                            </div>
+
+                            <div style="margin-top: 1rem; text-align: center;">
+                                <button class="btn-primary" id="btn-add-invoice" onclick="showInvoiceForm()">+ Emitir Nueva Factura</button>
+                            </div>
+
+                            <!-- Invoice Form -->
+                            <form id="invoice-form" onsubmit="processInvoice(event)" style="display:none; margin-top: 1rem; background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; border:1px solid var(--brand-gold);">
+                                <h4 style="color:var(--brand-gold)">Emitir Factura / Crédito Fiscal</h4>
+                                <div class="form-grid mt-2">
+                                    <input type="hidden" id="inv-id-edit">
+                                    <div class="form-group"><label>Número de Documento</label><input type="text" id="inv-numero" placeholder="Ej. FCF-0001" required></div>
+                                    <div class="form-group"><label>Monto a Facturar (CON IVA)</label><input type="number" id="inv-monto" required step="0.01"></div>
+                                    <div class="form-group full-width"><label>Copia de Factura</label><input type="file" id="inv-file" required></div>
+                                </div>
+                                <button type="submit" class="btn-primary mt-2">Guardar Factura</button>
+                                <button type="button" class="btn-secondary ml-2" onclick="document.getElementById('invoice-form').style.display='none'">Cancelar</button>
+                            </form>
+
+                            <!-- Payment Form -->
+                            <form id="payment-form" onsubmit="processPayment(event)" style="display:none; margin-top: 1rem; background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; border:1px solid var(--success);">
+                                <h4 style="color:var(--success)">Registrar Pago</h4>
+                                <p style="font-size:0.85rem; color:var(--text-secondary); margin-top:4px;" id="pay-target-invoice-text"></p>
+                                <input type="hidden" id="pay-invoice-id">
+                                <input type="hidden" id="pay-idx-edit">
+                                <div class="form-grid mt-2">
+                                    <div class="form-group"><label>Monto a abonar</label><input type="number" id="pay-monto-nuevo" required step="0.01"></div>
+                                    <div class="form-group"><label>Forma de Pago</label>
+                                        <select id="pay-metodo" required>
+                                            <option value="">-- Seleccione --</option>
+                                            <option value="Transferencia">Transferencia</option>
+                                            <option value="Cheque">Cheque</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group full-width"><label>Referencia / Número de Cheque</label><input type="text" id="pay-ref" required></div>
+                                    <div class="form-group full-width"><label>Comprobante de Abono</label><input type="file" id="pay-file" required></div>
+                                </div>
+                                <button type="submit" class="btn-success mt-2">Aplicar Pago</button>
+                                <button type="button" class="btn-secondary ml-2" onclick="document.getElementById('payment-form').style.display='none'">Cancelar</button>
+                            </form>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                            <h3 id="stage-title-text">Avance de Etapa</h3>
+                            <span id="detail-time-in-stage" class="badge bg-neutral">Tiempo en etapa: 0 días</span>
+                        </div>
+                        
+                        <div class="stage-tracker" id="stage-tracker">
+                            <!-- Stages timeline -->
+                        </div>
+
+                        <div id="advance-form-container" class="mt-4">
+                            <!-- Form injected by JS depending on next stage -->
+                        </div>
+
+                        <div class="action-buttons mt-4" id="action-buttons-container">
+                            <button class="btn-primary" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
+                            <button class="btn-danger ml-2" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                        </div>
+                    </div>
+
+                    <div class="side-detail glass-panel">
+                        <h3>Información General</h3>
+                        <ul class="info-list" id="info-list">
+                            <!-- Populated by JS -->
+                        </ul>
+
+                        <h3 class="mt-4">Documentos Adjuntos</h3>
+                        <ul class="info-list" id="docs-list">
+                            <!-- Populated by JS -->
+                        </ul>
+
+                        <h3 class="mt-4">Historial y Notas</h3>
+                        <div class="logs-container" id="logs-container">
+                            <!-- Populated by JS -->
+                        </div>
+                        
+                        <div class="add-log-box mt-2">
+                            <textarea id="new-log-text" placeholder="Escribe una nota operativa o seguimiento..."></textarea>
+                            <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Modals -->
+    
+    <!-- New Prospect Modal -->
+    <div id="newProspectModal" class="modal">
+        <div class="modal-content glass-panel">
+            <span class="close" onclick="closeModal('newProspectModal')">&times;</span>
+            <h2>Nuevo Prospecto</h2>
+            <form id="newProspectForm" onsubmit="createNewProspect(event)">
+                <div class="form-group flex-group">
+                    <div style="flex:1;">
+                        <label>Cliente (Selecciona)</label>
+                        <select id="new-cliente-select" required></select>
+                    </div>
+                    <div>
+                        <label>&nbsp;</label>
+                        <button type="button" class="btn-secondary" onclick="openClientModal()" style="height: 42px; width: 100%; white-space: nowrap;">+ Nuevo</button>
+                    </div>
+                </div>
+                <div class="form-group"><label>Nombre del proyecto</label><input type="text" id="new-proyecto" required></div>
+                <div class="form-group">
+                    <label>Origen de la oportunidad</label>
+                    <select id="new-origen" required>
+                        <option value="Prospección del vendedor">Prospección del vendedor</option>
+                        <option value="Llamada telefónica">Llamada telefónica</option>
+                        <option value="WhatsApp">WhatsApp</option>
+                        <option value="Página web">Página web</option>
+                        <option value="Correo">Correo</option>
+                        <option value="Redes Sociales">Redes Sociales</option>
+                        <option value="Ya es cliente">Ya es cliente</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tipo de proyecto</label>
+                    <select id="new-tipo-proyecto" required>
+                        <option value="Fabricación e instalación">Fabricación e instalación</option>
+                        <option value="Fabricación">Fabricación</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tipo de producto</label>
+                    <select id="new-tipo-producto" required>
+                        <option value="Chute">Chute</option>
+                        <option value="Ducto">Ducto</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%">Crear Oportunidad</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Client Modal (Create & Edit) -->
+    <div id="clientModal" class="modal" style="z-index: 110;">
+        <div class="modal-content glass-panel" style="width: 500px; max-height: 90vh; overflow-y: auto;">
+            <span class="close" onclick="closeModal('clientModal')">&times;</span>
+            <h2 id="client-modal-title">Registrar Cliente</h2>
+            <form id="clientForm" onsubmit="saveClient(event)">
+                <input type="hidden" id="client-id-edit">
+                <div class="form-group mt-2">
+                    <label>Tipo de Persona</label>
+                    <select id="client-tipo" onchange="toggleClientFields()">
+                        <option value="natural">Persona Natural</option>
+                        <option value="juridica">Persona Jurídica</option>
+                    </select>
+                </div>
+                <div id="fields-natural">
+                    <div class="form-grid">
+                        <div class="form-group"><label>Nombres *</label><input type="text" id="nat-nombres"></div>
+                        <div class="form-group"><label>Apellidos *</label><input type="text" id="nat-apellidos"></div>
+                        <div class="form-group"><label>DUI (Opcional)</label><input type="text" id="nat-dui" placeholder="00000000-0"></div>
+                        <div class="form-group"><label>NIT (Opcional)</label><input type="text" id="nat-nit" placeholder="0000-000000-000-0"></div>
+                    </div>
+                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
+                        <div class="form-group full-width"><label>Profesión</label><input type="text" id="nat-profesion" placeholder="Ej. Ingeniero Civil"></div>
+                        <div class="form-group full-width"><label>Domicilio</label><input type="text" id="nat-domicilio" placeholder="Ej. San Salvador"></div>
+                        <div class="form-group full-width"><label>Anexo DUI (PDF/Imagen)</label><input type="file" id="nat-dui-file"></div>
+                        <div id="nat-dui-status" class="form-group full-width" style="font-size:0.8rem;"></div>
+                    </div>
+                </div>
+                <div id="fields-juridica" style="display:none;">
+                    <div class="form-group"><label>Nombre de la Empresa *</label><input type="text" id="jur-empresa"></div>
+                    <div class="form-group"><label>Nombre del Contacto Principal</label><input type="text" id="jur-contacto"></div>
+                    <div class="form-grid">
+                        <div class="form-group"><label>NIT Empresa (Opcional)</label><input type="text" id="jur-nit"></div>
+                        <div class="form-group"><label>NRC Empresa (Opcional)</label><input type="text" id="jur-nrc"></div>
+                    </div>
+                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
+                        <div class="form-group full-width"><label>Nombre del Representante Legal *</label><input type="text" id="jur-rep-legal" placeholder="Ej. Juan Pérez"></div>
+                        <div class="form-group full-width"><label>Profesión del Representante Legal</label><input type="text" id="jur-profesion-rep" placeholder="Ej. Administrador de Empresas"></div>
+                        <div class="form-group full-width"><label>Domicilio del Representante Legal</label><input type="text" id="jur-domicilio-rep" placeholder="Ej. San Salvador"></div>
+                        <div class="form-group"><label>DUI Representante (Opcional)</label><input type="text" id="jur-dui-rep"></div>
+                        <div class="form-group"><label>NIT Representante (Opcional)</label><input type="text" id="jur-nit-rep"></div>
+                    </div>
+                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
+                        <div class="form-group full-width" style="color:var(--brand-gold); margin-bottom:0.5rem; grid-column: 1 / -1;"><strong>Documentación Legal</strong></div>
+                        <div class="form-group"><label>Escritura de Constitución</label><input type="file" id="jur-file-escritura"></div>
+                        <div class="form-group"><label>Modificaciones (Opcional)</label><input type="file" id="jur-file-mods"></div>
+                        <div class="form-group"><label>Credencial de Rep. Legal</label><input type="file" id="jur-file-credencial"></div>
+                        <div class="form-group"><label>NIT Empresa</label><input type="file" id="jur-file-nit"></div>
+                        <div class="form-group"><label>NRC Empresa</label><input type="file" id="jur-file-nrc"></div>
+                        <div class="form-group"><label>DUI Representante Legal</label><input type="file" id="jur-file-dui"></div>
+                        <div id="jur-docs-status" class="form-group full-width" style="font-size:0.8rem; margin-top:0.5rem; grid-column: 1 / -1;"></div>
+                    </div>
+                </div>
+                <div class="form-grid mt-2" style="border-top: 1px solid var(--panel-border); padding-top: 1rem;">
+                    <div class="form-group"><label>Teléfono (Obligatorio este o Correo)</label><input type="text" id="cli-telefono"></div>
+                    <div class="form-group"><label>Correo Electrónico</label><input type="email" id="cli-correo"></div>
+                    <div class="form-group full-width"><label>Correo para Facturación (Opcional)</label><input type="email" id="cli-correo-fact"></div>
+                </div>
+                <div class="form-group full-width" style="margin-top:-10px;">
+                    <small style="color:var(--text-muted);">* Campos obligatorios según el tipo de persona seleccionada, además de un medio de contacto.</small>
+                </div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%">Guardar Cliente</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal" style="z-index: 120;">
+        <div class="modal-content glass-panel" style="width: 500px;">
+            <span class="close" onclick="closeModal('settingsModal')">&times;</span>
+            <h2>Configuración del Sistema</h2>
+            <div class="mt-4">
+                <h3 style="color:var(--brand-gold); font-size: 1rem;">Vendedores / Quien Visita</h3>
+                <div style="display:flex; gap:10px; margin-bottom:10px; margin-top:5px;">
+                    <input type="text" id="new-visitantes-input" placeholder="Nombre completo" style="flex:1;">
+                    <button class="btn-primary" onclick="addSetting('visitantes')">Agregar</button>
+                </div>
+                <div id="list-visitantes" style="max-height:150px; overflow-y:auto; margin-bottom: 20px; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px;"></div>
+
+                <h3 style="color:var(--brand-gold); font-size: 1rem;">Encargados de Instalación</h3>
+                <div style="display:flex; gap:10px; margin-bottom:10px; margin-top:5px;">
+                    <input type="text" id="new-encargados-input" placeholder="Nombre completo" style="flex:1;">
+                    <button class="btn-primary" onclick="addSetting('encargados')">Agregar</button>
+                </div>
+                <div id="list-encargados" style="max-height:150px; overflow-y:auto; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px;"></div>
+                
+                <h3 style="color:var(--brand-gold); font-size: 1rem; margin-top:20px;">Ubicación de Fábrica</h3>
+                <div class="form-group full-width mt-2">
+                    <label>Dirección base para calcular distancias (Abre en Google Maps)</label>
+                    <input type="text" id="set-gmaps-factory" placeholder="Ej. Calle Principal, San Salvador">
+                </div>
+                <button class="btn-success mt-2" onclick="saveMapsSettings()">Guardar Dirección</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Management Modal -->
+    <div id="userModal" class="modal" style="z-index: 110;">
+        <div class="modal-content glass-panel" style="width: 400px;">
+            <span class="close" onclick="closeModal('userModal')">&times;</span>
+            <h2 id="user-modal-title">Registrar Usuario</h2>
+            <form id="userForm" onsubmit="saveUser(event)">
+                <input type="hidden" id="user-id-edit">
+                <div class="form-group"><label>Nombre Completo *</label><input type="text" id="usr-nombre" required></div>
+                <div class="form-group"><label>Correo Electrónico *</label><input type="email" id="usr-email" required></div>
+                <div class="form-group">
+                    <label>Rol de Sistema</label>
+                    <select id="usr-rol" required>
+                        <option value="vendedor">Vendedor</option>
+                        <option value="gestor">Gestor de Ventas</option>
+                        <option value="manager">Gerente</option>
+                    </select>
+                </div>
+                <div class="form-group" style="font-size:0.8rem; color:var(--brand-gold);">
+                    <em>Nota: El usuario definirá su contraseña la primera vez que inicie sesión con este correo.</em>
+                </div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%;">Guardar Usuario</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Change Order Modal -->
+    <div id="changeOrderModal" class="modal" style="z-index: 110;">
+        <div class="modal-content glass-panel" style="width: 400px;">
+            <span class="close" onclick="closeModal('changeOrderModal')">&times;</span>
+            <h2>Orden de Cambio</h2>
+            <form id="changeOrderForm" onsubmit="processChangeOrder(event)">
+                <input type="hidden" id="co-id-edit">
+                <div class="form-group">
+                    <label>Tipo de Orden</label>
+                    <select id="co-tipo" required>
+                        <option value="aumento">Aumento (Obra Adicional)</option>
+                        <option value="disminucion">Disminución (Descuento/Ajuste)</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Motivo / Descripción *</label><input type="text" id="co-desc" required></div>
+                <div class="form-group"><label>Monto (Subtotal) *</label><input type="number" step="0.01" id="co-precio" placeholder="Monto absoluto, ej. 1500" required></div>
+                <div class="form-group"><label>Costo Presupuestado *</label><input type="number" step="0.01" id="co-costo" placeholder="Monto absoluto, ej. 950" required></div>
+                <div class="form-group"><label>Oferta Firmada (Opcional)</label><input type="file" id="co-oferta"></div>
+                <div class="form-group"><label>Hoja de Costos (Opcional)</label><input type="file" id="co-costos"></div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%;">Guardar Orden</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Base Price Modal -->
+    <div id="editBasePriceModal" class="modal" style="z-index: 110;">
+        <div class="modal-content glass-panel" style="width: 400px;">
+            <span class="close" onclick="closeModal('editBasePriceModal')">&times;</span>
+            <h2>Editar Montos Base</h2>
+            <form id="editBasePriceForm" onsubmit="processEditBasePrice(event)">
+                <div class="form-group"><label>Precio Cotizado (Subtotal) *</label><input type="number" step="0.01" id="eb-precio" required></div>
+                <div class="form-group"><label>Costo Presupuestado *</label><input type="number" step="0.01" id="eb-costo" required></div>
+                <div class="form-group"><label>Motivo de la corrección *</label><input type="text" id="eb-motivo" placeholder="Ej. Corrección de error de tipeo" required></div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%;">Guardar Cambios</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Spinner Overlay -->
+    <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
+        <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
+        <h3 id="spinner-msg">Subiendo archivo a la nube...</h3>
+        <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
