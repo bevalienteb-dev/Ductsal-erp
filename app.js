@@ -1308,18 +1308,22 @@ function processLose() {
 // ========================
 
 function populateTimeFilter() {
-    const select = document.getElementById('dash-time-filter'); select.innerHTML = '<option value="all">Histórico Completo</option>';
+    const select = document.getElementById('dash-time-filter');
+    const currentVal = select ? select.value : 'all';
+    if (!select) return;
+    select.innerHTML = '<option value="all">Histórico Completo</option>';
     const now = new Date(); const currentYear = now.getFullYear(); const currentMonth = now.getMonth();
     select.innerHTML += `<option value="year_${currentYear}">Acumulado Año ${currentYear}</option>`;
     for(let i = 0; i <= currentMonth; i++) { select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; }
+    if (currentVal) select.value = currentVal;
 }
 function getFilteredProspects() {
-    const filter = document.getElementById('dash-time-filter').value;
+    const filter = document.getElementById('dash-time-filter').value || 'all';
     return prospects.filter(p => {
-        let refDateStr = p.estado === 'ganado' ? p.fecha_cierre : (p.estado === 'perdido' ? p.fecha_perdida : p.fecha_creacion);
+        if (filter === 'all') return true;
+        let refDateStr = p.estado === 'ganado' ? (p.fecha_cierre || p.fecha_creacion) : (p.estado === 'perdido' ? (p.fecha_perdida || p.fecha_creacion) : p.fecha_creacion);
         if(!refDateStr) return false;
         let d = new Date(refDateStr); let y = d.getFullYear(); let m = d.getMonth();
-        if (filter === 'all') return true;
         if (filter.startsWith('year_')) return y === parseInt(filter.split('_')[1]);
         if (filter.includes('-')) { const [fy, fm] = filter.split('-'); return y === parseInt(fy) && m === parseInt(fm); }
         return true;
@@ -1378,7 +1382,9 @@ function fetchAuditLogs() {
     const container = document.getElementById('audit-logs-container');
     container.innerHTML = '<em>Cargando auditoría...</em>';
     
-    db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
+    if (window.auditUnsubscribe) window.auditUnsubscribe();
+    
+    window.auditUnsubscribe = db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
         container.innerHTML = '';
         if(snap.empty) {
             container.innerHTML = '<span style="color:var(--text-muted)">No hay alertas recientes de eliminación.</span>';
