@@ -13,6 +13,15 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const storage = firebase.storage();
 
+// Configuración de Entornos Automática
+const isLocal = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const DB_SUFFIX = isLocal ? '_local' : '_prod';
+const STORAGE_PREFIX = isLocal ? 'local_files' : 'prod_files';
+
+if (isLocal) {
+    console.warn("⚠️ MODO DESARROLLO LOCAL ACTIVADO: Conectado a las colecciones '_local' en Firebase.");
+}
+
 // Helper Functions para Carga
 function showLoading(msg = 'Subiendo archivo a la nube...') {
     const el = document.getElementById('global-spinner');
@@ -32,7 +41,7 @@ async function uploadFileToStorage(file, folderName) {
         const ext = file.name.split('.').pop();
         const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
         const storageRef = storage.ref();
-        const fileRef = storageRef.child(`${folderName}/${Date.now()}_${safeName}`);
+        const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
         await fileRef.put(file);
         const url = await fileRef.getDownloadURL();
         return { name: file.name, url: url };
@@ -95,26 +104,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         const localUsers = JSON.parse(localStorage.getItem('hexasales_users')) || [];
         const localSettings = JSON.parse(localStorage.getItem('ductsal_settings')) || { visitantes: [], encargados: [] };
         
-        for(let c of localClients) await db.collection('clients_prod').doc(c.id).set(c);
-        for(let p of localProspects) await db.collection('prospects_prod').doc(p.id).set(p);
-        for(let u of localUsers) await db.collection('users_prod').doc(u.id).set(u);
-        await db.collection('system_prod').doc('settings').set(localSettings);
+        for(let c of localClients) await db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c);
+        for(let p of localProspects) await db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p);
+        for(let u of localUsers) await db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
+        await db.collection(`system${DB_SUFFIX}`).doc('settings').set(localSettings);
         
         localStorage.setItem('migrated_to_firebase', 'true');
         console.log("Migración completada.");
     }
 
     // Attach Listeners
-    db.collection('clients_prod').onSnapshot(snap => { clients = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection('prospects_prod').onSnapshot(snap => { prospects = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection('users_prod').onSnapshot(snap => { users = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection('system_prod').doc('settings').onSnapshot(doc => { if(doc.exists) settings = doc.data(); checkInitialLoad(); });
+    db.collection(`clients${DB_SUFFIX}`).onSnapshot(snap => { clients = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+    db.collection(`prospects${DB_SUFFIX}`).onSnapshot(snap => { prospects = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+    db.collection(`users${DB_SUFFIX}`).onSnapshot(snap => { users = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+    db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(doc => { if(doc.exists) settings = doc.data(); checkInitialLoad(); });
 });
 
-function saveClientToDB(c) { db.collection('clients_prod').doc(c.id).set(c); }
-function saveProspectToDB(p) { db.collection('prospects_prod').doc(p.id).set(p); }
-function saveUserToDB(u) { db.collection('users_prod').doc(u.id).set(u); }
-function saveSettings() { db.collection('system_prod').doc('settings').set(settings); }
+function saveClientToDB(c) { db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c); }
+function saveProspectToDB(p) { db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p); }
+function saveUserToDB(u) { db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u); }
+function saveSettings() { db.collection(`system${DB_SUFFIX}`).doc('settings').set(settings); }
 
 function saveState() { console.log('Deprecated saveState called.'); }
 function saveUsers() { console.log('Deprecated saveUsers called.'); }
@@ -379,8 +388,13 @@ function renderClientsTable() {
     [...filtered].reverse().forEach(c => {
         const isNatural = c.tipo === 'natural'; const typeBadge = isNatural ? '<span class="badge bg-neutral">Natural</span>' : '<span class="badge bg-neutral" style="color:var(--brand-gold);">Jurídica</span>';
         const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-'); const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
-        const btnHTML = `<td><button class="btn-secondary" onclick="openClientModal('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Editar</button></td>`;
-        tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong></td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td>${btnHTML}</tr>`;
+        
+        let btnHTML = `<button class="btn-secondary" onclick="openClientModal('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Editar</button>`;
+        if (currentUser && currentUser.role === 'manager') {
+            btnHTML += `<button class="btn-danger" onclick="deleteClient('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem; margin-left:5px;">Eliminar</button>`;
+        }
+        
+        tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong></td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td><td>${btnHTML}</td></tr>`;
     });
 }
 function toggleClientFields() {
@@ -577,6 +591,12 @@ function openDetail(id) {
     document.getElementById('detail-cliente').textContent = getClientName(p.clientId);
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;
     document.getElementById('advance-form-container').innerHTML = '';
+    
+    // Show Delete Prospect button for managers
+    const btnDeleteProspect = document.getElementById('btn-delete-prospect');
+    if (btnDeleteProspect) {
+        btnDeleteProspect.style.display = (currentUser && currentUser.role === 'manager') ? 'block' : 'none';
+    }
     
     const actionContainer = document.getElementById('action-buttons-container');
     const finTracker = document.getElementById('financial-tracker-container');
@@ -1358,7 +1378,7 @@ function fetchAuditLogs() {
     const container = document.getElementById('audit-logs-container');
     container.innerHTML = '<em>Cargando auditoría...</em>';
     
-    db.collection("audit_logs_prod").orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
+    db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
         container.innerHTML = '';
         if(snap.empty) {
             container.innerHTML = '<span style="color:var(--text-muted)">No hay alertas recientes de eliminación.</span>';
@@ -1695,7 +1715,7 @@ function reportToManager(p, itemType, itemDetail) {
     if (!currentUser) return;
     
     try {
-        db.collection("audit_logs_prod").add({
+        db.collection(`audit_logs${DB_SUFFIX}`).add({
             fecha: new Date().toISOString(),
             usuario: currentUser.email || 'desconocido',
             proyectoId: p.id || 'N/A',
@@ -1804,5 +1824,60 @@ function deletePayment(invoiceId, paymentIndex) {
         renderInfo(p);
     } catch(err) {
         alert("Ocurrió un error al eliminar: " + err.message);
+    }
+}
+
+function deleteClient(id) {
+    if (!currentUser || currentUser.role !== 'manager') return alert("Permiso denegado.");
+    const c = clients.find(x => x.id === id);
+    if (!c) return;
+
+    const hasProjects = prospects.some(p => p.clientId === id);
+    if (hasProjects) {
+        return alert("⚠️ No puedes eliminar este cliente porque tiene proyectos asociados. Debes eliminar primero todos sus proyectos.");
+    }
+
+    if (!confirm(`¿Estás SEGURO de que deseas eliminar permanentemente el cliente "${c.nombres || c.empresa || id}"?\n\nEsta acción NO se puede deshacer.`)) return;
+
+    try {
+        db.collection(`clients${DB_SUFFIX}`).doc(id).delete();
+        db.collection(`audit_logs${DB_SUFFIX}`).add({
+            timestamp: new Date().toISOString(),
+            usuario: currentUser.nombre,
+            tipo_item: 'Cliente',
+            cliente_nombre: c.nombres || c.empresa || id,
+            proyecto_desc: 'N/A',
+            detalle_eliminado: `Cliente eliminado por completo`
+        });
+        alert("Cliente eliminado exitosamente.");
+    } catch (e) {
+        alert("Error al eliminar cliente: " + e.message);
+    }
+}
+
+function deleteProspect() {
+    if (!currentProspectId) return;
+    if (!currentUser || currentUser.role !== 'manager') return alert("Permiso denegado.");
+    
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    const c = clients.find(x => x.id === p.clientId);
+
+    if (!confirm(`¿Estás EXTREMADAMENTE SEGURO de que deseas eliminar por completo el proyecto "${p.proyecto}"?\n\nSE BORRARÁ TODO (Historial, Facturas, Abonos, Archivos referenciados).\nEsta acción NO se puede deshacer.`)) return;
+
+    try {
+        db.collection(`prospects${DB_SUFFIX}`).doc(p.id).delete();
+        db.collection(`audit_logs${DB_SUFFIX}`).add({
+            timestamp: new Date().toISOString(),
+            usuario: currentUser.nombre,
+            tipo_item: 'Proyecto',
+            cliente_nombre: c ? (c.nombres || c.empresa || c.id) : 'Desconocido',
+            proyecto_desc: p.proyecto,
+            detalle_eliminado: `Proyecto completo (${p.codigo || p.id}) eliminado`
+        });
+        alert("Proyecto eliminado exitosamente.");
+        goBackFromDetail();
+    } catch (e) {
+        alert("Error al eliminar proyecto: " + e.message);
     }
 }
