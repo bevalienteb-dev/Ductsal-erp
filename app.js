@@ -72,7 +72,7 @@ async function uploadFileToStorage(file, folderName) {
 
         taskId = Date.now().toString() + Math.random().toString();
         activeUploads++;
-        uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size });
+        uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size || 1000000 });
         updateGlobalProgress();
 
         await new Promise((resolve, reject) => {
@@ -1252,7 +1252,7 @@ function showAdvanceForm() {
 
             formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto</label><input type="text" id="adv-ubicacion" required placeholder="Ej. Calle Principal #123"></div>
                 <div class="form-group"><label>Distancia a Fábrica (km) <a href="${mapLink}" target="_blank" style="color:var(--brand-gold); font-size: 0.8rem; margin-left: 5px;">[Abrir Mapa]</a></label><input type="number" step="0.1" id="adv-distancia" required></div>
-                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita</label><input type="date" id="adv-fecha" required></div><div class="form-group"><label>Fecha est. inicio</label><input type="date" id="adv-inicio" required></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
+                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita</label><input type="date" id="adv-fecha" required></div><div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
         }
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         let isNeg = nextStage === 'negociacion';
@@ -1323,7 +1323,7 @@ async function processAdvance(nextStage) {
             if (!dF || !u || !dist) return alert("Completa los campos de visita (Ubicación, Fecha, Distancia).");
         }
 
-        if (!dI || !v) return alert("Completa la fecha de inicio y el vendedor/visitante.");
+        if (!v) return alert("Completa el vendedor/visitante.");
 
         showLoading('Subiendo documentos de levantamiento...');
         try {
@@ -2093,7 +2093,7 @@ function deleteProspect() {
 // Compresión de imágenes en el lado del cliente (Frontend)
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-        if (!file.type.startsWith('image/')) {
+        if (!file || !file.type || !file.type.startsWith('image/')) {
             resolve(file); // No es imagen, devolver el archivo original
             return;
         }
