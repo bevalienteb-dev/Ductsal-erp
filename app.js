@@ -118,7 +118,7 @@ const KPI_LIMITS = { 'prospecto': 7, 'levantamiento': 10, 'cotizacion': 7, 'nego
 let clients = [];
 let prospects = [];
 let users = [];
-let fabricacion = [];
+
 let currentUser = JSON.parse(localStorage.getItem('hexasales_current_user')) || null;
 let currentProspectId = null;
 let lastViewedSection = 'list-view';
@@ -137,8 +137,7 @@ function reRenderApp() {
     if (document.getElementById('dashboard-view').style.display !== 'none') renderDashboard();
     if (document.getElementById('users-view').style.display !== 'none') renderUsers();
     if (document.getElementById('detail-view').style.display !== 'none' && currentProspectId) openDetail(currentProspectId);
-    if (document.getElementById('fabricacion-view').style.display !== 'none') renderFabricacionTable();
-    if (document.getElementById('fabricacion-dashboard-view').style.display !== 'none') renderFabricacionDashboard();
+
 }
 
 function checkInitialLoad() {
@@ -177,14 +176,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     db.collection(`clients${DB_SUFFIX}`).onSnapshot(snap => { clients = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
     db.collection(`prospects${DB_SUFFIX}`).onSnapshot(snap => { prospects = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
     db.collection(`users${DB_SUFFIX}`).onSnapshot(snap => { users = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection(`fabricacion${DB_SUFFIX}`).onSnapshot(snap => { fabricacion = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+
     db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(doc => { if (doc.exists) settings = doc.data(); checkInitialLoad(); });
 });
 
 function saveClientToDB(c) { db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c); }
 function saveProspectToDB(p) { db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p); }
 function saveUserToDB(u) { db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u); }
-function saveFabricacionToDB(f) { db.collection(`fabricacion${DB_SUFFIX}`).doc(f.id).set(f); }
+
 function saveSettings() { db.collection(`system${DB_SUFFIX}`).doc('settings').set(settings); }
 
 function saveState() { console.log('Deprecated saveState called.'); }
@@ -243,8 +242,7 @@ function showView(viewId) {
     if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
     if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
     if (viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
-    if (viewId === 'fabricacion-view') { document.getElementById('nav-fabricacion').classList.add('active'); renderFabricacionTable(); }
-    if (viewId === 'fabricacion-dashboard-view') { document.getElementById('nav-fabricacion-dashboard').classList.add('active'); renderFabricacionDashboard(); }
+
 }
 function goBackFromDetail() { showView(lastViewedSection); }
 
@@ -317,15 +315,14 @@ function applyRolePermissions() {
     const role = currentUser.role;
     const navDashboard = document.getElementById('nav-dashboard'); const navProjects = document.getElementById('nav-projects'); const headerAction = document.getElementById('client-action-header');
     const navSettings = document.getElementById('nav-settings'); const navUsers = document.getElementById('nav-users');
-    const navFab = document.getElementById('nav-fabricacion'); const navFabDash = document.getElementById('nav-fabricacion-dashboard');
     const navList = document.getElementById('nav-list'); const navClients = document.getElementById('nav-clients');
 
     // Hide all initially
-    [navDashboard, navProjects, navSettings, navUsers, navFab, navFabDash, navList, navClients].forEach(n => { if (n) n.style.display = 'none'; });
+    [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'none'; });
     headerAction.style.display = 'none';
 
     if (role === 'manager') {
-        [navDashboard, navProjects, navSettings, navUsers, navFab, navFabDash, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         showView('dashboard-view');
     }
     else if (role === 'gestor') {
@@ -333,19 +330,10 @@ function applyRolePermissions() {
         headerAction.style.display = 'table-cell';
         showView('projects-view');
     }
-    else if (role === 'vendedor') {
+    else {
         [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
         showView('list-view');
-    }
-    else if (role === 'jefe_produccion') {
-        [navFab, navFabDash].forEach(n => { if (n) n.style.display = 'flex'; });
-        showView('fabricacion-dashboard-view');
-    }
-    else {
-        // Factory workers (recepcion, dibujante, operario, control_calidad, despacho)
-        if (navFab) navFab.style.display = 'flex';
-        showView('fabricacion-view');
     }
 
     renderList();
@@ -2100,371 +2088,7 @@ function deleteProspect() {
     }
 }
 
-// ========================
-// FABRICACIÓN MODULE
-// ========================
 
-function openNewFabricacionModal() {
-    document.getElementById('newFabricacionForm').reset();
-    document.getElementById('newFabricacionModal').dataset.prospectId = '';
-    document.getElementById('newFabricacionModal').style.display = 'flex';
-}
-
-function createNewFabricacion(e) {
-    e.preventDefault();
-    if (!currentUser) return;
-
-    const cliente = document.getElementById('fab-cliente').value.trim();
-    const desc = document.getElementById('fab-desc').value.trim();
-    const exterior = document.getElementById('fab-exterior').checked;
-    const rectas = parseInt(document.getElementById('fab-piezas-rectas').value) || 0;
-    const fittings = parseInt(document.getElementById('fab-fittings').value) || 0;
-
-    const now = new Date();
-
-    // Calcular 5 días hábiles (saltar fines de semana)
-    let limitDate = new Date(now);
-    if (!exterior) {
-        let addedDays = 0;
-        while (addedDays < 5) {
-            limitDate.setDate(limitDate.getDate() + 1);
-            if (limitDate.getDay() !== 0 && limitDate.getDay() !== 6) {
-                addedDays++;
-            }
-        }
-    }
-
-    const isFromProspect = document.getElementById('newFabricacionModal').dataset.prospectId;
-    const fab = {
-        id: "FAB-" + Date.now(),
-        origen_tipo: isFromProspect ? "oportunidad" : "interno",
-        prospecto_id: isFromProspect || null,
-        cliente_nombre: cliente,
-        descripcion: desc,
-        exterior: exterior,
-        piezas_rectas: rectas,
-        fittings: fittings,
-        total_piezas: rectas + fittings,
-        etapa: "Recepción",
-        fecha_creacion: now.toISOString(),
-        fecha_limite: exterior ? null : limitDate.toISOString(),
-        errores_qa: 0,
-        stage_timestamps: { "Recepción": now.toISOString() },
-        creado_por: currentUser.nombre
-    };
-
-    try {
-        saveFabricacionToDB(fab);
-        document.getElementById('newFabricacionModal').dataset.prospectId = '';
-        closeModal('newFabricacionModal');
-        alert("Orden de fabricación creada exitosamente.");
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-}
-
-function renderFabricacionTable() {
-    const tbody = document.getElementById('fabricacion-body');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    if (!currentUser) return;
-
-    const search = document.getElementById('fab-search').value.toLowerCase();
-    const stageFilter = document.getElementById('fab-stage-filter').value;
-
-    // Filtro por Rol
-    const roleMap = {
-        'recepcion': 'Recepción',
-        'dibujante': 'Dibujante', // Wait, the stage is "Dibujo"
-        'operario': 'Fabricación',
-        'control_calidad': 'Quality Control',
-        'despacho': 'Despacho'
-    };
-    // Corregimos "dibujante" a la etapa "Dibujo"
-    let forcedStage = null;
-    if (currentUser.role === 'dibujante') forcedStage = 'Dibujo';
-    else if (roleMap[currentUser.role]) forcedStage = roleMap[currentUser.role];
-
-    let filtered = fabricacion.filter(f => {
-        if (forcedStage && f.etapa !== forcedStage) return false;
-        if (stageFilter !== 'all' && f.etapa !== stageFilter) return false;
-
-        const matchSearch = f.cliente_nombre.toLowerCase().includes(search) || f.descripcion.toLowerCase().includes(search) || f.id.toLowerCase().includes(search);
-        if (search && !matchSearch) return false;
-
-        return true;
-    });
-
-    // Sort by creation date
-    filtered.sort((a, b) => new Date(a.fecha_creacion) - new Date(b.fecha_creacion));
-
-    const now = new Date();
-
-    if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 2rem;">No hay órdenes para mostrar en esta vista.</td></tr>';
-        return;
-    }
-
-    filtered.forEach(f => {
-        let deadlineHtml = '-';
-        if (f.fecha_limite) {
-            const limit = new Date(f.fecha_limite);
-            const isLate = now > limit && f.etapa !== 'Despacho';
-            deadlineHtml = isLate ? `<span style="color:var(--danger); font-weight:bold;">${limit.toLocaleDateString()} ⚠️</span>` : limit.toLocaleDateString();
-        } else if (f.exterior) {
-            deadlineHtml = '<span class="badge bg-neutral">EXTERIOR</span>';
-        }
-
-        let originBadge = f.origen_tipo === 'interno' ? '<span class="badge bg-neutral" style="font-size:0.7rem;">INTERNO</span>' : '<span class="badge bg-neutral" style="font-size:0.7rem; color:var(--brand-gold);">VENTAS</span>';
-
-        tbody.innerHTML += `<tr>
-            <td><strong>${f.cliente_nombre}</strong><br>${originBadge}</td>
-            <td style="font-size:0.85rem;">${f.descripcion.substring(0, 50)}${f.descripcion.length > 50 ? '...' : ''}</td>
-            <td><strong>${f.total_piezas}</strong> <span style="font-size:0.7rem;">(${f.piezas_rectas}R / ${f.fittings}F)</span></td>
-            <td>${deadlineHtml}</td>
-            <td><span class="badge" style="background: rgba(255,255,255,0.1);">${f.etapa}</span></td>
-            <td><button class="btn-secondary" style="padding: 4px 8px; font-size:0.75rem;" onclick="openFabricacionDetail('${f.id}')">Ver Detalle</button></td>
-        </tr>`;
-    });
-}
-
-let currentFabId = null;
-
-function openFabricacionDetail(id) {
-    const f = fabricacion.find(x => x.id === id);
-    if (!f) return;
-
-    currentFabId = id;
-    document.getElementById('fab-det-id').textContent = f.id;
-    document.getElementById('fab-det-cliente').textContent = f.cliente_nombre;
-    document.getElementById('fab-det-desc').textContent = f.descripcion;
-    document.getElementById('fab-det-origen').innerHTML = f.origen_tipo === 'interno' ? 'Interno' : `<a href="#" onclick="closeModal('fabricacionDetailModal'); showView('list-view');" style="color:var(--brand-gold);">Oportunidad Ventas</a>`;
-    document.getElementById('fab-det-piezas').textContent = f.total_piezas;
-    document.getElementById('fab-det-rectas').textContent = f.piezas_rectas;
-    document.getElementById('fab-det-fittings').textContent = f.fittings;
-
-    const now = new Date();
-    let limitHtml = '-';
-    let alertaHtml = '';
-    if (f.fecha_limite) {
-        const limit = new Date(f.fecha_limite);
-        limitHtml = limit.toLocaleDateString();
-        if (now > limit && f.etapa !== 'Despacho') {
-            alertaHtml = '<span style="color:var(--danger); font-size:0.8rem; font-weight:bold; margin-left:10px;">⚠️ RETRASADO</span>';
-        }
-    } else if (f.exterior) {
-        limitHtml = 'Sin Límite (Exterior)';
-    }
-    document.getElementById('fab-det-limite').textContent = limitHtml;
-    document.getElementById('fab-det-alerta').innerHTML = alertaHtml;
-
-    document.getElementById('fab-det-etapa').textContent = f.etapa;
-
-    const btn = document.getElementById('btn-fab-advance');
-    const qaSec = document.getElementById('qa-section');
-
-    qaSec.style.display = 'none';
-    btn.style.display = 'inline-block';
-
-    if (f.etapa === 'Despacho') {
-        btn.style.display = 'none';
-    } else if (f.etapa === 'Quality Control') {
-        btn.textContent = 'Aprobar QA y Pasar a Despacho';
-        qaSec.style.display = 'block';
-    } else {
-        const nextMap = { 'Recepción': 'Dibujo', 'Dibujo': 'Fabricación', 'Fabricación': 'Quality Control' };
-        btn.textContent = `Avanzar a ${nextMap[f.etapa]}`;
-    }
-
-    // Permission checks
-    if (currentUser.role !== 'manager' && currentUser.role !== 'jefe_produccion') {
-        const roleMap = { 'recepcion': 'Recepción', 'dibujante': 'Dibujo', 'operario': 'Fabricación', 'control_calidad': 'Quality Control', 'despacho': 'Despacho' };
-        if (roleMap[currentUser.role] !== f.etapa) {
-            btn.style.display = 'none';
-            qaSec.style.display = 'none';
-        }
-    }
-
-    document.getElementById('fabricacionDetailModal').style.display = 'flex';
-}
-
-function advanceFabricacionStage() {
-    if (!currentFabId) return;
-    const f = fabricacion.find(x => x.id === currentFabId);
-    if (!f) return;
-
-    const nextMap = { 'Recepción': 'Dibujo', 'Dibujo': 'Fabricación', 'Fabricación': 'Quality Control', 'Quality Control': 'Despacho' };
-    const nextStage = nextMap[f.etapa];
-    if (!nextStage) return;
-
-    f.etapa = nextStage;
-    if (!f.stage_timestamps) f.stage_timestamps = {};
-    f.stage_timestamps[nextStage] = new Date().toISOString();
-
-    try {
-        saveFabricacionToDB(f);
-        closeModal('fabricacionDetailModal');
-        alert(`Orden avanzada a ${nextStage}.`);
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-}
-
-function reportarErrorQA() {
-    if (!currentFabId) return;
-    const f = fabricacion.find(x => x.id === currentFabId);
-    if (!f || f.etapa !== 'Quality Control') return;
-
-    if (!confirm("¿Seguro que deseas reportar un error de QA? La orden regresará a Fabricación y se registrará la incidencia.")) return;
-
-    f.etapa = 'Fabricación';
-    f.errores_qa = (f.errores_qa || 0) + 1;
-    // Volvemos a registrar timestamp de regreso a Fab
-    f.stage_timestamps['Fabricación_Regreso_' + f.errores_qa] = new Date().toISOString();
-
-    try {
-        saveFabricacionToDB(f);
-        closeModal('fabricacionDetailModal');
-        alert("Error reportado. Orden devuelta a Fabricación.");
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-}
-
-function showSendFabForm() {
-    if (!currentProspectId) return;
-    const p = prospects.find(x => x.id === currentProspectId);
-    if (!p) return;
-
-    document.getElementById('newFabricacionForm').reset();
-
-    // Si podemos buscar al cliente para el nombre
-    let cName = 'Cliente Desconocido';
-    if (p.clientId) {
-        const c = clients.find(x => x.id === p.clientId);
-        if (c) cName = c.nombres ? `${c.nombres} ${c.apellidos}` : c.empresa;
-    }
-
-    document.getElementById('fab-cliente').value = cName;
-    document.getElementById('fab-desc').value = `Proyecto: ${p.proyecto} (Cod: ${p.codigo || p.id})`;
-
-    // No bloqueamos los campos para permitir que añadan más detalle si quieren
-    document.getElementById('newFabricacionModal').dataset.prospectId = currentProspectId;
-    document.getElementById('newFabricacionModal').style.display = 'flex';
-}
-
-let fabFunnelChart = null;
-let fabPipelineChart = null;
-
-function renderFabricacionDashboard() {
-    if (!currentUser || (currentUser.role !== 'manager' && currentUser.role !== 'jefe_produccion')) return;
-
-    // Filter
-    const timeFilter = document.getElementById('fab-dash-time-filter');
-    if (timeFilter.options.length === 1) { // only "all" is there
-        const now = new Date(); const y = now.getFullYear(); const m = now.getMonth();
-        timeFilter.innerHTML += `<option value="year_${y}">Acumulado Año ${y}</option>`;
-        for (let i = 0; i <= m; i++) timeFilter.innerHTML += `<option value="${y}-${i}">${MESES[i]} ${y}</option>`;
-    }
-    const filter = timeFilter.value || 'all';
-
-    let filtered = fabricacion.filter(f => {
-        if (filter === 'all') return true;
-        let d = new Date(f.fecha_creacion); let y = d.getFullYear(); let m = d.getMonth();
-        if (filter.startsWith('year_')) return y === parseInt(filter.split('_')[1]);
-        if (filter.includes('-')) { const [fy, fm] = filter.split('-'); return y === parseInt(fy) && m === parseInt(fm); }
-        return true;
-    });
-
-    // 1. Output Diario (Solo las despachadas HOY)
-    const now = new Date();
-    const todayStr = now.toLocaleDateString();
-    let piezasHoy = 0;
-    filtered.forEach(f => {
-        if (f.etapa === 'Despacho' && f.stage_timestamps['Despacho']) {
-            if (new Date(f.stage_timestamps['Despacho']).toLocaleDateString() === todayStr) {
-                piezasHoy += (f.total_piezas || 0);
-            }
-        }
-    });
-
-    document.getElementById('fab-metric-output').textContent = `${piezasHoy} / 144`;
-    const trendEl = document.getElementById('fab-metric-output-trend');
-    if (piezasHoy >= 144) {
-        trendEl.textContent = '✅ Meta Diaria Cumplida';
-        trendEl.style.color = 'var(--success)';
-    } else {
-        trendEl.textContent = '⏱️ Capacidad Disponible: ' + (144 - piezasHoy);
-        trendEl.style.color = 'var(--text-muted)';
-    }
-
-    // 2. Órdenes Activas
-    const activas = filtered.filter(f => f.etapa !== 'Despacho');
-    document.getElementById('fab-metric-activas').textContent = activas.length;
-
-    // 3. Retrasadas
-    let retrasadas = 0;
-    activas.forEach(f => {
-        if (f.fecha_limite && !f.exterior) {
-            if (now > new Date(f.fecha_limite)) retrasadas++;
-        }
-    });
-    document.getElementById('fab-metric-retrasadas').textContent = retrasadas;
-
-    // 4. Errores QA
-    let qaErrors = filtered.reduce((acc, f) => acc + (f.errores_qa || 0), 0);
-    document.getElementById('fab-metric-qa').textContent = qaErrors;
-
-    // 5. Funnel Chart (Orders per stage)
-    const stages = ['Recepción', 'Dibujo', 'Fabricación', 'Quality Control', 'Despacho'];
-    const funnelData = stages.map(s => filtered.filter(f => f.etapa === s).length);
-
-    if (fabFunnelChart) fabFunnelChart.destroy();
-    fabFunnelChart = new Chart(document.getElementById('fabFunnelChart').getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: stages,
-            datasets: [{
-                label: 'Órdenes Activas',
-                data: funnelData,
-                backgroundColor: ['#3A3B3C', '#4F4F51', '#D4AF37', '#DC143C', '#28a745']
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } }
-        }
-    });
-
-    // 6. Pipeline Carga Futura (Piezas Totales en Cola)
-    const pipelineData = stages.map(s => {
-        return activas.filter(f => f.etapa === s).reduce((acc, f) => acc + (f.total_piezas || 0), 0);
-    });
-
-    if (fabPipelineChart) fabPipelineChart.destroy();
-    fabPipelineChart = new Chart(document.getElementById('fabPipelineChart').getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: stages.slice(0, 4), // Despacho isn't in queue
-            datasets: [{
-                label: 'Piezas en Cola',
-                data: pipelineData.slice(0, 4),
-                backgroundColor: 'rgba(212, 175, 55, 0.7)',
-                borderColor: 'var(--brand-gold)',
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } }
-        }
-    });
-}
 
 // Compresión de imágenes en el lado del cliente (Frontend)
 function compressImage(file, maxWidth, maxHeight, quality) {
