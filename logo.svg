@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Módulo Izquierdo (Marco) -->
+  <polygon points="48.5,0.86 3.5,26.86 3.5,73.14 48.5,99.14 48.5,84.13 16.5,65.65 16.5,34.35 48.5,15.87" fill="#F4D03F"/>
+  <!-- Barra Derecha 1 -->
+  <polygon points="51.5,0.86 64.5,8.37 64.5,91.63 51.5,99.14" fill="#F4D03F"/>
+  <!-- Barra Derecha 2 -->
+  <polygon points="67.5,10.11 80.5,17.62 80.5,82.38 67.5,89.89" fill="#F4D03F"/>
+  <!-- Barra Derecha 3 -->
+  <polygon points="83.5,19.35 96.5,26.86 96.5,73.14 83.5,80.65" fill="#F4D03F"/>
+</svg>
