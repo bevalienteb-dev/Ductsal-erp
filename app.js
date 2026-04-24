@@ -1244,15 +1244,15 @@ function showAdvanceForm() {
 
         if (p.tipo_proyecto === 'Fabricación') {
             formHTML += `<div class="form-group"><label>Vendedor que atendió</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div>
-            <div class="form-group"><label>Fecha est. inicio</label><input type="date" id="adv-inicio" required></div>
+            <div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div>
             <div class="form-group full-width"><label>Documentos/Planos</label><input type="file" id="adv-file" required></div>`;
         } else {
             let mapLink = "https://maps.google.com";
             if (settings.factory_address) mapLink += `?q=${encodeURIComponent(settings.factory_address)}`;
 
-            formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto</label><input type="text" id="adv-ubicacion" required placeholder="Ej. Calle Principal #123"></div>
+            formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto (Opcional)</label><input type="text" id="adv-ubicacion" placeholder="Ej. Calle Principal #123"></div>
                 <div class="form-group"><label>Distancia a Fábrica (km) <a href="${mapLink}" target="_blank" style="color:var(--brand-gold); font-size: 0.8rem; margin-left: 5px;">[Abrir Mapa]</a></label><input type="number" step="0.1" id="adv-distancia" required></div>
-                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita</label><input type="date" id="adv-fecha" required></div><div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
+                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita (Opcional)</label><input type="date" id="adv-fecha"></div><div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
         }
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         let isNeg = nextStage === 'negociacion';
@@ -1320,7 +1320,7 @@ async function processAdvance(nextStage) {
             const elF = document.getElementById('adv-fecha'); dF = elF ? elF.value : "";
             const elU = document.getElementById('adv-ubicacion'); u = elU ? elU.value.trim() : "";
             const elDist = document.getElementById('adv-distancia'); dist = elDist ? elDist.value : "";
-            if (!dF || !u || !dist) return alert("Completa los campos de visita (Ubicación, Fecha, Distancia).");
+            if (!dist) return alert("Completa la distancia a la fábrica.");
         }
 
         if (!v) return alert("Completa el vendedor/visitante.");
