@@ -1,13 +1,13 @@
 // app.js
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBSnGhwh043oV_zW1FlE5z7N8_ywh9FUEA",
-  authDomain: "ductsal-erp.firebaseapp.com",
-  projectId: "ductsal-erp",
-  storageBucket: "ductsal-erp.firebasestorage.app",
-  messagingSenderId: "948658286825",
-  appId: "1:948658286825:web:e3008dc00f714e57aa0078",
-  measurementId: "G-32JZ4MV4FR"
+    apiKey: "AIzaSyBSnGhwh043oV_zW1FlE5z7N8_ywh9FUEA",
+    authDomain: "ductsal-erp.firebaseapp.com",
+    projectId: "ductsal-erp",
+    storageBucket: "ductsal-erp.firebasestorage.app",
+    messagingSenderId: "948658286825",
+    appId: "1:948658286825:web:e3008dc00f714e57aa0078",
+    measurementId: "G-32JZ4MV4FR"
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
@@ -25,27 +25,84 @@ if (isLocal) {
 // Helper Functions para Carga
 function showLoading(msg = 'Subiendo archivo a la nube...') {
     const el = document.getElementById('global-spinner');
-    if(el) {
+    if (el) {
         document.getElementById('spinner-msg').textContent = msg;
         el.style.display = 'flex';
     }
 }
 function hideLoading() {
     const el = document.getElementById('global-spinner');
-    if(el) el.style.display = 'none';
+    if (el) el.style.display = 'none';
 }
 
 async function uploadFileToStorage(file, folderName) {
-    if(!file) return null;
+    if (!file) return null;
+    let taskId;
+    
+    if (isLocal) {
+        taskId = 'mock_' + Date.now().toString();
+        activeUploads++;
+        uploadProgressMap.set(taskId, { transferred: 0, total: file.size || 1000000 });
+        updateGlobalProgress();
+        
+        await new Promise(resolve => {
+            let p = 0;
+            const interval = setInterval(() => {
+                p += 20;
+                uploadProgressMap.set(taskId, { transferred: (file.size || 1000000) * (p/100), total: file.size || 1000000 });
+                updateGlobalProgress();
+                if(p >= 100) { clearInterval(interval); resolve(); }
+            }, 300);
+        });
+        
+        activeUploads--;
+        uploadProgressMap.delete(taskId);
+        updateGlobalProgress();
+        return { name: file.name || 'mock_file.pdf', url: 'https://dummyimage.com/600x400/000/fff&text=Archivo+Prueba' };
+    }
+
     try {
-        const ext = file.name.split('.').pop();
-        const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        // Comprimir si es imagen (max 1280x1280, 70% calidad)
+        const processedFile = await compressImage(file, 1280, 1280, 0.7);
+
+        const ext = processedFile.name.split('.').pop();
+        const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
         const storageRef = storage.ref();
         const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
-        await fileRef.put(file);
+
+        taskId = Date.now().toString() + Math.random().toString();
+        activeUploads++;
+        uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size });
+        updateGlobalProgress();
+
+        await new Promise((resolve, reject) => {
+            const uploadTask = fileRef.put(processedFile);
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
+                    updateGlobalProgress();
+                },
+                (error) => {
+                    reject(error);
+                },
+                () => {
+                    resolve();
+                }
+            );
+        });
+
+        activeUploads--;
+        uploadProgressMap.delete(taskId);
+        updateGlobalProgress();
+
         const url = await fileRef.getDownloadURL();
-        return { name: file.name, url: url };
+        return { name: processedFile.name, url: url };
     } catch (e) {
+        if (typeof taskId !== 'undefined') {
+            activeUploads = Math.max(0, activeUploads - 1);
+            uploadProgressMap.delete(taskId);
+            updateGlobalProgress();
+        }
         console.error("Error uploading file to Storage", e);
         throw e;
     }
@@ -61,6 +118,7 @@ const KPI_LIMITS = { 'prospecto': 7, 'levantamiento': 10, 'cotizacion': 7, 'nego
 let clients = [];
 let prospects = [];
 let users = [];
+let fabricacion = [];
 let currentUser = JSON.parse(localStorage.getItem('hexasales_current_user')) || null;
 let currentProspectId = null;
 let lastViewedSection = 'list-view';
@@ -73,29 +131,31 @@ let loadedCollections = 0;
 
 function reRenderApp() {
     if (!currentUser) return;
-    populateTimeFilter(); 
-    toggleClientFields(); 
+    populateTimeFilter();
+    toggleClientFields();
     if (document.getElementById('list-view').style.display !== 'none') renderList();
     if (document.getElementById('dashboard-view').style.display !== 'none') renderDashboard();
     if (document.getElementById('users-view').style.display !== 'none') renderUsers();
     if (document.getElementById('detail-view').style.display !== 'none' && currentProspectId) openDetail(currentProspectId);
+    if (document.getElementById('fabricacion-view').style.display !== 'none') renderFabricacionTable();
+    if (document.getElementById('fabricacion-dashboard-view').style.display !== 'none') renderFabricacionDashboard();
 }
 
 function checkInitialLoad() {
     loadedCollections++;
-    if (loadedCollections === 4) {
+    if (loadedCollections === 5) {
         if (users.length === 0) {
             let admin = { id: Date.now().toString(), nombre: 'Administrador Maestro', email: 'bvaliente@grupogama.com', password: '', role: 'manager', activo: true };
             saveUserToDB(admin);
         }
         checkAuth();
         reRenderApp();
-    } else if (loadedCollections > 4) {
+    } else if (loadedCollections > 5) {
         reRenderApp();
     }
 }
 
-document.addEventListener('DOMContentLoaded', async () => { 
+document.addEventListener('DOMContentLoaded', async () => {
     // Migrate local to firebase on first run
     const localClients = JSON.parse(localStorage.getItem('ductsal_clients'));
     if (localClients && !localStorage.getItem('migrated_to_firebase')) {
@@ -103,12 +163,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const localProspects = JSON.parse(localStorage.getItem('ductsal_prospects')) || [];
         const localUsers = JSON.parse(localStorage.getItem('hexasales_users')) || [];
         const localSettings = JSON.parse(localStorage.getItem('ductsal_settings')) || { visitantes: [], encargados: [] };
-        
-        for(let c of localClients) await db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c);
-        for(let p of localProspects) await db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p);
-        for(let u of localUsers) await db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
+
+        for (let c of localClients) await db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c);
+        for (let p of localProspects) await db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p);
+        for (let u of localUsers) await db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
         await db.collection(`system${DB_SUFFIX}`).doc('settings').set(localSettings);
-        
+
         localStorage.setItem('migrated_to_firebase', 'true');
         console.log("Migración completada.");
     }
@@ -117,12 +177,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     db.collection(`clients${DB_SUFFIX}`).onSnapshot(snap => { clients = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
     db.collection(`prospects${DB_SUFFIX}`).onSnapshot(snap => { prospects = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
     db.collection(`users${DB_SUFFIX}`).onSnapshot(snap => { users = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(doc => { if(doc.exists) settings = doc.data(); checkInitialLoad(); });
+    db.collection(`fabricacion${DB_SUFFIX}`).onSnapshot(snap => { fabricacion = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+    db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(doc => { if (doc.exists) settings = doc.data(); checkInitialLoad(); });
 });
 
 function saveClientToDB(c) { db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c); }
 function saveProspectToDB(p) { db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p); }
 function saveUserToDB(u) { db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u); }
+function saveFabricacionToDB(f) { db.collection(`fabricacion${DB_SUFFIX}`).doc(f.id).set(f); }
 function saveSettings() { db.collection(`system${DB_SUFFIX}`).doc('settings').set(settings); }
 
 function saveState() { console.log('Deprecated saveState called.'); }
@@ -146,7 +208,7 @@ function renderSettingsLists() {
     settings.visitantes.forEach((v, i) => {
         listVis.innerHTML += `<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding:6px 0; font-size:0.9rem;"><span>👤 ${v}</span><button class="btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="removeSetting('visitantes', ${i})">X</button></div>`;
     });
-    
+
     let listEnc = document.getElementById('list-encargados');
     listEnc.innerHTML = '';
     settings.encargados.forEach((e, i) => {
@@ -157,7 +219,7 @@ function renderSettingsLists() {
 function addSetting(type) {
     let input = document.getElementById(`new-${type}-input`);
     let val = input.value.trim();
-    if(val) {
+    if (val) {
         settings[type].push(val);
         input.value = '';
         saveSettings();
@@ -176,11 +238,13 @@ function showView(viewId) {
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
-    
-    if(viewId === 'list-view') { document.getElementById('nav-list').classList.add('active'); renderList(); }
-    if(viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
-    if(viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
-    if(viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
+
+    if (viewId === 'list-view') { document.getElementById('nav-list').classList.add('active'); renderList(); }
+    if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
+    if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
+    if (viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
+    if (viewId === 'fabricacion-view') { document.getElementById('nav-fabricacion').classList.add('active'); renderFabricacionTable(); }
+    if (viewId === 'fabricacion-dashboard-view') { document.getElementById('nav-fabricacion-dashboard').classList.add('active'); renderFabricacionDashboard(); }
 }
 function goBackFromDetail() { showView(lastViewedSection); }
 
@@ -193,11 +257,11 @@ function checkAuth() {
         document.getElementById('main-app').style.display = 'flex';
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('setup-screen').style.display = 'none';
-        
+
         document.getElementById('ui-user-name').textContent = currentUser.nombre;
         const rName = currentUser.role === 'manager' ? 'Gerente' : (currentUser.role === 'gestor' ? 'Gestor de Ventas' : 'Vendedor');
         document.getElementById('ui-user-role').textContent = rName;
-        
+
         applyRolePermissions();
     }
 }
@@ -208,10 +272,10 @@ function processLogin(e) {
     e.preventDefault();
     const email = document.getElementById('login-email').value.trim();
     const pass = document.getElementById('login-password').value;
-    
+
     const user = users.find(u => u.email === email && u.activo);
     if (!user) return alert("Usuario no encontrado o inactivo.");
-    
+
     if (user.password === "") {
         if (pass !== "") {
             return alert("Este usuario es nuevo. Deja la contraseña en blanco y dale a Iniciar Sesión para configurarla por primera vez.");
@@ -231,12 +295,12 @@ function processFirstTimeSetup(e) {
     e.preventDefault();
     const p1 = document.getElementById('setup-password').value;
     const p2 = document.getElementById('setup-password-confirm').value;
-    if(p1 !== p2) return alert("Las contraseñas no coinciden.");
-    if(p1.length < 4) return alert("La contraseña debe tener al menos 4 caracteres.");
-    
+    if (p1 !== p2) return alert("Las contraseñas no coinciden.");
+    if (p1.length < 4) return alert("La contraseña debe tener al menos 4 caracteres.");
+
     pendingSetupUser.password = p1;
     saveUserToDB(pendingSetupUser);
-    
+
     currentUser = pendingSetupUser;
     localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
     checkAuth();
@@ -249,15 +313,41 @@ function processLogout() {
 }
 
 function applyRolePermissions() {
-    if(!currentUser) return;
+    if (!currentUser) return;
     const role = currentUser.role;
     const navDashboard = document.getElementById('nav-dashboard'); const navProjects = document.getElementById('nav-projects'); const headerAction = document.getElementById('client-action-header');
     const navSettings = document.getElementById('nav-settings'); const navUsers = document.getElementById('nav-users');
-    
-    if (role === 'manager') { navDashboard.style.display = 'flex'; navProjects.style.display = 'flex'; navSettings.style.display = 'flex'; navUsers.style.display = 'flex'; headerAction.style.display = 'none'; showView('dashboard-view'); } 
-    else if (role === 'gestor') { navDashboard.style.display = 'flex'; navProjects.style.display = 'flex'; navSettings.style.display = 'none'; navUsers.style.display = 'none'; headerAction.style.display = 'table-cell'; showView('projects-view'); }
-    else { navDashboard.style.display = 'none'; navProjects.style.display = 'none'; navSettings.style.display = 'none'; navUsers.style.display = 'none'; headerAction.style.display = 'table-cell'; showView('list-view'); }
-    
+    const navFab = document.getElementById('nav-fabricacion'); const navFabDash = document.getElementById('nav-fabricacion-dashboard');
+    const navList = document.getElementById('nav-list'); const navClients = document.getElementById('nav-clients');
+
+    // Hide all initially
+    [navDashboard, navProjects, navSettings, navUsers, navFab, navFabDash, navList, navClients].forEach(n => { if (n) n.style.display = 'none'; });
+    headerAction.style.display = 'none';
+
+    if (role === 'manager') {
+        [navDashboard, navProjects, navSettings, navUsers, navFab, navFabDash, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        showView('dashboard-view');
+    }
+    else if (role === 'gestor') {
+        [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        headerAction.style.display = 'table-cell';
+        showView('projects-view');
+    }
+    else if (role === 'vendedor') {
+        [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        headerAction.style.display = 'table-cell';
+        showView('list-view');
+    }
+    else if (role === 'jefe_produccion') {
+        [navFab, navFabDash].forEach(n => { if (n) n.style.display = 'flex'; });
+        showView('fabricacion-dashboard-view');
+    }
+    else {
+        // Factory workers (recepcion, dibujante, operario, control_calidad, despacho)
+        if (navFab) navFab.style.display = 'flex';
+        showView('fabricacion-view');
+    }
+
     renderList();
     renderClientsTable();
     if (role === 'manager') renderUsersTable();
@@ -295,7 +385,7 @@ function saveUser(e) {
         const u = users.find(x => x.id === id);
         if (u) { u.nombre = nombre; u.email = email; u.role = role; saveUserToDB(u); }
     } else {
-        if(users.some(x => x.email === email)) return alert("El correo ya está en uso.");
+        if (users.some(x => x.email === email)) return alert("El correo ya está en uso.");
         let nu = { id: Date.now().toString(), nombre, email, password: '', role, activo: true };
         saveUserToDB(nu);
     }
@@ -308,7 +398,12 @@ function renderUsersTable() {
     if (!tbody) return;
     tbody.innerHTML = '';
     users.forEach(u => {
-        const rName = u.role === 'manager' ? 'Gerente' : (u.role === 'gestor' ? 'Gestor de Ventas' : 'Vendedor');
+        const roleMap = {
+            'manager': 'Gerente', 'gestor': 'Gestor de Ventas', 'vendedor': 'Vendedor',
+            'jefe_produccion': 'Jefe de Producción', 'recepcion': 'Recepción',
+            'dibujante': 'Dibujante', 'operario': 'Operario', 'control_calidad': 'Control de Calidad', 'despacho': 'Despacho'
+        };
+        const rName = roleMap[u.role] || u.role;
         const stHtml = u.activo ? `<span style="color:var(--success);">Activo</span>` : `<span style="color:var(--danger);">Inactivo</span>`;
         tbody.innerHTML += `<tr>
             <td>${u.nombre}</td>
@@ -325,7 +420,7 @@ function renderUsersTable() {
 }
 
 function resetUserPassword(id) {
-    if(confirm("¿Estás seguro de restablecer la contraseña? El usuario deberá configurarla nuevamente al iniciar sesión.")) {
+    if (confirm("¿Estás seguro de restablecer la contraseña? El usuario deberá configurarla nuevamente al iniciar sesión.")) {
         const u = users.find(x => x.id === id);
         u.password = "";
         saveUserToDB(u);
@@ -335,7 +430,7 @@ function resetUserPassword(id) {
 
 function toggleUserStatus(id) {
     const u = users.find(x => x.id === id);
-    if(u.id === currentUser.id) return alert("No puedes desactivarte a ti mismo.");
+    if (u.id === currentUser.id) return alert("No puedes desactivarte a ti mismo.");
     u.activo = !u.activo;
     saveUserToDB(u);
     renderUsersTable();
@@ -379,7 +474,7 @@ function generateProspectCode() {
 // ========================
 function renderClientsTable() {
     const tbody = document.getElementById('clients-table-body'); tbody.innerHTML = '';
-    
+
     let filtered = clients;
     if (currentUser && currentUser.role === 'vendedor') {
         filtered = filtered.filter(c => c.createdBy === currentUser.id);
@@ -388,18 +483,18 @@ function renderClientsTable() {
     [...filtered].reverse().forEach(c => {
         const isNatural = c.tipo === 'natural'; const typeBadge = isNatural ? '<span class="badge bg-neutral">Natural</span>' : '<span class="badge bg-neutral" style="color:var(--brand-gold);">Jurídica</span>';
         const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-'); const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
-        
+
         let btnHTML = `<button class="btn-secondary" onclick="openClientModal('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Editar</button>`;
         if (currentUser && currentUser.role === 'manager') {
             btnHTML += `<button class="btn-danger" onclick="deleteClient('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem; margin-left:5px;">Eliminar</button>`;
         }
-        
+
         tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong></td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td><td>${btnHTML}</td></tr>`;
     });
 }
 function toggleClientFields() {
     const type = document.getElementById('client-tipo').value;
-    if (type === 'natural') { document.getElementById('fields-natural').style.display = 'block'; document.getElementById('fields-juridica').style.display = 'none'; } 
+    if (type === 'natural') { document.getElementById('fields-natural').style.display = 'block'; document.getElementById('fields-juridica').style.display = 'none'; }
     else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
 }
 function openClientModal(clientId = null) {
@@ -409,21 +504,21 @@ function openClientModal(clientId = null) {
         if (c) {
             document.getElementById('client-id-edit').value = c.id; document.getElementById('client-tipo').value = c.tipo; toggleClientFields();
             document.getElementById('cli-telefono').value = c.telefono || ''; document.getElementById('cli-correo').value = c.correo || ''; document.getElementById('cli-correo-fact').value = c.correo_fact || '';
-            if (c.tipo === 'natural') { 
-                document.getElementById('nat-nombres').value = c.nombres || ''; document.getElementById('nat-apellidos').value = c.apellidos || ''; 
-                document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || ''; 
+            if (c.tipo === 'natural') {
+                document.getElementById('nat-nombres').value = c.nombres || ''; document.getElementById('nat-apellidos').value = c.apellidos || '';
+                document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || '';
                 document.getElementById('nat-profesion').value = c.profesion || ''; document.getElementById('nat-domicilio').value = c.domicilio || '';
                 const sts = document.getElementById('nat-dui-status');
-                if(c.documentos && c.documentos.dui) sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: ${c.documentos.dui}</span>`; else sts.innerHTML = '';
+                if (c.documentos && c.documentos.dui) sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: ${c.documentos.dui}</span>`; else sts.innerHTML = '';
             }
-            else { 
+            else {
                 document.getElementById('jur-empresa').value = c.empresa || ''; document.getElementById('jur-contacto').value = c.contacto || ''; document.getElementById('jur-nit').value = c.nit || ''; document.getElementById('jur-nrc').value = c.nrc || '';
                 document.getElementById('jur-rep-legal').value = c.rep_legal || ''; document.getElementById('jur-profesion-rep').value = c.profesion_rep || ''; document.getElementById('jur-domicilio-rep').value = c.domicilio_rep || '';
                 document.getElementById('jur-dui-rep').value = c.dui_rep || ''; document.getElementById('jur-nit-rep').value = c.nit_rep || '';
                 const jSts = document.getElementById('jur-docs-status');
                 if (c.documentos && Object.keys(c.documentos).length > 0) {
                     let text = "Archivos en expediente: ";
-                    if(c.documentos.escritura) text += "[Escritura] "; if(c.documentos.credencial) text += "[Credencial] "; if(c.documentos.nit) text += "[NIT] "; if(c.documentos.nrc) text += "[NRC] "; if(c.documentos.dui) text += "[DUI Rep.] ";
+                    if (c.documentos.escritura) text += "[Escritura] "; if (c.documentos.credencial) text += "[Credencial] "; if (c.documentos.nit) text += "[NIT] "; if (c.documentos.nrc) text += "[NRC] "; if (c.documentos.dui) text += "[DUI Rep.] ";
                     jSts.innerHTML = `<span style="color:var(--success);">${text}</span>`;
                 } else { jSts.innerHTML = ''; }
             }
@@ -436,7 +531,7 @@ async function saveClient(e) {
     e.preventDefault(); const type = document.getElementById('client-tipo').value; const editId = document.getElementById('client-id-edit').value;
     const tel = document.getElementById('cli-telefono').value.trim(); const email = document.getElementById('cli-correo').value.trim();
     if (!tel && !email) return alert("Debe ingresar obligatoriamente un teléfono o correo.");
-    
+
     showLoading('Subiendo documentos del cliente...');
     try {
         let c = {};
@@ -447,36 +542,43 @@ async function saveClient(e) {
             c.profesion = document.getElementById('nat-profesion').value; c.domicilio = document.getElementById('nat-domicilio').value;
             const duiFile = document.getElementById('nat-dui-file');
             if (duiFile && duiFile.files.length > 0) {
-                if(!c.documentos) c.documentos = {};
+                if (!c.documentos) c.documentos = {};
                 c.documentos.dui = await uploadFileToStorage(duiFile.files[0], 'clientes');
             }
         } else {
             c.empresa = document.getElementById('jur-empresa').value.trim(); if (!c.empresa) { hideLoading(); return alert("Nombre de la Empresa obligatorio."); }
-            c.contacto = document.getElementById('jur-contacto').value; c.nit = document.getElementById('jur-nit').value; c.nrc = document.getElementById('jur-nrc').value;
-            c.rep_legal = document.getElementById('jur-rep-legal').value.trim(); if (!c.rep_legal) { hideLoading(); return alert("Nombre del Representante Legal obligatorio."); }
-            c.profesion_rep = document.getElementById('jur-profesion-rep').value; c.domicilio_rep = document.getElementById('jur-domicilio_rep').value;
-            c.dui_rep = document.getElementById('jur-dui-rep').value; c.nit_rep = document.getElementById('jur-nit_rep').value;
-            
-            if(!c.documentos) c.documentos = {};
-            const uploadDoc = async (id, key) => { const el = document.getElementById(id); if(el && el.files.length > 0) c.documentos[key] = await uploadFileToStorage(el.files[0], 'clientes'); };
-            await uploadDoc('jur-file-escritura', 'escritura'); await uploadDoc('jur-file-mods', 'mods_escritura'); await uploadDoc('jur-file-credencial', 'credencial'); 
-            await uploadDoc('jur-file-nit', 'nit'); await uploadDoc('jur-file-nrc', 'nrc'); await uploadDoc('jur-file-dui', 'dui');
+            c.contacto = document.getElementById('jur-contacto').value.trim(); if (!c.contacto) { hideLoading(); return alert("Nombre del Contacto Principal obligatorio."); }
+            c.nit = document.getElementById('jur-nit').value; c.nrc = document.getElementById('jur-nrc').value;
+            c.rep_legal = document.getElementById('jur-rep-legal').value.trim();
+            c.profesion_rep = document.getElementById('jur-profesion-rep').value; c.domicilio_rep = document.getElementById('jur-domicilio-rep').value;
+            c.dui_rep = document.getElementById('jur-dui-rep').value; c.nit_rep = document.getElementById('jur-nit-rep').value;
+
+            if (!c.documentos) c.documentos = {};
+            const uploadDoc = async (id, key) => { const el = document.getElementById(id); if (el && el.files.length > 0) { c.documentos[key] = await uploadFileToStorage(el.files[0], 'clientes'); } };
+            await Promise.all([
+                uploadDoc('jur-file-escritura', 'escritura'),
+                uploadDoc('jur-file-mods', 'mods_escritura'),
+                uploadDoc('jur-file-credencial', 'credencial'),
+                uploadDoc('jur-file-nit', 'nit'),
+                uploadDoc('jur-file-nrc', 'nrc'),
+                uploadDoc('jur-file-dui', 'dui')
+            ]);
         }
         c.tipo = type; c.telefono = tel; c.correo = email; c.correo_fact = document.getElementById('cli-correo-fact').value;
-        if (editId) { c.id = editId; const index = clients.findIndex(x => x.id === editId); if (index > -1) clients[index] = c; } 
-        else { 
-            c.id = 'C' + Date.now().toString(); 
+        if (editId) { c.id = editId; const index = clients.findIndex(x => x.id === editId); if (index > -1) clients[index] = c; }
+        else {
+            c.id = 'C' + Date.now().toString();
             c.createdBy = currentUser ? currentUser.id : 'sistema';
-            c.fecha_creacion = new Date().toISOString(); 
-            clients.push(c); 
+            c.fecha_creacion = new Date().toISOString();
+            clients.push(c);
         }
         saveClientToDB(c);
         closeModal('clientModal');
-        if(document.getElementById('newProspectModal').style.display === 'block') { 
-            renderClientSelect(); 
-            document.getElementById('new-cliente-select').value = c.id; 
-        } else { 
-            renderClientsTable(); 
+        if (document.getElementById('newProspectModal').style.display === 'block') {
+            renderClientSelect();
+            document.getElementById('new-cliente-select').value = c.id;
+        } else {
+            renderClientsTable();
         }
     } catch (err) {
         alert("Error al guardar cliente: " + err.message);
@@ -503,7 +605,19 @@ function renderList() {
     [...visibleProspects].reverse().forEach(p => {
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
         let badgeClass = p.estado === 'activo' ? 'activo' : 'perdido';
-        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length-4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
+
+        // Calculate days in stage
+        const timestamp = p.stage_timestamps && p.stage_timestamps[p.etapa] ? p.stage_timestamps[p.etapa] : p.fecha_creacion;
+        const daysInStage = getDaysDifference(timestamp);
+        const limit = KPI_LIMITS[p.etapa] || 999;
+        const isLate = p.estado === 'activo' && daysInStage > limit;
+
+        if (isLate) {
+            tr.style.backgroundColor = 'rgba(220, 20, 60, 0.15)'; // Red tint
+            tr.style.color = '#ff6b6b';
+        }
+
+        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -518,16 +632,16 @@ function renderProjectsList() {
         let total = subtotal * 1.13;
 
         let totalFacturado = 0; let totalCobrado = 0;
-        if(p.facturas) {
+        if (p.facturas) {
             p.facturas.forEach(f => {
                 totalFacturado += f.monto;
-                if(f.pagos) totalCobrado += f.pagos.reduce((a,b) => a + parseFloat(b.monto), 0);
+                if (f.pagos) totalCobrado += f.pagos.reduce((a, b) => a + parseFloat(b.monto), 0);
             });
         }
-        
+
         const pctFacturado = total > 0 ? Math.min(100, (totalFacturado / total) * 100) : 0;
         const pctCobrado = total > 0 ? Math.min(100, (totalCobrado / total) * 100) : 0;
-        
+
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
         const encargado = p.encargado || '-';
         tr.innerHTML = `
@@ -561,22 +675,22 @@ function renderClientSelect() {
     filtered.forEach(c => { select.innerHTML += `<option value="${c.id}">${c.tipo === 'natural' ? `${c.nombres} ${c.apellidos}` : c.empresa}</option>`; });
 }
 function createNewProspect(e) {
-    e.preventDefault(); const clientId = document.getElementById('new-cliente-select').value; if(!clientId) return alert("Debes seleccionar un cliente");
+    e.preventDefault(); const clientId = document.getElementById('new-cliente-select').value; if (!clientId) return alert("Debes seleccionar un cliente");
     const p = {
-        id: Date.now().toString(), 
-        codigo: generateProspectCode(), 
-        clientId: clientId, 
+        id: Date.now().toString(),
+        codigo: generateProspectCode(),
+        clientId: clientId,
         createdBy: currentUser ? currentUser.id : 'sistema',
-        proyecto: document.getElementById('new-proyecto').value, 
+        proyecto: document.getElementById('new-proyecto').value,
         origen: document.getElementById('new-origen').value,
-        tipo_proyecto: document.getElementById('new-tipo-proyecto').value, 
-        tipo_producto: document.getElementById('new-tipo-producto').value, 
+        tipo_proyecto: document.getElementById('new-tipo-proyecto').value,
+        tipo_producto: document.getElementById('new-tipo-producto').value,
         fecha_creacion: new Date().toISOString(),
-        etapa: 'prospecto', 
-        estado: 'activo', 
-        stage_timestamps: { 'prospecto': new Date().toISOString() }, 
-        logs: [], 
-        datos: {}, 
+        etapa: 'prospecto',
+        estado: 'activo',
+        stage_timestamps: { 'prospecto': new Date().toISOString() },
+        logs: [],
+        datos: {},
         facturas: []
     };
     addLogToProspect(p, 'Prospecto creado. Origen: ' + p.origen, true); saveProspectToDB(p); closeModal('newProspectModal'); document.getElementById('newProspectForm').reset(); renderList();
@@ -591,21 +705,24 @@ function openDetail(id) {
     document.getElementById('detail-cliente').textContent = getClientName(p.clientId);
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;
     document.getElementById('advance-form-container').innerHTML = '';
-    
+
     // Show Delete Prospect button for managers
     const btnDeleteProspect = document.getElementById('btn-delete-prospect');
     if (btnDeleteProspect) {
         btnDeleteProspect.style.display = (currentUser && currentUser.role === 'manager') ? 'block' : 'none';
     }
-    
+
     const actionContainer = document.getElementById('action-buttons-container');
     const finTracker = document.getElementById('financial-tracker-container');
     const stageTitleText = document.getElementById('stage-title-text');
 
     const trackerContainer = document.getElementById('stage-tracker');
+    const btnSendFab = document.getElementById('btn-send-fab');
+    if (btnSendFab) btnSendFab.style.display = 'none';
+
     if (p.estado === 'activo') {
         actionContainer.style.display = 'block'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Avance de Etapa"; document.getElementById('btn-advance').style.display = p.etapa === 'cierre' ? 'none' : 'inline-block';
-        
+
         const existingBtn = document.getElementById('btn-new-proposal');
         if (existingBtn) existingBtn.remove();
         if (p.etapa === 'negociacion') {
@@ -618,6 +735,9 @@ function openDetail(id) {
         }
     } else if (p.estado === 'ganado') {
         actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; renderFinancials(p);
+        if (btnSendFab && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+            btnSendFab.style.display = 'inline-block';
+        }
     } else { actionContainer.style.display = 'none'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Línea de Tiempo"; }
 
     document.getElementById('detail-time-in-stage').textContent = `Tiempo en etapa: ${getDaysDifference(p.stage_timestamps[p.etapa] || p.fecha_creacion)} días`;
@@ -628,25 +748,25 @@ function renderFinancials(p) {
     const subtotal = getProjectSubtotal(p);
     const iva = subtotal * 0.13;
     const total = subtotal + iva;
-    
+
     const costoTotal = getProjectCosto(p);
     const margen = subtotal - costoTotal;
     const margenPct = subtotal > 0 ? (margen / subtotal) * 100 : 0;
 
     document.getElementById('fin-precio-original').textContent = formatCurrency(p.precio_cotizado || 0);
     document.getElementById('fin-costo-original').textContent = formatCurrency(p.costo_venta || 0);
-    
+
     const ordContainer = document.getElementById('fin-ordenes-container');
     const costContainer = document.getElementById('fin-costos-ordenes-container');
-    
+
     if (ordContainer) ordContainer.innerHTML = '';
     if (costContainer) costContainer.innerHTML = '';
-    
-    if(p.ordenes_cambio && p.ordenes_cambio.length > 0) {
+
+    if (p.ordenes_cambio && p.ordenes_cambio.length > 0) {
         p.ordenes_cambio.forEach(o => {
             let sign = o.tipo === 'aumento' ? '+' : '-';
             let color = o.tipo === 'aumento' ? 'var(--brand-gold)' : 'var(--danger)';
-            
+
             if (ordContainer) {
                 ordContainer.innerHTML += `<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${color}; margin-top:2px;">
                     <span>↳ ${o.desc} 
@@ -673,25 +793,25 @@ function renderFinancials(p) {
     }
 
     let totalFacturado = 0; let totalCobrado = 0;
-    
+
     const listDiv = document.getElementById('invoices-list');
     listDiv.innerHTML = '';
 
     if (!p.facturas) p.facturas = [];
-    
+
     p.facturas.forEach((f, invoiceIndex) => {
         totalFacturado += f.monto;
         let pCobrado = 0;
-        if(f.pagos) pCobrado = f.pagos.reduce((a,b) => a + parseFloat(b.monto), 0);
+        if (f.pagos) pCobrado = f.pagos.reduce((a, b) => a + parseFloat(b.monto), 0);
         totalCobrado += pCobrado;
         let pSaldo = f.monto - pCobrado;
-        
+
         let isPaid = pSaldo <= 0;
-        
+
         let pHistory = '';
-        if(f.pagos && f.pagos.length > 0) {
+        if (f.pagos && f.pagos.length > 0) {
             pHistory = `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem; border-top:1px dashed var(--panel-border); padding-top:0.5rem;">
-                <strong>Historial de Pagos de esta factura:</strong><br>` + 
+                <strong>Historial de Pagos de esta factura:</strong><br>` +
                 f.pagos.map((pay, i) => `${formatDate(pay.fecha)} - Abono: ${formatCurrency(pay.monto)} [${pay.metodo || 'N/A'}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`).join('<br>') + `</div>`;
         }
 
@@ -722,7 +842,7 @@ function renderFinancials(p) {
     document.getElementById('fin-subtotal').textContent = formatCurrency(subtotal);
     document.getElementById('fin-iva').textContent = formatCurrency(iva);
     document.getElementById('fin-total').textContent = formatCurrency(total);
-    
+
     document.getElementById('fin-facturado').textContent = formatCurrency(totalFacturado);
     document.getElementById('fin-cobrado').textContent = formatCurrency(totalCobrado);
     document.getElementById('fin-saldo').textContent = formatCurrency(cxc);
@@ -746,8 +866,8 @@ function editChangeOrder(id) {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p || !p.ordenes_cambio) return;
     const o = p.ordenes_cambio.find(x => x.id === id);
-    if(!o) return;
-    
+    if (!o) return;
+
     document.getElementById('co-id-edit').value = o.id;
     document.getElementById('co-tipo').value = o.tipo;
     document.getElementById('co-desc').value = o.desc;
@@ -760,26 +880,26 @@ async function processChangeOrder(e) {
     e.preventDefault();
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    
-    if(!p.ordenes_cambio) p.ordenes_cambio = [];
-    
+
+    if (!p.ordenes_cambio) p.ordenes_cambio = [];
+
     const editId = document.getElementById('co-id-edit').value;
     const tipo = document.getElementById('co-tipo').value;
     const desc = document.getElementById('co-desc').value.trim();
     const precio = parseFloat(document.getElementById('co-precio').value);
     const costo = parseFloat(document.getElementById('co-costo').value);
-    
+
     const fOferta = document.getElementById('co-oferta');
     const fCostos = document.getElementById('co-costos');
-    
+
     showLoading('Subiendo documentos de la orden de cambio...');
     try {
         let docOferta = null;
         let docCostos = null;
-        
+
         if (fOferta && fOferta.files.length > 0) docOferta = await uploadFileToStorage(fOferta.files[0], 'ordenes_cambio');
         if (fCostos && fCostos.files.length > 0) docCostos = await uploadFileToStorage(fCostos.files[0], 'ordenes_cambio');
-        
+
         if (editId) {
             const idx = p.ordenes_cambio.findIndex(x => x.id === editId);
             if (idx !== -1) {
@@ -789,11 +909,11 @@ async function processChangeOrder(e) {
                 p.ordenes_cambio[idx].costo = costo;
                 if (docOferta) p.ordenes_cambio[idx].doc_oferta = docOferta;
                 if (docCostos) p.ordenes_cambio[idx].doc_costos = docCostos;
-                
+
                 if (!p.documentos) p.documentos = {};
                 if (docOferta) p.documentos['oc_' + editId + '_oferta'] = docOferta;
                 if (docCostos) p.documentos['oc_' + editId + '_costos'] = docCostos;
-                
+
                 addLogToProspect(p, `Orden de Cambio editada: ${desc}`, true);
             }
         } else {
@@ -810,17 +930,17 @@ async function processChangeOrder(e) {
             p.ordenes_cambio.push(orden);
             let sign = tipo === 'aumento' ? '+' : '-';
             addLogToProspect(p, `Orden de Cambio (${tipo.toUpperCase()}): ${desc}. Monto: ${sign}${formatCurrency(precio)}.`, true);
-            
+
             if (!p.documentos) p.documentos = {};
             if (docOferta) p.documentos['oc_' + orden.id + '_oferta'] = docOferta;
             if (docCostos) p.documentos['oc_' + orden.id + '_costos'] = docCostos;
         }
-        
+
         saveProspectToDB(p);
         closeModal('changeOrderModal');
         renderFinancials(p);
         renderInfo(p);
-    } catch(err) {
+    } catch (err) {
         alert("Error al guardar la orden de cambio: " + err.message);
     } finally {
         hideLoading();
@@ -838,8 +958,8 @@ function editInvoice(id) {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p || !p.facturas) return;
     const f = p.facturas.find(x => x.id === id);
-    if(!f) return;
-    
+    if (!f) return;
+
     document.getElementById('invoice-form').style.display = 'block'; document.getElementById('payment-form').style.display = 'none';
     document.getElementById('btn-add-invoice').style.display = 'none';
     document.getElementById('inv-id-edit').value = f.id;
@@ -848,22 +968,22 @@ function editInvoice(id) {
 }
 
 async function processInvoice(e) {
-    if(e) e.preventDefault();
-    const p = prospects.find(x => x.id === currentProspectId); 
+    if (e) e.preventDefault();
+    const p = prospects.find(x => x.id === currentProspectId);
     const editId = document.getElementById('inv-id-edit').value;
     const n = document.getElementById('inv-numero').value.trim(); const m = parseFloat(document.getElementById('inv-monto').value);
     const fileEl = document.getElementById('inv-file');
-    
+
     if (!n) return alert("Ingrese un número de factura.");
     if (isNaN(m) || m <= 0) return alert("Ingrese un monto válido mayor a cero.");
     if (!editId && fileEl.files.length === 0) return alert("Debe adjuntar la copia de la factura.");
 
     if (!p.facturas) p.facturas = [];
-    
+
     const subtotal = getProjectSubtotal(p);
     const totalConIVA = subtotal * 1.13;
     let totalFacturado = p.facturas.reduce((acc, f) => f.id !== editId ? acc + f.monto : acc, 0);
-    
+
     if ((totalFacturado + m) > (totalConIVA + 0.1)) {
         return alert(`Error: El monto a facturar excede el saldo restante del proyecto. Saldo máximo a facturar: ${formatCurrency(totalConIVA - totalFacturado)}`);
     }
@@ -887,9 +1007,9 @@ async function processInvoice(e) {
             p.facturas.push({ id: Date.now().toString(), numero: n, monto: m, doc_factura: docName, pagos: [], fecha: new Date().toISOString() });
             addLogToProspect(p, `Factura/CCF emitida: ${n} por ${formatCurrency(m)}`, true);
         }
-        
+
         saveProspectToDB(p); document.getElementById('invoice-form').style.display = 'none'; renderFinancials(p); renderLogs(p);
-    } catch(err) {
+    } catch (err) {
         alert("Error al subir factura: " + err.message);
     } finally {
         hideLoading();
@@ -908,9 +1028,9 @@ function editPayment(invoiceId, paymentIndex) {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p || !p.facturas) return;
     const f = p.facturas.find(x => x.id === invoiceId);
-    if(!f || !f.pagos) return;
+    if (!f || !f.pagos) return;
     const pay = f.pagos[paymentIndex];
-    
+
     document.getElementById('payment-form').style.display = 'block'; document.getElementById('invoice-form').style.display = 'none';
     document.getElementById('pay-target-invoice-text').textContent = `Editando abono en Factura ${f.numero}`;
     document.getElementById('pay-invoice-id').value = invoiceId;
@@ -921,15 +1041,15 @@ function editPayment(invoiceId, paymentIndex) {
 }
 
 async function processPayment(e) {
-    if(e) e.preventDefault();
-    const p = prospects.find(x => x.id === currentProspectId); 
-    const m = parseFloat(document.getElementById('pay-monto-nuevo').value); 
+    if (e) e.preventDefault();
+    const p = prospects.find(x => x.id === currentProspectId);
+    const m = parseFloat(document.getElementById('pay-monto-nuevo').value);
     const met = document.getElementById('pay-metodo').value;
     const ref = document.getElementById('pay-ref').value.trim();
     const invId = document.getElementById('pay-invoice-id').value;
     const editIdx = document.getElementById('pay-idx-edit').value;
     const fileEl = document.getElementById('pay-file');
-    
+
     if (!editIdx && fileEl && fileEl.files.length === 0) return alert("Debe adjuntar el comprobante de pago.");
     if (isNaN(m) || m <= 0) return alert("Ingrese un monto de pago válido.");
 
@@ -943,8 +1063,8 @@ async function processPayment(e) {
         return alert(`El abono supera el saldo de esta factura. Saldo pendiente: ${formatCurrency(saldoPendiente)}`);
     }
 
-    if(!fac.pagos) fac.pagos = [];
-    
+    if (!fac.pagos) fac.pagos = [];
+
     showLoading('Subiendo comprobante de pago...');
     try {
         let docName = null;
@@ -963,9 +1083,9 @@ async function processPayment(e) {
             fac.pagos.push({ monto: m, metodo: met, ref: ref, doc_comprobante: docName, fecha: new Date().toISOString() });
             addLogToProspect(p, `Pago recibido: ${formatCurrency(m)} vía ${met} a cuenta de Factura ${fac.numero}`, true);
         }
-        
+
         saveProspectToDB(p); document.getElementById('payment-form').style.display = 'none'; renderFinancials(p); renderLogs(p);
-    } catch(err) {
+    } catch (err) {
         alert("Error al subir comprobante de pago: " + err.message);
     } finally {
         hideLoading();
@@ -995,7 +1115,7 @@ function renderInfo(p) {
     if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span></li>`;
     if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span></li>`;
     if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
-    
+
     if (p.estado === 'ganado') {
         list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${p.forma_pago}</li>`;
         if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${p.encargado}</li>`;
@@ -1006,25 +1126,25 @@ function renderInfo(p) {
     const docsList = document.getElementById('docs-list');
     docsList.innerHTML = '';
     let hasDocs = false;
-    
+
     function dlLink(doc) {
         if (!doc) return '';
         let name = typeof doc === 'object' ? doc.name : doc;
         let url = typeof doc === 'object' && doc.url ? doc.url : '#';
-        
+
         if (url === '#') {
             return `<a href="#" onclick="alert('El archivo no está en la nube: ${name}'); return false;" style="color:var(--brand-gold)">${name}</a>`;
         } else {
             return `<a href="${url}" target="_blank" style="color:var(--brand-gold)">${name}</a>`;
         }
     }
-    
+
     if (p.datos.doc_levantamiento) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Planos/Notas:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_levantamiento)}</span></li>`; hasDocs = true; }
     if (p.datos.doc_oferta) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta/Cotiz.:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_oferta)}</span></li>`; hasDocs = true; }
     if (p.datos.doc_costos) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Cuadro Costos:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_costos)}</span></li>`; hasDocs = true; }
     if (p.datos.doc_oferta_firmada) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta Firmada:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_oferta_firmada)}</span></li>`; hasDocs = true; }
     if (p.datos.doc_contrato) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Contrato:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_contrato)}</span></li>`; hasDocs = true; }
-    
+
     if (p.facturas && p.facturas.length > 0) {
         p.facturas.forEach(f => {
             if (f.doc_factura) {
@@ -1033,16 +1153,16 @@ function renderInfo(p) {
             }
         });
     }
-    
+
     if (!hasDocs) {
         docsList.innerHTML = `<li style="color:var(--text-muted); font-size: 0.85rem;">No hay documentos adjuntos.</li>`;
     }
 }
 
-function addLogToProspect(p, text, isAuto = false) { 
+function addLogToProspect(p, text, isAuto = false) {
     if (!p.logs) p.logs = [];
     const author = currentUser ? currentUser.nombre : 'Sistema';
-    p.logs.push({ text: `${isAuto ? '' : '(' + author + ') '} ${text}`, date: new Date().toISOString(), auto: isAuto }); 
+    p.logs.push({ text: `${isAuto ? '' : '(' + author + ') '} ${text}`, date: new Date().toISOString(), auto: isAuto });
 }
 function addLog() {
     const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
@@ -1055,13 +1175,13 @@ function renderLogs(p) {
 }
 
 function showNewProposalForm() {
-    const p = prospects.find(x => x.id === currentProspectId); 
+    const p = prospects.find(x => x.id === currentProspectId);
     const container = document.getElementById('advance-form-container');
-    
+
     let formHTML = `<h4><span style="color:var(--success)">Registrar Nueva Propuesta</span></h4>
         <div class="form-grid mt-2">
-            <div class="form-group"><label>Nuevo Costo (Subtotal)</label><input type="number" id="prop-costo" value="${p.costo_venta||''}" required></div>
-            <div class="form-group"><label>Nuevo Precio (Subtotal)</label><input type="number" id="prop-precio" value="${p.precio_cotizado||''}" required></div>
+            <div class="form-group"><label>Nuevo Costo (Subtotal)</label><input type="number" id="prop-costo" value="${p.costo_venta || ''}" required></div>
+            <div class="form-group"><label>Nuevo Precio (Subtotal)</label><input type="number" id="prop-precio" value="${p.precio_cotizado || ''}" required></div>
             <div class="form-group full-width"><label>Nueva Oferta (PDF/Word)</label><input type="file" id="prop-file" required></div>
             <div class="form-group full-width"><label>Nuevo Cuadro de Costos (PDF/Excel)</label><input type="file" id="prop-file2" required></div>
         </div>
@@ -1072,19 +1192,19 @@ function showNewProposalForm() {
 }
 
 function processNewProposal() {
-    const p = prospects.find(x => x.id === currentProspectId); 
-    const c = parseFloat(document.getElementById('prop-costo').value); 
-    const pr = parseFloat(document.getElementById('prop-precio').value); 
-    if(isNaN(c) || isNaN(pr)) return alert("Completa costos y precios.");
-    
+    const p = prospects.find(x => x.id === currentProspectId);
+    const c = parseFloat(document.getElementById('prop-costo').value);
+    const pr = parseFloat(document.getElementById('prop-precio').value);
+    if (isNaN(c) || isNaN(pr)) return alert("Completa costos y precios.");
+
     const f1 = document.getElementById('prop-file');
     const f2 = document.getElementById('prop-file2');
-    if(!f1 || f1.files.length === 0 || !f2 || f2.files.length === 0) return alert("Debe subir la nueva oferta y el cuadro de costos.");
-    
+    if (!f1 || f1.files.length === 0 || !f2 || f2.files.length === 0) return alert("Debe subir la nueva oferta y el cuadro de costos.");
+
     p.costo_venta = c; p.precio_cotizado = pr;
     p.datos.doc_oferta = f1.files[0].name;
     p.datos.doc_costos = f2.files[0].name;
-    
+
     addLogToProspect(p, `NUEVA PROPUESTA: Precio ${formatCurrency(pr)}, Costo ${formatCurrency(c)}. Docs: ${p.datos.doc_oferta}, ${p.datos.doc_costos}`, true);
     saveProspectToDB(p);
     openDetail(p.id);
@@ -1132,55 +1252,61 @@ function showAdvanceForm() {
 
     if (nextStage === 'levantamiento') {
         let visOpts = settings.visitantes.map(v => `<option value="${v}">${v}</option>`).join('');
-        if(!visOpts) visOpts = `<option value="">-- Sin visitantes (Configure en ajustes) --</option>`;
-        
-        let mapLink = "https://maps.google.com";
-        if (settings.factory_address) mapLink += `?q=${encodeURIComponent(settings.factory_address)}`;
+        if (!visOpts) visOpts = `<option value="">-- Sin configurar (Vaya a ajustes) --</option>`;
 
-        formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto</label><input type="text" id="adv-ubicacion" required placeholder="Ej. Calle Principal #123"></div>
-            <div class="form-group"><label>Distancia a Fábrica (km) <a href="${mapLink}" target="_blank" style="color:var(--brand-gold); font-size: 0.8rem; margin-left: 5px;">[Abrir Mapa]</a></label><input type="number" step="0.1" id="adv-distancia" required></div>
-            <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita</label><input type="date" id="adv-fecha" required></div><div class="form-group"><label>Fecha est. inicio</label><input type="date" id="adv-inicio" required></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
+        if (p.tipo_proyecto === 'Fabricación') {
+            formHTML += `<div class="form-group"><label>Vendedor que atendió</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div>
+            <div class="form-group"><label>Fecha est. inicio</label><input type="date" id="adv-inicio" required></div>
+            <div class="form-group full-width"><label>Documentos/Planos</label><input type="file" id="adv-file" required></div>`;
+        } else {
+            let mapLink = "https://maps.google.com";
+            if (settings.factory_address) mapLink += `?q=${encodeURIComponent(settings.factory_address)}`;
+
+            formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto</label><input type="text" id="adv-ubicacion" required placeholder="Ej. Calle Principal #123"></div>
+                <div class="form-group"><label>Distancia a Fábrica (km) <a href="${mapLink}" target="_blank" style="color:var(--brand-gold); font-size: 0.8rem; margin-left: 5px;">[Abrir Mapa]</a></label><input type="number" step="0.1" id="adv-distancia" required></div>
+                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita</label><input type="date" id="adv-fecha" required></div><div class="form-group"><label>Fecha est. inicio</label><input type="date" id="adv-inicio" required></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
+        }
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         let isNeg = nextStage === 'negociacion';
         let selAlta = p.probabilidad === 75 ? 'selected' : ''; let selMedia = p.probabilidad === 50 ? 'selected' : ''; let selBaja = p.probabilidad === 25 ? 'selected' : ''; let selImprobable = p.probabilidad === 10 ? 'selected' : '';
-        formHTML += `<div class="form-group"><label>Costo de Venta (Subtotal)</label><input type="number" id="adv-costo" value="${p.costo_venta||''}" required></div>
-            <div class="form-group"><label>Precio Cotizado (Subtotal)</label><input type="number" id="adv-precio" value="${p.precio_cotizado||''}" required></div>
+        formHTML += `<div class="form-group"><label>Costo de Venta (Subtotal)</label><input type="number" id="adv-costo" value="${p.costo_venta || ''}" required></div>
+            <div class="form-group"><label>Precio Cotizado (Subtotal)</label><input type="number" id="adv-precio" value="${p.precio_cotizado || ''}" required></div>
             <div class="form-group"><label>Probabilidad</label><select id="adv-prob" required>
                     <option value="alta" ${selAlta}>Alta (75%)</option><option value="media" ${selMedia}>Media (50%)</option><option value="baja" ${selBaja}>Baja (25%)</option><option value="improbable" ${selImprobable}>Improbable (10%)</option>
                 </select></div>
-            <div class="form-group full-width"><label>Oferta (PDF/Word)</label><input type="file" id="adv-file" ${isNeg?'':'required'}></div>
-            <div class="form-group full-width"><label>Cuadro de Costos (PDF/Excel)</label><input type="file" id="adv-file2" ${isNeg?'':'required'}></div>`;
+            <div class="form-group full-width"><label>Oferta (PDF/Word)</label><input type="file" id="adv-file" ${isNeg ? '' : 'required'}></div>
+            <div class="form-group full-width"><label>Cuadro de Costos (PDF/Excel)</label><input type="file" id="adv-file2" ${isNeg ? '' : 'required'}></div>`;
     } else if (nextStage === 'cierre') {
         const c = clients.find(x => x.id === p.clientId);
-        if(!c.documentos) c.documentos = {};
+        if (!c.documentos) c.documentos = {};
 
         const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (p.precio_cotizado || 0) > 10000);
-        
+
         let encOpts = settings.encargados.map(e => `<option value="${e}">${e}</option>`).join('');
-        if(!encOpts) encOpts = `<option value="">-- Sin encargados (Configure en ajustes) --</option>`;
-        
+        if (!encOpts) encOpts = `<option value="">-- Sin encargados (Configure en ajustes) --</option>`;
+
         formHTML += `<div class="form-group full-width" style="border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; margin-bottom: 0.5rem;"><strong>Configuración de Proyecto</strong></div>`;
         formHTML += `<div class="form-group"><label>Forma de Pago Pactada</label>
                 <select id="adv-forma-pago" required><option value="100% anticipado">100% Anticipado</option><option value="70/30">70% Anticipo / 30% Cierre</option><option value="50/50">50% Anticipo / 50% Cierre</option></select></div>`;
         formHTML += `<div class="form-group"><label>Número Factura de Anticipo</label><input type="text" id="adv-fac-anticipo" required placeholder="Ej. FCF-001"></div>`;
         if (p.tipo_proyecto === 'Fabricación e instalación') { formHTML += `<div class="form-group"><label>Encargado de Instalación</label><select id="adv-encargado" required><option value="">-- Seleccione --</option>${encOpts}</select></div>`; }
-        
+
         formHTML += `<div class="form-group full-width" style="border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; margin-top: 1rem; margin-bottom: 0.5rem; color:var(--brand-gold);"><strong>Documentación Requerida para Cierre</strong></div>`;
-        
+
         if (isBigInstalacion) {
             formHTML += `<div class="form-group full-width"><button type="button" class="btn-primary" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button><p style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">Haz clic aquí para imprimir el contrato ya rellenado. Luego, escanéalo firmado y súbelo a continuación.</p></div>`;
             formHTML += `<div class="form-group full-width"><label>Contrato Firmado (Proyecto > $10k)</label><input type="file" id="adv-file1" required></div>`;
-            
+
             // Validate Client Docs in Directory
             if (c.tipo === 'juridica') {
-                if(!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc || !c.documentos.dui) {
-                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem;">⚠️ Advertencia: Faltan documentos legales de la Empresa en el Directorio de Clientes.</div>`;
+                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc || !c.documentos.dui) {
+                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Faltan documentos legales de la Empresa en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube sus documentos antes de poder cerrar este proyecto.</div>`;
                 } else {
                     formHTML += `<div class="form-group full-width" style="color:var(--success); font-size:0.9rem;">✔️ Documentación legal de la empresa ya registrada en el directorio.</div>`;
                 }
             } else {
-                if(!c.documentos.dui) {
-                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem;">⚠️ Advertencia: No has anexado el DUI de este cliente en el Directorio.</div>`;
+                if (!c.documentos.dui) {
+                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Falta el DUI en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.</div>`;
                 }
             }
         } else {
@@ -1193,32 +1319,44 @@ function showAdvanceForm() {
 }
 
 async function processAdvance(nextStage) {
-    const p = prospects.find(x => x.id === currentProspectId); 
+    const p = prospects.find(x => x.id === currentProspectId);
     const author = currentUser ? currentUser.nombre : 'Sistema';
     let logMsg = `Avanzó a etapa: ${nextStage}.`;
 
     if (nextStage === 'levantamiento') {
-        const dF = document.getElementById('adv-fecha').value; const dI = document.getElementById('adv-inicio').value;
-        const u = document.getElementById('adv-ubicacion').value.trim(); const v = document.getElementById('adv-visitante').value.trim();
-        const dist = document.getElementById('adv-distancia').value;
-        if(!dF || !dI || !u || !v || !dist) return alert("Completa los campos.");
+        const dI = document.getElementById('adv-inicio').value;
+        const v = document.getElementById('adv-visitante').value.trim();
+        let u = "", dF = "", dist = "";
+
+        if (p.tipo_proyecto !== 'Fabricación') {
+            const elF = document.getElementById('adv-fecha'); dF = elF ? elF.value : "";
+            const elU = document.getElementById('adv-ubicacion'); u = elU ? elU.value.trim() : "";
+            const elDist = document.getElementById('adv-distancia'); dist = elDist ? elDist.value : "";
+            if (!dF || !u || !dist) return alert("Completa los campos de visita (Ubicación, Fecha, Distancia).");
+        }
+
+        if (!dI || !v) return alert("Completa la fecha de inicio y el vendedor/visitante.");
+
         showLoading('Subiendo documentos de levantamiento...');
         try {
-            p.datos.ubicacion = u; p.datos.distancia = dist; p.datos.visitante = v; p.datos.fecha_visita = dF; p.datos.fecha_inicio = dI;
-            const f = document.getElementById('adv-file'); 
-            if(f && f.files.length > 0) p.datos.doc_levantamiento = await uploadFileToStorage(f.files[0], 'proyectos');
-        } catch(e) {
+            if (p.tipo_proyecto !== 'Fabricación') {
+                p.datos.ubicacion = u; p.datos.distancia = dist; p.datos.fecha_visita = dF;
+            }
+            p.datos.visitante = v; p.datos.fecha_inicio = dI;
+            const f = document.getElementById('adv-file');
+            if (f && f.files.length > 0) p.datos.doc_levantamiento = await uploadFileToStorage(f.files[0], 'proyectos');
+        } catch (e) {
             hideLoading();
             return alert("Error al subir archivo: " + e.message);
         }
         hideLoading();
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         const c = parseFloat(document.getElementById('adv-costo').value); const pr = parseFloat(document.getElementById('adv-precio').value); const prob = document.getElementById('adv-prob').value;
-        if(isNaN(c) || isNaN(pr) || !prob) return alert("Completa costos, precios y probabilidad.");
-        
-        const f = document.getElementById('adv-file'); 
-        const f2 = document.getElementById('adv-file2'); 
-        
+        if (isNaN(c) || isNaN(pr) || !prob) return alert("Completa costos, precios y probabilidad.");
+
+        const f = document.getElementById('adv-file');
+        const f2 = document.getElementById('adv-file2');
+
         if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
             const hasOferta = (f && f.files.length > 0) || (p.datos && p.datos.doc_oferta);
             const hasCostos = (f2 && f2.files.length > 0) || (p.datos && p.datos.doc_costos);
@@ -1226,48 +1364,70 @@ async function processAdvance(nextStage) {
                 return alert("Es obligatorio adjuntar tanto la Oferta como el Cuadro de Costos.");
             }
         }
-        
+
         showLoading('Subiendo cotizaciones y costos...');
         try {
             p.costo_venta = c; p.precio_cotizado = pr;
-            p.probabilidad = prob==='alta'?75:prob==='media'?50:prob==='baja'?25:10;
-            if(f && f.files.length > 0) p.datos.doc_oferta = await uploadFileToStorage(f.files[0], 'proyectos');
-            if(f2 && f2.files.length > 0) p.datos.doc_costos = await uploadFileToStorage(f2.files[0], 'proyectos');
+            p.probabilidad = prob === 'alta' ? 75 : prob === 'media' ? 50 : prob === 'baja' ? 25 : 10;
+
+            const uploadTasks = [];
+            if (f && f.files.length > 0) uploadTasks.push(uploadFileToStorage(f.files[0], 'proyectos').then(url => p.datos.doc_oferta = url));
+            if (f2 && f2.files.length > 0) uploadTasks.push(uploadFileToStorage(f2.files[0], 'proyectos').then(url => p.datos.doc_costos = url));
+            await Promise.all(uploadTasks);
+
             logMsg += ` (Cotizado: ${formatCurrency(pr)}, Costo: ${formatCurrency(c)})`;
-        } catch(e) {
+        } catch (e) {
             hideLoading();
             return alert("Error al subir archivo: " + e.message);
         }
         hideLoading();
     } else if (nextStage === 'cierre') {
-        const fp = document.getElementById('adv-forma-pago').value; if(!fp) return alert("Selecciona la forma de pago."); p.forma_pago = fp;
-        const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if(!facNum) return alert("Ingresa el número de factura de anticipo.");
-        if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if(!enc) return alert("Debe asignar un Encargado de Instalación."); p.encargado = enc; logMsg += ` (Encargado: ${enc})`; }
-        
+        const fp = document.getElementById('adv-forma-pago').value; if (!fp) return alert("Selecciona la forma de pago."); p.forma_pago = fp;
+        const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if (!facNum) return alert("Ingresa el número de factura de anticipo.");
+        if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); p.encargado = enc; logMsg += ` (Encargado: ${enc})`; }
+
         const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (p.precio_cotizado || 0) > 10000);
         const c = clients.find(x => x.id === p.clientId);
-        if(!c.documentos) c.documentos = {};
+        if (!c.documentos) c.documentos = {};
 
-        const f1 = document.getElementById('adv-file1'); 
-        if(!f1 || f1.files.length === 0) return alert("Es obligatorio subir el Contrato o la Oferta firmada.");
-        
-        const f2 = document.getElementById('adv-file2'); 
-        if(!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
-        
+        if (isBigInstalacion) {
+            if (c.tipo === 'juridica') {
+                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc || !c.documentos.dui) {
+                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar todos los documentos legales (Escritura, Credencial, NIT, NRC, DUI).");
+                }
+            } else {
+                if (!c.documentos.dui) {
+                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar el DUI del cliente.");
+                }
+            }
+        }
+
+        const f1 = document.getElementById('adv-file1');
+        if (!f1 || f1.files.length === 0) return alert("Es obligatorio subir el Contrato o la Oferta firmada.");
+
+        const f2 = document.getElementById('adv-file2');
+        if (!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
+
         showLoading('Generando cierre y subiendo documentos finales...');
         try {
-            if (isBigInstalacion) p.datos.doc_contrato = await uploadFileToStorage(f1.files[0], 'proyectos');
-            else p.datos.doc_oferta_firmada = await uploadFileToStorage(f1.files[0], 'proyectos');
-            
-            p.datos.doc_comprobante = await uploadFileToStorage(f2.files[0], 'facturas');
-            
-            p.estado = 'ganado'; p.probabilidad = 100; p.fecha_cierre = new Date().toISOString(); 
-        } catch(e) {
+            const uploadTasks = [];
+            if (isBigInstalacion) {
+                uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_contrato = url));
+            } else {
+                uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_oferta_firmada = url));
+            }
+            uploadTasks.push(uploadFileToStorage(f2.files[0], 'facturas').then(url => p.datos.doc_comprobante = url));
+
+            await Promise.all(uploadTasks);
+
+
+            p.estado = 'ganado'; p.probabilidad = 100; p.fecha_cierre = new Date().toISOString();
+        } catch (e) {
             hideLoading();
             return alert("Error al subir archivo de cierre: " + e.message);
         }
         hideLoading();
-        
+
         p.facturas = [];
         const subtotal = p.precio_cotizado || 0;
         const totalConIVA = subtotal * 1.13;
@@ -1276,21 +1436,21 @@ async function processAdvance(nextStage) {
         else if (fp === '50/50') expectedPercentage = 0.50;
         else if (fp === '100% anticipado') expectedPercentage = 1.0;
         const advanceAmount = totalConIVA * expectedPercentage;
-        
-        p.facturas.push({ 
-            id: Date.now().toString(), 
-            numero: facNum, 
-            monto: advanceAmount, 
+
+        p.facturas.push({
+            id: Date.now().toString(),
+            numero: facNum,
+            monto: advanceAmount,
             doc_factura: p.datos.doc_comprobante || '',
-            pagos: [], 
-            fecha: new Date().toISOString() 
+            pagos: [],
+            fecha: new Date().toISOString()
         });
 
         logMsg = `¡VENTA CERRADA! Proyecto ${p.codigo || ''} generado con factura PENDIENTE ${facNum} por ${formatCurrency(advanceAmount)}`;
     }
 
     p.etapa = nextStage; p.stage_timestamps[nextStage] = new Date().toISOString();
-    addLogToProspect(p, logMsg, true); saveProspectToDB(p); document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id); 
+    addLogToProspect(p, logMsg, true); saveProspectToDB(p); document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
 }
 
 function showLoseForm() {
@@ -1298,7 +1458,7 @@ function showLoseForm() {
     document.getElementById('advance-form-container').innerHTML = `<div class="form-group mt-4"><label style="color:var(--danger)">Motivo de pérdida</label><select id="lose-reason" required><option value="">-- Selecciona --</option>${opts}</select><button class="btn-danger mt-2" onclick="processLose()">Confirmar Pérdida</button><button class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button></div>`;
 }
 function processLose() {
-    const reason = document.getElementById('lose-reason').value; if(!reason) return alert("Debes seleccionar un motivo.");
+    const reason = document.getElementById('lose-reason').value; if (!reason) return alert("Debes seleccionar un motivo.");
     const p = prospects.find(x => x.id === currentProspectId); p.estado = 'perdido'; p.motivo_perdida = reason; p.fecha_perdida = new Date().toISOString();
     addLogToProspect(p, `Marcado como PERDIDO. Motivo: ${reason}`, true); saveProspectToDB(p); document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
 }
@@ -1314,7 +1474,7 @@ function populateTimeFilter() {
     select.innerHTML = '<option value="all">Histórico Completo</option>';
     const now = new Date(); const currentYear = now.getFullYear(); const currentMonth = now.getMonth();
     select.innerHTML += `<option value="year_${currentYear}">Acumulado Año ${currentYear}</option>`;
-    for(let i = 0; i <= currentMonth; i++) { select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; }
+    for (let i = 0; i <= currentMonth; i++) { select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; }
     if (currentVal) select.value = currentVal;
 }
 function getFilteredProspects() {
@@ -1322,7 +1482,7 @@ function getFilteredProspects() {
     return prospects.filter(p => {
         if (filter === 'all') return true;
         let refDateStr = p.estado === 'ganado' ? (p.fecha_cierre || p.fecha_creacion) : (p.estado === 'perdido' ? (p.fecha_perdida || p.fecha_creacion) : p.fecha_creacion);
-        if(!refDateStr) return false;
+        if (!refDateStr) return false;
         let d = new Date(refDateStr); let y = d.getFullYear(); let m = d.getMonth();
         if (filter.startsWith('year_')) return y === parseInt(filter.split('_')[1]);
         if (filter.includes('-')) { const [fy, fm] = filter.split('-'); return y === parseInt(fy) && m === parseInt(fm); }
@@ -1335,8 +1495,8 @@ function renderDashboard() {
 
     filtered.forEach(p => {
         // Margins always based on Subtotal (precio_cotizado) to exclude IVA
-        if (p.estado === 'ganado') { 
-            ganadoPrecio += (p.precio_cotizado || 0); ganadoCosto += (p.costo_venta || 0); 
+        if (p.estado === 'ganado') {
+            ganadoPrecio += (p.precio_cotizado || 0); ganadoCosto += (p.costo_venta || 0);
             if (p.facturas) {
                 p.facturas.forEach(f => {
                     globalFacturado += f.monto;
@@ -1367,11 +1527,11 @@ function renderDashboard() {
     document.getElementById('metric-total-cxc').textContent = formatCurrency(globalFacturado - globalCobrado);
 
     let pctCobrado = globalFacturado > 0 ? (globalCobrado / globalFacturado) * 100 : 0;
-    
+
     document.getElementById('cxc-bar-cobrado').style.width = pctCobrado + '%';
 
     renderCharts(filtered); renderDashboardKpiTimes(filtered); renderDashboardActiveTimes(filtered);
-    
+
     if (currentUser && currentUser.role === 'manager') {
         fetchAuditLogs();
     }
@@ -1381,12 +1541,12 @@ function fetchAuditLogs() {
     document.getElementById('audit-panel').style.display = 'block';
     const container = document.getElementById('audit-logs-container');
     container.innerHTML = '<em>Cargando auditoría...</em>';
-    
+
     if (window.auditUnsubscribe) window.auditUnsubscribe();
-    
+
     window.auditUnsubscribe = db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
         container.innerHTML = '';
-        if(snap.empty) {
+        if (snap.empty) {
             container.innerHTML = '<span style="color:var(--text-muted)">No hay alertas recientes de eliminación.</span>';
             return;
         }
@@ -1404,7 +1564,7 @@ function fetchAuditLogs() {
 
 function renderDashboardKpiTimes(filtered) {
     const grid = document.getElementById('kpi-times-grid'); grid.innerHTML = '';
-    
+
     STAGES.forEach((stage, idx) => {
         let totalDays = 0; let count = 0;
         const nextStage = STAGES[idx + 1];
@@ -1414,22 +1574,22 @@ function renderDashboardKpiTimes(filtered) {
             if (ts[stage]) {
                 let start = new Date(ts[stage]);
                 let end = new Date();
-                
+
                 // If they moved past this stage, calculate the exact time spent in it
                 if (nextStage && ts[nextStage]) {
                     end = new Date(ts[nextStage]);
-                } 
+                }
                 // If they won/lost while in this stage
                 else if (p.estado === 'ganado' && p.fecha_cierre) {
                     end = new Date(p.fecha_cierre);
-                } 
+                }
                 else if (p.estado === 'perdido' && p.fecha_perdida) {
                     end = new Date(p.fecha_perdida);
                 }
 
                 let diff = Math.floor((end - start) / (1000 * 60 * 60 * 24));
                 if (diff < 0) diff = 0;
-                
+
                 totalDays += diff;
                 count++;
             }
@@ -1451,7 +1611,7 @@ function renderDashboardKpiTimes(filtered) {
 function renderDashboardActiveTimes(filtered) {
     const tbody = document.getElementById('dash-active-times-body'); tbody.innerHTML = '';
     let active = filtered.filter(p => p.estado === 'activo');
-    
+
     // Filter to ONLY those exceeding their limit
     active = active.filter(p => {
         const ts = p.stage_timestamps || {};
@@ -1460,7 +1620,7 @@ function renderDashboardActiveTimes(filtered) {
     });
 
     if (active.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 1rem; color: var(--text-muted);">No hay oportunidades excedidas de tiempo.</td></tr>'; return; }
-    
+
     active.sort((a, b) => {
         const tsA = a.stage_timestamps || {};
         const tsB = b.stage_timestamps || {};
@@ -1471,10 +1631,10 @@ function renderDashboardActiveTimes(filtered) {
         const ts = p.stage_timestamps || {};
         const days = getDaysDifference(ts[p.etapa] || p.fecha_creacion);
         const limit = KPI_LIMITS[p.etapa];
-        
+
         let daysColor = '';
         let alertIcon = '';
-        
+
         if (days > limit) {
             daysColor = 'color: var(--danger); font-weight: bold; background: rgba(239, 68, 68, 0.1); padding: 0.2rem 0.5rem; border-radius: 4px;';
             alertIcon = '⚠️ ';
@@ -1482,19 +1642,19 @@ function renderDashboardActiveTimes(filtered) {
             daysColor = 'color: var(--brand-gold);';
         }
 
-        tbody.innerHTML += `<tr><td>${p.codigo || p.id.substring(p.id.length-4)}</td><td>${getClientName(p.clientId)}</td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa}</td><td><span style="${daysColor}">${alertIcon}${days} días</span> <small style="color:var(--text-muted); margin-left:4px;">(Max ${limit})</small></td></tr>`;
+        tbody.innerHTML += `<tr><td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td>${getClientName(p.clientId)}</td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa}</td><td><span style="${daysColor}">${alertIcon}${days} días</span> <small style="color:var(--text-muted); margin-left:4px;">(Max ${limit})</small></td></tr>`;
     });
 }
 
 function renderCharts(filtered) {
     Chart.defaults.color = '#a0aabf'; const gold = '#ffcc4d', blue = '#3b476e', success = '#10b981', danger = '#ef4444', accent1 = '#8b5cf6', accent2 = '#f97316';
     const active = filtered.filter(p => p.estado === 'activo');
-    
-    Chart.defaults.plugins.tooltip.callbacks.label = function(context) {
+
+    Chart.defaults.plugins.tooltip.callbacks.label = function (context) {
         let label = context.label || '';
         if (label) label += ': ';
         if (context.parsed !== null) {
-            let total = context.dataset.data.reduce((a,b)=>a+b,0);
+            let total = context.dataset.data.reduce((a, b) => a + b, 0);
             let pct = total > 0 ? ((context.parsed * 100) / total).toFixed(1) + '%' : '0%';
             label += context.parsed + ' (' + pct + ')';
         }
@@ -1504,19 +1664,19 @@ function renderCharts(filtered) {
     const funnelStages = STAGES;
     let funnelHTML = '';
     const colors = [blue, gold, success, '#f59e0b', danger];
-    
+
     // Find the maximum count to make bars proportional
     let counts = funnelStages.map(s => active.filter(p => p.etapa === s).length);
     let maxCount = Math.max(...counts);
     if (maxCount === 0) maxCount = 1; // Prevent division by zero
-    
+
     funnelStages.forEach((s, i) => {
         let count = counts[i];
         let amount = active.filter(p => p.etapa === s).reduce((acc, p) => acc + (p.precio_cotizado || 0), 0);
-        
+
         let currentWidth = Math.max((count / maxCount) * 100, 15); // Minimum 15% width so it's always visible
         let c = colors[i % colors.length];
-        
+
         funnelHTML += `
             <div style="display:flex; width: 100%; align-items:center; margin-bottom: 6px;">
                 <div style="width:25%; text-align:right; padding-right:15px; font-size:0.8rem; font-weight:bold; color:var(--text-secondary); text-transform:uppercase; line-height:1.2;">
@@ -1543,75 +1703,127 @@ function renderCharts(filtered) {
             </div>
         `;
     });
-    
+
     const funnelContainer = document.getElementById('css-funnel-container');
     if (funnelContainer) {
         funnelContainer.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; width:100%; padding-top:20px;">${funnelHTML}</div>`;
     }
     const won = filtered.filter(p => p.estado === 'ganado');
-    const sumMonto = (arr) => arr.reduce((acc, p) => acc + (p.precio_cotizado || 0), 0);
-    
-    const prodW = [sumMonto(won.filter(p => p.tipo_producto==='Chute')), sumMonto(won.filter(p => p.tipo_producto==='Ducto'))];
+    const sumMonto = (arr) => arr.reduce((acc, p) => acc + (parseFloat(p.precio_cotizado) || 0), 0);
+
+    const prodW = [sumMonto(won.filter(p => p.tipo_producto === 'Chute')), sumMonto(won.filter(p => p.tipo_producto === 'Ducto'))];
     const prodWColors = [gold, blue];
     const prodWNo = sumMonto(won.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
-    if(prodWNo > 0) { prodW.push(prodWNo); prodWColors.push('#6b7280'); }
-    if(chartProduct) chartProduct.destroy(); chartProduct = new Chart(document.getElementById('productChart').getContext('2d'), { type: 'pie', data: { labels: prodWNo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodW, backgroundColor: prodWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function(ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
-    
-    const projW = [sumMonto(won.filter(p => p.tipo_proyecto==='Fabricación e instalación')), sumMonto(won.filter(p => p.tipo_proyecto==='Fabricación'))];
+    if (prodWNo > 0) { prodW.push(prodWNo); prodWColors.push('#6b7280'); }
+    if (chartProduct) chartProduct.destroy(); chartProduct = new Chart(document.getElementById('productChart').getContext('2d'), { type: 'pie', data: { labels: prodWNo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodW, backgroundColor: prodWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+
+    const projW = [sumMonto(won.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumMonto(won.filter(p => p.tipo_proyecto === 'Fabricación'))];
     const projWColors = [success, '#a0aabf'];
     const projWNo = sumMonto(won.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
-    if(projWNo > 0) { projW.push(projWNo); projWColors.push('#6b7280'); }
-    if(chartProject) chartProject.destroy(); chartProject = new Chart(document.getElementById('projectChart').getContext('2d'), { type: 'pie', data: { labels: projWNo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projW, backgroundColor: projWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function(ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
-    
-    const prodA = [sumMonto(active.filter(p => p.tipo_producto==='Chute')), sumMonto(active.filter(p => p.tipo_producto==='Ducto'))];
+    if (projWNo > 0) { projW.push(projWNo); projWColors.push('#6b7280'); }
+    if (chartProject) chartProject.destroy(); chartProject = new Chart(document.getElementById('projectChart').getContext('2d'), { type: 'pie', data: { labels: projWNo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projW, backgroundColor: projWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+
+    const prodA = [sumMonto(active.filter(p => p.tipo_producto === 'Chute')), sumMonto(active.filter(p => p.tipo_producto === 'Ducto'))];
     const prodANo = sumMonto(active.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
     const prodAColors = [gold, blue];
-    if(prodANo > 0) { prodA.push(prodANo); prodAColors.push('#6b7280'); }
-    if(chartOppProduct) chartOppProduct.destroy(); chartOppProduct = new Chart(document.getElementById('oppProductChart').getContext('2d'), { type: 'pie', data: { labels: prodANo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodA, backgroundColor: prodAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function(ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
-    
-    const projA = [sumMonto(active.filter(p => p.tipo_proyecto==='Fabricación e instalación')), sumMonto(active.filter(p => p.tipo_proyecto==='Fabricación'))];
+    if (prodANo > 0) { prodA.push(prodANo); prodAColors.push('#6b7280'); }
+    if (chartOppProduct) chartOppProduct.destroy(); chartOppProduct = new Chart(document.getElementById('oppProductChart').getContext('2d'), { type: 'pie', data: { labels: prodANo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodA, backgroundColor: prodAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+
+    const projA = [sumMonto(active.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumMonto(active.filter(p => p.tipo_proyecto === 'Fabricación'))];
     const projANo = sumMonto(active.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
     const projAColors = [accent1, accent2];
-    if(projANo > 0) { projA.push(projANo); projAColors.push('#6b7280'); }
-    if(chartOppProject) chartOppProject.destroy(); chartOppProject = new Chart(document.getElementById('oppProjectChart').getContext('2d'), { type: 'pie', data: { labels: projANo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projA, backgroundColor: projAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function(ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
-    
-    const origins = ["Prospección del vendedor", "Llamada telefónica", "WhatsApp", "Página web", "Correo", "Redes Sociales", "Ya es cliente"]; if(chartOrigin) chartOrigin.destroy(); chartOrigin = new Chart(document.getElementById('originChart').getContext('2d'), { type: 'pie', data: { labels: origins, datasets: [{ data: origins.map(o => filtered.filter(p => p.origen === o).length), backgroundColor: [blue, gold, success, danger, accent1, accent2, '#14b8a6'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels:{boxWidth:12, font:{size:10}} } } } });
-    const lost = filtered.filter(p => p.estado === 'perdido'); if(chartLoss) chartLoss.destroy(); chartLoss = new Chart(document.getElementById('lossChart').getContext('2d'), { type: 'pie', data: { labels: MOTIVOS_PERDIDA, datasets: [{ data: MOTIVOS_PERDIDA.map(m => lost.filter(p => p.motivo_perdida === m).length), backgroundColor: [danger, '#f59e0b', accent2, accent1, '#6b7280'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels:{boxWidth:12, font:{size:10}} } } } });
+    if (projANo > 0) { projA.push(projANo); projAColors.push('#6b7280'); }
+    if (chartOppProject) chartOppProject.destroy(); chartOppProject = new Chart(document.getElementById('oppProjectChart').getContext('2d'), { type: 'pie', data: { labels: projANo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projA, backgroundColor: projAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+
+    // Efectividad por Canal (Stacked Volume Bar Chart)
+    let originStats = {};
+    filtered.forEach(p => {
+        let repName = p.origen || 'Desconocido';
+        if (!originStats[repName]) originStats[repName] = { ganado: 0, activo: 0, perdido: 0, total: 0 };
+        originStats[repName][p.estado]++;
+        originStats[repName].total++;
+    });
+
+    const repNames = Object.keys(originStats);
+    const dataGanado = [];
+    const dataActivo = [];
+    const dataPerdido = [];
+
+    repNames.forEach(name => {
+        const stats = originStats[name];
+        dataGanado.push(stats.ganado);
+        dataActivo.push(stats.activo);
+        dataPerdido.push(stats.perdido);
+    });
+
+    if (chartOrigin) chartOrigin.destroy();
+    chartOrigin = new Chart(document.getElementById('conversionChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: repNames,
+            datasets: [
+                { label: 'Ganado', data: dataGanado, backgroundColor: success },
+                { label: 'En Proceso', data: dataActivo, backgroundColor: gold },
+                { label: 'Perdido', data: dataPerdido, backgroundColor: danger }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'x', 
+            scales: {
+                x: { stacked: true, display: true, ticks: { font: { size: 10 } } },
+                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': ' + context.raw + ' Ops';
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    const lost = filtered.filter(p => p.estado === 'perdido'); if (chartLoss) chartLoss.destroy(); chartLoss = new Chart(document.getElementById('lossChart').getContext('2d'), { type: 'pie', data: { labels: MOTIVOS_PERDIDA, datasets: [{ data: MOTIVOS_PERDIDA.map(m => lost.filter(p => p.motivo_perdida === m).length), backgroundColor: [danger, '#f59e0b', accent2, accent1, '#6b7280'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } } } } });
 }
 
 function generarContrato(prospectId) {
     try {
         const p = prospects.find(x => x.id === prospectId);
         const c = clients.find(x => x.id === p.clientId);
-        
+
         if (!p || !c) return alert("Error: Cliente o Proyecto no encontrado.");
 
         let missing = [];
         let clauseNosotros = "";
         let nombreContrato = "";
 
-        if(c.tipo === 'juridica') {
-            if(!c.empresa) missing.push("Nombre de Empresa");
-            if(!c.rep_legal) missing.push("Nombre del Representante Legal");
-            if(!c.profesion_rep) missing.push("Profesión del Representante");
-            if(!c.domicilio_rep) missing.push("Domicilio del Representante");
-            if(!c.dui_rep) missing.push("DUI del Representante");
-            if(!c.nit_rep) missing.push("NIT del Representante");
-            
+        if (c.tipo === 'juridica') {
+            if (!c.empresa) missing.push("Nombre de Empresa");
+            if (!c.rep_legal) missing.push("Nombre del Representante Legal");
+            if (!c.profesion_rep) missing.push("Profesión del Representante");
+            if (!c.domicilio_rep) missing.push("Domicilio del Representante");
+            if (!c.dui_rep) missing.push("DUI del Representante");
+            if (!c.nit_rep) missing.push("NIT del Representante");
+
             nombreContrato = c.empresa;
             clauseNosotros = `y por otra parte <span class="bold">${c.empresa}</span>, que para efectos de este instrumento se denominará EL CLIENTE, representada por <span class="bold">${c.rep_legal}</span>, mayor de edad, <span class="bold">${c.profesion_rep || ''}</span>, del domicilio de <span class="bold">${c.domicilio_rep || ''}</span>, portador de Documento Único de Identidad número <span class="bold">${c.dui_rep || ''}</span> y Número de Identificación Tributaria <span class="bold">${c.nit_rep || ''}</span>.`;
         } else {
-            if(!c.nombres || !c.apellidos) missing.push("Nombres/Apellidos");
-            if(!c.profesion) missing.push("Profesión");
-            if(!c.domicilio) missing.push("Domicilio");
-            if(!c.dui) missing.push("DUI");
-            if(!c.nit) missing.push("NIT");
-            
+            if (!c.nombres || !c.apellidos) missing.push("Nombres/Apellidos");
+            if (!c.profesion) missing.push("Profesión");
+            if (!c.domicilio) missing.push("Domicilio");
+            if (!c.dui) missing.push("DUI");
+            if (!c.nit) missing.push("NIT");
+
             nombreContrato = `${c.nombres || ''} ${c.apellidos || ''}`;
             clauseNosotros = `y por otra parte <span class="bold">${nombreContrato}</span>, que para efectos de este instrumento se denominará EL CLIENTE, mayor de edad, <span class="bold">${c.profesion || ''}</span>, del domicilio de <span class="bold">${c.domicilio || ''}</span>, portador de Documento Único de Identidad número <span class="bold">${c.dui || ''}</span> y Número de Identificación Tributaria <span class="bold">${c.nit || ''}</span>.`;
         }
 
-        if(missing.length > 0) {
+        if (missing.length > 0) {
             openClientModal(c.id);
             return alert("Faltan datos en el perfil del cliente para el contrato: " + missing.join(", ") + ". Complete el formulario que se acaba de abrir y vuelva a generar el contrato.");
         }
@@ -1692,7 +1904,7 @@ function generarContrato(prospectId) {
                 </tr>
             </table>
         </body></html>`;
-        
+
         let iframe = document.getElementById('print-iframe');
         if (!iframe) {
             iframe = document.createElement('iframe');
@@ -1702,24 +1914,24 @@ function generarContrato(prospectId) {
             iframe.style.left = '-10000px';
             document.body.appendChild(iframe);
         }
-        
+
         iframe.contentDocument.open();
         iframe.contentDocument.write(html);
         iframe.contentDocument.close();
-        
+
         setTimeout(() => {
             iframe.contentWindow.focus();
             iframe.contentWindow.print();
         }, 500);
-        
-    } catch(e) {
+
+    } catch (e) {
         alert("Ocurrió un error al generar el contrato: " + e.message);
     }
 }
 
 function reportToManager(p, itemType, itemDetail) {
     if (!currentUser) return;
-    
+
     try {
         db.collection(`audit_logs${DB_SUFFIX}`).add({
             fecha: new Date().toISOString(),
@@ -1740,7 +1952,7 @@ function reportToManager(p, itemType, itemDetail) {
 // ========================
 function openEditBasePriceModal() {
     const p = prospects.find(x => x.id === currentProspectId);
-    if(!p) return;
+    if (!p) return;
     document.getElementById('eb-precio').value = p.precio_cotizado || 0;
     document.getElementById('eb-costo').value = p.costo_venta || 0;
     document.getElementById('eb-motivo').value = '';
@@ -1751,76 +1963,76 @@ function processEditBasePrice(e) {
     e.preventDefault();
     try {
         const p = prospects.find(x => x.id === currentProspectId);
-        if(!p) return;
+        if (!p) return;
         const oldP = p.precio_cotizado || 0;
         const oldC = p.costo_venta || 0;
-        
+
         p.precio_cotizado = parseFloat(document.getElementById('eb-precio').value);
         p.costo_venta = parseFloat(document.getElementById('eb-costo').value);
         const motivo = document.getElementById('eb-motivo').value;
-        
+
         addLogToProspect(p, `Corrección de sistema: Precio original modificado de ${formatCurrency(oldP)} a ${formatCurrency(p.precio_cotizado)} y Costo de ${formatCurrency(oldC)} a ${formatCurrency(p.costo_venta)}. Motivo: ${motivo}`, true);
         saveProspectToDB(p);
         closeModal('editBasePriceModal');
         renderFinancials(p);
         renderInfo(p);
-    } catch(err) {
+    } catch (err) {
         alert("Ocurrió un error al guardar los cambios: " + err.message);
     }
 }
 
 function deleteChangeOrder(id) {
-    if(!confirm("¿Estás seguro de eliminar esta orden de cambio?")) return;
+    if (!confirm("¿Estás seguro de eliminar esta orden de cambio?")) return;
     try {
         const p = prospects.find(x => x.id === currentProspectId);
-        if(!p || !p.ordenes_cambio) return;
+        if (!p || !p.ordenes_cambio) return;
         const idx = p.ordenes_cambio.findIndex(o => o.id === id);
-        if(idx === -1) return;
+        if (idx === -1) return;
         const o = p.ordenes_cambio[idx];
-        
+
         p.ordenes_cambio.splice(idx, 1);
         addLogToProspect(p, `Orden de Cambio eliminada: ${o.desc} (${formatCurrency(o.precio)})`, true);
         reportToManager(p, 'Orden de Cambio', `${o.desc} (${formatCurrency(o.precio)})`);
         saveProspectToDB(p);
         renderFinancials(p);
         renderInfo(p);
-    } catch(err) {
+    } catch (err) {
         alert("Ocurrió un error al eliminar: " + err.message);
     }
 }
 
 function deleteInvoice(id) {
-    if(!confirm("¿Estás seguro de eliminar esta factura? Todo su historial de pagos se borrará también.")) return;
+    if (!confirm("¿Estás seguro de eliminar esta factura? Todo su historial de pagos se borrará también.")) return;
     try {
         const p = prospects.find(x => x.id === currentProspectId);
-        if(!p || !p.facturas) return;
+        if (!p || !p.facturas) return;
         const idx = p.facturas.findIndex(f => f.id === id);
-        if(idx === -1) return;
-        if(idx === 0) {
+        if (idx === -1) return;
+        if (idx === 0) {
             alert("Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error.");
             return;
         }
         const f = p.facturas[idx];
-        
+
         p.facturas.splice(idx, 1);
         addLogToProspect(p, `Factura eliminada: ${f.numero} (${formatCurrency(f.monto)})`, true);
         reportToManager(p, 'Factura', `${f.numero} (${formatCurrency(f.monto)})`);
         saveProspectToDB(p);
         renderFinancials(p);
         renderInfo(p);
-    } catch(err) {
+    } catch (err) {
         alert("Ocurrió un error al eliminar: " + err.message);
     }
 }
 
 function deletePayment(invoiceId, paymentIndex) {
-    if(!confirm("¿Estás seguro de eliminar este abono?")) return;
+    if (!confirm("¿Estás seguro de eliminar este abono?")) return;
     try {
         const p = prospects.find(x => x.id === currentProspectId);
-        if(!p || !p.facturas) return;
+        if (!p || !p.facturas) return;
         const f = p.facturas.find(x => x.id === invoiceId);
-        if(!f || !f.pagos) return;
-        
+        if (!f || !f.pagos) return;
+
         const pay = f.pagos[paymentIndex];
         f.pagos.splice(paymentIndex, 1);
         addLogToProspect(p, `Abono eliminado de factura ${f.numero}: ${formatCurrency(pay.monto)}`, true);
@@ -1828,7 +2040,7 @@ function deletePayment(invoiceId, paymentIndex) {
         saveProspectToDB(p);
         renderFinancials(p);
         renderInfo(p);
-    } catch(err) {
+    } catch (err) {
         alert("Ocurrió un error al eliminar: " + err.message);
     }
 }
@@ -1864,7 +2076,7 @@ function deleteClient(id) {
 function deleteProspect() {
     if (!currentProspectId) return;
     if (!currentUser || currentUser.role !== 'manager') return alert("Permiso denegado.");
-    
+
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
     const c = clients.find(x => x.id === p.clientId);
@@ -1885,5 +2097,449 @@ function deleteProspect() {
         goBackFromDetail();
     } catch (e) {
         alert("Error al eliminar proyecto: " + e.message);
+    }
+}
+
+// ========================
+// FABRICACIÓN MODULE
+// ========================
+
+function openNewFabricacionModal() {
+    document.getElementById('newFabricacionForm').reset();
+    document.getElementById('newFabricacionModal').dataset.prospectId = '';
+    document.getElementById('newFabricacionModal').style.display = 'flex';
+}
+
+function createNewFabricacion(e) {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    const cliente = document.getElementById('fab-cliente').value.trim();
+    const desc = document.getElementById('fab-desc').value.trim();
+    const exterior = document.getElementById('fab-exterior').checked;
+    const rectas = parseInt(document.getElementById('fab-piezas-rectas').value) || 0;
+    const fittings = parseInt(document.getElementById('fab-fittings').value) || 0;
+
+    const now = new Date();
+
+    // Calcular 5 días hábiles (saltar fines de semana)
+    let limitDate = new Date(now);
+    if (!exterior) {
+        let addedDays = 0;
+        while (addedDays < 5) {
+            limitDate.setDate(limitDate.getDate() + 1);
+            if (limitDate.getDay() !== 0 && limitDate.getDay() !== 6) {
+                addedDays++;
+            }
+        }
+    }
+
+    const isFromProspect = document.getElementById('newFabricacionModal').dataset.prospectId;
+    const fab = {
+        id: "FAB-" + Date.now(),
+        origen_tipo: isFromProspect ? "oportunidad" : "interno",
+        prospecto_id: isFromProspect || null,
+        cliente_nombre: cliente,
+        descripcion: desc,
+        exterior: exterior,
+        piezas_rectas: rectas,
+        fittings: fittings,
+        total_piezas: rectas + fittings,
+        etapa: "Recepción",
+        fecha_creacion: now.toISOString(),
+        fecha_limite: exterior ? null : limitDate.toISOString(),
+        errores_qa: 0,
+        stage_timestamps: { "Recepción": now.toISOString() },
+        creado_por: currentUser.nombre
+    };
+
+    try {
+        saveFabricacionToDB(fab);
+        document.getElementById('newFabricacionModal').dataset.prospectId = '';
+        closeModal('newFabricacionModal');
+        alert("Orden de fabricación creada exitosamente.");
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+function renderFabricacionTable() {
+    const tbody = document.getElementById('fabricacion-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!currentUser) return;
+
+    const search = document.getElementById('fab-search').value.toLowerCase();
+    const stageFilter = document.getElementById('fab-stage-filter').value;
+
+    // Filtro por Rol
+    const roleMap = {
+        'recepcion': 'Recepción',
+        'dibujante': 'Dibujante', // Wait, the stage is "Dibujo"
+        'operario': 'Fabricación',
+        'control_calidad': 'Quality Control',
+        'despacho': 'Despacho'
+    };
+    // Corregimos "dibujante" a la etapa "Dibujo"
+    let forcedStage = null;
+    if (currentUser.role === 'dibujante') forcedStage = 'Dibujo';
+    else if (roleMap[currentUser.role]) forcedStage = roleMap[currentUser.role];
+
+    let filtered = fabricacion.filter(f => {
+        if (forcedStage && f.etapa !== forcedStage) return false;
+        if (stageFilter !== 'all' && f.etapa !== stageFilter) return false;
+
+        const matchSearch = f.cliente_nombre.toLowerCase().includes(search) || f.descripcion.toLowerCase().includes(search) || f.id.toLowerCase().includes(search);
+        if (search && !matchSearch) return false;
+
+        return true;
+    });
+
+    // Sort by creation date
+    filtered.sort((a, b) => new Date(a.fecha_creacion) - new Date(b.fecha_creacion));
+
+    const now = new Date();
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 2rem;">No hay órdenes para mostrar en esta vista.</td></tr>';
+        return;
+    }
+
+    filtered.forEach(f => {
+        let deadlineHtml = '-';
+        if (f.fecha_limite) {
+            const limit = new Date(f.fecha_limite);
+            const isLate = now > limit && f.etapa !== 'Despacho';
+            deadlineHtml = isLate ? `<span style="color:var(--danger); font-weight:bold;">${limit.toLocaleDateString()} ⚠️</span>` : limit.toLocaleDateString();
+        } else if (f.exterior) {
+            deadlineHtml = '<span class="badge bg-neutral">EXTERIOR</span>';
+        }
+
+        let originBadge = f.origen_tipo === 'interno' ? '<span class="badge bg-neutral" style="font-size:0.7rem;">INTERNO</span>' : '<span class="badge bg-neutral" style="font-size:0.7rem; color:var(--brand-gold);">VENTAS</span>';
+
+        tbody.innerHTML += `<tr>
+            <td><strong>${f.cliente_nombre}</strong><br>${originBadge}</td>
+            <td style="font-size:0.85rem;">${f.descripcion.substring(0, 50)}${f.descripcion.length > 50 ? '...' : ''}</td>
+            <td><strong>${f.total_piezas}</strong> <span style="font-size:0.7rem;">(${f.piezas_rectas}R / ${f.fittings}F)</span></td>
+            <td>${deadlineHtml}</td>
+            <td><span class="badge" style="background: rgba(255,255,255,0.1);">${f.etapa}</span></td>
+            <td><button class="btn-secondary" style="padding: 4px 8px; font-size:0.75rem;" onclick="openFabricacionDetail('${f.id}')">Ver Detalle</button></td>
+        </tr>`;
+    });
+}
+
+let currentFabId = null;
+
+function openFabricacionDetail(id) {
+    const f = fabricacion.find(x => x.id === id);
+    if (!f) return;
+
+    currentFabId = id;
+    document.getElementById('fab-det-id').textContent = f.id;
+    document.getElementById('fab-det-cliente').textContent = f.cliente_nombre;
+    document.getElementById('fab-det-desc').textContent = f.descripcion;
+    document.getElementById('fab-det-origen').innerHTML = f.origen_tipo === 'interno' ? 'Interno' : `<a href="#" onclick="closeModal('fabricacionDetailModal'); showView('list-view');" style="color:var(--brand-gold);">Oportunidad Ventas</a>`;
+    document.getElementById('fab-det-piezas').textContent = f.total_piezas;
+    document.getElementById('fab-det-rectas').textContent = f.piezas_rectas;
+    document.getElementById('fab-det-fittings').textContent = f.fittings;
+
+    const now = new Date();
+    let limitHtml = '-';
+    let alertaHtml = '';
+    if (f.fecha_limite) {
+        const limit = new Date(f.fecha_limite);
+        limitHtml = limit.toLocaleDateString();
+        if (now > limit && f.etapa !== 'Despacho') {
+            alertaHtml = '<span style="color:var(--danger); font-size:0.8rem; font-weight:bold; margin-left:10px;">⚠️ RETRASADO</span>';
+        }
+    } else if (f.exterior) {
+        limitHtml = 'Sin Límite (Exterior)';
+    }
+    document.getElementById('fab-det-limite').textContent = limitHtml;
+    document.getElementById('fab-det-alerta').innerHTML = alertaHtml;
+
+    document.getElementById('fab-det-etapa').textContent = f.etapa;
+
+    const btn = document.getElementById('btn-fab-advance');
+    const qaSec = document.getElementById('qa-section');
+
+    qaSec.style.display = 'none';
+    btn.style.display = 'inline-block';
+
+    if (f.etapa === 'Despacho') {
+        btn.style.display = 'none';
+    } else if (f.etapa === 'Quality Control') {
+        btn.textContent = 'Aprobar QA y Pasar a Despacho';
+        qaSec.style.display = 'block';
+    } else {
+        const nextMap = { 'Recepción': 'Dibujo', 'Dibujo': 'Fabricación', 'Fabricación': 'Quality Control' };
+        btn.textContent = `Avanzar a ${nextMap[f.etapa]}`;
+    }
+
+    // Permission checks
+    if (currentUser.role !== 'manager' && currentUser.role !== 'jefe_produccion') {
+        const roleMap = { 'recepcion': 'Recepción', 'dibujante': 'Dibujo', 'operario': 'Fabricación', 'control_calidad': 'Quality Control', 'despacho': 'Despacho' };
+        if (roleMap[currentUser.role] !== f.etapa) {
+            btn.style.display = 'none';
+            qaSec.style.display = 'none';
+        }
+    }
+
+    document.getElementById('fabricacionDetailModal').style.display = 'flex';
+}
+
+function advanceFabricacionStage() {
+    if (!currentFabId) return;
+    const f = fabricacion.find(x => x.id === currentFabId);
+    if (!f) return;
+
+    const nextMap = { 'Recepción': 'Dibujo', 'Dibujo': 'Fabricación', 'Fabricación': 'Quality Control', 'Quality Control': 'Despacho' };
+    const nextStage = nextMap[f.etapa];
+    if (!nextStage) return;
+
+    f.etapa = nextStage;
+    if (!f.stage_timestamps) f.stage_timestamps = {};
+    f.stage_timestamps[nextStage] = new Date().toISOString();
+
+    try {
+        saveFabricacionToDB(f);
+        closeModal('fabricacionDetailModal');
+        alert(`Orden avanzada a ${nextStage}.`);
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+function reportarErrorQA() {
+    if (!currentFabId) return;
+    const f = fabricacion.find(x => x.id === currentFabId);
+    if (!f || f.etapa !== 'Quality Control') return;
+
+    if (!confirm("¿Seguro que deseas reportar un error de QA? La orden regresará a Fabricación y se registrará la incidencia.")) return;
+
+    f.etapa = 'Fabricación';
+    f.errores_qa = (f.errores_qa || 0) + 1;
+    // Volvemos a registrar timestamp de regreso a Fab
+    f.stage_timestamps['Fabricación_Regreso_' + f.errores_qa] = new Date().toISOString();
+
+    try {
+        saveFabricacionToDB(f);
+        closeModal('fabricacionDetailModal');
+        alert("Error reportado. Orden devuelta a Fabricación.");
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+function showSendFabForm() {
+    if (!currentProspectId) return;
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+
+    document.getElementById('newFabricacionForm').reset();
+
+    // Si podemos buscar al cliente para el nombre
+    let cName = 'Cliente Desconocido';
+    if (p.clientId) {
+        const c = clients.find(x => x.id === p.clientId);
+        if (c) cName = c.nombres ? `${c.nombres} ${c.apellidos}` : c.empresa;
+    }
+
+    document.getElementById('fab-cliente').value = cName;
+    document.getElementById('fab-desc').value = `Proyecto: ${p.proyecto} (Cod: ${p.codigo || p.id})`;
+
+    // No bloqueamos los campos para permitir que añadan más detalle si quieren
+    document.getElementById('newFabricacionModal').dataset.prospectId = currentProspectId;
+    document.getElementById('newFabricacionModal').style.display = 'flex';
+}
+
+let fabFunnelChart = null;
+let fabPipelineChart = null;
+
+function renderFabricacionDashboard() {
+    if (!currentUser || (currentUser.role !== 'manager' && currentUser.role !== 'jefe_produccion')) return;
+
+    // Filter
+    const timeFilter = document.getElementById('fab-dash-time-filter');
+    if (timeFilter.options.length === 1) { // only "all" is there
+        const now = new Date(); const y = now.getFullYear(); const m = now.getMonth();
+        timeFilter.innerHTML += `<option value="year_${y}">Acumulado Año ${y}</option>`;
+        for (let i = 0; i <= m; i++) timeFilter.innerHTML += `<option value="${y}-${i}">${MESES[i]} ${y}</option>`;
+    }
+    const filter = timeFilter.value || 'all';
+
+    let filtered = fabricacion.filter(f => {
+        if (filter === 'all') return true;
+        let d = new Date(f.fecha_creacion); let y = d.getFullYear(); let m = d.getMonth();
+        if (filter.startsWith('year_')) return y === parseInt(filter.split('_')[1]);
+        if (filter.includes('-')) { const [fy, fm] = filter.split('-'); return y === parseInt(fy) && m === parseInt(fm); }
+        return true;
+    });
+
+    // 1. Output Diario (Solo las despachadas HOY)
+    const now = new Date();
+    const todayStr = now.toLocaleDateString();
+    let piezasHoy = 0;
+    filtered.forEach(f => {
+        if (f.etapa === 'Despacho' && f.stage_timestamps['Despacho']) {
+            if (new Date(f.stage_timestamps['Despacho']).toLocaleDateString() === todayStr) {
+                piezasHoy += (f.total_piezas || 0);
+            }
+        }
+    });
+
+    document.getElementById('fab-metric-output').textContent = `${piezasHoy} / 144`;
+    const trendEl = document.getElementById('fab-metric-output-trend');
+    if (piezasHoy >= 144) {
+        trendEl.textContent = '✅ Meta Diaria Cumplida';
+        trendEl.style.color = 'var(--success)';
+    } else {
+        trendEl.textContent = '⏱️ Capacidad Disponible: ' + (144 - piezasHoy);
+        trendEl.style.color = 'var(--text-muted)';
+    }
+
+    // 2. Órdenes Activas
+    const activas = filtered.filter(f => f.etapa !== 'Despacho');
+    document.getElementById('fab-metric-activas').textContent = activas.length;
+
+    // 3. Retrasadas
+    let retrasadas = 0;
+    activas.forEach(f => {
+        if (f.fecha_limite && !f.exterior) {
+            if (now > new Date(f.fecha_limite)) retrasadas++;
+        }
+    });
+    document.getElementById('fab-metric-retrasadas').textContent = retrasadas;
+
+    // 4. Errores QA
+    let qaErrors = filtered.reduce((acc, f) => acc + (f.errores_qa || 0), 0);
+    document.getElementById('fab-metric-qa').textContent = qaErrors;
+
+    // 5. Funnel Chart (Orders per stage)
+    const stages = ['Recepción', 'Dibujo', 'Fabricación', 'Quality Control', 'Despacho'];
+    const funnelData = stages.map(s => filtered.filter(f => f.etapa === s).length);
+
+    if (fabFunnelChart) fabFunnelChart.destroy();
+    fabFunnelChart = new Chart(document.getElementById('fabFunnelChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: stages,
+            datasets: [{
+                label: 'Órdenes Activas',
+                data: funnelData,
+                backgroundColor: ['#3A3B3C', '#4F4F51', '#D4AF37', '#DC143C', '#28a745']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } }
+        }
+    });
+
+    // 6. Pipeline Carga Futura (Piezas Totales en Cola)
+    const pipelineData = stages.map(s => {
+        return activas.filter(f => f.etapa === s).reduce((acc, f) => acc + (f.total_piezas || 0), 0);
+    });
+
+    if (fabPipelineChart) fabPipelineChart.destroy();
+    fabPipelineChart = new Chart(document.getElementById('fabPipelineChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: stages.slice(0, 4), // Despacho isn't in queue
+            datasets: [{
+                label: 'Piezas en Cola',
+                data: pipelineData.slice(0, 4),
+                backgroundColor: 'rgba(212, 175, 55, 0.7)',
+                borderColor: 'var(--brand-gold)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } }
+        }
+    });
+}
+
+// Compresión de imágenes en el lado del cliente (Frontend)
+function compressImage(file, maxWidth, maxHeight, quality) {
+    return new Promise((resolve, reject) => {
+        if (!file.type.startsWith('image/')) {
+            resolve(file); // No es imagen, devolver el archivo original
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = event => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height *= maxWidth / width));
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width *= maxHeight / height));
+                        height = maxHeight;
+                    }
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                canvas.toBlob(blob => {
+                    if (!blob) return resolve(file);
+                    const compressedFile = new File([blob], file.name, {
+                        type: 'image/jpeg',
+                        lastModified: Date.now()
+                    });
+                    resolve(compressedFile);
+                }, 'image/jpeg', quality);
+            };
+            img.onerror = error => reject(error);
+        };
+        reader.onerror = error => reject(error);
+    });
+}
+
+// Lógica de progreso de carga global
+let activeUploads = 0;
+let uploadProgressMap = new Map();
+
+function updateGlobalProgress() {
+    if (activeUploads === 0) {
+        document.getElementById('upload-progress-container').style.display = 'none';
+        document.getElementById('upload-progress-text').style.display = 'none';
+        return;
+    }
+
+    let totalBytes = 0;
+    let transferredBytes = 0;
+
+    for (let [taskId, data] of uploadProgressMap.entries()) {
+        totalBytes += data.total;
+        transferredBytes += data.transferred;
+    }
+
+    if (totalBytes > 0) {
+        const percent = Math.min(100, Math.round((transferredBytes / totalBytes) * 100));
+        document.getElementById('upload-progress-container').style.display = 'block';
+        document.getElementById('upload-progress-text').style.display = 'block';
+        document.getElementById('upload-progress-bar').style.width = percent + '%';
+        document.getElementById('upload-progress-text').innerText = percent + '% (' + (transferredBytes / 1048576).toFixed(1) + ' MB / ' + (totalBytes / 1048576).toFixed(1) + ' MB)';
     }
 }
