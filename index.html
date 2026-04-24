@@ -15,7 +15,8 @@
     <!-- Login Screen -->
     <div id="login-screen" class="modal" style="display:flex; z-index: 1000; background: var(--bg-dark);">
         <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
-            <div class="hexagon-logo fallback" style="margin: 0 auto 1rem;"></div>
+            <img src="logo.svg" alt="Ductsal Logo" style="width: 60px; height: 60px; display: block; margin: 0 auto 1rem;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+            <div class="hexagon-logo fallback" style="display:none; margin: 0 auto 1rem;"></div>
             <h2>Ingresar al Sistema</h2>
             <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Ductsal ERP Financials</p>
             <form id="login-form" onsubmit="processLogin(event)">
@@ -53,7 +54,7 @@
         <!-- Sidebar -->
         <nav class="sidebar">
             <div class="logo-container">
-                <img src="logo.png" alt="Ductsal Logo" class="main-logo" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='block';">
+                <img src="logo.svg" alt="Ductsal Logo" class="main-logo" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='block';">
                 <div class="hexagon-logo fallback" style="display:none;"></div>
                 <h2>Ductsal</h2>
             </div>
@@ -80,6 +81,14 @@
                 <li id="nav-users" onclick="showView('users-view')" style="display: none;">
                     <span class="icon">🛡️</span> Gestión de Usuarios
                 </li>
+                
+                <li id="nav-fabricacion" onclick="showView('fabricacion-view')" style="display: none; border-top: 1px solid var(--panel-border); margin-top: 10px; padding-top: 10px;">
+                    <span class="icon">🛠️</span> Órdenes de Fabricación
+                </li>
+                <li id="nav-fabricacion-dashboard" onclick="showView('fabricacion-dashboard-view')" style="display: none;">
+                    <span class="icon">📈</span> Dashboard Producción
+                </li>
+
                 <li id="nav-settings" onclick="openSettingsModal()" style="display: none; border-top: 1px solid var(--panel-border); margin-top: 10px; padding-top: 10px;">
                     <span class="icon">⚙️</span> Configuración
                 </li>
@@ -360,6 +369,7 @@
                         <p id="detail-proyecto">Proyecto <span id="detail-codigo" class="badge bg-neutral ml-2"></span></p>
                     </div>
                     <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <button class="btn-primary" id="btn-send-fab" onclick="showSendFabForm()" style="display:none; background-color: var(--brand-gold); color: black; padding: 4px 8px; font-size:0.8rem;">🛠️ Enviar a Fabricación</button>
                         <div class="status-badges" id="detail-badges">
                             <!-- Badges -->
                         </div>
@@ -490,11 +500,144 @@
                 </div>
             </section>
 
+            <!-- Fabricación View (Kanban / List) -->
+            <section id="fabricacion-view" class="view-section" style="display:none;">
+                <header class="header-flex">
+                    <div>
+                        <h1>Órdenes de Fabricación</h1>
+                        <p>Gestiona el flujo de producción y despachos.</p>
+                    </div>
+                    <button class="btn-primary" onclick="openNewFabricacionModal()">+ Nueva Orden Interna</button>
+                </header>
+                
+                <div class="filters-bar" style="display:flex; gap:10px; margin-bottom:1rem; align-items:center;">
+                    <input type="text" id="fab-search" placeholder="Buscar por cliente o proyecto..." class="search-input" style="flex:1;" onkeyup="renderFabricacionTable()">
+                    <select id="fab-stage-filter" onchange="renderFabricacionTable()">
+                        <option value="all">Todas las Etapas</option>
+                        <option value="Recepción">Recepción</option>
+                        <option value="Dibujo">Dibujo</option>
+                        <option value="Fabricación">Fabricación</option>
+                        <option value="Quality Control">Quality Control</option>
+                        <option value="Despacho">Despacho</option>
+                    </select>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Cliente / Origen</th>
+                                <th>Descripción</th>
+                                <th>Piezas</th>
+                                <th>Fecha Límite</th>
+                                <th>Etapa Actual</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fabricacion-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Fabricación Dashboard View -->
+            <section id="fabricacion-dashboard-view" class="view-section" style="display:none;">
+                <header class="header-flex">
+                    <div>
+                        <h1>Dashboard de Producción</h1>
+                        <p>Métricas de capacidad, eficiencia y alertas.</p>
+                    </div>
+                    <div class="dashboard-filters">
+                        <select id="fab-dash-time-filter" onchange="renderFabricacionDashboard()">
+                            <!-- Dynamically populated by JS -->
+                            <option value="all">Histórico Completo</option>
+                        </select>
+                    </div>
+                </header>
+
+                <div class="metrics-grid mb-4">
+                    <div class="metric-card">
+                        <h3>Piezas Producidas Hoy</h3>
+                        <div class="value" id="fab-metric-output">0 / 144</div>
+                        <div class="trend" id="fab-metric-output-trend" style="color:var(--text-muted); font-size:0.8rem;">Capacidad Diaria</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Órdenes Activas</h3>
+                        <div class="value" id="fab-metric-activas">0</div>
+                    </div>
+                    <div class="metric-card" style="border-left: 4px solid var(--danger);">
+                        <h3>Órdenes Retrasadas (> 5 días)</h3>
+                        <div class="value" id="fab-metric-retrasadas" style="color:var(--danger);">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Errores QA Reportados</h3>
+                        <div class="value" id="fab-metric-qa">0</div>
+                    </div>
+                </div>
+
+                <div class="charts-grid mb-4">
+                    <div class="chart-container">
+                        <h3>Embudo de Producción</h3>
+                        <canvas id="fabFunnelChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Carga Futura Proyectada (Piezas Totales en Cola)</h3>
+                        <canvas id="fabPipelineChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
         </main>
     </div>
 
     <!-- Modals -->
-    
+
+    <!-- New Fabricacion Modal (Internal) -->
+    <div id="newFabricacionModal" class="modal">
+        <div class="modal-content glass-panel">
+            <span class="close" onclick="closeModal('newFabricacionModal')">&times;</span>
+            <h2>Nueva Orden de Fabricación (Interna)</h2>
+            <form id="newFabricacionForm" onsubmit="createNewFabricacion(event)">
+                <div class="form-group"><label>Cliente / Departamento *</label><input type="text" id="fab-cliente" required></div>
+                <div class="form-group"><label>Descripción del Requerimiento *</label><textarea id="fab-desc" required></textarea></div>
+                <div class="form-group"><label>¿Es para el exterior? (Excluir del límite de 5 días)</label><input type="checkbox" id="fab-exterior"></div>
+                <div style="display:flex; gap:10px; margin-top: 1rem;">
+                    <div class="form-group" style="flex:1;"><label>Piezas Rectas *</label><input type="number" id="fab-piezas-rectas" required min="0" value="0"></div>
+                    <div class="form-group" style="flex:1;"><label>Fittings *</label><input type="number" id="fab-fittings" required min="0" value="0"></div>
+                </div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%;">Crear Orden Interna</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Fabricacion Detail Modal -->
+    <div id="fabricacionDetailModal" class="modal">
+        <div class="modal-content glass-panel" style="max-width: 600px;">
+            <span class="close" onclick="closeModal('fabricacionDetailModal')">&times;</span>
+            <h2>Detalle de Orden <span id="fab-det-id" class="badge bg-neutral" style="font-size:0.8rem; margin-left:10px;"></span></h2>
+            
+            <div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                <p><strong>Cliente:</strong> <span id="fab-det-cliente"></span></p>
+                <p><strong>Descripción:</strong> <span id="fab-det-desc"></span></p>
+                <p><strong>Origen:</strong> <span id="fab-det-origen"></span></p>
+                <p><strong>Piezas Totales:</strong> <span id="fab-det-piezas"></span> <span style="font-size:0.8rem; color:var(--text-muted);">(<span id="fab-det-rectas"></span> Rectas / <span id="fab-det-fittings"></span> Fittings)</span></p>
+                <p><strong>Fecha Límite:</strong> <span id="fab-det-limite"></span> <span id="fab-det-alerta"></span></p>
+            </div>
+
+            <div style="margin-top: 1.5rem; text-align:center;">
+                <h3 style="margin-bottom:0.5rem;">Etapa Actual</h3>
+                <div id="fab-det-etapa" style="font-size: 1.5rem; font-weight:700; color:var(--brand-gold); margin-bottom: 1rem;">Recepción</div>
+                <button id="btn-fab-advance" class="btn-primary" onclick="advanceFabricacionStage()" style="padding: 10px 20px;">Avanzar a Siguiente Etapa</button>
+            </div>
+            
+            <div id="qa-section" style="margin-top: 2rem; border-top: 1px solid var(--panel-border); padding-top: 1rem; display:none;">
+                <h3 style="color:var(--danger);">Control de Calidad (QA)</h3>
+                <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.5rem;">Si detectas errores en la fabricación, regístralo aquí. Esto regresará la orden a la etapa de Fabricación y sumará un error al historial.</p>
+                <button class="btn-danger" onclick="reportarErrorQA()" style="width:100%;">Reportar Error y Devolver a Fabricación</button>
+            </div>
+        </div>
+    </div>
     <!-- New Prospect Modal -->
     <div id="newProspectModal" class="modal">
         <div class="modal-content glass-panel">
@@ -654,6 +797,13 @@
                         <option value="vendedor">Vendedor</option>
                         <option value="gestor">Gestor de Ventas</option>
                         <option value="manager">Gerente</option>
+                        <option disabled>--- Fábrica ---</option>
+                        <option value="jefe_produccion">Jefe de Producción</option>
+                        <option value="recepcion">Recepción de Requerimientos</option>
+                        <option value="dibujante">Dibujante</option>
+                        <option value="operario">Operario de Fabricación</option>
+                        <option value="control_calidad">Control de Calidad</option>
+                        <option value="despacho">Despacho</option>
                     </select>
                 </div>
                 <div class="form-group" style="font-size:0.8rem; color:var(--brand-gold);">
@@ -709,6 +859,6 @@
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 
-    <script src="app.js?v=4"></script>
+    <script src="app.js"></script>
 </body>
 </html>
