@@ -137,7 +137,7 @@ let clients = [];
 let prospects = [];
 let users = [];
 
-let currentUser = JSON.parse(localStorage.getItem('hexasales_current_user')) || null;
+let currentUser = JSON.parse(localStorage.getItem('ductsal_current_user')) || null;
 let currentProspectId = null;
 let lastViewedSection = 'list-view';
 
@@ -304,6 +304,7 @@ function processLogin(e) {
         currentUser = user;
         localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
         checkAuth();
+        reRenderApp();
     }
 }
 
@@ -320,6 +321,7 @@ function processFirstTimeSetup(e) {
     currentUser = pendingSetupUser;
     localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
     checkAuth();
+    reRenderApp();
 }
 
 function processLogout() {
