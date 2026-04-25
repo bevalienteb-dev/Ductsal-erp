@@ -281,7 +281,7 @@ function checkAuth() {
 
         document.getElementById('ui-user-name').textContent = currentUser.nombre;
         const rName = currentUser.role === 'manager' ? 'Gerente' : (currentUser.role === 'gestor' ? 'Gestor de Ventas' : 'Vendedor');
-        document.getElementById('ui-user-role').textContent = rName;
+        document.getElementById('ui-user-role').textContent = rName + ' (v2.0)';
 
         applyRolePermissions();
     }
@@ -1210,9 +1210,12 @@ function renderLogs(p) {
     const origLen = p.logs.length;
     safeLogs.reverse().forEach((l, i) => { 
         const realIdx = origLen - 1 - i;
+        const canDelete = currentUser && (currentUser.role.toLowerCase() === 'manager' || currentUser.role.toLowerCase() === 'gestor');
+        const isManual = l.auto !== true && l.auto !== 'true';
+        
         cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}">
             <span class="date">${formatDate(l.date)}</span>${l.text}
-            ${!l.auto && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor') ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger);" onclick="deleteLog('${p.id}', ${realIdx})">[Eliminar]</span>` : ''}
+            ${isManual && canDelete ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger); font-weight:bold;" onclick="deleteLog('${p.id}', ${realIdx})">[Eliminar]</span>` : ''}
         </div>`; 
     });
 }
