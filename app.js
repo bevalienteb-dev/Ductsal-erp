@@ -1477,11 +1477,24 @@ function populateTimeFilter() {
     const select = document.getElementById('dash-time-filter');
     const currentVal = select ? select.value : 'all';
     if (!select) return;
+    
     select.innerHTML = '<option value="all">Histórico Completo</option>';
-    const now = new Date(); const currentYear = now.getFullYear(); const currentMonth = now.getMonth();
-    select.innerHTML += `<option value="year_${currentYear}">Acumulado Año ${currentYear}</option>`;
-    for (let i = 0; i <= currentMonth; i++) { select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; }
-    if (currentVal) select.value = currentVal;
+    
+    const now = new Date(); 
+    const currentYear = now.getFullYear(); 
+    const currentMonth = now.getMonth();
+    
+    select.innerHTML += `<option value="year_${currentYear}">YTD (Año en curso)</option>`;
+    
+    for (let i = 0; i <= currentMonth; i++) { 
+        select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; 
+    }
+    
+    if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+        select.value = currentVal;
+    } else {
+        select.value = 'all';
+    }
 }
 function getFilteredProspects() {
     const filter = document.getElementById('dash-time-filter').value || 'all';
