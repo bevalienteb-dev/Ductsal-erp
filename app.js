@@ -77,15 +77,33 @@ async function uploadFileToStorage(file, folderName) {
 
         await new Promise((resolve, reject) => {
             const uploadTask = fileRef.put(processedFile);
+            let timeoutId = null;
+            let lastTransferred = -1;
+
+            // Timeout watchdog: if no progress is made within 30 seconds, abort.
+            const checkProgress = () => {
+                const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
+                if (currentTransferred === lastTransferred && currentTransferred === 0) {
+                    uploadTask.cancel();
+                    reject(new Error("La subida fue bloqueada. Revisa tu antivirus, red corporativa o si el archivo está abierto en otro programa."));
+                } else {
+                    lastTransferred = currentTransferred;
+                    timeoutId = setTimeout(checkProgress, 30000);
+                }
+            };
+            timeoutId = setTimeout(checkProgress, 30000);
+
             uploadTask.on('state_changed',
                 (snapshot) => {
                     uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
                     updateGlobalProgress();
                 },
                 (error) => {
+                    if (timeoutId) clearTimeout(timeoutId);
                     reject(error);
                 },
                 () => {
+                    if (timeoutId) clearTimeout(timeoutId);
                     resolve();
                 }
             );
@@ -2126,17 +2144,27 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 ctx.drawImage(img, 0, 0, width, height);
 
                 canvas.toBlob(blob => {
-                    if (!blob) return resolve(file);
-                    const compressedFile = new File([blob], file.name, {
-                        type: 'image/jpeg',
-                        lastModified: Date.now()
-                    });
-                    resolve(compressedFile);
+                    try {
+                        if (!blob) return resolve(file);
+                        const compressedFile = new File([blob], file.name, {
+                            type: 'image/jpeg',
+                            lastModified: Date.now()
+                        });
+                        resolve(compressedFile);
+                    } catch (err) {
+                        // iOS Safari fallback: si el constructor File falla, devuelve el blob original o el archivo
+                        if (blob) {
+                            blob.name = file.name;
+                            resolve(blob);
+                        } else {
+                            resolve(file);
+                        }
+                    }
                 }, 'image/jpeg', quality);
             };
-            img.onerror = error => reject(error);
+            img.onerror = () => resolve(file); // En caso de error de imagen, devolver original en vez de rechazar
         };
-        reader.onerror = error => reject(error);
+        reader.onerror = () => resolve(file); // En caso de error de lectura, devolver original en vez de rechazar
     });
 }
 
