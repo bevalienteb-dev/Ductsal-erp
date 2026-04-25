@@ -151,23 +151,28 @@ function reRenderApp() {
     if (!currentUser) return;
     populateTimeFilter();
     toggleClientFields();
-    if (document.getElementById('list-view').style.display !== 'none') renderList();
-    if (document.getElementById('dashboard-view').style.display !== 'none') renderDashboard();
-    if (document.getElementById('users-view').style.display !== 'none') renderUsersTable();
-    if (document.getElementById('detail-view').style.display !== 'none' && currentProspectId) openDetail(currentProspectId);
-
+    if (document.getElementById('list-view').classList.contains('active')) renderList();
+    if (document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
+    if (document.getElementById('users-view').classList.contains('active')) renderUsersTable();
+    if (document.getElementById('detail-view').classList.contains('active') && currentProspectId) {
+        const p = prospects.find(x => x.id === currentProspectId);
+        if (p) {
+            renderTracker(p); renderInfo(p); renderLogs(p);
+            if (p.estado === 'ganado') renderFinancials(p);
+        }
+    }
 }
 
 function checkInitialLoad() {
     loadedCollections++;
-    if (loadedCollections === 5) {
+    if (loadedCollections === 4) {
         if (users.length === 0) {
             let admin = { id: Date.now().toString(), nombre: 'Administrador Maestro', email: 'bvaliente@grupogama.com', password: '', role: 'manager', activo: true };
             saveUserToDB(admin);
         }
         checkAuth();
         reRenderApp();
-    } else if (loadedCollections > 5) {
+    } else if (loadedCollections > 4) {
         reRenderApp();
     }
 }
@@ -713,6 +718,8 @@ function openDetail(id) {
     document.getElementById('detail-cliente').textContent = getClientName(p.clientId);
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;
     document.getElementById('advance-form-container').innerHTML = '';
+    const textEl = document.getElementById('new-log-text');
+    if (textEl) textEl.value = '';
 
     // Show Delete Prospect button for managers
     const btnDeleteProspect = document.getElementById('btn-delete-prospect');
@@ -748,7 +755,13 @@ function openDetail(id) {
         }
     } else { actionContainer.style.display = 'none'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Línea de Tiempo"; }
 
-    document.getElementById('detail-time-in-stage').textContent = `Tiempo en etapa: ${getDaysDifference(p.stage_timestamps[p.etapa] || p.fecha_creacion)} días`;
+    let timeInStage = 0;
+    if (p.stage_timestamps && p.stage_timestamps[p.etapa]) {
+        timeInStage = getDaysDifference(p.stage_timestamps[p.etapa]);
+    } else {
+        timeInStage = getDaysDifference(p.fecha_creacion);
+    }
+    document.getElementById('detail-time-in-stage').textContent = `Tiempo en etapa: ${timeInStage} días`;
     renderTracker(p); renderInfo(p); renderLogs(p);
 }
 
@@ -776,8 +789,16 @@ function renderFinancials(p) {
             let color = o.tipo === 'aumento' ? 'var(--brand-gold)' : 'var(--danger)';
 
             if (ordContainer) {
+                let ocDocLink = '';
+                if (o.doc_oferta) {
+                    if (typeof o.doc_oferta === 'object' && o.doc_oferta.url) {
+                        ocDocLink = `<a href="${o.doc_oferta.url}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Doc</a>`;
+                    } else if (typeof o.doc_oferta === 'string') {
+                        ocDocLink = `<a href="${o.doc_oferta}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Doc</a>`;
+                    }
+                }
                 ordContainer.innerHTML += `<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${color}; margin-top:2px;">
-                    <span>↳ ${o.desc} 
+                    <span>↳ ${o.desc} ${ocDocLink}
                         <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--brand-gold);" onclick="editChangeOrder('${o.id}')">[Editar]</span>
                         <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deleteChangeOrder('${o.id}')">[Eliminar]</span>
                     </span> <span>${sign}${formatCurrency(o.precio)}</span>
@@ -820,7 +841,17 @@ function renderFinancials(p) {
         if (f.pagos && f.pagos.length > 0) {
             pHistory = `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem; border-top:1px dashed var(--panel-border); padding-top:0.5rem;">
                 <strong>Historial de Pagos de esta factura:</strong><br>` +
-                f.pagos.map((pay, i) => `${formatDate(pay.fecha)} - Abono: ${formatCurrency(pay.monto)} [${pay.metodo || 'N/A'}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`).join('<br>') + `</div>`;
+                f.pagos.map((pay, i) => {
+                    let docLink = '';
+                    if (pay.doc_comprobante) {
+                        if (typeof pay.doc_comprobante === 'object' && pay.doc_comprobante.url) {
+                            docLink = `<a href="${pay.doc_comprobante.url}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Comprobante</a>`;
+                        } else if (typeof pay.doc_comprobante === 'string') {
+                            docLink = `<a href="${pay.doc_comprobante}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Comprobante</a>`;
+                        }
+                    }
+                    return `${formatDate(pay.fecha)} - Abono: ${formatCurrency(pay.monto)} [${pay.metodo || 'N/A'}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} ${docLink} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`;
+                }).join('<br>') + `</div>`;
         }
 
         listDiv.innerHTML += `
@@ -830,7 +861,7 @@ function renderFinancials(p) {
                         <strong style="font-size:1.1rem; color:white;">${f.numero}</strong> <span class="badge ${isPaid ? 'ganado' : 'activo'} ml-2">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
                         <span class="cursor-pointer" style="margin-left:10px; font-size:0.8rem; color:var(--brand-gold);" onclick="editInvoice('${f.id}')">[Editar Factura]</span>
                         ${invoiceIndex > 0 ? `<span class="cursor-pointer" style="margin-left:5px; font-size:0.8rem; color:var(--danger);" onclick="deleteInvoice('${f.id}')">[Eliminar Factura]</span>` : `<span style="margin-left:5px; font-size:0.8rem; color:var(--text-muted);" title="La factura de anticipo no puede ser eliminada">[Eliminar Factura]</span>`}
-                        ${f.doc_factura ? `<span style="font-size:0.8rem; color:var(--brand-gold); margin-left:10px;">📄 ${f.doc_factura}</span>` : ''}
+                        ${f.doc_factura ? (typeof f.doc_factura === 'object' && f.doc_factura.url ? `<a href="${f.doc_factura.url}" target="_blank" style="font-size:0.8rem; color:var(--brand-gold); margin-left:10px; text-decoration:none;">📄 ${f.doc_factura.name || 'Ver Documento'}</a>` : `<a href="${f.doc_factura}" target="_blank" style="font-size:0.8rem; color:var(--brand-gold); margin-left:10px; text-decoration:none;">📄 Ver Documento</a>`) : ''}
                         <div style="font-size:0.9rem; color:var(--text-secondary); margin-top:4px;">Facturado: ${formatCurrency(f.monto)} | Saldo Pendiente: <span style="color:var(--danger)">${formatCurrency(pSaldo)}</span></div>
                     </div>
                     ${!isPaid ? `<button class="btn-success" onclick="showPaymentForm('${f.id}', '${f.numero}')" style="padding:0.4rem 0.8rem; font-size:0.8rem;">+ Abonar a Factura</button>` : ''}
@@ -1168,18 +1199,44 @@ function renderInfo(p) {
 }
 
 function addLogToProspect(p, text, isAuto = false) {
-    if (!p.logs) p.logs = [];
+    if (!p.logs || !Array.isArray(p.logs)) p.logs = [];
     const author = currentUser ? currentUser.nombre : 'Sistema';
     p.logs.push({ text: `${isAuto ? '' : '(' + author + ') '} ${text}`, date: new Date().toISOString(), auto: isAuto });
 }
 function addLog() {
     const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
+    const btnEl = textEl.nextElementSibling;
+    if (btnEl) btnEl.disabled = true;
+
     let pObj = prospects.find(x => x.id === currentProspectId);
-    addLogToProspect(pObj, text, false); saveProspectToDB(pObj); textEl.value = ''; renderLogs(pObj);
+    if (!pObj) { if (btnEl) btnEl.disabled = false; return; }
+
+    addLogToProspect(pObj, text, false); 
+    
+    // Purga total: romper referencia y limpiar campos undefined para Firebase
+    const cleanObj = JSON.parse(JSON.stringify(pObj));
+    
+    db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
+        textEl.value = ''; 
+        if (btnEl) btnEl.disabled = false;
+        renderLogs(pObj);
+    }).catch(err => {
+        alert("Error al guardar la nota. Revisa tu conexión o permisos: " + err.message);
+        console.error(err);
+        if (btnEl) btnEl.disabled = false;
+    });
 }
 function renderLogs(p) {
-    const cont = document.getElementById('logs-container'); cont.innerHTML = '';
-    [...p.logs].reverse().forEach(l => { cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}"><span class="date">${formatDate(l.date)}</span>${l.text}</div>`; });
+    const cont = document.getElementById('logs-container'); 
+    if (!cont) return;
+    cont.innerHTML = '';
+    if (!p || !p.logs || !Array.isArray(p.logs)) return;
+    
+    // Clonamos el array para no mutarlo al hacer reverse
+    const safeLogs = JSON.parse(JSON.stringify(p.logs));
+    safeLogs.reverse().forEach(l => { 
+        cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}"><span class="date">${formatDate(l.date)}</span>${l.text}</div>`; 
+    });
 }
 
 function showNewProposalForm() {
