@@ -153,7 +153,7 @@ function reRenderApp() {
     toggleClientFields();
     if (document.getElementById('list-view').style.display !== 'none') renderList();
     if (document.getElementById('dashboard-view').style.display !== 'none') renderDashboard();
-    if (document.getElementById('users-view').style.display !== 'none') renderUsers();
+    if (document.getElementById('users-view').style.display !== 'none') renderUsersTable();
     if (document.getElementById('detail-view').style.display !== 'none' && currentProspectId) openDetail(currentProspectId);
 
 }
