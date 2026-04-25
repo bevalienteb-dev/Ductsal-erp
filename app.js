@@ -1139,12 +1139,13 @@ function renderTracker(p) {
         else if (p.estado !== 'perdido') { if (index < currentIndex) statusClass = 'completed'; if (index === currentIndex) statusClass = 'current'; if (p.estado === 'ganado' && stage === 'cierre') statusClass = 'completed'; }
         tracker.innerHTML += `<div class="stage-step ${statusClass}"><div class="stage-circle">${index + 1}</div><div class="stage-label">${stage}</div></div>`;
     });
-    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${p.estado.toUpperCase()}</span>`;
+    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>`;
 }
 
 function renderInfo(p) {
     const list = document.getElementById('info-list');
     list.innerHTML = `<li><strong>Creación:</strong> ${new Date(p.fecha_creacion).toLocaleDateString('es-MX')}</li><li><strong>Origen:</strong> ${p.origen}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto}</li><li><strong>Producto:</strong> ${p.tipo_producto}</li>`;
+    if (!p.datos) p.datos = {};
     if (p.datos.ubicacion) {
         list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
         if (p.datos.distancia) list.innerHTML += `<li><span class="label">Distancia a fábrica:</span> ${p.datos.distancia} km</li>`;
@@ -1198,11 +1199,44 @@ function renderInfo(p) {
     }
 }
 
+function renderLogs(p) {
+    const cont = document.getElementById('logs-container'); 
+    if (!cont) return;
+    cont.innerHTML = '';
+    if (!p || !p.logs || !Array.isArray(p.logs)) return;
+    
+    // Clonamos el array para no mutarlo al hacer reverse
+    const safeLogs = JSON.parse(JSON.stringify(p.logs));
+    const origLen = p.logs.length;
+    safeLogs.reverse().forEach((l, i) => { 
+        const realIdx = origLen - 1 - i;
+        cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}">
+            <span class="date">${formatDate(l.date)}</span>${l.text}
+            ${!l.auto && (currentUser.role === 'manager' || currentUser.role === 'gestor') ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger);" onclick="deleteLog('${p.id}', ${realIdx})">[Eliminar]</span>` : ''}
+        </div>`; 
+    });
+}
+
+function deleteLog(prospectId, idx) {
+    if (!confirm('¿Estás seguro de eliminar esta nota?')) return;
+    let pObj = prospects.find(x => x.id === prospectId);
+    if (!pObj || !pObj.logs) return;
+    
+    pObj.logs.splice(idx, 1);
+    addLogToProspect(pObj, `Nota eliminada manualmente por ${currentUser.nombre}`, true);
+    
+    const cleanObj = JSON.parse(JSON.stringify(pObj));
+    db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
+        renderLogs(pObj);
+    }).catch(err => alert("Error al eliminar nota: " + err.message));
+}
+
 function addLogToProspect(p, text, isAuto = false) {
     if (!p.logs || !Array.isArray(p.logs)) p.logs = [];
     const author = currentUser ? currentUser.nombre : 'Sistema';
     p.logs.push({ text: `${isAuto ? '' : '(' + author + ') '} ${text}`, date: new Date().toISOString(), auto: isAuto });
 }
+
 function addLog() {
     const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
     const btnEl = textEl.nextElementSibling;
