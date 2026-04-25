@@ -12,6 +12,18 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
 </head>
 <body>
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            alert("Error JS: " + msg + "\nLinea: " + lineNo + "\n" + (error ? error.stack : ""));
+            return false;
+        };
+        setTimeout(() => {
+            const select = document.getElementById('dash-time-filter');
+            if (!select) alert("El filtro dash-time-filter NO EXISTE en el HTML.");
+            else if (select.options.length === 0) alert("El filtro EXISTE pero TIENE CERO OPCIONES.");
+            else alert("El filtro tiene " + select.options.length + " opciones cargadas. Valor actual: " + select.value);
+        }, 5000);
+    </script>
     <!-- Login Screen -->
     <div id="login-screen" class="modal" style="display:flex; z-index: 1000; background: var(--bg-dark);">
         <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
@@ -731,6 +743,6 @@
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js"></script>
 </body>
 </html>
