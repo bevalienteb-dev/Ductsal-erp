@@ -4,7 +4,7 @@ const firebaseConfig = {
     apiKey: "AIzaSyBSnGhwh043oV_zW1FlE5z7N8_ywh9FUEA",
     authDomain: "ductsal-erp.firebaseapp.com",
     projectId: "ductsal-erp",
-    storageBucket: "ductsal-erp.appspot.com",
+    storageBucket: "ductsal-erp.firebasestorage.app",
     messagingSenderId: "948658286825",
     appId: "1:948658286825:web:e3008dc00f714e57aa0078",
     measurementId: "G-32JZ4MV4FR"
