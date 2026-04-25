@@ -518,7 +518,8 @@ function renderClientsTable() {
 function toggleClientFields() {
     const type = document.getElementById('client-tipo').value;
     if (type === 'natural') { document.getElementById('fields-natural').style.display = 'block'; document.getElementById('fields-juridica').style.display = 'none'; }
-    else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
+    else if (type === 'juridica') { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
+    else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'none'; }
 }
 function openClientModal(clientId = null) {
     document.getElementById('clientForm').reset(); document.getElementById('client-id-edit').value = '';
@@ -546,17 +547,21 @@ function openClientModal(clientId = null) {
                 } else { jSts.innerHTML = ''; }
             }
         }
-    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = 'natural'; toggleClientFields(); }
+    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; toggleClientFields(); }
     document.getElementById('clientModal').style.display = 'block';
 }
 
 async function saveClient(e) {
-    e.preventDefault(); const type = document.getElementById('client-tipo').value; const editId = document.getElementById('client-id-edit').value;
-    const tel = document.getElementById('cli-telefono').value.trim(); const email = document.getElementById('cli-correo').value.trim();
-    if (!tel && !email) return alert("Debe ingresar obligatoriamente un teléfono o correo.");
-
+    e.preventDefault(); 
     showLoading('Subiendo documentos del cliente...');
     try {
+        const editId = document.getElementById('client-id-edit').value;
+        const type = document.getElementById('client-tipo').value;
+        if (!type) { hideLoading(); return alert("Debes seleccionar el Tipo de Persona obligatoriamente."); }
+        
+        const tel = document.getElementById('cli-telefono').value.trim(); const email = document.getElementById('cli-correo').value.trim();
+        if (!tel && !email) { hideLoading(); return alert("Debe ingresar obligatoriamente un teléfono o correo."); }
+
         let c = {};
         if (type === 'natural') {
             c.nombres = document.getElementById('nat-nombres').value.trim(); c.apellidos = document.getElementById('nat-apellidos').value.trim();

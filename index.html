@@ -442,10 +442,9 @@
                                 <div class="form-grid mt-2">
                                     <div class="form-group"><label>Monto a abonar</label><input type="number" id="pay-monto-nuevo" required step="0.01"></div>
                                     <div class="form-group"><label>Forma de Pago</label>
-                                        <select id="pay-metodo" required>
-                                            <option value="">-- Seleccione --</option>
-                                            <option value="Transferencia">Transferencia</option>
-                                            <option value="Cheque">Cheque</option>
+                                        <select id="pay-metodo" required onchange="handlePaymentMethodChange()">
+                                            <option value="transferencia">Transferencia</option>
+                                            <option value="cheque">Cheque</option>
                                         </select>
                                     </div>
                                     <div class="form-group full-width"><label>Referencia / Número de Cheque</label><input type="text" id="pay-ref" required></div>
@@ -563,7 +562,8 @@
                 <input type="hidden" id="client-id-edit">
                 <div class="form-group mt-2">
                     <label>Tipo de Persona</label>
-                    <select id="client-tipo" onchange="toggleClientFields()">
+                    <select id="client-tipo" onchange="toggleClientFields()" required>
+                        <option value="">-- Selecciona el Tipo --</option>
                         <option value="natural">Persona Natural</option>
                         <option value="juridica">Persona Jurídica</option>
                     </select>
@@ -585,6 +585,12 @@
                 <div id="fields-juridica" style="display:none;">
                     <div class="form-group"><label>Nombre de la Empresa *</label><input type="text" id="jur-empresa"></div>
                     <div class="form-group"><label>Nombre del Contacto Principal *</label><input type="text" id="jur-contacto"></div>
+                    <div class="form-group full-width" style="margin-top: 10px; margin-bottom: 5px;">
+                        <label style="display: flex; align-items: center; gap: 10px; color: var(--brand-gold); cursor: pointer;">
+                            <input type="checkbox" id="jur-gran-contribuyente" style="width: auto;">
+                            Es Gran Contribuyente (Agente de Retención 1% IVA)
+                        </label>
+                    </div>
                     <div class="form-grid">
                         <div class="form-group"><label>NIT Empresa (Opcional)</label><input type="text" id="jur-nit"></div>
                         <div class="form-group"><label>NRC Empresa (Opcional)</label><input type="text" id="jur-nrc"></div>

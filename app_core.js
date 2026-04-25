@@ -518,7 +518,8 @@ function renderClientsTable() {
 function toggleClientFields() {
     const type = document.getElementById('client-tipo').value;
     if (type === 'natural') { document.getElementById('fields-natural').style.display = 'block'; document.getElementById('fields-juridica').style.display = 'none'; }
-    else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
+    else if (type === 'juridica') { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
+    else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'none'; }
 }
 function openClientModal(clientId = null) {
     document.getElementById('clientForm').reset(); document.getElementById('client-id-edit').value = '';
@@ -538,6 +539,7 @@ function openClientModal(clientId = null) {
                 document.getElementById('jur-empresa').value = c.empresa || ''; document.getElementById('jur-contacto').value = c.contacto || ''; document.getElementById('jur-nit').value = c.nit || ''; document.getElementById('jur-nrc').value = c.nrc || '';
                 document.getElementById('jur-rep-legal').value = c.rep_legal || ''; document.getElementById('jur-profesion-rep').value = c.profesion_rep || ''; document.getElementById('jur-domicilio-rep').value = c.domicilio_rep || '';
                 document.getElementById('jur-dui-rep').value = c.dui_rep || ''; document.getElementById('jur-nit-rep').value = c.nit_rep || '';
+                document.getElementById('jur-gran-contribuyente').checked = c.is_gran_contribuyente === true;
                 const jSts = document.getElementById('jur-docs-status');
                 if (c.documentos && Object.keys(c.documentos).length > 0) {
                     let text = "Archivos en expediente: ";
@@ -546,17 +548,22 @@ function openClientModal(clientId = null) {
                 } else { jSts.innerHTML = ''; }
             }
         }
-    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = 'natural'; toggleClientFields(); }
+    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; toggleClientFields(); }
     document.getElementById('clientModal').style.display = 'block';
 }
 
 async function saveClient(e) {
-    e.preventDefault(); const type = document.getElementById('client-tipo').value; const editId = document.getElementById('client-id-edit').value;
-    const tel = document.getElementById('cli-telefono').value.trim(); const email = document.getElementById('cli-correo').value.trim();
-    if (!tel && !email) return alert("Debe ingresar obligatoriamente un teléfono o correo.");
-
+    e.preventDefault();
     showLoading('Subiendo documentos del cliente...');
     try {
+        const editId = document.getElementById('client-id-edit').value;
+        const type = document.getElementById('client-tipo').value;
+        if (!type) { hideLoading(); return alert("Debes seleccionar el Tipo de Persona obligatoriamente."); }
+        
+        const tel = document.getElementById('cli-telefono').value.trim();
+        const email = document.getElementById('cli-correo').value.trim();
+        if (!tel && !email) { hideLoading(); return alert("Debe ingresar obligatoriamente un teléfono o correo."); }
+
         let c = {};
         if (type === 'natural') {
             c.nombres = document.getElementById('nat-nombres').value.trim(); c.apellidos = document.getElementById('nat-apellidos').value.trim();
@@ -575,6 +582,7 @@ async function saveClient(e) {
             c.rep_legal = document.getElementById('jur-rep-legal').value.trim();
             c.profesion_rep = document.getElementById('jur-profesion-rep').value; c.domicilio_rep = document.getElementById('jur-domicilio-rep').value;
             c.dui_rep = document.getElementById('jur-dui-rep').value; c.nit_rep = document.getElementById('jur-nit-rep').value;
+            c.is_gran_contribuyente = document.getElementById('jur-gran-contribuyente').checked;
 
             if (!c.documentos) c.documentos = {};
             const uploadDoc = async (id, key) => { const el = document.getElementById(id); if (el && el.files.length > 0) { c.documentos[key] = await uploadFileToStorage(el.files[0], 'clientes'); } };
@@ -730,6 +738,9 @@ function openDetail(id) {
     document.getElementById('advance-form-container').innerHTML = '';
     const textEl = document.getElementById('new-log-text');
     if (textEl) textEl.value = '';
+    
+    const payForm = document.getElementById('payment-form'); if (payForm) payForm.style.display = 'none';
+    const invForm = document.getElementById('invoice-form'); if (invForm) invForm.style.display = 'none';
 
     // Show Delete Prospect button for managers
     const btnDeleteProspect = document.getElementById('btn-delete-prospect');
@@ -792,6 +803,24 @@ function renderFinancials(p) {
 
     if (ordContainer) ordContainer.innerHTML = '';
     if (costContainer) costContainer.innerHTML = '';
+
+    // Advertencia de Retención 1% (Gran Contribuyente)
+    const client = clients.find(c => c.id === p.clientId);
+    const isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
+    const warningContainer = document.getElementById('fin-retencion-warning');
+    if (isGranContribuyente) {
+        if (!warningContainer) {
+            const warnDiv = document.createElement('div');
+            warnDiv.id = 'fin-retencion-warning';
+            warnDiv.style.cssText = 'background-color: rgba(255, 193, 7, 0.15); border-left: 4px solid var(--brand-gold); padding: 10px; margin-bottom: 15px; border-radius: 4px; color: var(--brand-gold); font-size: 0.9rem;';
+            warnDiv.innerHTML = `<strong>⚠️ Agente de Retención:</strong> Este cliente es Gran Contribuyente. Recuerda que el <strong>1% de cada factura</strong> quedará como saldo pendiente (CXC) hasta que se registre el <em>Comprobante de Retención</em> como pago.`;
+            document.getElementById('invoices-list').parentNode.insertBefore(warnDiv, document.getElementById('invoices-list'));
+        } else {
+            warningContainer.style.display = 'block';
+        }
+    } else if (warningContainer) {
+        warningContainer.style.display = 'none';
+    }
 
     if (p.ordenes_cambio && p.ordenes_cambio.length > 0) {
         p.ordenes_cambio.forEach(o => {
@@ -860,7 +889,9 @@ function renderFinancials(p) {
                             docLink = `<a href="${pay.doc_comprobante}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Comprobante</a>`;
                         }
                     }
-                    return `${formatDate(pay.fecha)} - Abono: ${formatCurrency(pay.monto)} [${pay.metodo || 'N/A'}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} ${docLink} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`;
+                    let lbl = pay.metodo === 'retencion_1pct' ? '<span style="color:var(--brand-gold);">[Retención 1%]</span>' : 'Abono:';
+                    let met = pay.metodo === 'retencion_1pct' ? 'Comprobante' : (pay.metodo || 'N/A');
+                    return `${formatDate(pay.fecha)} - ${lbl} ${formatCurrency(pay.monto)} [${met}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} ${docLink} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`;
                 }).join('<br>') + `</div>`;
         }
 
@@ -1071,6 +1102,44 @@ function showPaymentForm(invoiceId, invoiceNumero) {
     document.getElementById('pay-invoice-id').value = invoiceId;
     document.getElementById('pay-idx-edit').value = '';
     document.getElementById('pay-monto-nuevo').value = ''; document.getElementById('pay-ref').value = '';
+    
+    // Configurar método de pago dinámicamente según el cliente
+    const p = prospects.find(x => x.id === currentProspectId);
+    const selectMetodo = document.getElementById('pay-metodo');
+    let isGranContribuyente = false;
+    
+    // Limpiar opciones de retención previas
+    Array.from(selectMetodo.options).forEach(opt => {
+        if (opt.value === 'retencion_1pct') opt.remove();
+    });
+
+    if (p && p.facturas) {
+        const fac = p.facturas.find(f => f.id === invoiceId);
+        if (fac) document.getElementById('pay-monto-nuevo').dataset.invoiceTotal = fac.monto;
+        
+        const client = clients.find(c => c.id === p.clientId);
+        isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
+        
+        const opt = document.createElement('option');
+        opt.value = 'retencion_1pct';
+        opt.textContent = isGranContribuyente ? 'Comprobante de Retención (1%)' : 'Retención 1% (Solo Grandes Contribuyentes)';
+        opt.disabled = !isGranContribuyente;
+        selectMetodo.appendChild(opt);
+    }
+}
+
+function handlePaymentMethodChange() {
+    const met = document.getElementById('pay-metodo').value;
+    const inputMonto = document.getElementById('pay-monto-nuevo');
+    if (met === 'retencion_1pct') {
+        const totalFactura = parseFloat(inputMonto.dataset.invoiceTotal);
+        if (!isNaN(totalFactura)) {
+            // El usuario pidió que se calcule el 1% pero sea modificable
+            inputMonto.value = (totalFactura * 0.01).toFixed(2);
+        }
+    } else {
+        // Opcional: limpiar si cambian de opción, aunque si ya escribieron algo tal vez sea mejor dejarlo
+    }
 }
 
 function editPayment(invoiceId, paymentIndex) {
@@ -1085,6 +1154,23 @@ function editPayment(invoiceId, paymentIndex) {
     document.getElementById('pay-invoice-id').value = invoiceId;
     document.getElementById('pay-idx-edit').value = paymentIndex;
     document.getElementById('pay-monto-nuevo').value = pay.monto;
+    document.getElementById('pay-monto-nuevo').dataset.invoiceTotal = f.monto;
+    
+    // Configurar método de pago dinámicamente según el cliente
+    const selectMetodo = document.getElementById('pay-metodo');
+    Array.from(selectMetodo.options).forEach(opt => {
+        if (opt.value === 'retencion_1pct') opt.remove();
+    });
+    
+    const client = clients.find(c => c.id === p.clientId);
+    const isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
+    
+    const opt = document.createElement('option');
+    opt.value = 'retencion_1pct';
+    opt.textContent = isGranContribuyente ? 'Comprobante de Retención (1%)' : 'Retención 1% (Solo Grandes Contribuyentes)';
+    opt.disabled = !isGranContribuyente;
+    selectMetodo.appendChild(opt);
+    
     document.getElementById('pay-metodo').value = pay.metodo;
     document.getElementById('pay-ref').value = pay.ref;
 }
