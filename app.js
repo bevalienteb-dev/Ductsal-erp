@@ -1212,7 +1212,7 @@ function renderLogs(p) {
         const realIdx = origLen - 1 - i;
         cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}">
             <span class="date">${formatDate(l.date)}</span>${l.text}
-            ${!l.auto && (currentUser.role === 'manager' || currentUser.role === 'gestor') ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger);" onclick="deleteLog('${p.id}', ${realIdx})">[Eliminar]</span>` : ''}
+            ${!l.auto && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor') ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger);" onclick="deleteLog('${p.id}', ${realIdx})">[Eliminar]</span>` : ''}
         </div>`; 
     });
 }
