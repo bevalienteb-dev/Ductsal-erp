@@ -22,6 +22,89 @@ if (isLocal) {
     console.warn("⚠️ MODO DESARROLLO LOCAL ACTIVADO: Conectado a las colecciones '_local' en Firebase.");
 }
 
+// Variables Globales de Ordenamiento para Oportunidades, Proyectos y Clientes
+let oppSortCol = ''; let oppSortDir = 'asc';
+let projSortCol = ''; let projSortDir = 'asc';
+let cliSortCol = ''; let cliSortDir = 'asc';
+
+function toggleOppSort(column) {
+    if (oppSortCol === column) {
+        oppSortDir = oppSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        oppSortCol = column;
+        oppSortDir = 'asc';
+    }
+    renderList();
+    updateOppSortIcons();
+}
+
+function updateOppSortIcons() {
+    const columns = ['codigo', 'cliente', 'proyecto', 'etapa', 'monto', 'estado'];
+    columns.forEach(col => {
+        const el = document.getElementById(`sort-opp-${col}`);
+        if (!el) return;
+        if (oppSortCol === col) {
+            el.innerHTML = oppSortDir === 'asc' ? '▲' : '▼';
+            el.style.color = 'var(--brand-gold)';
+        } else {
+            el.innerHTML = '↕';
+            el.style.color = 'var(--text-muted)';
+        }
+    });
+}
+
+function toggleProjSort(column) {
+    if (projSortCol === column) {
+        projSortDir = projSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        projSortCol = column;
+        projSortDir = 'asc';
+    }
+    renderProjectsList();
+    updateProjSortIcons();
+}
+
+function updateProjSortIcons() {
+    const columns = ['codigo', 'cliente', 'proyecto', 'encargado', 'total', 'condicion', 'pctFacturado', 'pctCobrado'];
+    columns.forEach(col => {
+        const el = document.getElementById(`sort-proj-${col}`);
+        if (!el) return;
+        if (projSortCol === col) {
+            el.innerHTML = projSortDir === 'asc' ? '▲' : '▼';
+            el.style.color = 'var(--brand-gold)';
+        } else {
+            el.innerHTML = '↕';
+            el.style.color = 'var(--text-muted)';
+        }
+    });
+}
+
+function toggleCliSort(column) {
+    if (cliSortCol === column) {
+        cliSortDir = cliSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        cliSortCol = column;
+        cliSortDir = 'asc';
+    }
+    renderClientsTable();
+    updateCliSortIcons();
+}
+
+function updateCliSortIcons() {
+    const columns = ['tipo', 'nombre', 'contacto', 'telefono', 'correo'];
+    columns.forEach(col => {
+        const el = document.getElementById(`sort-cli-${col}`);
+        if (!el) return;
+        if (cliSortCol === col) {
+            el.innerHTML = cliSortDir === 'asc' ? '▲' : '▼';
+            el.style.color = 'var(--brand-gold)';
+        } else {
+            el.innerHTML = '↕';
+            el.style.color = 'var(--text-muted)';
+        }
+    });
+}
+
 // Helper Functions para Carga
 function showLoading(msg = 'Subiendo archivo a la nube...') {
     const el = document.getElementById('global-spinner');
@@ -33,6 +116,105 @@ function showLoading(msg = 'Subiendo archivo a la nube...') {
 function hideLoading() {
     const el = document.getElementById('global-spinner');
     if (el) el.style.display = 'none';
+}
+
+function updateSelectedFilesList(input) {
+    const listId = input.id + '-list';
+    const listDiv = document.getElementById(listId);
+    if (!listDiv) {
+        // Fallback or normal behavior for single-file inputs
+        const nextDiv = input.nextElementSibling;
+        if (nextDiv && nextDiv.tagName === 'DIV') {
+            nextDiv.innerHTML = '';
+            if (input.files && input.files.length > 0) {
+                nextDiv.innerHTML = '<strong>Archivo seleccionado:</strong> ' + input.files[0].name;
+            }
+        }
+        return;
+    }
+    
+    if (!window.stagedFiles) window.stagedFiles = {};
+    if (!window.stagedFiles[input.id]) window.stagedFiles[input.id] = [];
+    
+    if (input.files && input.files.length > 0) {
+        const newFiles = Array.from(input.files);
+        newFiles.forEach(file => {
+            if (!window.stagedFiles[input.id].some(f => f.name === file.name && f.size === file.size)) {
+                window.stagedFiles[input.id].push(file);
+            }
+        });
+    }
+    
+    input.value = '';
+    renderStagedFiles(input.id);
+}
+
+function renderStagedFiles(inputId) {
+    const container = document.getElementById(inputId + '-list');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    const files = window.stagedFiles && window.stagedFiles[inputId] ? window.stagedFiles[inputId] : [];
+    if (files.length === 0) {
+        container.innerHTML = '<span style="color:var(--text-muted); font-size:0.85rem; font-style:italic;">Ningún archivo seleccionado.</span>';
+        return;
+    }
+    
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = '6px';
+    wrapper.style.marginTop = '8px';
+    
+    files.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.style.display = 'flex';
+        item.style.alignItems = 'center';
+        item.style.justifyContent = 'space-between';
+        item.style.background = 'rgba(255, 255, 255, 0.05)';
+        item.style.padding = '8px 12px';
+        item.style.borderRadius = '6px';
+        item.style.border = '1px solid rgba(255, 255, 255, 0.08)';
+        item.style.fontSize = '0.85rem';
+        
+        const nameText = document.createElement('span');
+        nameText.textContent = file.name;
+        nameText.style.color = 'var(--text-primary)';
+        nameText.style.wordBreak = 'break-all';
+        nameText.style.flex = '1';
+        nameText.style.marginRight = '12px';
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.innerHTML = '✕';
+        removeBtn.style.background = 'none';
+        removeBtn.style.border = 'none';
+        removeBtn.style.color = 'var(--danger)';
+        removeBtn.style.cursor = 'pointer';
+        removeBtn.style.fontSize = '1rem';
+        removeBtn.style.fontWeight = 'bold';
+        removeBtn.style.padding = '0 4px';
+        removeBtn.style.transition = 'opacity 0.2s';
+        removeBtn.onmouseenter = () => removeBtn.style.opacity = '0.7';
+        removeBtn.onmouseleave = () => removeBtn.style.opacity = '1';
+        removeBtn.onclick = (e) => {
+            e.preventDefault();
+            removeStagedFile(inputId, index);
+        };
+        
+        item.appendChild(nameText);
+        item.appendChild(removeBtn);
+        wrapper.appendChild(item);
+    });
+    
+    container.appendChild(wrapper);
+}
+
+function removeStagedFile(inputId, index) {
+    if (window.stagedFiles && window.stagedFiles[inputId]) {
+        window.stagedFiles[inputId].splice(index, 1);
+        renderStagedFiles(inputId);
+    }
 }
 
 async function uploadFileToStorage(file, folderName) {
@@ -503,7 +685,57 @@ function renderClientsTable() {
         filtered = filtered.filter(c => c.createdBy === currentUser.id);
     }
 
-    [...filtered].reverse().forEach(c => {
+    // Apply Search Filter
+    const searchVal = document.getElementById('cli-search') ? document.getElementById('cli-search').value.toLowerCase().trim() : '';
+    if (searchVal) {
+        filtered = filtered.filter(c => {
+            const isNatural = c.tipo === 'natural';
+            const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
+            const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-');
+            
+            return (c.tipo || '').toLowerCase().includes(searchVal) ||
+                   mainName.toLowerCase().includes(searchVal) ||
+                   contactName.toLowerCase().includes(searchVal) ||
+                   (c.telefono || '').toLowerCase().includes(searchVal) ||
+                   (c.correo || '').toLowerCase().includes(searchVal);
+        });
+    }
+
+    // Apply Sorting
+    if (cliSortCol) {
+        filtered.sort((a, b) => {
+            let valA = '';
+            let valB = '';
+            
+            const isNaturalA = a.tipo === 'natural';
+            const isNaturalB = b.tipo === 'natural';
+            
+            if (cliSortCol === 'tipo') {
+                valA = a.tipo || '';
+                valB = b.tipo || '';
+            } else if (cliSortCol === 'nombre') {
+                valA = isNaturalA ? `${a.nombres || ''} ${a.apellidos || ''}` : (a.empresa || '-');
+                valB = isNaturalB ? `${b.nombres || ''} ${b.apellidos || ''}` : (b.empresa || '-');
+            } else if (cliSortCol === 'contacto') {
+                valA = isNaturalA ? `${a.nombres || ''} ${a.apellidos || ''}` : (a.contacto || '-');
+                valB = isNaturalB ? `${b.nombres || ''} ${b.apellidos || ''}` : (b.contacto || '-');
+            } else if (cliSortCol === 'telefono') {
+                valA = a.telefono || '';
+                valB = b.telefono || '';
+            } else if (cliSortCol === 'correo') {
+                valA = a.correo || '';
+                valB = b.correo || '';
+            }
+            
+            return cliSortDir === 'asc'
+                ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
+                : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
+        });
+    } else {
+        filtered = [...filtered].reverse();
+    }
+
+    filtered.forEach(c => {
         const isNatural = c.tipo === 'natural'; const typeBadge = isNatural ? '<span class="badge bg-neutral">Natural</span>' : '<span class="badge bg-neutral" style="color:var(--brand-gold);">Jurídica</span>';
         const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-'); const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
 
@@ -629,8 +861,66 @@ function renderList() {
         filtered = filtered.filter(p => p.createdBy === currentUser.id);
     }
     const tbody = document.getElementById('opp-table-body'); tbody.innerHTML = '';
-    const visibleProspects = filtered.filter(p => p.estado !== 'ganado');
-    [...visibleProspects].reverse().forEach(p => {
+    let visibleProspects = filtered.filter(p => p.estado !== 'ganado');
+
+    // Apply Search Filter
+    const searchVal = document.getElementById('opp-search') ? document.getElementById('opp-search').value.toLowerCase().trim() : '';
+    if (searchVal) {
+        visibleProspects = visibleProspects.filter(p => {
+            const codeMatch = (p.codigo || '').toLowerCase().includes(searchVal) || p.id.substring(p.id.length - 4).toLowerCase().includes(searchVal);
+            const clientMatch = getClientName(p.clientId).toLowerCase().includes(searchVal);
+            const projectMatch = (p.proyecto || '').toLowerCase().includes(searchVal);
+            const stageMatch = (p.etapa || '').toLowerCase().includes(searchVal);
+            const amountMatch = p.precio_cotizado ? formatCurrency(p.precio_cotizado).toLowerCase().includes(searchVal) || String(p.precio_cotizado).includes(searchVal) : false;
+            const statusMatch = (p.estado || '').toLowerCase().includes(searchVal);
+            return codeMatch || clientMatch || projectMatch || stageMatch || amountMatch || statusMatch;
+        });
+    }
+
+    // Apply Sorting
+    if (oppSortCol) {
+        visibleProspects.sort((a, b) => {
+            let valA = '';
+            let valB = '';
+            
+            if (oppSortCol === 'codigo') {
+                valA = a.codigo || a.id.substring(a.id.length - 4);
+                valB = b.codigo || b.id.substring(b.id.length - 4);
+            } else if (oppSortCol === 'cliente') {
+                valA = getClientName(a.clientId);
+                valB = getClientName(b.clientId);
+            } else if (oppSortCol === 'proyecto') {
+                valA = a.proyecto || '';
+                valB = b.proyecto || '';
+            } else if (oppSortCol === 'etapa') {
+                valA = a.etapa || '';
+                valB = b.etapa || '';
+            } else if (oppSortCol === 'monto') {
+                valA = parseFloat(a.precio_cotizado) || 0;
+                valB = parseFloat(b.precio_cotizado) || 0;
+            } else if (oppSortCol === 'estado') {
+                valA = a.estado || '';
+                valB = b.estado || '';
+            }
+            
+            if (typeof valA === 'string') {
+                return oppSortDir === 'asc'
+                    ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
+                    : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
+            } else {
+                return oppSortDir === 'asc' ? valA - valB : valB - valA;
+            }
+        });
+    } else {
+        visibleProspects.reverse();
+    }
+
+    if (visibleProspects.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
+        return;
+    }
+
+    visibleProspects.forEach(p => {
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
         let badgeClass = p.estado === 'activo' ? 'activo' : 'perdido';
 
@@ -653,9 +943,10 @@ function renderList() {
 function renderProjectsList() {
     const tbody = document.getElementById('proj-table-body'); tbody.innerHTML = '';
     const projects = prospects.filter(p => p.estado === 'ganado');
-    if (projects.length === 0) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 2rem; color: var(--text-muted);">No hay proyectos cerrados / ganados todavía.</td></tr>'; return; }
+    if (projects.length === 0) { tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No hay proyectos cerrados / ganados todavía.</td></tr>'; return; }
 
-    [...projects].reverse().forEach(p => {
+    // Map projects to calculated objects for search and sort
+    let mappedProjects = projects.map(p => {
         let subtotal = p.precio_cotizado || 0;
         let total = subtotal * 1.13;
 
@@ -669,22 +960,75 @@ function renderProjectsList() {
 
         const pctFacturado = total > 0 ? Math.min(100, (totalFacturado / total) * 100) : 0;
         const pctCobrado = total > 0 ? Math.min(100, (totalCobrado / total) * 100) : 0;
+        
+        return {
+            original: p,
+            codigo: p.codigo || p.id.substring(p.id.length - 4),
+            cliente: getClientName(p.clientId),
+            proyecto: p.proyecto || '',
+            encargado: p.encargado || '-',
+            total: total,
+            condicion: p.forma_pago || 'N/A',
+            pctFacturado: pctFacturado,
+            pctCobrado: pctCobrado
+        };
+    });
 
+    // Apply Search Filter
+    const searchVal = document.getElementById('proj-search') ? document.getElementById('proj-search').value.toLowerCase().trim() : '';
+    if (searchVal) {
+        mappedProjects = mappedProjects.filter(mp => {
+            return mp.codigo.toLowerCase().includes(searchVal) ||
+                   mp.cliente.toLowerCase().includes(searchVal) ||
+                   mp.proyecto.toLowerCase().includes(searchVal) ||
+                   mp.encargado.toLowerCase().includes(searchVal) ||
+                   mp.condicion.toLowerCase().includes(searchVal) ||
+                   formatCurrency(mp.total).toLowerCase().includes(searchVal) ||
+                   String(mp.total).includes(searchVal) ||
+                   mp.pctFacturado.toFixed(0).includes(searchVal) ||
+                   mp.pctCobrado.toFixed(0).includes(searchVal);
+        });
+    }
+
+    // Apply Sorting
+    if (projSortCol) {
+        mappedProjects.sort((a, b) => {
+            let valA = a[projSortCol];
+            let valB = b[projSortCol];
+            
+            if (typeof valA === 'string') {
+                return projSortDir === 'asc'
+                    ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
+                    : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
+            } else {
+                return projSortDir === 'asc' ? valA - valB : valB - valA;
+            }
+        });
+    } else {
+        mappedProjects.reverse();
+    }
+
+    if (mappedProjects.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron proyectos.</td></tr>';
+        return;
+    }
+
+    mappedProjects.forEach(mp => {
+        const p = mp.original;
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
-        const encargado = p.encargado || '-';
         tr.innerHTML = `
             <td><strong>${p.codigo || '-'}</strong></td>
-            <td>${getClientName(p.clientId)}</td>
-            <td>${p.proyecto}</td>
-            <td>${encargado}</td>
-            <td>${formatCurrency(total)}</td>
-            <td>${p.forma_pago || 'N/A'}</td>
-            <td>${pctFacturado.toFixed(0)}%</td>
+            <td>${mp.cliente}</td>
+            <td>${mp.proyecto}</td>
+            <td>${mp.encargado}</td>
+            <td>${formatCurrency(mp.total)}</td>
+            <td>${mp.condicion}</td>
+            <td>${mp.pctFacturado.toFixed(0)}%</td>
             <td>
                 <div style="background:rgba(255,255,255,0.1); height:8px; border-radius:4px; width:100px; margin-bottom:4px; overflow:hidden;">
-                    <div style="background:var(--success); height:100%; width:${pctCobrado}%"></div>
+                    <div style="background:var(--success); height:100%; width:${mp.pctCobrado}%"></div>
                 </div>
-                <small>${pctCobrado.toFixed(0)}%</small>
+                <small>${mp.pctCobrado.toFixed(0)}%</small>
             </td>
             <td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Gestionar</button></td>
         `;
@@ -1202,16 +1546,24 @@ function renderInfo(p) {
         }
     }
 
-    if (p.datos.doc_levantamiento) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Planos/Notas:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_levantamiento)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_oferta) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta/Cotiz.:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_oferta)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_costos) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Cuadro Costos:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_costos)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_oferta_firmada) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta Firmada:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_oferta_firmada)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_contrato) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Contrato:</span> <span style="word-break: break-all;">${dlLink(p.datos.doc_contrato)}</span></li>`; hasDocs = true; }
+    function renderDocLinks(doc) {
+        if (!doc) return '';
+        if (Array.isArray(doc)) {
+            return doc.map(d => dlLink(d)).join(', ');
+        }
+        return dlLink(doc);
+    }
+
+    if (p.datos.doc_levantamiento) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Planos/Notas:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_levantamiento)}</span></li>`; hasDocs = true; }
+    if (p.datos.doc_oferta) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta/Cotiz.:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_oferta)}</span></li>`; hasDocs = true; }
+    if (p.datos.doc_costos) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Cuadro Costos:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_costos)}</span></li>`; hasDocs = true; }
+    if (p.datos.doc_oferta_firmada) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta Firmada:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_oferta_firmada)}</span></li>`; hasDocs = true; }
+    if (p.datos.doc_contrato) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Contrato:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_contrato)}</span></li>`; hasDocs = true; }
 
     if (p.facturas && p.facturas.length > 0) {
         p.facturas.forEach(f => {
             if (f.doc_factura) {
-                docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Fac ${f.numero}:</span> <span style="word-break: break-all;">${dlLink(f.doc_factura)}</span></li>`;
+                docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Fac ${f.numero}:</span> <span style="word-break: break-all;">${renderDocLinks(f.doc_factura)}</span></li>`;
                 hasDocs = true;
             }
         });
@@ -1294,36 +1646,62 @@ function showNewProposalForm() {
     const p = prospects.find(x => x.id === currentProspectId);
     const container = document.getElementById('advance-form-container');
 
+    window.stagedFiles = { 'prop-file': [], 'prop-file2': [] };
+
     let formHTML = `<h4><span style="color:var(--success)">Registrar Nueva Propuesta</span></h4>
         <div class="form-grid mt-2">
             <div class="form-group"><label>Nuevo Costo (Subtotal)</label><input type="number" id="prop-costo" value="${p.costo_venta || ''}" required></div>
             <div class="form-group"><label>Nuevo Precio (Subtotal)</label><input type="number" id="prop-precio" value="${p.precio_cotizado || ''}" required></div>
-            <div class="form-group full-width"><label>Nueva Oferta (PDF/Word)</label><input type="file" id="prop-file" required></div>
-            <div class="form-group full-width"><label>Nuevo Cuadro de Costos (PDF/Excel)</label><input type="file" id="prop-file2" required></div>
+            <div class="form-group full-width">
+                <label>Nueva Oferta (PDF/Word)</label>
+                <input type="file" id="prop-file" multiple onchange="updateSelectedFilesList(this)">
+                <div id="prop-file-list" style="margin-top: 8px;"></div>
+            </div>
+            <div class="form-group full-width">
+                <label>Nuevo Cuadro de Costos (PDF/Excel)</label>
+                <input type="file" id="prop-file2" multiple onchange="updateSelectedFilesList(this)">
+                <div id="prop-file2-list" style="margin-top: 8px;"></div>
+            </div>
         </div>
         <button class="btn-success mt-2" onclick="processNewProposal()">Guardar Propuesta</button>
         <button class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>
     `;
     container.innerHTML = formHTML;
+    renderStagedFiles('prop-file');
+    renderStagedFiles('prop-file2');
 }
 
-function processNewProposal() {
+async function processNewProposal() {
     const p = prospects.find(x => x.id === currentProspectId);
     const c = parseFloat(document.getElementById('prop-costo').value);
     const pr = parseFloat(document.getElementById('prop-precio').value);
     if (isNaN(c) || isNaN(pr)) return alert("Completa costos y precios.");
 
-    const f1 = document.getElementById('prop-file');
-    const f2 = document.getElementById('prop-file2');
-    if (!f1 || f1.files.length === 0 || !f2 || f2.files.length === 0) return alert("Debe subir la nueva oferta y el cuadro de costos.");
+    const files1 = window.stagedFiles && window.stagedFiles['prop-file'] ? window.stagedFiles['prop-file'] : [];
+    const files2 = window.stagedFiles && window.stagedFiles['prop-file2'] ? window.stagedFiles['prop-file2'] : [];
+    if (files1.length === 0 || files2.length === 0) return alert("Debe subir la nueva oferta y el cuadro de costos.");
 
-    p.costo_venta = c; p.precio_cotizado = pr;
-    p.datos.doc_oferta = f1.files[0].name;
-    p.datos.doc_costos = f2.files[0].name;
+    showLoading('Subiendo nueva propuesta...');
+    try {
+        p.costo_venta = c; p.precio_cotizado = pr;
 
-    addLogToProspect(p, `NUEVA PROPUESTA: Precio ${formatCurrency(pr)}, Costo ${formatCurrency(c)}. Docs: ${p.datos.doc_oferta}, ${p.datos.doc_costos}`, true);
-    saveProspectToDB(p);
-    openDetail(p.id);
+        const uploadTasks = [];
+        uploadTasks.push(Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_oferta = urls));
+        uploadTasks.push(Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_costos = urls));
+
+        await Promise.all(uploadTasks);
+
+        const namesOferta = files1.map(f => f.name).join(', ');
+        const namesCostos = files2.map(f => f.name).join(', ');
+
+        addLogToProspect(p, `NUEVA PROPUESTA: Precio ${formatCurrency(pr)}, Costo ${formatCurrency(c)}. Docs: ${namesOferta}, ${namesCostos}`, true);
+        saveProspectToDB(p);
+        openDetail(p.id);
+    } catch (e) {
+        alert("Error al subir archivos de propuesta: " + e.message);
+    } finally {
+        hideLoading();
+    }
 }
 
 // Google Maps auto-script removed per user request
@@ -1373,14 +1751,23 @@ function showAdvanceForm() {
         if (p.tipo_proyecto === 'Fabricación') {
             formHTML += `<div class="form-group"><label>Vendedor que atendió</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div>
             <div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div>
-            <div class="form-group full-width"><label>Documentos/Planos</label><input type="file" id="adv-file" required></div>`;
+            <div class="form-group full-width">
+                <label>Documentos/Planos</label>
+                <input type="file" id="adv-file" multiple onchange="updateSelectedFilesList(this)">
+                <div id="adv-file-list" style="margin-top: 8px;"></div>
+            </div>`;
         } else {
             let mapLink = "https://maps.google.com";
             if (settings.factory_address) mapLink += `?q=${encodeURIComponent(settings.factory_address)}`;
 
             formHTML += `<div class="form-group full-width"><label>Ubicación del Proyecto (Opcional)</label><input type="text" id="adv-ubicacion" placeholder="Ej. Calle Principal #123"></div>
                 <div class="form-group"><label>Distancia a Fábrica (km) <a href="${mapLink}" target="_blank" style="color:var(--brand-gold); font-size: 0.8rem; margin-left: 5px;">[Abrir Mapa]</a></label><input type="number" step="0.1" id="adv-distancia" required></div>
-                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita (Opcional)</label><input type="date" id="adv-fecha"></div><div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div><div class="form-group"><label>Notas/Planos</label><input type="file" id="adv-file"></div>`;
+                <div class="form-group"><label>Quién visitó</label><select id="adv-visitante" required><option value="">-- Seleccione --</option>${visOpts}</select></div><div class="form-group"><label>Fecha de visita (Opcional)</label><input type="date" id="adv-fecha"></div><div class="form-group"><label>Fecha est. inicio (Opcional)</label><input type="date" id="adv-inicio"></div>
+                <div class="form-group full-width">
+                    <label>Notas/Planos</label>
+                    <input type="file" id="adv-file" multiple onchange="updateSelectedFilesList(this)">
+                    <div id="adv-file-list" style="margin-top: 8px;"></div>
+                </div>`;
         }
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         let isNeg = nextStage === 'negociacion';
@@ -1390,8 +1777,16 @@ function showAdvanceForm() {
             <div class="form-group"><label>Probabilidad</label><select id="adv-prob" required>
                     <option value="alta" ${selAlta}>Alta (75%)</option><option value="media" ${selMedia}>Media (50%)</option><option value="baja" ${selBaja}>Baja (25%)</option><option value="improbable" ${selImprobable}>Improbable (10%)</option>
                 </select></div>
-            <div class="form-group full-width"><label>Oferta (PDF/Word)</label><input type="file" id="adv-file" ${isNeg ? '' : 'required'}></div>
-            <div class="form-group full-width"><label>Cuadro de Costos (PDF/Excel)</label><input type="file" id="adv-file2" ${isNeg ? '' : 'required'}></div>`;
+            <div class="form-group full-width">
+                <label>Oferta (PDF/Word)</label>
+                <input type="file" id="adv-file" multiple onchange="updateSelectedFilesList(this)">
+                <div id="adv-file-list" style="margin-top: 8px;"></div>
+            </div>
+            <div class="form-group full-width">
+                <label>Cuadro de Costos (PDF/Excel)</label>
+                <input type="file" id="adv-file2" multiple onchange="updateSelectedFilesList(this)">
+                <div id="adv-file2-list" style="margin-top: 8px;"></div>
+            </div>`;
     } else if (nextStage === 'cierre') {
         const c = clients.find(x => x.id === p.clientId);
         if (!c.documentos) c.documentos = {};
@@ -1431,7 +1826,13 @@ function showAdvanceForm() {
         formHTML += `<div class="form-group full-width"><label>Copia de Factura / C.F. Emitida</label><input type="file" id="adv-file2" required></div>`;
     }
     formHTML += `</div><button type="button" class="btn-primary mt-2" onclick="processAdvance('${nextStage}')">Confirmar Avance</button><button type="button" class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>`;
+    
+    window.stagedFiles = { 'adv-file': [], 'adv-file2': [] };
+    
     container.innerHTML = formHTML;
+
+    if (document.getElementById('adv-file-list')) renderStagedFiles('adv-file');
+    if (document.getElementById('adv-file2-list')) renderStagedFiles('adv-file2');
 }
 
 async function processAdvance(nextStage) {
@@ -1453,14 +1854,17 @@ async function processAdvance(nextStage) {
 
         if (!v) return alert("Completa el vendedor/visitante.");
 
+        const files = window.stagedFiles && window.stagedFiles['adv-file'] ? window.stagedFiles['adv-file'] : [];
+
         showLoading('Subiendo documentos de levantamiento...');
         try {
             if (p.tipo_proyecto !== 'Fabricación') {
                 p.datos.ubicacion = u; p.datos.distancia = dist; p.datos.fecha_visita = dF;
             }
             p.datos.visitante = v; p.datos.fecha_inicio = dI;
-            const f = document.getElementById('adv-file');
-            if (f && f.files.length > 0) p.datos.doc_levantamiento = await uploadFileToStorage(f.files[0], 'proyectos');
+            if (files.length > 0) {
+                p.datos.doc_levantamiento = await Promise.all(files.map(file => uploadFileToStorage(file, 'proyectos')));
+            }
         } catch (e) {
             hideLoading();
             return alert("Error al subir archivo: " + e.message);
@@ -1470,12 +1874,12 @@ async function processAdvance(nextStage) {
         const c = parseFloat(document.getElementById('adv-costo').value); const pr = parseFloat(document.getElementById('adv-precio').value); const prob = document.getElementById('adv-prob').value;
         if (isNaN(c) || isNaN(pr) || !prob) return alert("Completa costos, precios y probabilidad.");
 
-        const f = document.getElementById('adv-file');
-        const f2 = document.getElementById('adv-file2');
+        const files1 = window.stagedFiles && window.stagedFiles['adv-file'] ? window.stagedFiles['adv-file'] : [];
+        const files2 = window.stagedFiles && window.stagedFiles['adv-file2'] ? window.stagedFiles['adv-file2'] : [];
 
         if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
-            const hasOferta = (f && f.files.length > 0) || (p.datos && p.datos.doc_oferta);
-            const hasCostos = (f2 && f2.files.length > 0) || (p.datos && p.datos.doc_costos);
+            const hasOferta = (files1.length > 0) || (p.datos && p.datos.doc_oferta);
+            const hasCostos = (files2.length > 0) || (p.datos && p.datos.doc_costos);
             if (!hasOferta || !hasCostos) {
                 return alert("Es obligatorio adjuntar tanto la Oferta como el Cuadro de Costos.");
             }
@@ -1487,8 +1891,12 @@ async function processAdvance(nextStage) {
             p.probabilidad = prob === 'alta' ? 75 : prob === 'media' ? 50 : prob === 'baja' ? 25 : 10;
 
             const uploadTasks = [];
-            if (f && f.files.length > 0) uploadTasks.push(uploadFileToStorage(f.files[0], 'proyectos').then(url => p.datos.doc_oferta = url));
-            if (f2 && f2.files.length > 0) uploadTasks.push(uploadFileToStorage(f2.files[0], 'proyectos').then(url => p.datos.doc_costos = url));
+            if (files1.length > 0) {
+                uploadTasks.push(Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_oferta = urls));
+            }
+            if (files2.length > 0) {
+                uploadTasks.push(Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_costos = urls));
+            }
             await Promise.all(uploadTasks);
 
             logMsg += ` (Cotizado: ${formatCurrency(pr)}, Costo: ${formatCurrency(c)})`;

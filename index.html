@@ -101,16 +101,20 @@
                     <button class="btn-primary" onclick="openNewModal()">+ Nuevo Prospecto</button>
                 </header>
 
+                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
+                    <input type="text" id="opp-search" placeholder="🔍 Buscar oportunidad por código, cliente, proyecto, monto, etapa o estado..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                </div>
+
                 <div class="table-container glass-panel">
                     <table id="opportunitiesTable">
                         <thead>
-                            <tr>
-                                <th>Código</th>
-                                <th>Cliente</th>
-                                <th>Proyecto</th>
-                                <th>Etapa Actual</th>
-                                <th>Precio Cotizado</th>
-                                <th>Estado</th>
+                            <tr style="user-select: none;">
+                                <th onclick="toggleOppSort('codigo')" style="cursor: pointer;">Código <span id="sort-opp-codigo" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-opp-cliente" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-opp-proyecto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('etapa')" style="cursor: pointer;">Etapa Actual <span id="sort-opp-etapa" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('monto')" style="cursor: pointer;">Precio Cotizado <span id="sort-opp-monto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('estado')" style="cursor: pointer;">Estado <span id="sort-opp-estado" style="color: var(--text-muted);">↕</span></th>
                                 <th>Acción</th>
                             </tr>
                         </thead>
@@ -130,18 +134,22 @@
                     </div>
                 </header>
 
+                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
+                    <input type="text" id="proj-search" placeholder="🔍 Buscar proyecto por código, cliente, proyecto, encargado, monto, condición o %..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderProjectsList()">
+                </div>
+
                 <div class="table-container glass-panel">
                     <table id="projectsTable">
                         <thead>
-                            <tr>
-                                <th>Código</th>
-                                <th>Cliente</th>
-                                <th>Proyecto</th>
-                                <th>Encargado</th>
-                                <th>Total (Inc. IVA)</th>
-                                <th>Condición</th>
-                                <th>% Facturado</th>
-                                <th>% Cobrado</th>
+                            <tr style="user-select: none;">
+                                <th onclick="toggleProjSort('codigo')" style="cursor: pointer;">Código <span id="sort-proj-codigo" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-proj-cliente" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-proj-proyecto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('encargado')" style="cursor: pointer;">Encargado <span id="sort-proj-encargado" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('total')" style="cursor: pointer;">Total (Inc. IVA) <span id="sort-proj-total" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('condicion')" style="cursor: pointer;">Condición <span id="sort-proj-condicion" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('pctFacturado')" style="cursor: pointer;">% Facturado <span id="sort-proj-pctFacturado" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('pctCobrado')" style="cursor: pointer;">% Cobrado <span id="sort-proj-pctCobrado" style="color: var(--text-muted);">↕</span></th>
                                 <th>Acción</th>
                             </tr>
                         </thead>
@@ -162,15 +170,19 @@
                     <button class="btn-primary" id="btn-new-client-view" onclick="openClientModal()">+ Agregar Cliente</button>
                 </header>
 
+                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
+                    <input type="text" id="cli-search" placeholder="🔍 Buscar cliente por tipo, nombre/razón social, contacto principal, teléfono o correo..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderClientsTable()">
+                </div>
+
                 <div class="table-container glass-panel">
                     <table id="clientsTable">
                         <thead>
-                            <tr>
-                                <th>Tipo</th>
-                                <th>Nombre / Razón Social</th>
-                                <th>Contacto Principal</th>
-                                <th>Teléfono</th>
-                                <th>Correo</th>
+                            <tr style="user-select: none;">
+                                <th onclick="toggleCliSort('tipo')" style="cursor: pointer;">Tipo <span id="sort-cli-tipo" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('nombre')" style="cursor: pointer;">Nombre / Razón Social <span id="sort-cli-nombre" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('contacto')" style="cursor: pointer;">Contacto Principal <span id="sort-cli-contacto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('telefono')" style="cursor: pointer;">Teléfono <span id="sort-cli-telefono" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('correo')" style="cursor: pointer;">Correo <span id="sort-cli-correo" style="color: var(--text-muted);">↕</span></th>
                                 <th id="client-action-header">Acción</th>
                             </tr>
                         </thead>
@@ -737,6 +749,6 @@
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 
-    <script src="app_core.js"></script>
+    <script src="app_core.js?v=10"></script>
 </body>
 </html>
