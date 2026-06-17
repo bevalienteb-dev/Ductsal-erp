@@ -1604,6 +1604,26 @@ function renderInfo(p) {
     if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span></li>`;
     if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
 
+    const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+    if (isBigInstalacionInfo && p.estado === 'activo') {
+        const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
+        const isManager = currentUser && currentUser.role === 'manager';
+        if (isManager) {
+            list.innerHTML += `<li>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px; margin-bottom: 4px;">
+                    <input type="checkbox" id="info-auth-no-contract" ${isAuthorized ? 'checked' : ''} onchange="toggleManagerApproval(this.checked)">
+                    <span>Autorizar sin Contrato</span>
+                </label>
+            </li>`;
+        } else {
+            if (isAuthorized) {
+                list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
+            } else {
+                list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato (> $10k)</strong></li>`;
+            }
+        }
+    }
+
     if (p.estado === 'ganado') {
         list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${p.forma_pago}</li>`;
         if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${p.encargado}</li>`;
@@ -1654,6 +1674,101 @@ function renderInfo(p) {
         docsList.innerHTML = `<li style="color:var(--text-muted); font-size: 0.85rem;">No hay documentos adjuntos.</li>`;
     }
 }
+
+window.toggleManagerApproval = async function(checked) {
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    
+    if (!p.datos) p.datos = {};
+    if (checked) {
+        p.datos.autorizado_sin_contrato = true;
+        p.datos.autorizado_por = currentUser ? currentUser.nombre : 'Gerente';
+        addLogToProspect(p, `Autorización de venta sin contrato otorgada por gerente: ${p.datos.autorizado_por}`, true);
+    } else {
+        p.datos.autorizado_sin_contrato = false;
+        delete p.datos.autorizado_por;
+        addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
+    }
+    
+    showLoading('Guardando autorización...');
+    try {
+        await saveProspectToDB(p);
+        openDetail(p.id);
+    } catch(e) {
+        alert("Error al guardar autorización: " + e.message);
+    } finally {
+        hideLoading();
+    }
+};
+
+window.toggleManagerApprovalInForm = async function(checked) {
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    
+    if (!p.datos) p.datos = {};
+    if (checked) {
+        p.datos.autorizado_sin_contrato = true;
+        p.datos.autorizado_por = currentUser ? currentUser.nombre : 'Gerente';
+        addLogToProspect(p, `Autorización de venta sin contrato otorgada por gerente: ${p.datos.autorizado_por}`, true);
+    } else {
+        p.datos.autorizado_sin_contrato = false;
+        delete p.datos.autorizado_por;
+        addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
+    }
+    
+    showLoading('Guardando autorización...');
+    try {
+        await saveProspectToDB(p);
+        openDetail(p.id);
+        showAdvanceForm();
+    } catch(e) {
+        alert("Error al guardar autorización: " + e.message);
+    } finally {
+        hideLoading();
+    }
+};
+
+window.applyManagerBypass = async function() {
+    const managerId = document.getElementById('adv-auth-manager').value;
+    const password = document.getElementById('adv-auth-password').value;
+    
+    if (!managerId) {
+        return alert("Por favor seleccione un Gerente.");
+    }
+    if (!password) {
+        return alert("Por favor ingrese la contraseña del Gerente.");
+    }
+    
+    const manager = users.find(u => u.id === managerId);
+    if (!manager) {
+        return alert("Gerente no encontrado.");
+    }
+    
+    // Check password
+    if (manager.password !== password) {
+        return alert("Contraseña de gerente incorrecta.");
+    }
+    
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    
+    if (!p.datos) p.datos = {};
+    p.datos.autorizado_sin_contrato = true;
+    p.datos.autorizado_por = manager.nombre;
+    addLogToProspect(p, `Autorización de venta sin contrato otorgada en formulario de cierre por gerente: ${manager.nombre}`, true);
+    
+    showLoading('Aplicando autorización...');
+    try {
+        await saveProspectToDB(p);
+        openDetail(p.id);
+        showAdvanceForm();
+        alert("✔️ Autorización aplicada exitosamente.");
+    } catch(e) {
+        alert("Error al guardar autorización: " + e.message);
+    } finally {
+        hideLoading();
+    }
+};
 
 function renderLogs(p) {
     const cont = document.getElementById('logs-container'); 
@@ -1787,6 +1902,31 @@ async function processNewProposal() {
 
 // Google Maps auto-script removed per user request
 
+function toggleContractRequirement(checked) {
+    const contractSec = document.getElementById('contract-fields-container');
+    const noContractSec = document.getElementById('no-contract-fields-container');
+    const file1Contract = document.getElementById('adv-file1-contract');
+    const file1NoContract = document.getElementById('adv-file1-nocontract');
+    const companyDocsWarning = document.getElementById('company-docs-warning');
+    const companyDocsSuccess = document.getElementById('company-docs-success');
+
+    if (checked) {
+        if (contractSec) contractSec.style.display = 'none';
+        if (noContractSec) noContractSec.style.display = 'block';
+        if (file1Contract) file1Contract.required = false;
+        if (file1NoContract) file1NoContract.required = true;
+        if (companyDocsWarning) companyDocsWarning.style.display = 'none';
+        if (companyDocsSuccess) companyDocsSuccess.style.display = 'none';
+    } else {
+        if (contractSec) contractSec.style.display = 'block';
+        if (noContractSec) noContractSec.style.display = 'none';
+        if (file1Contract) file1Contract.required = true;
+        if (file1NoContract) file1NoContract.required = false;
+        if (companyDocsWarning) companyDocsWarning.style.display = 'block';
+        if (companyDocsSuccess) companyDocsSuccess.style.display = 'block';
+    }
+}
+
 function showAdvanceForm() {
     const p = prospects.find(x => x.id === currentProspectId); const container = document.getElementById('advance-form-container');
     const currentIndex = STAGES.indexOf(p.etapa); if (currentIndex >= STAGES.length - 1) return; const nextStage = STAGES[currentIndex + 1];
@@ -1872,7 +2012,7 @@ function showAdvanceForm() {
         const c = clients.find(x => x.id === p.clientId);
         if (!c.documentos) c.documentos = {};
 
-        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (p.precio_cotizado || 0) > 10000);
+        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
 
         let encOpts = settings.encargados.map(e => `<option value="${e}">${e}</option>`).join('');
         if (!encOpts) encOpts = `<option value="">-- Sin encargados (Configure en ajustes) --</option>`;
@@ -1885,22 +2025,79 @@ function showAdvanceForm() {
 
         formHTML += `<div class="form-group full-width" style="border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; margin-top: 1rem; margin-bottom: 0.5rem; color:var(--brand-gold);"><strong>Documentación Requerida para Cierre</strong></div>`;
 
-        if (isBigInstalacion) {
-            formHTML += `<div class="form-group full-width"><button type="button" class="btn-primary" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button><p style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">Haz clic aquí para imprimir el contrato ya rellenado. Luego, escanéalo firmado y súbelo a continuación.</p></div>`;
-            formHTML += `<div class="form-group full-width"><label>Contrato Firmado (Proyecto > $10k)</label><input type="file" id="adv-file1" required></div>`;
+        // DUI (from legal representative or individual customer) is ALWAYS mandatory at closure
+        if (!c.documentos.dui) {
+            formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Falta el DUI (del representante o cliente) en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.</div>`;
+        }
 
-            // Validate Client Docs in Directory
-            if (c.tipo === 'juridica') {
-                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc || !c.documentos.dui) {
-                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Faltan documentos legales de la Empresa en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube sus documentos antes de poder cerrar este proyecto.</div>`;
-                } else {
-                    formHTML += `<div class="form-group full-width" style="color:var(--success); font-size:0.9rem;">✔️ Documentación legal de la empresa ya registrada en el directorio.</div>`;
+        if (isBigInstalacion) {
+            const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
+            if (isAuthorized) {
+                formHTML += `<div class="form-group full-width" style="background: rgba(46, 204, 113, 0.1); border: 1px solid var(--success); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--success);">
+                        <span>\u2714 Cierre Sin Contrato Autorizado</span>
+                    </div>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 4px;">
+                        Esta venta ha sido autorizada sin contrato por el gerente: <strong>${p.datos.autorizado_por || 'Gerencia'}</strong>.
+                    </p>`;
+                if (currentUser && currentUser.role === 'manager') {
+                    formHTML += `<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px;">
+                        <input type="checkbox" id="adv-auth-no-contract-checkbox" checked onchange="toggleManagerApprovalInForm(this.checked)">
+                        <span>Revocar Autorización (Modo Gerente)</span>
+                    </label>`;
                 }
+                formHTML += `<input type="checkbox" id="adv-auth-no-contract" checked style="display: none;">
+                </div>`;
             } else {
-                if (!c.documentos.dui) {
-                    formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Falta el DUI en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.</div>`;
+                formHTML += `<div class="form-group full-width" style="background: rgba(212, 175, 55, 0.1); border: 1px solid var(--brand-gold); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--brand-gold);">
+                        <span>\u26A0 Requiere Contrato</span>
+                    </div>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 8px;">
+                        Esta venta supera los $10k e instalación, por lo que requiere un contrato y documentos de la empresa. Si el Gerente aprueba exceptuar el contrato, puede autorizarlo marcándolo en el panel lateral o ingresando sus credenciales aquí abajo.
+                    </p>`;
+                
+                if (currentUser && currentUser.role === 'manager') {
+                    formHTML += `<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px;">
+                        <input type="checkbox" id="adv-auth-no-contract-checkbox" onchange="toggleManagerApprovalInForm(this.checked)">
+                        <span>Autorizar sin Contrato (Modo Gerente)</span>
+                    </label>`;
+                } else {
+                    const managers = users.filter(u => u.role === 'manager' && u.activo !== false);
+                    const managerOpts = managers.map(m => `<option value="${m.id}">${m.nombre}</option>`).join('');
+                    formHTML += `<div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;">
+                        <span style="font-size: 0.8rem; font-weight: bold; color: var(--brand-gold); display: block; margin-bottom: 4px;">Autorización en Sitio por Gerente:</span>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <select id="adv-auth-manager" style="flex: 1; min-width: 150px; padding: 4px; background: rgba(0,0,0,0.2); color: white; border: 1px solid var(--panel-border); border-radius: 4px;">
+                                <option value="">-- Seleccione Gerente --</option>
+                                ${managerOpts}
+                            </select>
+                            <input type="password" id="adv-auth-password" placeholder="Contraseña de Gerente" style="flex: 1; min-width: 150px; padding: 4px; background: rgba(0,0,0,0.2); color: white; border: 1px solid var(--panel-border); border-radius: 4px;">
+                            <button type="button" class="btn-primary" style="padding: 4px 12px; font-size: 0.85rem;" onclick="applyManagerBypass()">Autorizar</button>
+                        </div>
+                    </div>`;
                 }
+                formHTML += `<input type="checkbox" id="adv-auth-no-contract" style="display: none;">
+                </div>`;
             }
+
+            // Contract fields
+            formHTML += `<div id="contract-fields-container" style="width: 100%; display: ${isAuthorized ? 'none' : 'contents'};">`;
+            formHTML += `<div class="form-group full-width"><button type="button" class="btn-primary" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button><p style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">Haz clic aquí para imprimir el contrato ya rellenado. Luego, escanéalo firmado y súbelo a continuación.</p></div>`;
+            formHTML += `<div class="form-group full-width"><label>Contrato Firmado (Proyecto > $10k)</label><input type="file" id="adv-file1-contract" ${isAuthorized ? '' : 'required'}></div>`;
+            formHTML += `</div>`; // end contract-fields-container
+
+            // Validate company documents (excluding DUI since it is validated above)
+            if (c.tipo === 'juridica') {
+                const hasCompanyDocs = c.documentos.escritura && c.documentos.credencial && c.documentos.nit && c.documentos.nrc;
+                formHTML += `<div id="company-docs-warning" class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1); display: ${(!hasCompanyDocs && !isAuthorized) ? 'block' : 'none'};">❌ Obligatorio: Faltan documentos corporativos de la Empresa en el Directorio de Clientes (Escritura, Credencial, NIT, NRC). Ve al Directorio, edita el cliente y súbelos antes de poder cerrar este proyecto.</div>`;
+                formHTML += `<div id="company-docs-success" class="form-group full-width" style="color:var(--success); font-size:0.9rem; display: ${(hasCompanyDocs && !isAuthorized) ? 'block' : 'none'};">✔️ Documentación legal corporativa ya registrada en el directorio.</div>`;
+            }
+
+            // No contract fields
+            formHTML += `<div id="no-contract-fields-container" style="width: 100%; display: ${isAuthorized ? 'block' : 'none'};">`;
+            formHTML += `<div class="form-group full-width"><label>Oferta Firmada por Cliente</label><input type="file" id="adv-file1-nocontract" ${isAuthorized ? 'required' : ''}></div>`;
+            formHTML += `</div>`; // end no-contract-fields-container
         } else {
             formHTML += `<div class="form-group full-width"><label>Oferta Firmada por Cliente</label><input type="file" id="adv-file1" required></div>`;
         }
@@ -1991,32 +2188,46 @@ async function processAdvance(nextStage) {
         const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if (!facNum) return alert("Ingresa el número de factura de anticipo.");
         if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); p.encargado = enc; logMsg += ` (Encargado: ${enc})`; }
 
-        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (p.precio_cotizado || 0) > 10000);
+        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+        const authNoContractEl = document.getElementById('adv-auth-no-contract');
+        const bypassContract = authNoContractEl ? authNoContractEl.checked : false;
+
         const c = clients.find(x => x.id === p.clientId);
         if (!c.documentos) c.documentos = {};
 
-        if (isBigInstalacion) {
+        // DUI is always mandatory for all closing transactions
+        if (!c.documentos.dui) {
+            return alert("❌ OBLIGATORIO: Falta el DUI (del representante o cliente) en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.");
+        }
+
+        if (isBigInstalacion && !bypassContract) {
             if (c.tipo === 'juridica') {
-                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc || !c.documentos.dui) {
-                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar todos los documentos legales (Escritura, Credencial, NIT, NRC, DUI).");
-                }
-            } else {
-                if (!c.documentos.dui) {
-                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar el DUI del cliente.");
+                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc) {
+                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar todos los documentos legales de la Empresa (Escritura, Credencial, NIT, NRC).");
                 }
             }
         }
 
-        const f1 = document.getElementById('adv-file1');
+        let f1;
+        if (isBigInstalacion) {
+            f1 = bypassContract ? document.getElementById('adv-file1-nocontract') : document.getElementById('adv-file1-contract');
+        } else {
+            f1 = document.getElementById('adv-file1');
+        }
+
         if (!f1 || f1.files.length === 0) return alert("Es obligatorio subir el Contrato o la Oferta firmada.");
 
         const f2 = document.getElementById('adv-file2');
         if (!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
 
+        if (isBigInstalacion && bypassContract) {
+            logMsg += ` (Autorizado sin contrato por gerente: ${p.datos.autorizado_por || 'Gerente'})`;
+        }
+
         showLoading('Generando cierre y subiendo documentos finales...');
         try {
             const uploadTasks = [];
-            if (isBigInstalacion) {
+            if (isBigInstalacion && !bypassContract) {
                 uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_contrato = url));
             } else {
                 uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_oferta_firmada = url));
