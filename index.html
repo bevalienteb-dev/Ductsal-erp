@@ -112,6 +112,7 @@
                                 <th onclick="toggleOppSort('codigo')" style="cursor: pointer;">Código <span id="sort-opp-codigo" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-opp-cliente" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-opp-proyecto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('vendedor')" style="cursor: pointer;">Vendedor / Asesor <span id="sort-opp-vendedor" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('etapa')" style="cursor: pointer;">Etapa Actual <span id="sort-opp-etapa" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('monto')" style="cursor: pointer;">Precio Cotizado <span id="sort-opp-monto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('estado')" style="cursor: pointer;">Estado <span id="sort-opp-estado" style="color: var(--text-muted);">↕</span></th>
@@ -534,6 +535,10 @@
                     </div>
                 </div>
                 <div class="form-group"><label>Nombre del proyecto</label><input type="text" id="new-proyecto" required></div>
+                <div class="form-group" id="vendedor-assign-group" style="display:none;">
+                    <label>Vendedor / Asesor Asignado</label>
+                    <select id="new-vendedor-select"></select>
+                </div>
                 <div class="form-group">
                     <label>Origen de la oportunidad</label>
                     <select id="new-origen" required>

@@ -38,8 +38,67 @@ function toggleOppSort(column) {
     updateOppSortIcons();
 }
 
+function getProspectVendorInfo(p) {
+    if (!p) return { id: '', name: 'Sistema', role: '' };
+
+    let userId = p.vendedorId || p.createdBy;
+    let name = p.vendedorName || p.createdByName || p.creado_por || p.vendedor;
+    let role = p.vendedorRole || p.createdByRole || '';
+
+    if (userId) {
+        const u = users.find(x => x.id === userId);
+        if (u) {
+            name = u.nombre;
+            role = u.role;
+        }
+    }
+
+    if (!name) name = 'Sistema / Desconocido';
+
+    let roleText = '';
+    if (role === 'manager') roleText = 'Gerente';
+    else if (role === 'gestor') roleText = 'Gestor de Ventas';
+    else if (role === 'vendedor') roleText = 'Vendedor';
+
+    return { id: userId, name, role: roleText };
+}
+
+function reassignVendor(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+    if (!currentUser || (currentUser.role !== 'manager' && currentUser.role !== 'gestor')) {
+        return alert("Solo los Gestores y Gerentes pueden reasignar vendedores.");
+    }
+    const currentVendor = getProspectVendorInfo(p);
+    const activeUsers = users.filter(u => u.activo !== false);
+    let optionsText = activeUsers.map((u, idx) => {
+        const rName = u.role === 'manager' ? 'Gerente' : (u.role === 'gestor' ? 'Gestor' : 'Vendedor');
+        return `${idx + 1}. ${u.nombre} (${rName})`;
+    }).join('\n');
+
+    let selStr = prompt(`Reasignar Oportunidad: "${p.proyecto}"\n\nVendedor Actual: ${currentVendor.name}\n\nIngresa el número del nuevo vendedor:\n${optionsText}`);
+    if (!selStr) return;
+
+    let targetUser = activeUsers.find(u => u.email.toLowerCase() === selStr.toLowerCase().trim() || u.nombre.toLowerCase().includes(selStr.toLowerCase().trim()));
+    const num = parseInt(selStr, 10);
+    if (!targetUser && !isNaN(num) && num > 0 && num <= activeUsers.length) {
+        targetUser = activeUsers[num - 1];
+    }
+
+    if (!targetUser) return alert("Vendedor no encontrado.");
+
+    p.vendedorId = targetUser.id;
+    p.vendedorName = targetUser.nombre;
+    p.vendedorRole = targetUser.role;
+    addLogToProspect(p, `Vendedor reasignado a: ${targetUser.nombre} por ${currentUser.nombre}`, true);
+    saveProspectToDB(p);
+    openDetail(p.id);
+    renderList();
+    alert(`✔️ Vendedor reasignado exitosamente a ${targetUser.nombre}.`);
+}
+
 function updateOppSortIcons() {
-    const columns = ['codigo', 'cliente', 'proyecto', 'etapa', 'monto', 'estado'];
+    const columns = ['codigo', 'cliente', 'proyecto', 'vendedor', 'etapa', 'monto', 'estado'];
     columns.forEach(col => {
         const el = document.getElementById(`sort-opp-${col}`);
         if (!el) return;
@@ -132,10 +191,10 @@ function updateSelectedFilesList(input) {
         }
         return;
     }
-    
+
     if (!window.stagedFiles) window.stagedFiles = {};
     if (!window.stagedFiles[input.id]) window.stagedFiles[input.id] = [];
-    
+
     if (input.files && input.files.length > 0) {
         const newFiles = Array.from(input.files);
         newFiles.forEach(file => {
@@ -144,7 +203,7 @@ function updateSelectedFilesList(input) {
             }
         });
     }
-    
+
     input.value = '';
     renderStagedFiles(input.id);
 }
@@ -153,19 +212,19 @@ function renderStagedFiles(inputId) {
     const container = document.getElementById(inputId + '-list');
     if (!container) return;
     container.innerHTML = '';
-    
+
     const files = window.stagedFiles && window.stagedFiles[inputId] ? window.stagedFiles[inputId] : [];
     if (files.length === 0) {
         container.innerHTML = '<span style="color:var(--text-muted); font-size:0.85rem; font-style:italic;">Ningún archivo seleccionado.</span>';
         return;
     }
-    
+
     const wrapper = document.createElement('div');
     wrapper.style.display = 'flex';
     wrapper.style.flexDirection = 'column';
     wrapper.style.gap = '6px';
     wrapper.style.marginTop = '8px';
-    
+
     files.forEach((file, index) => {
         const item = document.createElement('div');
         item.style.display = 'flex';
@@ -176,14 +235,14 @@ function renderStagedFiles(inputId) {
         item.style.borderRadius = '6px';
         item.style.border = '1px solid rgba(255, 255, 255, 0.08)';
         item.style.fontSize = '0.85rem';
-        
+
         const nameText = document.createElement('span');
         nameText.textContent = file.name;
         nameText.style.color = 'var(--text-primary)';
         nameText.style.wordBreak = 'break-all';
         nameText.style.flex = '1';
         nameText.style.marginRight = '12px';
-        
+
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.innerHTML = '✕';
@@ -201,12 +260,12 @@ function renderStagedFiles(inputId) {
             e.preventDefault();
             removeStagedFile(inputId, index);
         };
-        
+
         item.appendChild(nameText);
         item.appendChild(removeBtn);
         wrapper.appendChild(item);
     });
-    
+
     container.appendChild(wrapper);
 }
 
@@ -220,23 +279,23 @@ function removeStagedFile(inputId, index) {
 async function uploadFileToStorage(file, folderName) {
     if (!file) return null;
     let taskId;
-    
+
     if (isLocal) {
         taskId = 'mock_' + Date.now().toString();
         activeUploads++;
         uploadProgressMap.set(taskId, { transferred: 0, total: file.size || 1000000 });
         updateGlobalProgress();
-        
+
         await new Promise(resolve => {
             let p = 0;
             const interval = setInterval(() => {
                 p += 20;
-                uploadProgressMap.set(taskId, { transferred: (file.size || 1000000) * (p/100), total: file.size || 1000000 });
+                uploadProgressMap.set(taskId, { transferred: (file.size || 1000000) * (p / 100), total: file.size || 1000000 });
                 updateGlobalProgress();
-                if(p >= 100) { clearInterval(interval); resolve(); }
+                if (p >= 100) { clearInterval(interval); resolve(); }
             }, 300);
         });
-        
+
         activeUploads--;
         uploadProgressMap.delete(taskId);
         updateGlobalProgress();
@@ -692,12 +751,12 @@ function renderClientsTable() {
             const isNatural = c.tipo === 'natural';
             const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
             const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-');
-            
+
             return (c.tipo || '').toLowerCase().includes(searchVal) ||
-                   mainName.toLowerCase().includes(searchVal) ||
-                   contactName.toLowerCase().includes(searchVal) ||
-                   (c.telefono || '').toLowerCase().includes(searchVal) ||
-                   (c.correo || '').toLowerCase().includes(searchVal);
+                mainName.toLowerCase().includes(searchVal) ||
+                contactName.toLowerCase().includes(searchVal) ||
+                (c.telefono || '').toLowerCase().includes(searchVal) ||
+                (c.correo || '').toLowerCase().includes(searchVal);
         });
     }
 
@@ -706,10 +765,10 @@ function renderClientsTable() {
         filtered.sort((a, b) => {
             let valA = '';
             let valB = '';
-            
+
             const isNaturalA = a.tipo === 'natural';
             const isNaturalB = b.tipo === 'natural';
-            
+
             if (cliSortCol === 'tipo') {
                 valA = a.tipo || '';
                 valB = b.tipo || '';
@@ -726,7 +785,7 @@ function renderClientsTable() {
                 valA = a.correo || '';
                 valB = b.correo || '';
             }
-            
+
             return cliSortDir === 'asc'
                 ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
                 : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
@@ -791,7 +850,7 @@ async function saveClient(e) {
         const editId = document.getElementById('client-id-edit').value;
         const type = document.getElementById('client-tipo').value;
         if (!type) { hideLoading(); return alert("Debes seleccionar el Tipo de Persona obligatoriamente."); }
-        
+
         const tel = document.getElementById('cli-telefono').value.trim();
         const email = document.getElementById('cli-correo').value.trim();
         if (!tel && !email) { hideLoading(); return alert("Debe ingresar obligatoriamente un teléfono o correo."); }
@@ -861,7 +920,7 @@ function getClientName(clientId) {
 function renderList() {
     let filtered = prospects;
     if (currentUser && currentUser.role === 'vendedor') {
-        filtered = filtered.filter(p => p.createdBy === currentUser.id);
+        filtered = filtered.filter(p => p.createdBy === currentUser.id || p.vendedorId === currentUser.id);
     }
     const tbody = document.getElementById('opp-table-body'); tbody.innerHTML = '';
     let visibleProspects = filtered.filter(p => p.estado !== 'ganado');
@@ -873,10 +932,12 @@ function renderList() {
             const codeMatch = (p.codigo || '').toLowerCase().includes(searchVal) || p.id.substring(p.id.length - 4).toLowerCase().includes(searchVal);
             const clientMatch = getClientName(p.clientId).toLowerCase().includes(searchVal);
             const projectMatch = (p.proyecto || '').toLowerCase().includes(searchVal);
+            const vendorInfo = getProspectVendorInfo(p);
+            const vendorMatch = vendorInfo.name.toLowerCase().includes(searchVal) || vendorInfo.role.toLowerCase().includes(searchVal);
             const stageMatch = (p.etapa || '').toLowerCase().includes(searchVal);
             const amountMatch = p.precio_cotizado ? formatCurrency(p.precio_cotizado).toLowerCase().includes(searchVal) || String(p.precio_cotizado).includes(searchVal) : false;
             const statusMatch = (p.estado || '').toLowerCase().includes(searchVal);
-            return codeMatch || clientMatch || projectMatch || stageMatch || amountMatch || statusMatch;
+            return codeMatch || clientMatch || projectMatch || vendorMatch || stageMatch || amountMatch || statusMatch;
         });
     }
 
@@ -885,7 +946,7 @@ function renderList() {
         visibleProspects.sort((a, b) => {
             let valA = '';
             let valB = '';
-            
+
             if (oppSortCol === 'codigo') {
                 valA = a.codigo || a.id.substring(a.id.length - 4);
                 valB = b.codigo || b.id.substring(b.id.length - 4);
@@ -895,6 +956,9 @@ function renderList() {
             } else if (oppSortCol === 'proyecto') {
                 valA = a.proyecto || '';
                 valB = b.proyecto || '';
+            } else if (oppSortCol === 'vendedor') {
+                valA = getProspectVendorInfo(a).name;
+                valB = getProspectVendorInfo(b).name;
             } else if (oppSortCol === 'etapa') {
                 valA = a.etapa || '';
                 valB = b.etapa || '';
@@ -905,7 +969,7 @@ function renderList() {
                 valA = a.estado || '';
                 valB = b.estado || '';
             }
-            
+
             if (typeof valA === 'string') {
                 return oppSortDir === 'asc'
                     ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
@@ -919,7 +983,7 @@ function renderList() {
     }
 
     if (visibleProspects.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
         return;
     }
 
@@ -938,7 +1002,10 @@ function renderList() {
             tr.style.color = '#ff6b6b';
         }
 
-        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
+        const vendor = getProspectVendorInfo(p);
+        const vendorBadge = vendor.role ? `<span style="font-size:0.75rem; color:var(--text-secondary); display:block;">(${vendor.role})</span>` : '';
+
+        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -963,7 +1030,7 @@ function renderProjectsList() {
 
         const pctFacturado = total > 0 ? Math.min(100, (totalFacturado / total) * 100) : 0;
         const pctCobrado = total > 0 ? Math.min(100, (totalCobrado / total) * 100) : 0;
-        
+
         return {
             original: p,
             codigo: p.codigo || p.id.substring(p.id.length - 4),
@@ -982,14 +1049,14 @@ function renderProjectsList() {
     if (searchVal) {
         mappedProjects = mappedProjects.filter(mp => {
             return mp.codigo.toLowerCase().includes(searchVal) ||
-                   mp.cliente.toLowerCase().includes(searchVal) ||
-                   mp.proyecto.toLowerCase().includes(searchVal) ||
-                   mp.encargado.toLowerCase().includes(searchVal) ||
-                   mp.condicion.toLowerCase().includes(searchVal) ||
-                   formatCurrency(mp.total).toLowerCase().includes(searchVal) ||
-                   String(mp.total).includes(searchVal) ||
-                   mp.pctFacturado.toFixed(0).includes(searchVal) ||
-                   mp.pctCobrado.toFixed(0).includes(searchVal);
+                mp.cliente.toLowerCase().includes(searchVal) ||
+                mp.proyecto.toLowerCase().includes(searchVal) ||
+                mp.encargado.toLowerCase().includes(searchVal) ||
+                mp.condicion.toLowerCase().includes(searchVal) ||
+                formatCurrency(mp.total).toLowerCase().includes(searchVal) ||
+                String(mp.total).includes(searchVal) ||
+                mp.pctFacturado.toFixed(0).includes(searchVal) ||
+                mp.pctCobrado.toFixed(0).includes(searchVal);
         });
     }
 
@@ -998,7 +1065,7 @@ function renderProjectsList() {
         mappedProjects.sort((a, b) => {
             let valA = a[projSortCol];
             let valB = b[projSortCol];
-            
+
             if (typeof valA === 'string') {
                 return projSortDir === 'asc'
                     ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
@@ -1039,7 +1106,24 @@ function renderProjectsList() {
     });
 }
 
-function openNewModal() { renderClientSelect(); document.getElementById('newProspectModal').style.display = 'block'; }
+function openNewModal() {
+    renderClientSelect();
+    const vendorGroup = document.getElementById('vendedor-assign-group');
+    const vendorSelect = document.getElementById('new-vendedor-select');
+    if (vendorGroup && vendorSelect) {
+        if (currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+            vendorGroup.style.display = 'block';
+            vendorSelect.innerHTML = `<option value="${currentUser.id}">Mismo Creador: ${currentUser.nombre} (${currentUser.role === 'manager' ? 'Gerente' : 'Gestor'})</option>`;
+            users.filter(u => u.activo !== false && u.id !== currentUser.id).forEach(u => {
+                const rText = u.role === 'manager' ? 'Gerente' : (u.role === 'gestor' ? 'Gestor' : 'Vendedor');
+                vendorSelect.innerHTML += `<option value="${u.id}">${u.nombre} (${rText})</option>`;
+            });
+        } else {
+            vendorGroup.style.display = 'none';
+        }
+    }
+    document.getElementById('newProspectModal').style.display = 'block';
+}
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function renderClientSelect() {
     const select = document.getElementById('new-cliente-select'); select.innerHTML = '<option value="">-- Selecciona Cliente --</option>';
@@ -1051,11 +1135,31 @@ function renderClientSelect() {
 }
 function createNewProspect(e) {
     e.preventDefault(); const clientId = document.getElementById('new-cliente-select').value; if (!clientId) return alert("Debes seleccionar un cliente");
+
+    let assignedVendorId = currentUser ? currentUser.id : 'sistema';
+    let assignedVendorName = currentUser ? currentUser.nombre : 'Sistema';
+    let assignedVendorRole = currentUser ? currentUser.role : '';
+
+    const vendorSelect = document.getElementById('new-vendedor-select');
+    if (vendorSelect && vendorSelect.value && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+        const targetUser = users.find(u => u.id === vendorSelect.value);
+        if (targetUser) {
+            assignedVendorId = targetUser.id;
+            assignedVendorName = targetUser.nombre;
+            assignedVendorRole = targetUser.role;
+        }
+    }
+
     const p = {
         id: Date.now().toString(),
         codigo: generateProspectCode(),
         clientId: clientId,
         createdBy: currentUser ? currentUser.id : 'sistema',
+        createdByName: currentUser ? currentUser.nombre : 'Sistema',
+        createdByRole: currentUser ? currentUser.role : '',
+        vendedorId: assignedVendorId,
+        vendedorName: assignedVendorName,
+        vendedorRole: assignedVendorRole,
         proyecto: document.getElementById('new-proyecto').value,
         origen: document.getElementById('new-origen').value,
         tipo_proyecto: document.getElementById('new-tipo-proyecto').value,
@@ -1068,7 +1172,11 @@ function createNewProspect(e) {
         datos: {},
         facturas: []
     };
-    addLogToProspect(p, 'Prospecto creado. Origen: ' + p.origen, true); saveProspectToDB(p); closeModal('newProspectModal'); document.getElementById('newProspectForm').reset(); renderList();
+    addLogToProspect(p, `Prospecto creado por ${p.createdByName}. Vendedor asignado: ${p.vendedorName}. Origen: ${p.origen}`, true);
+    saveProspectToDB(p);
+    closeModal('newProspectModal');
+    document.getElementById('newProspectForm').reset();
+    renderList();
 }
 
 // ========================
@@ -1082,7 +1190,7 @@ function openDetail(id) {
     document.getElementById('advance-form-container').innerHTML = '';
     const textEl = document.getElementById('new-log-text');
     if (textEl) textEl.value = '';
-    
+
     const payForm = document.getElementById('payment-form'); if (payForm) payForm.style.display = 'none';
     const invForm = document.getElementById('invoice-form'); if (invForm) invForm.style.display = 'none';
 
@@ -1446,12 +1554,12 @@ function showPaymentForm(invoiceId, invoiceNumero) {
     document.getElementById('pay-invoice-id').value = invoiceId;
     document.getElementById('pay-idx-edit').value = '';
     document.getElementById('pay-monto-nuevo').value = ''; document.getElementById('pay-ref').value = '';
-    
+
     // Configurar método de pago dinámicamente según el cliente
     const p = prospects.find(x => x.id === currentProspectId);
     const selectMetodo = document.getElementById('pay-metodo');
     let isGranContribuyente = false;
-    
+
     // Limpiar opciones de retención previas
     Array.from(selectMetodo.options).forEach(opt => {
         if (opt.value === 'retencion_1pct') opt.remove();
@@ -1460,10 +1568,10 @@ function showPaymentForm(invoiceId, invoiceNumero) {
     if (p && p.facturas) {
         const fac = p.facturas.find(f => f.id === invoiceId);
         if (fac) document.getElementById('pay-monto-nuevo').dataset.invoiceTotal = fac.monto;
-        
+
         const client = clients.find(c => c.id === p.clientId);
         isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
-        
+
         const opt = document.createElement('option');
         opt.value = 'retencion_1pct';
         opt.textContent = isGranContribuyente ? 'Comprobante de Retención (1%)' : 'Retención 1% (Solo Grandes Contribuyentes)';
@@ -1499,22 +1607,22 @@ function editPayment(invoiceId, paymentIndex) {
     document.getElementById('pay-idx-edit').value = paymentIndex;
     document.getElementById('pay-monto-nuevo').value = pay.monto;
     document.getElementById('pay-monto-nuevo').dataset.invoiceTotal = f.monto;
-    
+
     // Configurar método de pago dinámicamente según el cliente
     const selectMetodo = document.getElementById('pay-metodo');
     Array.from(selectMetodo.options).forEach(opt => {
         if (opt.value === 'retencion_1pct') opt.remove();
     });
-    
+
     const client = clients.find(c => c.id === p.clientId);
     const isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
-    
+
     const opt = document.createElement('option');
     opt.value = 'retencion_1pct';
     opt.textContent = isGranContribuyente ? 'Comprobante de Retención (1%)' : 'Retención 1% (Solo Grandes Contribuyentes)';
     opt.disabled = !isGranContribuyente;
     selectMetodo.appendChild(opt);
-    
+
     document.getElementById('pay-metodo').value = pay.metodo;
     document.getElementById('pay-ref').value = pay.ref;
 }
@@ -1584,15 +1692,22 @@ function renderTracker(p) {
 
 function renderInfo(p) {
     const list = document.getElementById('info-list');
-    
+
     // Evitar crasheo si p.fecha_creacion no existe (ej: importado de Excel)
     let fechaDate = new Date();
     if (p.fecha_creacion) {
         let parsed = new Date(p.fecha_creacion);
         if (!isNaN(parsed)) fechaDate = parsed;
     }
-    
-    list.innerHTML = `<li><strong>Creación:</strong> ${fechaDate.toLocaleDateString('es-MX')}</li><li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
+
+    const vendor = getProspectVendorInfo(p);
+    let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
+    if (currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+        vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
+    }
+    vendorLinkHTML += `</li>`;
+
+    list.innerHTML = `<li><strong>Creación:</strong> ${fechaDate.toLocaleDateString('es-MX')}</li>${vendorLinkHTML}<li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
     if (!p.datos) p.datos = {};
     if (p.datos.ubicacion) {
         list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
@@ -1675,10 +1790,10 @@ function renderInfo(p) {
     }
 }
 
-window.toggleManagerApproval = async function(checked) {
+window.toggleManagerApproval = async function (checked) {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    
+
     if (!p.datos) p.datos = {};
     if (checked) {
         p.datos.autorizado_sin_contrato = true;
@@ -1689,22 +1804,22 @@ window.toggleManagerApproval = async function(checked) {
         delete p.datos.autorizado_por;
         addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
     }
-    
+
     showLoading('Guardando autorización...');
     try {
         await saveProspectToDB(p);
         openDetail(p.id);
-    } catch(e) {
+    } catch (e) {
         alert("Error al guardar autorización: " + e.message);
     } finally {
         hideLoading();
     }
 };
 
-window.toggleManagerApprovalInForm = async function(checked) {
+window.toggleManagerApprovalInForm = async function (checked) {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    
+
     if (!p.datos) p.datos = {};
     if (checked) {
         p.datos.autorizado_sin_contrato = true;
@@ -1715,55 +1830,55 @@ window.toggleManagerApprovalInForm = async function(checked) {
         delete p.datos.autorizado_por;
         addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
     }
-    
+
     showLoading('Guardando autorización...');
     try {
         await saveProspectToDB(p);
         openDetail(p.id);
         showAdvanceForm();
-    } catch(e) {
+    } catch (e) {
         alert("Error al guardar autorización: " + e.message);
     } finally {
         hideLoading();
     }
 };
 
-window.applyManagerBypass = async function() {
+window.applyManagerBypass = async function () {
     const managerId = document.getElementById('adv-auth-manager').value;
     const password = document.getElementById('adv-auth-password').value;
-    
+
     if (!managerId) {
         return alert("Por favor seleccione un Gerente.");
     }
     if (!password) {
         return alert("Por favor ingrese la contraseña del Gerente.");
     }
-    
+
     const manager = users.find(u => u.id === managerId);
     if (!manager) {
         return alert("Gerente no encontrado.");
     }
-    
+
     // Check password
     if (manager.password !== password) {
         return alert("Contraseña de gerente incorrecta.");
     }
-    
+
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    
+
     if (!p.datos) p.datos = {};
     p.datos.autorizado_sin_contrato = true;
     p.datos.autorizado_por = manager.nombre;
     addLogToProspect(p, `Autorización de venta sin contrato otorgada en formulario de cierre por gerente: ${manager.nombre}`, true);
-    
+
     showLoading('Aplicando autorización...');
     try {
         await saveProspectToDB(p);
         openDetail(p.id);
         showAdvanceForm();
         alert("✔️ Autorización aplicada exitosamente.");
-    } catch(e) {
+    } catch (e) {
         alert("Error al guardar autorización: " + e.message);
     } finally {
         hideLoading();
@@ -1771,17 +1886,17 @@ window.applyManagerBypass = async function() {
 };
 
 function renderLogs(p) {
-    const cont = document.getElementById('logs-container'); 
+    const cont = document.getElementById('logs-container');
     if (!cont) return;
     cont.innerHTML = '';
     if (!p || !p.logs || !Array.isArray(p.logs)) return;
-    
+
     // Clonamos el array para no mutarlo al hacer reverse
     const safeLogs = JSON.parse(JSON.stringify(p.logs));
     const origLen = p.logs.length;
-    safeLogs.reverse().forEach((l, i) => { 
+    safeLogs.reverse().forEach((l, i) => {
         const realIdx = origLen - 1 - i;
-        
+
         let deleteBtn = '';
         if (l.auto !== true && l.auto !== 'true') {
             deleteBtn = `<span class="cursor-pointer" style="margin-left:10px; font-size:0.75rem; color:var(--danger); font-weight:bold; text-decoration:underline;" onclick="deleteLog('${p.id}', ${realIdx})">[X Eliminar]</span>`;
@@ -1790,7 +1905,7 @@ function renderLogs(p) {
         cont.innerHTML += `<div class="log-item ${l.auto ? 'auto' : ''}">
             <span class="date">${formatDate(l.date)}</span>${l.text}
             ${deleteBtn}
-        </div>`; 
+        </div>`;
     });
 }
 
@@ -1798,9 +1913,9 @@ function deleteLog(prospectId, idx) {
     if (!confirm('¿Estás seguro de eliminar esta nota?')) return;
     let pObj = prospects.find(x => x.id === prospectId);
     if (!pObj || !pObj.logs) return;
-    
+
     pObj.logs.splice(idx, 1);
-    
+
     const cleanObj = JSON.parse(JSON.stringify(pObj));
     db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
         renderLogs(pObj);
@@ -1821,13 +1936,13 @@ function addLog() {
     let pObj = prospects.find(x => x.id === currentProspectId);
     if (!pObj) { if (btnEl) btnEl.disabled = false; return; }
 
-    addLogToProspect(pObj, text, false); 
-    
+    addLogToProspect(pObj, text, false);
+
     // Purga total: romper referencia y limpiar campos undefined para Firebase
     const cleanObj = JSON.parse(JSON.stringify(pObj));
-    
+
     db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
-        textEl.value = ''; 
+        textEl.value = '';
         if (btnEl) btnEl.disabled = false;
         renderLogs(pObj);
     }).catch(err => {
@@ -2056,7 +2171,7 @@ function showAdvanceForm() {
                     <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 8px;">
                         Esta venta supera los $10k e instalación, por lo que requiere un contrato y documentos de la empresa. Si el Gerente aprueba exceptuar el contrato, puede autorizarlo marcándolo en el panel lateral o ingresando sus credenciales aquí abajo.
                     </p>`;
-                
+
                 if (currentUser && currentUser.role === 'manager') {
                     formHTML += `<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px;">
                         <input type="checkbox" id="adv-auth-no-contract-checkbox" onchange="toggleManagerApprovalInForm(this.checked)">
@@ -2104,9 +2219,9 @@ function showAdvanceForm() {
         formHTML += `<div class="form-group full-width"><label>Copia de Factura / C.F. Emitida</label><input type="file" id="adv-file2" required></div>`;
     }
     formHTML += `</div><button type="button" class="btn-primary mt-2" onclick="processAdvance('${nextStage}')">Confirmar Avance</button><button type="button" class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>`;
-    
+
     window.stagedFiles = { 'adv-file': [], 'adv-file2': [] };
-    
+
     container.innerHTML = formHTML;
 
     if (document.getElementById('adv-file-list')) renderStagedFiles('adv-file');
@@ -2287,19 +2402,19 @@ function populateTimeFilter() {
     const select = document.getElementById('dash-time-filter');
     const currentVal = select ? select.value : 'all';
     if (!select) return;
-    
+
     select.innerHTML = '<option value="all">Histórico Completo</option>';
-    
-    const now = new Date(); 
-    const currentYear = now.getFullYear(); 
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
-    
+
     select.innerHTML += `<option value="year_${currentYear}">YTD (Año en curso)</option>`;
-    
-    for (let i = 0; i <= currentMonth; i++) { 
-        select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`; 
+
+    for (let i = 0; i <= currentMonth; i++) {
+        select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`;
     }
-    
+
     if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
         select.value = currentVal;
     } else {
@@ -2599,7 +2714,7 @@ function renderCharts(filtered) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            indexAxis: 'x', 
+            indexAxis: 'x',
             scales: {
                 x: { stacked: true, display: true, ticks: { font: { size: 10 } } },
                 y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
@@ -2608,7 +2723,7 @@ function renderCharts(filtered) {
                 legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } },
                 tooltip: {
                     callbacks: {
-                        label: function(context) {
+                        label: function (context) {
                             return context.dataset.label + ': ' + context.raw + ' Ops';
                         }
                     }
