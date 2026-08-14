@@ -4,7 +4,7 @@ const firebaseConfig = {
     apiKey: "AIzaSyBSnGhwh043oV_zW1FlE5z7N8_ywh9FUEA",
     authDomain: "ductsal-erp.firebaseapp.com",
     projectId: "ductsal-erp",
-    storageBucket: "ductsal-erp.firebasestorage.app",
+    storageBucket: "ductsal-erp.appspot.com",
     messagingSenderId: "948658286825",
     appId: "1:948658286825:web:e3008dc00f714e57aa0078",
     measurementId: "G-32JZ4MV4FR"
@@ -285,17 +285,24 @@ async function uploadFileToStorage(file, folderName) {
     if (!file) return null;
     let taskId;
 
-    let attempt = 0;
-    const maxRetries = 2;
+    // Probar primero el bucket ductsal-erp.appspot.com y como respaldo ductsal-erp.firebasestorage.app
+    const bucketsToTry = ["ductsal-erp.appspot.com", "ductsal-erp.firebasestorage.app"];
+    let lastError = null;
 
-    while (attempt <= maxRetries) {
+    for (let b = 0; b < bucketsToTry.length; b++) {
+        const bucketName = bucketsToTry[b];
         try {
-            // Comprimir si es imagen (max 1280x1280, 70% calidad)
             const processedFile = await compressImage(file, 1280, 1280, 0.7);
-
             const ext = processedFile.name.split('.').pop();
             const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-            const storageRef = storage.ref();
+            
+            let storageRef;
+            try {
+                storageRef = firebase.app().storage(`gs://${bucketName}`).ref();
+            } catch (e) {
+                storageRef = storage.ref();
+            }
+
             const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
 
             taskId = Date.now().toString() + Math.random().toString();
@@ -308,18 +315,18 @@ async function uploadFileToStorage(file, folderName) {
                 let timeoutId = null;
                 let lastTransferred = -1;
 
-                // Timeout watchdog: si no hay avance en 45 segundos, abortar e intentar reintento
+                // Watchdog de 12 segundos: si no transfiere datos, aborta para probar el siguiente bucket
                 const checkProgress = () => {
                     const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
                     if (currentTransferred === lastTransferred && currentTransferred === 0) {
                         uploadTask.cancel();
-                        reject(new Error("La subida fue pausada por inactividad de red. Reintentando..."));
+                        reject(new Error(`Timeout de subida en bucket ${bucketName}`));
                     } else {
                         lastTransferred = currentTransferred;
-                        timeoutId = setTimeout(checkProgress, 45000);
+                        timeoutId = setTimeout(checkProgress, 12000);
                     }
                 };
-                timeoutId = setTimeout(checkProgress, 45000);
+                timeoutId = setTimeout(checkProgress, 12000);
 
                 uploadTask.on('state_changed',
                     (snapshot) => {
@@ -328,6 +335,7 @@ async function uploadFileToStorage(file, folderName) {
                     },
                     (error) => {
                         if (timeoutId) clearTimeout(timeoutId);
+                        console.warn(`Error en subida Firebase Storage (bucket: ${bucketName}):`, error);
                         reject(error);
                     },
                     () => {
@@ -343,21 +351,22 @@ async function uploadFileToStorage(file, folderName) {
 
             const url = await fileRef.getDownloadURL();
             return { name: processedFile.name, url: url };
+
         } catch (e) {
             if (typeof taskId !== 'undefined') {
                 activeUploads = Math.max(0, activeUploads - 1);
                 uploadProgressMap.delete(taskId);
                 updateGlobalProgress();
             }
-            attempt++;
-            if (attempt > maxRetries) {
-                console.error("Error uploading file to Storage after retries", e);
-                throw e;
-            }
-            console.warn(`Intento ${attempt} de subida falló, reintentando en 1.5s...`, e);
-            await new Promise(r => setTimeout(r, 1500 * attempt));
+            lastError = e;
+            console.warn(`Intento con bucket ${bucketName} falló:`, e);
         }
     }
+
+    const errorMsg = lastError ? (lastError.message || lastError.code || JSON.stringify(lastError)) : "Error de red desconocido";
+    console.error("Error definitivo subiendo archivo a Firebase Storage:", lastError);
+    alert("❌ Error al subir el archivo a Firebase Storage:\n" + errorMsg);
+    throw lastError;
 }
 
 const STAGES = ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
