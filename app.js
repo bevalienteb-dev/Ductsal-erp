@@ -285,28 +285,6 @@ async function uploadFileToStorage(file, folderName) {
     if (!file) return null;
     let taskId;
 
-    if (isLocal) {
-        taskId = 'mock_' + Date.now().toString();
-        activeUploads++;
-        uploadProgressMap.set(taskId, { transferred: 0, total: file.size || 1000000 });
-        updateGlobalProgress();
-
-        await new Promise(resolve => {
-            let p = 0;
-            const interval = setInterval(() => {
-                p += 20;
-                uploadProgressMap.set(taskId, { transferred: (file.size || 1000000) * (p / 100), total: file.size || 1000000 });
-                updateGlobalProgress();
-                if (p >= 100) { clearInterval(interval); resolve(); }
-            }, 300);
-        });
-
-        activeUploads--;
-        uploadProgressMap.delete(taskId);
-        updateGlobalProgress();
-        return { name: file.name || 'mock_file.pdf', url: 'https://dummyimage.com/600x400/000/fff&text=Archivo+Prueba' };
-    }
-
     let attempt = 0;
     const maxRetries = 2;
 
@@ -839,17 +817,27 @@ function openClientModal(clientId = null) {
                 document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || '';
                 document.getElementById('nat-profesion').value = c.profesion || ''; document.getElementById('nat-domicilio').value = c.domicilio || '';
                 const sts = document.getElementById('nat-dui-status');
-                if (c.documentos && c.documentos.dui) sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: ${c.documentos.dui}</span>`; else sts.innerHTML = '';
+                if (c.documentos && c.documentos.dui) {
+                    const docUrl = typeof c.documentos.dui === 'string' ? c.documentos.dui : c.documentos.dui.url;
+                    sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: <a href="${docUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">Ver DUI</a></span>`;
+                } else { sts.innerHTML = ''; }
             }
             else {
                 document.getElementById('jur-empresa').value = c.empresa || ''; document.getElementById('jur-contacto').value = c.contacto || ''; document.getElementById('jur-nit').value = c.nit || ''; document.getElementById('jur-nrc').value = c.nrc || '';
                 document.getElementById('jur-rep-legal').value = c.rep_legal || ''; document.getElementById('jur-profesion-rep').value = c.profesion_rep || ''; document.getElementById('jur-domicilio-rep').value = c.domicilio_rep || '';
                 document.getElementById('jur-dui-rep').value = c.dui_rep || ''; document.getElementById('jur-nit-rep').value = c.nit_rep || '';
+                document.getElementById('jur-gran-contribuyente').checked = c.is_gran_contribuyente === true;
                 const jSts = document.getElementById('jur-docs-status');
                 if (c.documentos && Object.keys(c.documentos).length > 0) {
-                    let text = "Archivos en expediente: ";
-                    if (c.documentos.escritura) text += "[Escritura] "; if (c.documentos.credencial) text += "[Credencial] "; if (c.documentos.nit) text += "[NIT] "; if (c.documentos.nrc) text += "[NRC] "; if (c.documentos.dui) text += "[DUI Rep.] ";
-                    jSts.innerHTML = `<span style="color:var(--success);">${text}</span>`;
+                    let links = [];
+                    const keysMap = { escritura: 'Escritura', mods_escritura: 'Mods. Escritura', credencial: 'Credencial', nit: 'NIT', nrc: 'NRC', dui: 'DUI Rep.' };
+                    for (let k in keysMap) {
+                        if (c.documentos[k]) {
+                            const url = typeof c.documentos[k] === 'string' ? c.documentos[k] : c.documentos[k].url;
+                            links.push(`<a href="${url}" target="_blank" style="color:var(--brand-gold); text-decoration:underline; margin-right:8px;">[${keysMap[k]}]</a>`);
+                        }
+                    }
+                    jSts.innerHTML = links.length > 0 ? `<span style="color:var(--success);">Archivos en expediente: ${links.join(' ')}</span>` : '';
                 } else { jSts.innerHTML = ''; }
             }
         }
@@ -865,10 +853,17 @@ async function saveClient(e) {
         const type = document.getElementById('client-tipo').value;
         if (!type) { hideLoading(); return alert("Debes seleccionar el Tipo de Persona obligatoriamente."); }
 
-        const tel = document.getElementById('cli-telefono').value.trim(); const email = document.getElementById('cli-correo').value.trim();
+        const tel = document.getElementById('cli-telefono').value.trim();
+        const email = document.getElementById('cli-correo').value.trim();
         if (!tel && !email) { hideLoading(); return alert("Debe ingresar obligatoriamente un teléfono o correo."); }
 
         let c = {};
+        if (editId) {
+            const existing = clients.find(x => x.id === editId);
+            if (existing) c = JSON.parse(JSON.stringify(existing));
+        }
+        if (!c.documentos) c.documentos = {};
+
         if (type === 'natural') {
             c.nombres = document.getElementById('nat-nombres').value.trim(); c.apellidos = document.getElementById('nat-apellidos').value.trim();
             if (!c.nombres || !c.apellidos) { hideLoading(); return alert("Nombres y Apellidos obligatorios."); }
@@ -876,7 +871,6 @@ async function saveClient(e) {
             c.profesion = document.getElementById('nat-profesion').value; c.domicilio = document.getElementById('nat-domicilio').value;
             const duiFile = document.getElementById('nat-dui-file');
             if (duiFile && duiFile.files.length > 0) {
-                if (!c.documentos) c.documentos = {};
                 c.documentos.dui = await uploadFileToStorage(duiFile.files[0], 'clientes');
             }
         } else {
@@ -886,8 +880,8 @@ async function saveClient(e) {
             c.rep_legal = document.getElementById('jur-rep-legal').value.trim();
             c.profesion_rep = document.getElementById('jur-profesion-rep').value; c.domicilio_rep = document.getElementById('jur-domicilio-rep').value;
             c.dui_rep = document.getElementById('jur-dui-rep').value; c.nit_rep = document.getElementById('jur-nit-rep').value;
+            c.is_gran_contribuyente = document.getElementById('jur-gran-contribuyente').checked;
 
-            if (!c.documentos) c.documentos = {};
             const uploadDoc = async (id, key) => { const el = document.getElementById(id); if (el && el.files.length > 0) { c.documentos[key] = await uploadFileToStorage(el.files[0], 'clientes'); } };
             await Promise.all([
                 uploadDoc('jur-file-escritura', 'escritura'),
@@ -908,7 +902,7 @@ async function saveClient(e) {
         }
         saveClientToDB(c);
         closeModal('clientModal');
-        if (document.getElementById('newProspectModal').style.display === 'block') {
+        if (document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block') {
             renderClientSelect();
             document.getElementById('new-cliente-select').value = c.id;
         } else {
@@ -923,7 +917,6 @@ async function saveClient(e) {
 
 // ========================
 // PROSPECTS & PROJECTS LISTS
-// ========================
 function getClientName(clientId) {
     const client = clients.find(c => c.id === clientId) || { nombres: 'Desconocido', empresa: 'Desconocido' };
     return client.tipo === 'natural' ? `${client.nombres} ${client.apellidos}` : client.empresa;
