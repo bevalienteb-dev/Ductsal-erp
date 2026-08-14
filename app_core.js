@@ -4,7 +4,7 @@ const firebaseConfig = {
     apiKey: "AIzaSyBSnGhwh043oV_zW1FlE5z7N8_ywh9FUEA",
     authDomain: "ductsal-erp.firebaseapp.com",
     projectId: "ductsal-erp",
-    storageBucket: "ductsal-erp.appspot.com",
+    storageBucket: "ductsal-erp.firebasestorage.app",
     messagingSenderId: "948658286825",
     appId: "1:948658286825:web:e3008dc00f714e57aa0078",
     measurementId: "G-32JZ4MV4FR"
@@ -285,8 +285,8 @@ async function uploadFileToStorage(file, folderName) {
     if (!file) return null;
     let taskId;
 
-    // Probar primero el bucket ductsal-erp.appspot.com y como respaldo ductsal-erp.firebasestorage.app
-    const bucketsToTry = ["ductsal-erp.appspot.com", "ductsal-erp.firebasestorage.app"];
+    // Probar primero el bucket ductsal-erp.firebasestorage.app y como respaldo ductsal-erp.appspot.com
+    const bucketsToTry = ["ductsal-erp.firebasestorage.app", "ductsal-erp.appspot.com"];
     let lastError = null;
 
     for (let b = 0; b < bucketsToTry.length; b++) {
@@ -363,9 +363,9 @@ async function uploadFileToStorage(file, folderName) {
         }
     }
 
-    const errorMsg = lastError ? (lastError.message || lastError.code || JSON.stringify(lastError)) : "Error de red desconocido";
+    let errorMsg = lastError ? (lastError.message || lastError.code || JSON.stringify(lastError)) : "Error de red desconocido";
     console.error("Error definitivo subiendo archivo a Firebase Storage:", lastError);
-    alert("❌ Error al subir el archivo a Firebase Storage:\n" + errorMsg);
+    alert("❌ Error al subir el archivo a Firebase Storage:\n" + errorMsg + "\n\n💡 Si estás navegando en https://erp.ductsal.com, debes activar los permisos CORS en tu bucket de Firebase para permitir subidas desde tu dominio.");
     throw lastError;
 }
 
