@@ -11,6 +11,11 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+try {
+    db.settings({ experimentalAutoDetectLongPolling: true });
+} catch (e) {
+    console.warn("Long polling config:", e);
+}
 const storage = firebase.storage();
 
 // Configuración de Entornos Automática
@@ -302,68 +307,78 @@ async function uploadFileToStorage(file, folderName) {
         return { name: file.name || 'mock_file.pdf', url: 'https://dummyimage.com/600x400/000/fff&text=Archivo+Prueba' };
     }
 
-    try {
-        // Comprimir si es imagen (max 1280x1280, 70% calidad)
-        const processedFile = await compressImage(file, 1280, 1280, 0.7);
+    let attempt = 0;
+    const maxRetries = 2;
 
-        const ext = processedFile.name.split('.').pop();
-        const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-        const storageRef = storage.ref();
-        const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
+    while (attempt <= maxRetries) {
+        try {
+            // Comprimir si es imagen (max 1280x1280, 70% calidad)
+            const processedFile = await compressImage(file, 1280, 1280, 0.7);
 
-        taskId = Date.now().toString() + Math.random().toString();
-        activeUploads++;
-        uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size || 1000000 });
-        updateGlobalProgress();
+            const ext = processedFile.name.split('.').pop();
+            const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+            const storageRef = storage.ref();
+            const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
 
-        await new Promise((resolve, reject) => {
-            const uploadTask = fileRef.put(processedFile);
-            let timeoutId = null;
-            let lastTransferred = -1;
+            taskId = Date.now().toString() + Math.random().toString();
+            activeUploads++;
+            uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size || 1000000 });
+            updateGlobalProgress();
 
-            // Timeout watchdog: if no progress is made within 30 seconds, abort.
-            const checkProgress = () => {
-                const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
-                if (currentTransferred === lastTransferred && currentTransferred === 0) {
-                    uploadTask.cancel();
-                    reject(new Error("La subida fue bloqueada. Revisa tu antivirus, red corporativa o si el archivo está abierto en otro programa."));
-                } else {
-                    lastTransferred = currentTransferred;
-                    timeoutId = setTimeout(checkProgress, 30000);
-                }
-            };
-            timeoutId = setTimeout(checkProgress, 30000);
+            await new Promise((resolve, reject) => {
+                const uploadTask = fileRef.put(processedFile);
+                let timeoutId = null;
+                let lastTransferred = -1;
 
-            uploadTask.on('state_changed',
-                (snapshot) => {
-                    uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
-                    updateGlobalProgress();
-                },
-                (error) => {
-                    if (timeoutId) clearTimeout(timeoutId);
-                    reject(error);
-                },
-                () => {
-                    if (timeoutId) clearTimeout(timeoutId);
-                    resolve();
-                }
-            );
-        });
+                // Timeout watchdog: si no hay avance en 45 segundos, abortar e intentar reintento
+                const checkProgress = () => {
+                    const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
+                    if (currentTransferred === lastTransferred && currentTransferred === 0) {
+                        uploadTask.cancel();
+                        reject(new Error("La subida fue pausada por inactividad de red. Reintentando..."));
+                    } else {
+                        lastTransferred = currentTransferred;
+                        timeoutId = setTimeout(checkProgress, 45000);
+                    }
+                };
+                timeoutId = setTimeout(checkProgress, 45000);
 
-        activeUploads--;
-        uploadProgressMap.delete(taskId);
-        updateGlobalProgress();
+                uploadTask.on('state_changed',
+                    (snapshot) => {
+                        uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
+                        updateGlobalProgress();
+                    },
+                    (error) => {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        reject(error);
+                    },
+                    () => {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        resolve();
+                    }
+                );
+            });
 
-        const url = await fileRef.getDownloadURL();
-        return { name: processedFile.name, url: url };
-    } catch (e) {
-        if (typeof taskId !== 'undefined') {
-            activeUploads = Math.max(0, activeUploads - 1);
+            activeUploads--;
             uploadProgressMap.delete(taskId);
             updateGlobalProgress();
+
+            const url = await fileRef.getDownloadURL();
+            return { name: processedFile.name, url: url };
+        } catch (e) {
+            if (typeof taskId !== 'undefined') {
+                activeUploads = Math.max(0, activeUploads - 1);
+                uploadProgressMap.delete(taskId);
+                updateGlobalProgress();
+            }
+            attempt++;
+            if (attempt > maxRetries) {
+                console.error("Error uploading file to Storage after retries", e);
+                throw e;
+            }
+            console.warn(`Intento ${attempt} de subida falló, reintentando en 1.5s...`, e);
+            await new Promise(r => setTimeout(r, 1500 * attempt));
         }
-        console.error("Error uploading file to Storage", e);
-        throw e;
     }
 }
 
