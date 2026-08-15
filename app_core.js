@@ -828,7 +828,8 @@ function openClientModal(clientId = null) {
                 const sts = document.getElementById('nat-dui-status');
                 if (c.documentos && c.documentos.dui) {
                     const docUrl = typeof c.documentos.dui === 'string' ? c.documentos.dui : c.documentos.dui.url;
-                    sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: <a href="${docUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">Ver DUI</a></span>`;
+                    let delBtn = (currentUser && currentUser.role === 'manager') ? ` <button type="button" class="btn-danger" style="padding:1px 6px; font-size:0.7rem; margin-left:6px;" onclick="deleteClientDocument('${c.id}', 'dui')">🗑️ Eliminar</button>` : '';
+                    sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: <a href="${docUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">Ver DUI</a>${delBtn}</span>`;
                 } else { sts.innerHTML = ''; }
             }
             else {
@@ -840,10 +841,12 @@ function openClientModal(clientId = null) {
                 if (c.documentos && Object.keys(c.documentos).length > 0) {
                     let links = [];
                     const keysMap = { escritura: 'Escritura', mods_escritura: 'Mods. Escritura', credencial: 'Credencial', nit: 'NIT', nrc: 'NRC', dui: 'DUI Rep.' };
+                    const isManager = currentUser && currentUser.role === 'manager';
                     for (let k in keysMap) {
                         if (c.documentos[k]) {
                             const url = typeof c.documentos[k] === 'string' ? c.documentos[k] : c.documentos[k].url;
-                            links.push(`<a href="${url}" target="_blank" style="color:var(--brand-gold); text-decoration:underline; margin-right:8px;">[${keysMap[k]}]</a>`);
+                            let delBtn = isManager ? ` <button type="button" class="btn-danger" style="padding:1px 5px; font-size:0.65rem; margin-left:2px; margin-right:8px;" onclick="deleteClientDocument('${c.id}', '${k}')">🗑️</button>` : '';
+                            links.push(`<span style="display:inline-block; margin-right:6px;"><a href="${url}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">[${keysMap[k]}]</a>${delBtn}</span>`);
                         }
                     }
                     jSts.innerHTML = links.length > 0 ? `<span style="color:var(--success);">Archivos en expediente: ${links.join(' ')}</span>` : '';
@@ -852,6 +855,32 @@ function openClientModal(clientId = null) {
         }
     } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; toggleClientFields(); }
     document.getElementById('clientModal').style.display = 'block';
+}
+
+async function deleteClientDocument(clientId, docKey) {
+    if (!currentUser || currentUser.role !== 'manager') {
+        return alert("Permiso denegado. Solo el Gerente puede eliminar documentos.");
+    }
+    const client = clients.find(c => c.id === clientId);
+    if (!client || !client.documentos || !client.documentos[docKey]) {
+        return alert("Documento no encontrado.");
+    }
+
+    const keyNames = { escritura: 'Escritura de Constitución', mods_escritura: 'Modificaciones', credencial: 'Credencial de Rep. Legal', nit: 'NIT Empresa', nrc: 'NRC Empresa', dui: 'DUI' };
+    const docName = keyNames[docKey] || docKey;
+
+    if (!confirm(`¿Estás seguro de que deseas eliminar el documento [${docName}] del expediente de este cliente?`)) {
+        return;
+    }
+
+    try {
+        delete client.documentos[docKey];
+        saveClientToDB(client);
+        openClientModal(clientId);
+        renderClientsTable();
+    } catch (err) {
+        alert("Error al eliminar el documento: " + err.message);
+    }
 }
 
 async function saveClient(e) {
