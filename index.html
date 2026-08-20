@@ -440,7 +440,7 @@
                                 <div class="form-grid mt-2">
                                     <input type="hidden" id="inv-id-edit">
                                     <div class="form-group"><label>Número de Documento</label><input type="text" id="inv-numero" placeholder="Ej. FCF-0001" required></div>
-                                    <div class="form-group"><label>Monto a Facturar (CON IVA)</label><input type="number" id="inv-monto" required step="0.01"></div>
+                                    <div class="form-group"><label id="inv-monto-label">Monto a Facturar (CON IVA)</label><input type="number" id="inv-monto" required step="0.01"></div>
                                     <div class="form-group full-width"><label>Copia de Factura</label><input type="file" id="inv-file" required></div>
                                 </div>
                                 <button type="submit" class="btn-primary mt-2">Guardar Factura</button>
@@ -585,6 +585,12 @@
                         <option value="natural">Persona Natural</option>
                         <option value="juridica">Persona Jurídica</option>
                     </select>
+                </div>
+                <div class="form-group full-width" style="margin-top: 5px; margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; gap: 10px; color: #64B5F6; cursor: pointer; font-weight: 600;">
+                        <input type="checkbox" id="cli-es-exportacion" style="width: auto;">
+                        ✈️ Cliente de Exportación (Exento de IVA / Facturación Sin IVA)
+                    </label>
                 </div>
                 <div id="fields-natural">
                     <div class="form-grid">

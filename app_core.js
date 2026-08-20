@@ -799,13 +799,15 @@ function renderClientsTable() {
     filtered.forEach(c => {
         const isNatural = c.tipo === 'natural'; const typeBadge = isNatural ? '<span class="badge bg-neutral">Natural</span>' : '<span class="badge bg-neutral" style="color:var(--brand-gold);">Jurídica</span>';
         const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-'); const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
+        const isExport = c.es_exportacion === true || c.es_exportacion === 'true';
+        const exportBadge = isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.2); color:#64B5F6; border:1px solid #2196F3; font-size:0.7rem; margin-left:4px;">✈️ Exportación</span>' : '';
 
         let btnHTML = `<button class="btn-secondary" onclick="openClientModal('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Editar</button>`;
         if (currentUser && currentUser.role === 'manager') {
             btnHTML += `<button class="btn-danger" onclick="deleteClient('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem; margin-left:5px;">Eliminar</button>`;
         }
 
-        tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong></td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td><td>${btnHTML}</td></tr>`;
+        tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong>${exportBadge}</td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td><td>${btnHTML}</td></tr>`;
     });
 }
 function toggleClientFields() {
@@ -821,6 +823,7 @@ function openClientModal(clientId = null) {
         if (c) {
             document.getElementById('client-id-edit').value = c.id; document.getElementById('client-tipo').value = c.tipo; toggleClientFields();
             document.getElementById('cli-telefono').value = c.telefono || ''; document.getElementById('cli-correo').value = c.correo || ''; document.getElementById('cli-correo-fact').value = c.correo_fact || '';
+            document.getElementById('cli-es-exportacion').checked = c.es_exportacion === true || c.es_exportacion === 'true';
             if (c.tipo === 'natural') {
                 document.getElementById('nat-nombres').value = c.nombres || ''; document.getElementById('nat-apellidos').value = c.apellidos || '';
                 document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || '';
@@ -853,7 +856,7 @@ function openClientModal(clientId = null) {
                 } else { jSts.innerHTML = ''; }
             }
         }
-    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; toggleClientFields(); }
+    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; document.getElementById('cli-es-exportacion').checked = false; toggleClientFields(); }
     document.getElementById('clientModal').style.display = 'block';
 }
 
@@ -931,6 +934,7 @@ async function saveClient(e) {
             ]);
         }
         c.tipo = type; c.telefono = tel; c.correo = email; c.correo_fact = document.getElementById('cli-correo-fact').value;
+        c.es_exportacion = document.getElementById('cli-es-exportacion').checked;
         if (editId) { c.id = editId; const index = clients.findIndex(x => x.id === editId); if (index > -1) clients[index] = c; }
         else {
             c.id = 'C' + Date.now().toString();
@@ -1062,7 +1066,9 @@ function renderProjectsList() {
     // Map projects to calculated objects for search and sort
     let mappedProjects = projects.map(p => {
         let subtotal = p.precio_cotizado || 0;
-        let total = subtotal * 1.13;
+        const client = clients.find(c => c.id === p.clientId);
+        const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
+        let total = isExport ? subtotal : subtotal * 1.13;
 
         let totalFacturado = 0; let totalCobrado = 0;
         if (p.facturas) {
@@ -1079,6 +1085,7 @@ function renderProjectsList() {
             original: p,
             codigo: p.codigo || p.id.substring(p.id.length - 4),
             cliente: getClientName(p.clientId),
+            isExport: isExport,
             proyecto: p.proyecto || '',
             encargado: p.encargado || '-',
             total: total,
@@ -1132,7 +1139,7 @@ function renderProjectsList() {
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
         tr.innerHTML = `
             <td><strong>${p.codigo || '-'}</strong></td>
-            <td>${mp.cliente}</td>
+            <td>${mp.cliente}${mp.isExport ? ' <span style="font-size:0.7rem; color:#64B5F6;">(✈️ Export)</span>' : ''}</td>
             <td>${mp.proyecto}</td>
             <td>${mp.encargado}</td>
             <td>${formatCurrency(mp.total)}</td>
@@ -1283,8 +1290,10 @@ function openDetail(id) {
 }
 
 function renderFinancials(p) {
+    const client = clients.find(c => c.id === p.clientId);
+    const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
     const subtotal = getProjectSubtotal(p);
-    const iva = subtotal * 0.13;
+    const iva = isExport ? 0 : subtotal * 0.13;
     const total = subtotal + iva;
 
     const costoTotal = getProjectCosto(p);
@@ -1301,7 +1310,6 @@ function renderFinancials(p) {
     if (costContainer) costContainer.innerHTML = '';
 
     // Advertencia de Retención 1% (Gran Contribuyente)
-    const client = clients.find(c => c.id === p.clientId);
     const isGranContribuyente = client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true');
     const warningContainer = document.getElementById('fin-retencion-warning');
     if (isGranContribuyente) {
@@ -1316,6 +1324,22 @@ function renderFinancials(p) {
         }
     } else if (warningContainer) {
         warningContainer.style.display = 'none';
+    }
+
+    // Advertencia de Cliente de Exportación (Sin IVA)
+    const exportContainer = document.getElementById('fin-export-warning');
+    if (isExport) {
+        if (!exportContainer) {
+            const expDiv = document.createElement('div');
+            expDiv.id = 'fin-export-warning';
+            expDiv.style.cssText = 'background-color: rgba(33, 150, 243, 0.15); border-left: 4px solid #2196F3; padding: 10px; margin-bottom: 15px; border-radius: 4px; color: #64B5F6; font-size: 0.9rem;';
+            expDiv.innerHTML = `<strong>✈️ Cliente de Exportación:</strong> Este cliente está exento de IVA (0% IVA). Los montos de facturación y cobro no incluyen impuesto.`;
+            document.getElementById('invoices-list').parentNode.insertBefore(expDiv, document.getElementById('invoices-list'));
+        } else {
+            exportContainer.style.display = 'block';
+        }
+    } else if (exportContainer) {
+        exportContainer.style.display = 'none';
     }
 
     if (p.ordenes_cambio && p.ordenes_cambio.length > 0) {
@@ -1416,7 +1440,7 @@ function renderFinancials(p) {
     const porFacturar = total - totalFacturado;
 
     document.getElementById('fin-subtotal').textContent = formatCurrency(subtotal);
-    document.getElementById('fin-iva').textContent = formatCurrency(iva);
+    document.getElementById('fin-iva').textContent = isExport ? "$0 (0% Exportación)" : formatCurrency(iva);
     document.getElementById('fin-total').textContent = formatCurrency(total);
 
     document.getElementById('fin-facturado').textContent = formatCurrency(totalFacturado);
@@ -1528,6 +1552,12 @@ function showInvoiceForm() {
     document.getElementById('btn-add-invoice').style.display = 'none';
     document.getElementById('inv-id-edit').value = '';
     document.getElementById('inv-numero').value = ''; document.getElementById('inv-monto').value = ''; document.getElementById('inv-file').value = '';
+
+    const p = prospects.find(x => x.id === currentProspectId);
+    const client = p ? clients.find(c => c.id === p.clientId) : null;
+    const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
+    const lbl = document.getElementById('inv-monto-label');
+    if (lbl) lbl.textContent = isExport ? 'Monto a Facturar (Sin IVA - Exportación)' : 'Monto a Facturar (CON IVA)';
 }
 
 function editInvoice(id) {
@@ -1541,6 +1571,11 @@ function editInvoice(id) {
     document.getElementById('inv-id-edit').value = f.id;
     document.getElementById('inv-numero').value = f.numero;
     document.getElementById('inv-monto').value = f.monto;
+
+    const client = clients.find(c => c.id === p.clientId);
+    const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
+    const lbl = document.getElementById('inv-monto-label');
+    if (lbl) lbl.textContent = isExport ? 'Monto a Facturar (Sin IVA - Exportación)' : 'Monto a Facturar (CON IVA)';
 }
 
 async function processInvoice(e) {
@@ -1557,7 +1592,9 @@ async function processInvoice(e) {
     if (!p.facturas) p.facturas = [];
 
     const subtotal = getProjectSubtotal(p);
-    const totalConIVA = subtotal * 1.13;
+    const client = clients.find(c => c.id === p.clientId);
+    const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
+    const totalConIVA = isExport ? subtotal : subtotal * 1.13;
     let totalFacturado = p.facturas.reduce((acc, f) => f.id !== editId ? acc + f.monto : acc, 0);
 
     if ((totalFacturado + m) > (totalConIVA + 0.1)) {
@@ -2405,7 +2442,9 @@ async function processAdvance(nextStage) {
 
         p.facturas = [];
         const subtotal = p.precio_cotizado || 0;
-        const totalConIVA = subtotal * 1.13;
+        const client = clients.find(c => c.id === p.clientId);
+        const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
+        const totalConIVA = isExport ? subtotal : subtotal * 1.13;
         let expectedPercentage = 0;
         if (fp === '70/30') expectedPercentage = 0.70;
         else if (fp === '50/50') expectedPercentage = 0.50;
