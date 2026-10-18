@@ -1817,7 +1817,7 @@ async function deleteClientDocument(clientId, docKey, itemIndex = null) {
         }
         const res = await CrmClients.updateClient(fb, { id: clientId, client: next, dbSuffix: DB_SUFFIX, confirmReview: false });
         if (res.status !== 'updated') return alert('No se eliminó el documento: ' + (res.status || 'respuesta inesperada') + '.');
-        
+
         if (res.client && res.client.documentos !== undefined) {
             client.documentos = res.client.documentos;
         } else {
