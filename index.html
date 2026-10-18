@@ -11,6 +11,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-functions-compat.js"></script>
 </head>
 <body>
     <!-- Login Screen -->
@@ -399,7 +401,7 @@
                                     <!-- Columna 1: Ventas -->
                                     <div>
                                         <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Ventas (Ingresos)</h4>
-                                        <div>Precio Original: <strong id="fin-precio-original">$0</strong> <span class="cursor-pointer" style="margin-left:8px; font-size:0.8rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar]</span></div>
+                                        <div>Precio Original: <strong id="fin-precio-original">$0</strong></div>
                                         <div id="fin-ordenes-container" style="color:var(--brand-gold);"></div>
                                         <div style="margin-top:4px; padding-top:4px; border-top:1px dashed var(--panel-border);">Subtotal Final: <strong id="fin-subtotal">$0</strong></div>
                                         <div>IVA (13%): <strong id="fin-iva">$0</strong></div>
@@ -528,6 +530,8 @@
                 <div class="form-group flex-group">
                     <div style="flex:1;">
                         <label>Cliente (Selecciona)</label>
+                        <input type="text" id="new-cliente-search" placeholder="Buscar cliente por nombre, NIT o DUI" autocomplete="off" maxlength="100" oninput="onClientCatalogSearchInput()" style="display:none; margin-bottom:6px;">
+                        <div id="new-cliente-search-hint" style="display:none; font-size:0.75rem; color:var(--text-muted, #94a3b8); margin-bottom:6px;"></div>
                         <select id="new-cliente-select" required></select>
                     </div>
                     <div>
@@ -761,6 +765,10 @@
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 
-    <script src="app_core.js?v=11"></script>
+    <script src="crm_env.js?v=1"></script>
+    <script src="crm_auth.js?v=3"></script>
+    <script src="crm_clients.js?v=1"></script>
+    <script src="crm_commercial.js?v=2"></script>
+    <script src="app_core.js?v=17"></script>
 </body>
 </html>

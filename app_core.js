@@ -9,8 +9,21 @@ const firebaseConfig = {
     appId: "1:948658286825:web:e3008dc00f714e57aa0078",
     measurementId: "G-32JZ4MV4FR"
 };
-firebase.initializeApp(firebaseConfig);
+// Emulator mode is opt-in and explicit (see crm_env.js): only on localhost/127.0.0.1 with
+// ?emulators=demo-ductsal-local. Any other use of the parameter blocks the page instead of falling
+// back to production. Without the parameter nothing below differs from the normal behaviour.
+if (typeof CrmEnv !== 'undefined' && CrmEnv.emulatorParamInvalid(window.location)) {
+    CrmEnv.blockPage(document, "El parámetro 'emulators' no es válido (se requiere ?emulators=" + CrmEnv.EMULATOR_PROJECT + " en localhost o 127.0.0.1). No se inició Firebase.");
+    throw new Error('Invalid emulator activation: Firebase was not initialised');
+}
+const CRM_EMULATOR_MODE = (typeof CrmEnv !== 'undefined') && CrmEnv.isEmulatorRequested(window.location);
+firebase.initializeApp(CRM_EMULATOR_MODE ? CrmEnv.emulatorFirebaseConfig() : firebaseConfig);
 const db = firebase.firestore();
+if (CRM_EMULATOR_MODE) {
+    const emulatorEndpoints = CrmEnv.connectEmulators(firebase, db);
+    console.warn("MODO EMULADORES ACTIVO. Proyecto: " + emulatorEndpoints.project + " | Auth " + emulatorEndpoints.auth.host + ":" + emulatorEndpoints.auth.port + " | Firestore " + emulatorEndpoints.firestore.host + ":" + emulatorEndpoints.firestore.port + " | Functions " + emulatorEndpoints.functions.host + ":" + emulatorEndpoints.functions.port + " | Storage " + emulatorEndpoints.storage.host + ":" + emulatorEndpoints.storage.port);
+    document.addEventListener('DOMContentLoaded', () => CrmEnv.showBanner(document, emulatorEndpoints));
+}
 try {
     db.settings({ experimentalAutoDetectLongPolling: true, merge: true });
 } catch (e) {
@@ -92,14 +105,20 @@ function reassignVendor(prospectId) {
 
     if (!targetUser) return alert("Vendedor no encontrado.");
 
-    p.vendedorId = targetUser.id;
-    p.vendedorName = targetUser.nombre;
-    p.vendedorRole = targetUser.role;
-    addLogToProspect(p, `Vendedor reasignado a: ${targetUser.nombre} por ${currentUser.nombre}`, true);
-    saveProspectToDB(p);
-    openDetail(p.id);
-    renderList();
-    alert(`✔️ Vendedor reasignado exitosamente a ${targetUser.nombre}.`);
+    // The server authorises (manager / gestor), validates the target and writes the log with the identity of the session.
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
+    showLoading('Reasignando vendedor...');
+    return CrmCommercial.reassign(fb, { prospectId: p.id, vendedorId: targetUser.id, dbSuffix: DB_SUFFIX }).then(res => {
+        if (res.status === 'reassigned') {
+            p.vendedorId = res.vendedorId; p.vendedorName = res.vendedorName; p.vendedorRole = res.vendedorRole;
+        }
+        openDetail(p.id);
+        renderList();
+        alert(res.status === 'reassigned' ? `✔️ Vendedor reasignado exitosamente a ${targetUser.nombre}.` : 'La oportunidad ya estaba asignada a ese vendedor.');
+    }).catch(err => alert(CrmCommercial.errorMessage(err))).finally(hideLoading);
 }
 
 function updateOppSortIcons() {
@@ -281,7 +300,7 @@ function removeStagedFile(inputId, index) {
     }
 }
 
-async function uploadFileToStorage(file, folderName) {
+async function uploadFileToStorage(file, folderName, options = {}) {
     if (!file) return null;
     let taskId;
 
@@ -303,7 +322,22 @@ async function uploadFileToStorage(file, folderName) {
                 storageRef = storage.ref();
             }
 
-            const fileRef = storageRef.child(`${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`);
+            let fullPath;
+            if (options.prospectId) {
+                fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${Date.now()}_${safeName}`;
+            } else if (options.clientId) {
+                const subfolder = options.isLegal ? 'legal' : 'identificacion';
+                fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${Date.now()}_${safeName}`;
+            } else if (options.reservationId) {
+                const subfolder = options.isLegal ? 'legal' : 'identificacion';
+                fullPath = `${STORAGE_PREFIX}/clients/${options.reservationId}/${subfolder}/${Date.now()}_${safeName}`;
+            } else if (options.customPath) {
+                fullPath = `${STORAGE_PREFIX}/${options.customPath}`;
+            } else {
+                fullPath = `${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`;
+            }
+
+            const fileRef = storageRef.child(fullPath);
 
             taskId = Date.now().toString() + Math.random().toString();
             activeUploads++;
@@ -349,8 +383,14 @@ async function uploadFileToStorage(file, folderName) {
             uploadProgressMap.delete(taskId);
             updateGlobalProgress();
 
-            const url = await fileRef.getDownloadURL();
-            return { name: processedFile.name, url: url };
+            // SEC-05 H-04: No generar tokens públicos permanentes mediante getDownloadURL().
+            // Se retorna únicamente la referencia canónica protegida { name, storagePath, size, contentType }.
+            return {
+                name: processedFile.name,
+                storagePath: fileRef.fullPath,
+                size: processedFile.size,
+                contentType: processedFile.type || 'application/octet-stream'
+            };
 
         } catch (e) {
             if (typeof taskId !== 'undefined') {
@@ -367,6 +407,453 @@ async function uploadFileToStorage(file, folderName) {
     console.error("Error definitivo subiendo archivo a Firebase Storage:", lastError);
     alert("❌ Error al subir el archivo a Firebase Storage:\n" + errorMsg + "\n\n💡 Si estás navegando en https://erp.ductsal.com, debes activar los permisos CORS en tu bucket de Firebase para permitir subidas desde tu dominio.");
     throw lastError;
+}
+
+// ============================================================================
+// SEC-05: VISOR SEGURO Y RESOLUCIÓN ESTRICTA DE RUTAS DE FIREBASE STORAGE
+// ============================================================================
+
+const escapeHtmlDoc = s => String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+if (typeof window !== 'undefined' && !window._docStore) {
+    window._docStore = new Map();
+}
+
+/**
+ * Resuelve y valida estrictamente una referencia de Storage para el entorno activo.
+ * Retorna la ruta física canónica segura o null si no supera la validación.
+ */
+function resolveStoragePath(docRef, envConfig = null) {
+    if (!docRef) return null;
+
+    const prefix = (envConfig && envConfig.storagePrefix) || (typeof STORAGE_PREFIX !== 'undefined' ? STORAGE_PREFIX : 'prod_files');
+    const allowedBuckets = (envConfig && envConfig.allowedBuckets) || [
+        'ductsal-erp.firebasestorage.app',
+        'ductsal-erp.appspot.com',
+        'demo-ductsal-isolated.appspot.com',
+        'demo-ductsal-local.appspot.com'
+    ];
+
+    let candidatePath = null;
+
+    // Caso A: Objeto con propiedad storagePath o path explícita
+    if (typeof docRef === 'object') {
+        const p = docRef.storagePath || docRef.path;
+        if (typeof p === 'string' && p.trim()) {
+            candidatePath = p.trim();
+        }
+    }
+
+    // Caso B: URL completa de Firebase Storage (string primitivo o docRef.url)
+    if (!candidatePath) {
+        const rawUrl = (typeof docRef === 'object') ? docRef.url : docRef;
+        if (typeof rawUrl === 'string' && rawUrl.includes('firebasestorage.googleapis.com')) {
+            try {
+                const parsedUrl = new URL(rawUrl);
+                // 1. Validar hostname exacto
+                if (parsedUrl.hostname !== 'firebasestorage.googleapis.com') return null;
+
+                // 2. Validar bucket en la ruta /v0/b/<bucket>/o/<path>
+                const match = parsedUrl.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+                if (!match) return null;
+
+                const bucketInUrl = decodeURIComponent(match[1]);
+                if (!allowedBuckets.includes(bucketInUrl)) {
+                    console.warn('[Storage Security] URL rechazada: bucket no autorizado:', bucketInUrl);
+                    return null;
+                }
+
+                // 3. Decodificar la ruta del objeto
+                candidatePath = decodeURIComponent(match[2]);
+            } catch (e) {
+                return null;
+            }
+        } else if (typeof rawUrl === 'string' && (rawUrl.startsWith('prod_files/') || rawUrl.startsWith('local_files/'))) {
+            candidatePath = rawUrl.trim();
+        }
+    }
+
+    if (!candidatePath) return null;
+
+    // Normalización y anti-traversal
+    candidatePath = candidatePath.replace(/^\/+/, '');
+    if (candidatePath.includes('..') || candidatePath.includes('//') || candidatePath.includes('\\')) return null;
+    if (candidatePath.length > 500) return null;
+
+    // Control de prefijo de entorno
+    if (!candidatePath.startsWith(`${prefix}/`)) {
+        console.warn(`[Storage Security] Ruta rechazada: prefijo ${candidatePath.split('/')[0]} no coincide con entorno activo ${prefix}`);
+        return null;
+    }
+
+    // Lista blanca estricta de jerarquías permitidas
+    const allowedPathPattern = new RegExp(
+        `^${prefix}/(` +
+        `prospects/[a-zA-Z0-9_-]+/(proyectos|facturas|pagos|ordenes_cambio)/.+|` +
+        `clients/[a-zA-Z0-9_-]+/(identificacion|legal)/.+|` +
+        `clients/[a-zA-Z0-9_-]+/[^/]+|` +
+        `(clientes|proyectos|facturas|pagos|ordenes_cambio)/.+` +
+        `)$`
+    );
+
+    if (!allowedPathPattern.test(candidatePath)) {
+        console.warn('[Storage Security] Ruta rechazada: estructura fuera de lista blanca:', candidatePath);
+        return null;
+    }
+
+    return candidatePath;
+}
+
+const PREVIEWABLE_EXTS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.txt'];
+
+function isFormatPreviewable(fileName, contentType) {
+    if (contentType && (contentType.startsWith('image/') || contentType === 'application/pdf' || contentType.startsWith('text/'))) {
+        return true;
+    }
+    const name = String(fileName || '').toLowerCase();
+    return PREVIEWABLE_EXTS.some(ext => name.endsWith(ext));
+}
+
+/**
+ * Descarga directamente un documento mediante URL firmada de corta duración de Cloud Functions.
+ * No satura la memoria del navegador con getBlob(), permitiendo descargar archivos de cualquier tamaño (> 35 MB, ZIP, CAD).
+ */
+async function downloadSecureDocument(docRef, fallbackName = 'Documento', options = {}) {
+    if (!docRef) {
+        alert('No se especificó ningún documento para descargar.');
+        return;
+    }
+
+    const storagePath = resolveStoragePath(docRef);
+    const fileName = (typeof docRef === 'object' && docRef.name) ? docRef.name : fallbackName;
+
+    if (!storagePath) {
+        alert(`La referencia de archivo no es válida en este entorno: ${fileName}`);
+        return;
+    }
+
+    if (typeof showLoading === 'function') showLoading(`Preparando descarga segura de ${fileName}...`);
+
+    try {
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        if (!fb || !fb.functions) {
+            throw new Error('SDK de Firebase Functions no disponible en el cliente');
+        }
+
+        const fn = fb.functions().httpsCallable('getSecureDownloadUrlAdmin');
+        const dbSuffix = typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : '_prod';
+        const res = await fn({
+            storagePath,
+            fileName,
+            dbSuffix,
+            prospectId: options.prospectId || (typeof currentProspectId !== 'undefined' ? currentProspectId : null),
+            clientId: options.clientId || null
+        });
+
+        const data = res && res.data;
+        if (!data || !data.signedUrl) {
+            throw new Error('No se recibió la URL de descarga segura del servidor.');
+        }
+
+        const safeDownloadName = data.fileName || fileName;
+
+        // Disparo directo de descarga nativa en el navegador (sin target="_blank" para evitar pestañas residuales)
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = data.signedUrl;
+        a.download = safeDownloadName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            if (a.parentNode) a.parentNode.removeChild(a);
+        }, 2000);
+
+    } catch (error) {
+        console.error('[Storage Security] Error al descargar documento:', error);
+        let userMessage = 'Error al descargar el archivo.';
+        const errCode = error.code || '';
+        const errMsg = error.message || '';
+
+        if (errCode === 'functions/permission-denied' || errMsg.includes('permission-denied')) {
+            userMessage = 'Acceso denegado: No tienes autorización para descargar este documento según las políticas comerciales.';
+        } else if (errCode === 'functions/not-found' || errMsg.includes('not-found')) {
+            userMessage = 'El archivo solicitado ya no existe en el almacenamiento de producción.';
+        } else if (errCode === 'functions/unauthenticated' || errMsg.includes('unauthenticated')) {
+            userMessage = 'Sesión expirada o no autenticada. Inicia sesión nuevamente.';
+        } else if (errMsg.includes('network') || errCode === 'functions/unavailable') {
+            userMessage = 'Error de conexión con el servidor. Verifica tu conexión a internet.';
+        }
+
+        alert(userMessage);
+    } finally {
+        if (typeof hideLoading === 'function') hideLoading();
+    }
+}
+
+/**
+ * Visualiza o descarga un documento de forma segura usando el SDK de Firebase Storage.
+ * Compatible con objetos canónicos { storagePath }, objetos legacy { url }, y URLs en string.
+ */
+async function viewSecureDocument(docRef, fallbackName = 'Documento', options = {}) {
+    if (!docRef) {
+        alert('No se especificó ningún documento.');
+        return;
+    }
+
+    const storagePath = resolveStoragePath(docRef);
+    const fileName = (typeof docRef === 'object' && docRef.name) ? docRef.name : fallbackName;
+
+    if (!storagePath) {
+        alert(`El archivo no se encuentra disponible o la referencia no es válida en este entorno: ${fileName}`);
+        return;
+    }
+
+    // Si el formato no es compatible con el visor interactivo (e.g. ZIP, DWG, CAD, Excel), descargar directamente
+    if (!isFormatPreviewable(fileName)) {
+        return await downloadSecureDocument(docRef, fallbackName, options);
+    }
+
+    // Mitigación popup blocker: abrir ventana en blanco de manera síncrona
+    let previewTab = null;
+    if (!options || !options.download) {
+        try {
+            previewTab = window.open('about:blank', '_blank');
+            if (previewTab) {
+                previewTab.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head><title>Cargando ${escapeHtmlDoc(fileName)}...</title></head>
+                    <body style="margin:0; display:flex; align-items:center; justify-content:center; height:100vh; font-family:system-ui, sans-serif; background:#1e293b; color:#f8fafc;">
+                        <div style="text-align:center;">
+                            <div style="font-size:2rem; margin-bottom:1rem;">📄</div>
+                            <div style="font-size:1.1rem; font-weight:600;">Cargando documento seguro...</div>
+                            <div style="font-size:0.85rem; color:#94a3b8; margin-top:0.5rem;">${escapeHtmlDoc(fileName)}</div>
+                        </div>
+                    </body>
+                    </html>
+                `);
+            }
+        } catch (e) {
+            console.warn('[Storage Security] No se pudo abrir pestaña previa:', e);
+        }
+    }
+
+    if (typeof showLoading === 'function') showLoading(`Descargando ${fileName}...`);
+
+    try {
+        const storageInstance = (typeof storage !== 'undefined' && storage) ? storage : firebase.storage();
+        const fileRef = storageInstance.ref(storagePath);
+
+        // Límite de seguridad: 35 MB por buffer en memoria
+        const MAX_BLOB_SIZE = 35 * 1024 * 1024;
+        const blob = await fileRef.getBlob(MAX_BLOB_SIZE);
+
+        const blobUrl = URL.createObjectURL(blob);
+
+        if (options && options.download) {
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = blobUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+        } else if (previewTab && !previewTab.closed) {
+            previewTab.location.href = blobUrl;
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+        } else {
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = fileName;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+        }
+    } catch (error) {
+        console.error('[Storage Security] Error al visualizar documento:', error);
+        let userMessage = 'Error al cargar el archivo.';
+        let isLargeFile = false;
+
+        if (error.code === 'storage/unauthorized') {
+            userMessage = 'Acceso denegado: No tienes permiso para visualizar este documento según las políticas de seguridad.';
+        } else if (error.code === 'storage/object-not-found') {
+            userMessage = 'El archivo solicitado ya no existe en el almacenamiento.';
+        } else if (error.code === 'storage/canceled') {
+            userMessage = 'Descarga cancelada por el usuario.';
+        } else if (error.message && error.message.includes('CORS')) {
+            userMessage = 'Error de conexión con el almacenamiento (CORS). Contacta al administrador.';
+        } else if (error.message && (error.message.includes('size') || error.code === 'storage/cannot-slice-blob')) {
+            userMessage = 'El archivo supera el límite de memoria del visor seguro (35 MB).';
+            isLargeFile = true;
+        }
+
+        if (previewTab && !previewTab.closed) {
+            if (isLargeFile) {
+                previewTab.document.write(`
+                    <div style="padding:2.5rem; font-family:system-ui, sans-serif; color:#f8fafc; background:#1e293b; height:100vh; text-align:center;">
+                        <div style="font-size:3rem; margin-bottom:1rem;">📦</div>
+                        <h3 style="color:#fbbf24; margin-bottom:0.5rem;">Archivo de Gran Tamaño</h3>
+                        <p style="color:#94a3b8; max-width:500px; margin:0 auto 1.5rem auto;">
+                            El archivo <strong>${escapeHtmlDoc(fileName)}</strong> supera el límite de memoria del visor interactivo (35 MB). Puedes descargarlo directamente en tu equipo.
+                        </p>
+                        <button id="dl-large-btn" style="background:#2563eb; color:#fff; border:none; padding:10px 20px; font-size:1rem; border-radius:6px; cursor:pointer; font-weight:600;">
+                            ⬇️ Descargar Archivo Completo
+                        </button>
+                    </div>
+                `);
+                try {
+                    const btn = previewTab.document.getElementById('dl-large-btn');
+                    if (btn) {
+                        btn.onclick = function() {
+                            downloadSecureDocument(storagePath, fileName);
+                        };
+                    }
+                } catch (e) {
+                    console.warn('[Storage Security] No se pudo vincular botón de descarga en pestaña grande:', e);
+                }
+            } else {
+                previewTab.document.write(`
+                    <div style="padding:2rem; font-family:system-ui, sans-serif; color:#ef4444; background:#1e293b; height:100vh;">
+                        <h3>⚠️ Error al abrir el documento</h3>
+                        <p>${escapeHtmlDoc(userMessage)}</p>
+                        <p style="font-size:0.8rem; color:#94a3b8;">Detalle técnico: ${escapeHtmlDoc(error.code || error.message || '')}</p>
+                    </div>
+                `);
+            }
+        } else {
+            alert(userMessage);
+        }
+    } finally {
+        if (typeof hideLoading === 'function') hideLoading();
+    }
+}
+
+const KNOWN_DOC_LABELS = {
+    escritura: 'Escritura',
+    escritura_constitucion: 'Escritura de Constitución',
+    mods_escritura: 'Mods. Escritura',
+    mods: 'Modificaciones',
+    credencial: 'Credencial',
+    credencial_rep: 'Credencial Rep. Legal',
+    nit: 'NIT',
+    nit_empresa: 'NIT Empresa',
+    nrc: 'NRC',
+    nrc_empresa: 'NRC Empresa',
+    dui: 'DUI',
+    dui_rep: 'DUI Rep. Legal',
+    comprobante: 'Comprobante',
+    balance: 'Balance'
+};
+
+function formatClientDocLabel(k) {
+    if (KNOWN_DOC_LABELS[k]) return KNOWN_DOC_LABELS[k];
+    const clean = String(k || '')
+        .replace(/^[_\s-]+|[_\s-]+$/g, '')
+        .replace(/[_-]+/g, ' ');
+    if (!clean) return 'Documento';
+    return clean.replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function getDocStore() {
+    if (typeof window !== 'undefined') {
+        if (!window._docStore) window._docStore = new Map();
+        return window._docStore;
+    }
+    if (typeof global !== 'undefined') {
+        if (!global._docStore) global._docStore = new Map();
+        return global._docStore;
+    }
+    return new Map();
+}
+
+function viewStoredClientDoc(storeId) {
+    const store = getDocStore();
+    const item = store ? store.get(storeId) : null;
+    if (!item) return;
+    return viewSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });
+}
+
+function downloadStoredClientDoc(storeId) {
+    const store = getDocStore();
+    const item = store ? store.get(storeId) : null;
+    if (!item) return;
+    return downloadSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });
+}
+
+function deleteStoredClientDoc(storeId) {
+    const store = getDocStore();
+    const item = store ? store.get(storeId) : null;
+    if (!item) return;
+    return deleteClientDocument(item.clientId, item.docKey, item.itemIndex);
+}
+
+function renderClientDocItem(docRef, label, clientId, docKey, itemIndex = null) {
+    if (!docRef) return '';
+    let fileName = 'Documento';
+    if (typeof docRef === 'object' && docRef && docRef.name) {
+        fileName = String(docRef.name);
+    } else if (typeof docRef === 'string') {
+        const parts = docRef.split('?')[0].split('/');
+        const last = parts[parts.length - 1];
+        fileName = decodeURIComponent(last) || label;
+    } else {
+        fileName = label;
+    }
+
+    const storeId = 'cdoc_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+    const store = getDocStore();
+    store.set(storeId, {
+        docRef,
+        fileName,
+        label,
+        clientId,
+        docKey,
+        itemIndex: (itemIndex !== null && itemIndex !== undefined) ? Number(itemIndex) : null
+    });
+
+    const safeName = escapeHtmlDoc(fileName);
+    const safeLabel = escapeHtmlDoc(label);
+
+    const previewable = isFormatPreviewable(fileName);
+    const isManager = currentUser && currentUser.role === 'manager';
+    const delBtn = isManager ? ` <button type="button" class="btn-danger" style="padding:1px 5px; font-size:0.65rem; margin-left:2px; margin-right:8px;" onclick="deleteStoredClientDoc('${storeId}')" title="Eliminar [${safeLabel}]">🗑️</button>` : '';
+    const dlBtn = ` <button type="button" class="btn-secondary" style="padding:1px 5px; font-size:0.65rem; margin-left:2px; margin-right:4px; cursor:pointer;" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar">⬇️</button>`;
+
+    let viewHtml = '';
+    if (previewable) {
+        viewHtml = `<a href="javascript:void(0)" onclick="viewStoredClientDoc('${storeId}')" style="color:var(--brand-gold); text-decoration:underline; cursor:pointer;" title="Previsualizar ${safeName}">[${safeLabel}]</a>`;
+    } else {
+        viewHtml = `<span style="color:var(--text-primary); font-weight:500;" title="${safeName}">📁 [${safeLabel}]</span>`;
+    }
+
+    return `<span style="display:inline-block; margin-right:6px; margin-bottom:4px;">${viewHtml}${dlBtn}${delBtn}</span>`;
+}
+
+if (typeof window !== 'undefined') {
+    window.resolveStoragePath = resolveStoragePath;
+    window.viewSecureDocument = viewSecureDocument;
+    window.downloadSecureDocument = downloadSecureDocument;
+    window.viewStoredClientDoc = viewStoredClientDoc;
+    window.downloadStoredClientDoc = downloadStoredClientDoc;
+    window.deleteStoredClientDoc = deleteStoredClientDoc;
+    window.isFormatPreviewable = isFormatPreviewable;
+    window.escapeHtmlDoc = escapeHtmlDoc;
+    window.formatClientDocLabel = formatClientDocLabel;
+    window.renderClientDocItem = renderClientDocItem;
+}
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        resolveStoragePath,
+        viewSecureDocument,
+        downloadSecureDocument,
+        viewStoredClientDoc,
+        downloadStoredClientDoc,
+        deleteStoredClientDoc,
+        isFormatPreviewable,
+        escapeHtmlDoc,
+        formatClientDocLabel,
+        renderClientDocItem
+    };
 }
 
 const STAGES = ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
@@ -411,51 +898,249 @@ function reRenderApp() {
     }
 }
 
+let activeUnsubscribers = [];
+
+function detachSnapshotListeners() {
+    if (Array.isArray(activeUnsubscribers)) {
+        activeUnsubscribers.forEach(unsub => {
+            try { if (typeof unsub === 'function') unsub(); } catch (_) {}
+        });
+    }
+    activeUnsubscribers = [];
+}
+
 function checkInitialLoad() {
     loadedCollections++;
-    if (loadedCollections === 4) {
+    if (loadedCollections >= 3) {
         if (users.length === 0) {
-            let admin = { id: Date.now().toString(), nombre: 'Administrador Maestro', email: 'bvaliente@grupogama.com', password: '', role: 'manager', activo: true };
-            saveUserToDB(admin);
+            console.warn('[CRM] No hay usuarios en Firestore. El primer administrador se crea a través del flujo de configuración inicial en functions/LEGACY_IMPORT.md.');
         }
         checkAuth();
         reRenderApp();
-    } else if (loadedCollections > 4) {
+    } else {
         reRenderApp();
     }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    // Migrate local to firebase on first run
-    const localClients = JSON.parse(localStorage.getItem('ductsal_clients'));
-    if (localClients && !localStorage.getItem('migrated_to_firebase')) {
-        console.log("Migrando datos a la nube...");
-        const localProspects = JSON.parse(localStorage.getItem('ductsal_prospects')) || [];
-        const localUsers = JSON.parse(localStorage.getItem('hexasales_users')) || [];
-        const localSettings = JSON.parse(localStorage.getItem('ductsal_settings')) || { visitantes: [], encargados: [] };
+// SEC-01: Scoped snapshot listeners adhering to Firestore rules.
+// In Firestore, "rules are not filters". Queries must specify filters matching allowed subsets.
+function attachDataListeners(role, userId) {
+    detachSnapshotListeners();
+    if (!role || !userId) return;
 
-        for (let c of localClients) await db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c);
-        for (let p of localProspects) await db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p);
-        for (let u of localUsers) await db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
-        await db.collection(`system${DB_SUFFIX}`).doc('settings').set(localSettings);
-
-        localStorage.setItem('migrated_to_firebase', 'true');
-        console.log("Migración completada.");
+    // 1. Settings listener (system/settings)
+    try {
+        const unsubSettings = db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(
+            doc => {
+                if (doc.exists) settings = Object.assign({ visitantes: [], encargados: [] }, doc.data());
+                checkInitialLoad();
+            },
+            err => console.warn('[CRM] Listener system/settings no disponible:', err && err.message)
+        );
+        activeUnsubscribers.push(unsubSettings);
+    } catch (e) {
+        console.warn('[CRM] Error al suscribir a settings:', e && e.message);
     }
 
-    // Attach Listeners
-    db.collection(`clients${DB_SUFFIX}`).onSnapshot(snap => { clients = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection(`prospects${DB_SUFFIX}`).onSnapshot(snap => { prospects = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
-    db.collection(`users${DB_SUFFIX}`).onSnapshot(snap => { users = snap.docs.map(doc => doc.data()); checkInitialLoad(); });
+    // 2. User directory listener (all roles subscribe to userDirectory_prod - SEC-03)
+    // Eliminates any direct onSnapshot listener on users_prod across the wire.
+    // userDirectory_prod contains strictly { id, nombre, role, activo } without password.
+    try {
+        const unsubDir = db.collection(`userDirectory${DB_SUFFIX}`).onSnapshot(
+            snap => {
+                const prevUsers = users;
+                users = snap.docs.map(doc => {
+                    const d = doc.data();
+                    const prev = prevUsers.find(u => u.id === d.id);
+                    if (prev) {
+                        if (prev.email) d.email = prev.email;
+                        if (prev.authUid) d.authUid = prev.authUid;
+                    }
+                    return d;
+                });
+                checkInitialLoad();
+            },
+            err => {
+                console.warn('[CRM] Listener userDirectory no disponible:', err && err.message);
+                if (currentUser && !users.some(u => u.id === currentUser.id)) {
+                    users = [currentUser];
+                }
+                checkInitialLoad();
+            }
+        );
+        activeUnsubscribers.push(unsubDir);
+    } catch (e) {
+        console.warn('[CRM] Error al suscribir a usuarios:', e && e.message);
+    }
 
-    db.collection(`system${DB_SUFFIX}`).doc('settings').onSnapshot(doc => { if (doc.exists) settings = doc.data(); checkInitialLoad(); });
+    // 3. Clients listener
+    try {
+        if (role === 'manager' || role === 'gestor') {
+            // Privileged roles can list all clients
+            const unsubClients = db.collection(`clients${DB_SUFFIX}`).onSnapshot(
+                snap => {
+                    clients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
+                    checkInitialLoad();
+                },
+                err => console.warn('[CRM] Listener clients no disponible:', err && err.message)
+            );
+            activeUnsubscribers.push(unsubClients);
+        } else if (role === 'vendedor') {
+            // Vendedores listen to: 1) createdBy == userId, 2) visibleTo array-contains userId
+            let ownClients = [];
+            let visibleClients = [];
+            const mergeClients = () => {
+                const dict = {};
+                ownClients.forEach(c => { dict[c.id] = c; });
+                visibleClients.forEach(c => { dict[c.id] = c; });
+                clients = Object.values(dict);
+                checkInitialLoad();
+            };
+            const unsubOwn = db.collection(`clients${DB_SUFFIX}`).where('createdBy', '==', userId).onSnapshot(
+                snap => {
+                    ownClients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
+                    mergeClients();
+                },
+                err => console.warn('[CRM] Listener clients (propios) no disponible:', err && err.message)
+            );
+            const unsubVis = db.collection(`clients${DB_SUFFIX}`).where('visibleTo', 'array-contains', userId).onSnapshot(
+                snap => {
+                    visibleClients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
+                    mergeClients();
+                },
+                err => console.warn('[CRM] Listener clients (visibles) no disponible:', err && err.message)
+            );
+            activeUnsubscribers.push(unsubOwn, unsubVis);
+        }
+    } catch (e) {
+        console.warn('[CRM] Error al suscribir a clientes:', e && e.message);
+    }
+
+    // 4. Prospects listener
+    try {
+        if (role === 'manager' || role === 'gestor') {
+            // Privileged roles list all prospects
+            const unsubProspects = db.collection(`prospects${DB_SUFFIX}`).onSnapshot(
+                snap => {
+                    prospects = snap.docs.map(doc => doc.data()).filter(p => p.eliminado !== true);
+                    checkInitialLoad();
+                },
+                err => console.warn('[CRM] Listener prospects no disponible:', err && err.message)
+            );
+            activeUnsubscribers.push(unsubProspects);
+        } else if (role === 'vendedor') {
+            // Vendedores listen to: 1) createdBy == userId, 2) vendedorId == userId
+            let createdProspects = [];
+            let assignedProspects = [];
+            const mergeProspects = () => {
+                const dict = {};
+                createdProspects.forEach(p => { dict[p.id] = p; });
+                assignedProspects.forEach(p => { dict[p.id] = p; });
+                prospects = Object.values(dict).filter(p => p.eliminado !== true);
+                checkInitialLoad();
+            };
+            const unsubCreated = db.collection(`prospects${DB_SUFFIX}`).where('createdBy', '==', userId).onSnapshot(
+                snap => {
+                    createdProspects = snap.docs.map(doc => doc.data());
+                    mergeProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (creados) no disponible:', err && err.message)
+            );
+            const unsubAssigned = db.collection(`prospects${DB_SUFFIX}`).where('vendedorId', '==', userId).onSnapshot(
+                snap => {
+                    assignedProspects = snap.docs.map(doc => doc.data());
+                    mergeProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (asignados) no disponible:', err && err.message)
+            );
+            activeUnsubscribers.push(unsubCreated, unsubAssigned);
+        }
+    } catch (e) {
+        console.warn('[CRM] Error al suscribir a prospectos:', e && e.message);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Emulator mode fails safe: if any required emulator does not answer, nothing is attached.
+    if (CRM_EMULATOR_MODE) {
+        const missing = await CrmEnv.probeEmulators();
+        if (missing.length > 0) {
+            CrmEnv.blockPage(document, 'Faltan emuladores en 127.0.0.1: ' + missing.join(', ') + '. No se conectó a ningún otro servicio.');
+            return;
+        }
+    }
+    // Detect legacy localStorage residue
+    try {
+        const legacyKeys = ['ductsal_clients', 'ductsal_prospects', 'hexasales_users', 'ductsal_settings'].filter(k => localStorage.getItem(k));
+        if (legacyKeys.length > 0) {
+            console.warn('[CRM] Este navegador conserva datos locales de la versión anterior (' + legacyKeys.join(', ') + '). No se importan automáticamente: ver functions/LEGACY_IMPORT.md para exportarlos e importarlos de forma controlada.');
+        }
+    } catch (e) { /* storage unavailable: nothing to detect */ }
+
+    // Attach Listeners
+    // SEC-03: Firebase Authentication session guard.
+    // Ensure currentUser and listeners are strictly synchronized with a verified Firebase Auth session.
+    if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function') {
+        try {
+            firebase.auth().onAuthStateChanged(async authUser => {
+                if (authUser) {
+                    try {
+                        const tok = await authUser.getIdTokenResult();
+                        const cid = tok.claims && tok.claims.cid;
+                        const role = tok.claims && tok.claims.role;
+                        if (!cid || !role) {
+                            console.warn('[CRM] Sesión rechazada: token sin claims requeridos (cid/role).');
+                            processLogout();
+                            return;
+                        }
+                        if (!currentUser || currentUser.id !== cid || currentUser.authUid !== authUser.uid || currentUser.role !== role) {
+                            currentUser = { id: cid, authUid: authUser.uid, role, nombre: authUser.displayName || cid, activo: true };
+                            localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+                            checkAuth();
+                            if (typeof attachDataListeners === 'function') attachDataListeners(role, cid);
+                            reRenderApp();
+                        } else if (activeUnsubscribers.length === 0) {
+                            if (typeof attachDataListeners === 'function') attachDataListeners(role, cid);
+                        }
+                    } catch (e) {
+                        console.warn('[CRM] Error al verificar token en onAuthStateChanged:', e);
+                        processLogout();
+                    }
+                } else {
+                    // No active Firebase Authentication session exists: invalidate any stale or forged localStorage
+                    if (currentUser) {
+                        console.warn('[CRM] Sesión cerrada o expirada en Firebase Auth.');
+                        currentUser = null;
+                        localStorage.removeItem('ductsal_current_user');
+                        if (typeof detachSnapshotListeners === 'function') detachSnapshotListeners();
+                        checkAuth();
+                    }
+                }
+            });
+        } catch (_) {}
+    }
+    if (currentUser && currentUser.id && currentUser.role) {
+        if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
+    }
+    checkAuth();
 });
 
-function saveClientToDB(c) { db.collection(`clients${DB_SUFFIX}`).doc(c.id).set(c); }
-function saveProspectToDB(p) { db.collection(`prospects${DB_SUFFIX}`).doc(p.id).set(p); }
-function saveUserToDB(u) { db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u); }
+// DISABLED: the opportunity and the client are written ONLY by the server operations (commercialService / prospectWorkflowService /
+// clientsService through CrmCommercial and CrmClients). These two used to rewrite the whole document from the browser copy (stale data,
+// any field, no audit); nothing calls them any more and they refuse to write so that no future code reintroduces the bypass.
+function saveClientToDB() { throw new Error('saveClientToDB está deshabilitada: usa las operaciones de servidor (CrmClients).'); }
+function saveProspectToDB() { throw new Error('saveProspectToDB está deshabilitada: usa las operaciones de servidor (CrmCommercial).'); }
+// Direct write of a CRM profile: ONLY for historical users (no Auth account), whose legacy login flow (first password, reset, status) still
+// needs it until their identity migration (pending, out of scope). A profile linked to Firebase Authentication (authUid) is never written
+// from the browser: it is created / enabled / disabled by the administrative functions.
+function saveUserToDB(u) {
+    if (u && u.authUid) throw new Error('Los perfiles con cuenta de Firebase Authentication solo se modifican con las funciones administrativas.');
+    db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
+}
 
-function saveSettings() { db.collection(`system${DB_SUFFIX}`).doc('settings').set(settings); }
+// DEPRECATED, no callers: it rewrote the whole `system/settings` document (shared with fabricacion) from the browser copy.
+// CRM settings are changed through CrmCommercial.updateSettings (updateSettingsAdmin). It now refuses to write.
+function saveSettings() { throw new Error('saveSettings est\u00e1 deshabilitada: usa CrmCommercial.updateSettings.'); }
 
 function saveState() { console.log('Deprecated saveState called.'); }
 function saveUsers() { console.log('Deprecated saveUsers called.'); }
@@ -466,10 +1151,30 @@ function openSettingsModal() {
     document.getElementById('settingsModal').style.display = 'block';
 }
 
-function saveMapsSettings() {
-    settings.factory_address = document.getElementById('set-gmaps-factory').value.trim();
-    saveSettings();
-    alert("Ajustes de mapa guardados.");
+// Settings are manager-only and decided by the server; the local copy is refreshed from the answer (and by the snapshot).
+async function applySettingsChange(change) {
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        return null;
+    }
+    try {
+        const res = await CrmCommercial.updateSettings(fb, Object.assign({ dbSuffix: DB_SUFFIX }, change));
+        if (res && res.settings) {
+            settings.visitantes = res.settings.visitantes;
+            settings.encargados = res.settings.encargados;
+            settings.factory_address = res.settings.factory_address;
+        }
+        return res;
+    } catch (err) {
+        alert(CrmCommercial.errorMessage(err));
+        return null;
+    }
+}
+
+async function saveMapsSettings() {
+    const res = await applySettingsChange({ action: 'setFactoryAddress', value: document.getElementById('set-gmaps-factory').value.trim() });
+    if (res) alert("Ajustes de mapa guardados.");
 }
 
 function renderSettingsLists() {
@@ -486,21 +1191,22 @@ function renderSettingsLists() {
     });
 }
 
-function addSetting(type) {
+async function addSetting(type) {
     let input = document.getElementById(`new-${type}-input`);
     let val = input.value.trim();
     if (val) {
-        settings[type].push(val);
+        const res = await applySettingsChange({ action: 'addItem', list: type, value: val });
+        if (!res) return;
         input.value = '';
-        saveSettings();
         renderSettingsLists();
     }
 }
 
-function removeSetting(type, index) {
-    settings[type].splice(index, 1);
-    saveSettings();
-    renderSettingsLists();
+async function removeSetting(type, index) {
+    const val = settings[type] && settings[type][index];
+    if (typeof val !== 'string') return;
+    const res = await applySettingsChange({ action: 'removeItem', list: type, value: val });
+    if (res) renderSettingsLists();
 }
 
 function showView(viewId) {
@@ -513,6 +1219,12 @@ function showView(viewId) {
     if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
     if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
     if (viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
+    if (viewId === 'users-view') {
+        const navU = document.getElementById('nav-users');
+        if (navU) navU.classList.add('active');
+        if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
+        renderUsersTable();
+    }
 
 }
 function goBackFromDetail() { showView(lastViewedSection); }
@@ -542,22 +1254,88 @@ function processLogin(e) {
     const email = document.getElementById('login-email').value.trim();
     const pass = document.getElementById('login-password').value;
 
-    const user = users.find(u => u.email === email && u.activo);
-    if (!user) return alert("Usuario no encontrado o inactivo.");
-
-    if (user.password === "") {
-        if (pass !== "") {
-            return alert("Este usuario es nuevo. Deja la contraseña en blanco y dale a Iniciar Sesión para configurarla por primera vez.");
+    const user = (typeof CrmAuth !== 'undefined') ? CrmAuth.findLoginUser(users, email) : users.find(u => u.email === email && u.activo);
+    if (!user) {
+        // Direct Firebase Auth login fallback when users collection was not preloaded
+        if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function' && pass) {
+            return processDirectFirebaseAuthLogin(email, pass);
         }
-        pendingSetupUser = user;
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('setup-screen').style.display = 'flex';
-    } else {
-        if (user.password !== pass) return alert("Contraseña incorrecta.");
-        currentUser = user;
+        return alert("Usuario no encontrado o inactivo.");
+    }
+
+    // SEC-03: All authenticated logins require Firebase Authentication.
+    // Plaintext password comparison in browser is decommissioned.
+    if (user.authUid) return processFirebaseLogin(user, pass);
+
+    if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function' && pass) {
+        return processDirectFirebaseAuthLogin(email, pass);
+    }
+
+    return alert("Esta cuenta histórica requiere vinculación a Firebase Authentication por un administrador antes de ingresar.");
+}
+
+async function processDirectFirebaseAuthLogin(email, pass) {
+    try {
+        const cred = await firebase.auth().signInWithEmailAndPassword(email, pass);
+        if (!cred || !cred.user) return alert("Error al iniciar sesión.");
+        const tok = await cred.user.getIdTokenResult();
+        const cid = tok.claims && tok.claims.cid;
+        const role = tok.claims && tok.claims.role;
+        if (!cid || !role) {
+            await firebase.auth().signOut();
+            return alert("La cuenta de acceso no tiene un perfil comercial asignado.");
+        }
+        let profile = { id: cid, authUid: cred.user.uid, email, role, activo: true, nombre: cred.user.displayName || email };
+        try {
+            const snap = await db.collection(`users${DB_SUFFIX}`).doc(cid).get();
+            if (snap.exists) {
+                const sdata = snap.data() || {};
+                if (sdata.activo === false) {
+                    await firebase.auth().signOut();
+                    return alert("Esta cuenta se encuentra inactiva. Contacta a un administrador.");
+                }
+                const hasLegacyPwd = sdata.password !== undefined && sdata.password !== null && sdata.password !== "";
+                delete sdata.password;
+                profile = Object.assign(profile, sdata);
+                delete profile.password;
+                if (hasLegacyPwd && typeof CrmAuth !== 'undefined' && typeof CrmAuth.purgeHistoricalPassword === 'function') {
+                    CrmAuth.purgeHistoricalPassword(firebase, { id: cid, dbSuffix: DB_SUFFIX }).catch(() => {});
+                }
+            }
+        } catch (_) {}
+        currentUser = profile;
         localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+        if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
         checkAuth();
         reRenderApp();
+    } catch (e) {
+        const reason = (typeof CrmAuth !== 'undefined') ? CrmAuth.normalizeCode(e) : (e && e.code);
+        alert((typeof CrmAuth !== 'undefined') ? CrmAuth.loginErrorMessage(reason) : "Correo o contraseña incorrectos.");
+    }
+}
+
+async function processFirebaseLogin(user, pass) {
+    if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
+    if (!pass) return alert("Ingresa tu contraseña.");
+    const res = await CrmAuth.loginWithFirebase(firebase, user, pass);
+    if (!res.ok) return alert(CrmAuth.loginErrorMessage(res.reason));
+    currentUser = user;
+    localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+    if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
+    checkAuth();
+    reRenderApp();
+
+    // Requirement 6: purge plaintext password from Firestore profile once successful login is verified
+    if (user.password !== undefined && user.password !== null && user.password !== "" && typeof CrmAuth.purgeHistoricalPassword === 'function') {
+        CrmAuth.purgeHistoricalPassword(firebase, { id: user.id, dbSuffix: DB_SUFFIX })
+            .then(() => {
+                delete user.password;
+                if (currentUser) delete currentUser.password;
+                localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+            })
+            .catch(err => {
+                console.warn('[CRM] No se pudo purgar contraseña histórica tras login verificado:', err && err.message);
+            });
     }
 }
 
@@ -573,11 +1351,17 @@ function processFirstTimeSetup(e) {
 
     currentUser = pendingSetupUser;
     localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+    if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
     checkAuth();
     reRenderApp();
 }
 
 function processLogout() {
+    if (typeof detachSnapshotListeners === 'function') detachSnapshotListeners();
+    clients = [];
+    prospects = [];
+    users = [];
+    if (typeof CrmAuth !== 'undefined') CrmAuth.signOut(firebase);
     currentUser = null;
     localStorage.removeItem('ductsal_current_user');
     checkAuth();
@@ -611,12 +1395,42 @@ function applyRolePermissions() {
 
     renderList();
     renderClientsTable();
-    if (role === 'manager') renderUsersTable();
+    if (role === 'manager') {
+        renderUsersTable();
+        if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
+    }
 }
 
 // ========================
 // USERS MANAGEMENT
 // ========================
+let adminUsersLoading = false;
+async function fetchAdminUsers() {
+    if (!currentUser || currentUser.role !== 'manager') return;
+    if (adminUsersLoading) return;
+    adminUsersLoading = true;
+    try {
+        if (typeof CrmAuth !== 'undefined' && typeof CrmAuth.listUsersViaFunction === 'function' && typeof firebase !== 'undefined') {
+            const list = await CrmAuth.listUsersViaFunction(firebase, { dbSuffix: DB_SUFFIX });
+            if (Array.isArray(list)) {
+                list.forEach(au => {
+                    const idx = users.findIndex(u => u.id === au.id);
+                    if (idx >= 0) {
+                        users[idx] = Object.assign({}, users[idx], au);
+                    } else {
+                        users.push(au);
+                    }
+                });
+                renderUsersTable();
+            }
+        }
+    } catch (e) {
+        console.warn('[CRM] Error al cargar usuarios administrativos:', e && e.message);
+    } finally {
+        adminUsersLoading = false;
+    }
+}
+
 function openUserModal(id = null) {
     if (id) {
         const u = users.find(x => x.id === id);
@@ -635,7 +1449,8 @@ function openUserModal(id = null) {
     document.getElementById('userModal').style.display = 'block';
 }
 
-function saveUser(e) {
+let userSaveInFlight = false;
+async function saveUser(e) {
     e.preventDefault();
     const id = document.getElementById('user-id-edit').value;
     const nombre = document.getElementById('usr-nombre').value.trim();
@@ -644,14 +1459,55 @@ function saveUser(e) {
 
     if (id) {
         const u = users.find(x => x.id === id);
+        // The email of a Firebase-Auth-linked user is the login identity and cannot be edited here.
+        if (u && u.authUid && u.email !== email) return alert("El correo de un usuario con cuenta de Firebase Authentication no se puede cambiar desde aquí.");
+        // Name and ROLE of an Auth-linked profile are changed ONLY by updateUserAdmin (manager session verified live on the server; it keeps the
+        // Auth claims and the profile in step and writes the audit). Nothing is changed locally unless the server confirms it. The email is
+        // the login identity and cannot be edited. Only vendedor / gestor can be assigned; `manager` is never granted from here.
+        if (u && u.authUid) {
+            if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se guardó ningún cambio. Recarga la página.");
+            if (role !== u.role && !CrmAuth.CREATABLE_ROLES.includes(role)) return alert("Solo se puede asignar el rol de vendedor o gestor desde aquí. Las cuentas de gerente las configura el propietario del sistema. No se guardó ningún cambio.");
+            const change = { id: u.id, dbSuffix: DB_SUFFIX };
+            if (nombre !== u.nombre) change.nombre = nombre;
+            if (role !== u.role) change.role = role;
+            if (change.nombre === undefined && change.role === undefined) { closeModal('userModal'); return; }
+            if (userSaveInFlight) return;
+            userSaveInFlight = true;
+            try {
+                const { outcome, result } = await CrmAuth.adminUpdateUser(firebase, change, alert);
+                if (outcome !== 'updated') return;
+                if (result && result.nombre !== undefined) u.nombre = result.nombre;
+                if (result && result.role !== undefined) u.role = result.role;
+                if (result && result.sessionsRevoked === false && change.role !== undefined) alert("El rol se cambió, pero no se pudieron cerrar las sesiones abiertas del usuario: aplicará cuando renueve su sesión.");
+            } finally {
+                userSaveInFlight = false;
+            }
+            closeModal('userModal');
+            renderUsersTable();
+            if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
+            return;
+        }
+        // Historical users (no Auth account) keep the legacy edit until their identity migration (out of scope, pending).
         if (u) { u.nombre = nombre; u.email = email; u.role = role; saveUserToDB(u); }
     } else {
-        if (users.some(x => x.email === email)) return alert("El correo ya está en uso.");
-        let nu = { id: Date.now().toString(), nombre, email, password: '', role, activo: true };
-        saveUserToDB(nu);
+        if (users.some(x => String(x.email || '').trim().toLowerCase() === email.toLowerCase())) return alert("El correo ya está en uso.");
+        // New users are ONLY created through the Cloud Function (the server verifies the caller is a
+        // manager and Firebase Auth holds the credential). There is deliberately no fallback to the
+        // old direct-Firestore creation, which stored a plaintext password: any outcome other than
+        // 'created' has already been explained to the user by CrmAuth and the creation stops here.
+        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se creó el usuario. Recarga la página.");
+        if (userSaveInFlight) return;
+        userSaveInFlight = true;
+        try {
+            const outcome = await CrmAuth.adminCreateUser(firebase, { nombre, email, role, dbSuffix: DB_SUFFIX }, alert);
+            if (outcome !== 'created') return;
+        } finally {
+            userSaveInFlight = false;
+        }
     }
     closeModal('userModal');
     renderUsersTable();
+    if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
 }
 
 function renderUsersTable() {
@@ -668,7 +1524,7 @@ function renderUsersTable() {
         const stHtml = u.activo ? `<span style="color:var(--success);">Activo</span>` : `<span style="color:var(--danger);">Inactivo</span>`;
         tbody.innerHTML += `<tr>
             <td>${u.nombre}</td>
-            <td>${u.email}</td>
+            <td>${u.email || '-'}</td>
             <td>${rName}</td>
             <td>${stHtml}</td>
             <td>
@@ -681,17 +1537,35 @@ function renderUsersTable() {
 }
 
 function resetUserPassword(id) {
-    if (confirm("¿Estás seguro de restablecer la contraseña? El usuario deberá configurarla nuevamente al iniciar sesión.")) {
-        const u = users.find(x => x.id === id);
-        u.password = "";
-        saveUserToDB(u);
-        alert("Contraseña restablecida.");
+    const target = users.find(x => x.id === id);
+    if (!target) return;
+    // Firebase-Auth-linked users: Firebase emails a password-reset link; nothing is written to Firestore.
+    if (target.authUid) {
+        if (!confirm("¿Enviar a este usuario un correo para restablecer su contraseña?")) return;
+        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
+        CrmAuth.sendPasswordSetupEmail(firebase, target.email)
+            .then(() => alert("Correo de restablecimiento enviado."))
+            .catch(() => alert("No se pudo enviar el correo de restablecimiento."));
+        return;
     }
+    alert("Este usuario no está vinculado a Firebase Authentication. Debe ser vinculado previamente por un administrador.");
 }
 
-function toggleUserStatus(id) {
+async function toggleUserStatus(id) {
     const u = users.find(x => x.id === id);
     if (u.id === currentUser.id) return alert("No puedes desactivarte a ti mismo.");
+    // Auth-linked users: the Cloud Function disables/enables the Firebase Auth account and updates the
+    // profile together. Nothing is changed locally unless the server confirms it.
+    if (u.authUid) {
+        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se cambió el estado. Recarga la página.");
+        const outcome = await CrmAuth.adminSetUserActive(firebase, { id: u.id, activo: !u.activo, dbSuffix: DB_SUFFIX }, alert);
+        if (outcome === 'updated') {
+            u.activo = !u.activo;
+            renderUsersTable();
+            if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
+        }
+        return;
+    }
     u.activo = !u.activo;
     saveUserToDB(u);
     renderUsersTable();
@@ -738,13 +1612,23 @@ function generateProspectCode() {
 // ========================
 // CLIENTS
 // ========================
+// Clients visible to the current user (list and selector). A vendedor sees the clients they created plus the
+// clients referenced (clientId) by opportunities they created or that are assigned to them: the same criterion
+// renderList uses for opportunities, so an assigned opportunity never points at a client the vendedor cannot see.
+// Gerente, gestor and any other role keep seeing every client. Read-only: no stored data is modified.
+function getVisibleClients() {
+    if (!currentUser || currentUser.role !== 'vendedor') return clients;
+    const related = new Set();
+    prospects.forEach(p => {
+        if (p.createdBy === currentUser.id || p.vendedorId === currentUser.id) related.add(p.clientId);
+    });
+    return clients.filter(c => c.createdBy === currentUser.id || related.has(c.id));
+}
+
 function renderClientsTable() {
     const tbody = document.getElementById('clients-table-body'); tbody.innerHTML = '';
 
-    let filtered = clients;
-    if (currentUser && currentUser.role === 'vendedor') {
-        filtered = filtered.filter(c => c.createdBy === currentUser.id);
-    }
+    let filtered = getVisibleClients();
 
     // Apply Search Filter
     const searchVal = document.getElementById('cli-search') ? document.getElementById('cli-search').value.toLowerCase().trim() : '';
@@ -816,11 +1700,13 @@ function toggleClientFields() {
     else if (type === 'juridica') { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
     else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'none'; }
 }
+
 function openClientModal(clientId = null) {
     document.getElementById('clientForm').reset(); document.getElementById('client-id-edit').value = '';
     if (clientId) {
         document.getElementById('client-modal-title').textContent = 'Editar Cliente'; const c = clients.find(x => x.id === clientId);
         if (c) {
+            window._activeClientBaseDocs = (c.documentos && typeof c.documentos === 'object') ? JSON.parse(JSON.stringify(c.documentos)) : null;
             document.getElementById('client-id-edit').value = c.id; document.getElementById('client-tipo').value = c.tipo; toggleClientFields();
             document.getElementById('cli-telefono').value = c.telefono || ''; document.getElementById('cli-correo').value = c.correo || ''; document.getElementById('cli-correo-fact').value = c.correo_fact || '';
             document.getElementById('cli-es-exportacion').checked = c.es_exportacion === true || c.es_exportacion === 'true';
@@ -829,10 +1715,25 @@ function openClientModal(clientId = null) {
                 document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || '';
                 document.getElementById('nat-profesion').value = c.profesion || ''; document.getElementById('nat-domicilio').value = c.domicilio || '';
                 const sts = document.getElementById('nat-dui-status');
-                if (c.documentos && c.documentos.dui) {
-                    const docUrl = typeof c.documentos.dui === 'string' ? c.documentos.dui : c.documentos.dui.url;
-                    let delBtn = (currentUser && currentUser.role === 'manager') ? ` <button type="button" class="btn-danger" style="padding:1px 6px; font-size:0.7rem; margin-left:6px;" onclick="deleteClientDocument('${c.id}', 'dui')">🗑️ Eliminar</button>` : '';
-                    sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: <a href="${docUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">Ver DUI</a>${delBtn}</span>`;
+                if (c.documentos && typeof c.documentos === 'object' && Object.keys(c.documentos).length > 0) {
+                    const items = [];
+                    const allKeys = Object.keys(c.documentos);
+                    const sortedKeys = allKeys.includes('dui')
+                        ? ['dui', ...allKeys.filter(k => k !== 'dui').sort()]
+                        : allKeys.sort();
+                    for (const k of sortedKeys) {
+                        const val = c.documentos[k];
+                        if (!val) continue;
+                        const lbl = formatClientDocLabel(k);
+                        if (Array.isArray(val)) {
+                            val.forEach((subVal, idx) => {
+                                if (subVal) items.push(renderClientDocItem(subVal, `${lbl} (${idx + 1})`, c.id, k, idx));
+                            });
+                        } else {
+                            items.push(renderClientDocItem(val, lbl, c.id, k));
+                        }
+                    }
+                    sts.innerHTML = items.length > 0 ? `<span style="color:var(--success);">✔️ Expediente: ${items.join(' ')}</span>` : '';
                 } else { sts.innerHTML = ''; }
             }
             else {
@@ -841,62 +1742,167 @@ function openClientModal(clientId = null) {
                 document.getElementById('jur-dui-rep').value = c.dui_rep || ''; document.getElementById('jur-nit-rep').value = c.nit_rep || '';
                 document.getElementById('jur-gran-contribuyente').checked = c.is_gran_contribuyente === true;
                 const jSts = document.getElementById('jur-docs-status');
-                if (c.documentos && Object.keys(c.documentos).length > 0) {
+                if (c.documentos && typeof c.documentos === 'object' && Object.keys(c.documentos).length > 0) {
                     let links = [];
-                    const keysMap = { escritura: 'Escritura', mods_escritura: 'Mods. Escritura', credencial: 'Credencial', nit: 'NIT', nrc: 'NRC', dui: 'DUI Rep.' };
-                    const isManager = currentUser && currentUser.role === 'manager';
-                    for (let k in keysMap) {
-                        if (c.documentos[k]) {
-                            const url = typeof c.documentos[k] === 'string' ? c.documentos[k] : c.documentos[k].url;
-                            let delBtn = isManager ? ` <button type="button" class="btn-danger" style="padding:1px 5px; font-size:0.65rem; margin-left:2px; margin-right:8px;" onclick="deleteClientDocument('${c.id}', '${k}')">🗑️</button>` : '';
-                            links.push(`<span style="display:inline-block; margin-right:6px;"><a href="${url}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">[${keysMap[k]}]</a>${delBtn}</span>`);
+                    const PREFERRED_ORDER = [
+                        'escritura', 'escritura_constitucion',
+                        'mods_escritura', 'mods',
+                        'credencial', 'credencial_rep',
+                        'nit', 'nit_empresa',
+                        'nrc', 'nrc_empresa',
+                        'dui', 'dui_rep'
+                    ];
+                    const allKeys = Object.keys(c.documentos);
+                    const sortedKeys = [
+                        ...PREFERRED_ORDER.filter(k => allKeys.includes(k)),
+                        ...allKeys.filter(k => !PREFERRED_ORDER.includes(k)).sort()
+                    ];
+                    for (const k of sortedKeys) {
+                        const val = c.documentos[k];
+                        if (!val) continue;
+                        const lbl = formatClientDocLabel(k);
+                        if (Array.isArray(val)) {
+                            val.forEach((subVal, idx) => {
+                                if (subVal) links.push(renderClientDocItem(subVal, `${lbl} (${idx + 1})`, c.id, k, idx));
+                            });
+                        } else {
+                            links.push(renderClientDocItem(val, lbl, c.id, k));
                         }
                     }
                     jSts.innerHTML = links.length > 0 ? `<span style="color:var(--success);">Archivos en expediente: ${links.join(' ')}</span>` : '';
                 } else { jSts.innerHTML = ''; }
             }
         }
-    } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; document.getElementById('cli-es-exportacion').checked = false; toggleClientFields(); }
+    } else {
+        window._activeClientBaseDocs = null;
+        document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; document.getElementById('cli-es-exportacion').checked = false; toggleClientFields();
+    }
     document.getElementById('clientModal').style.display = 'block';
 }
 
-async function deleteClientDocument(clientId, docKey) {
+async function deleteClientDocument(clientId, docKey, itemIndex = null) {
     if (!currentUser || currentUser.role !== 'manager') {
         return alert("Permiso denegado. Solo el Gerente puede eliminar documentos.");
     }
     const client = clients.find(c => c.id === clientId);
-    if (!client || !client.documentos || !client.documentos[docKey]) {
+    if (!client || !client.documentos || client.documentos[docKey] === undefined) {
         return alert("Documento no encontrado.");
     }
 
-    const keyNames = { escritura: 'Escritura de Constitución', mods_escritura: 'Modificaciones', credencial: 'Credencial de Rep. Legal', nit: 'NIT Empresa', nrc: 'NRC Empresa', dui: 'DUI' };
-    const docName = keyNames[docKey] || docKey;
+    const docName = formatClientDocLabel(docKey);
+    const targetDesc = (itemIndex !== null && itemIndex !== undefined) ? `[${docName} (${itemIndex + 1})]` : `[${docName}]`;
 
-    if (!confirm(`¿Estás seguro de que deseas eliminar el documento [${docName}] del expediente de este cliente?`)) {
+    if (!confirm(`¿Estás seguro de que deseas eliminar el documento ${targetDesc} del expediente de este cliente?`)) {
         return;
     }
 
+    // The server decides (manager only) and keeps the identifier index consistent: no direct write of the client.
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmClients === 'undefined' || !CrmClients.hasSessionSync(fb)) {
+        return alert(typeof CrmClients !== 'undefined' ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+    }
+    showLoading('Eliminando documento...');
     try {
-        delete client.documentos[docKey];
-        saveClientToDB(client);
+        const next = JSON.parse(JSON.stringify(client));
+        next.baseDocumentos = (client.documentos && typeof client.documentos === 'object')
+            ? JSON.parse(JSON.stringify(client.documentos))
+            : {};
+        if (itemIndex !== null && itemIndex !== undefined && Array.isArray(next.documentos[docKey])) {
+            next.documentos[docKey].splice(itemIndex, 1);
+            if (next.documentos[docKey].length === 0) {
+                delete next.documentos[docKey];
+            }
+        } else {
+            delete next.documentos[docKey];
+        }
+        const res = await CrmClients.updateClient(fb, { id: clientId, client: next, dbSuffix: DB_SUFFIX, confirmReview: false });
+        if (res.status !== 'updated') return alert('No se eliminó el documento: ' + (res.status || 'respuesta inesperada') + '.');
+
+        if (res.client && res.client.documentos !== undefined) {
+            client.documentos = res.client.documentos;
+        } else {
+            if (itemIndex !== null && itemIndex !== undefined && Array.isArray(client.documentos[docKey])) {
+                client.documentos[docKey].splice(itemIndex, 1);
+                if (client.documentos[docKey].length === 0) {
+                    delete client.documentos[docKey];
+                }
+            } else {
+                delete client.documentos[docKey];
+            }
+        }
+        window._activeClientBaseDocs = (client.documentos && typeof client.documentos === 'object') ? JSON.parse(JSON.stringify(client.documentos)) : null;
         openClientModal(clientId);
         renderClientsTable();
     } catch (err) {
-        alert("Error al eliminar el documento: " + err.message);
+        alert(CrmClients.errorMessage(err));
+    } finally {
+        hideLoading();
     }
+}
+
+function hasStagedClientFiles(type) {
+    if (typeof document === 'undefined') return false;
+    if (type === 'natural') {
+        const duiEl = document.getElementById('nat-dui-file');
+        return !!(duiEl && duiEl.files && duiEl.files.length > 0);
+    }
+    const specs = [
+        'jur-file-escritura',
+        'jur-file-mods',
+        'jur-file-credencial',
+        'jur-file-nit',
+        'jur-file-nrc',
+        'jur-file-dui'
+    ];
+    return specs.some(id => {
+        const el = document.getElementById(id);
+        return !!(el && el.files && el.files.length > 0);
+    });
+}
+
+async function uploadClientStagedFiles(targetId, type, existingDocs = {}) {
+    const docs = Object.assign({}, existingDocs);
+    const filesToUpload = [];
+    if (type === 'natural') {
+        const duiEl = document.getElementById('nat-dui-file');
+        if (duiEl && duiEl.files.length > 0) {
+            filesToUpload.push({ el: duiEl, key: 'dui', isLegal: false });
+        }
+    } else {
+        const specs = [
+            { id: 'jur-file-escritura', key: 'escritura', isLegal: true },
+            { id: 'jur-file-mods', key: 'mods_escritura', isLegal: true },
+            { id: 'jur-file-credencial', key: 'credencial', isLegal: true },
+            { id: 'jur-file-nit', key: 'nit', isLegal: true },
+            { id: 'jur-file-nrc', key: 'nrc', isLegal: true },
+            { id: 'jur-file-dui', key: 'dui', isLegal: false }
+        ];
+        for (const s of specs) {
+            const el = document.getElementById(s.id);
+            if (el && el.files.length > 0) filesToUpload.push({ el, key: s.key, isLegal: s.isLegal });
+        }
+    }
+
+    if (filesToUpload.length === 0) return docs;
+
+    showLoading('Subiendo documentos del cliente a la nube...');
+    await Promise.all(filesToUpload.map(async item => {
+        const ref = await uploadFileToStorage(item.el.files[0], 'clientes', { clientId: targetId, isLegal: item.isLegal });
+        docs[item.key] = ref;
+    }));
+    return docs;
 }
 
 async function saveClient(e) {
     e.preventDefault();
-    showLoading('Subiendo documentos del cliente...');
     try {
         const editId = document.getElementById('client-id-edit').value;
         const type = document.getElementById('client-tipo').value;
-        if (!type) { hideLoading(); return alert("Debes seleccionar el Tipo de Persona obligatoriamente."); }
+        if (!type) return alert("Debes seleccionar el Tipo de Persona obligatoriamente.");
 
         const tel = document.getElementById('cli-telefono').value.trim();
         const email = document.getElementById('cli-correo').value.trim();
-        if (!tel && !email) { hideLoading(); return alert("Debe ingresar obligatoriamente un teléfono o correo."); }
+        if (!tel && !email) return alert("Debe ingresar obligatoriamente un teléfono o correo.");
 
         let c = {};
         if (editId) {
@@ -906,47 +1912,42 @@ async function saveClient(e) {
         if (!c.documentos) c.documentos = {};
 
         if (type === 'natural') {
-            c.nombres = document.getElementById('nat-nombres').value.trim(); c.apellidos = document.getElementById('nat-apellidos').value.trim();
-            if (!c.nombres || !c.apellidos) { hideLoading(); return alert("Nombres y Apellidos obligatorios."); }
-            c.dui = document.getElementById('nat-dui').value; c.nit = document.getElementById('nat-nit').value;
-            c.profesion = document.getElementById('nat-profesion').value; c.domicilio = document.getElementById('nat-domicilio').value;
-            const duiFile = document.getElementById('nat-dui-file');
-            if (duiFile && duiFile.files.length > 0) {
-                c.documentos.dui = await uploadFileToStorage(duiFile.files[0], 'clientes');
-            }
+            c.nombres = document.getElementById('nat-nombres').value.trim();
+            c.apellidos = document.getElementById('nat-apellidos').value.trim();
+            if (!c.nombres || !c.apellidos) return alert("Nombres y Apellidos obligatorios.");
+            c.dui = document.getElementById('nat-dui').value;
+            c.nit = document.getElementById('nat-nit').value;
+            c.profesion = document.getElementById('nat-profesion').value;
+            c.domicilio = document.getElementById('nat-domicilio').value;
         } else {
-            c.empresa = document.getElementById('jur-empresa').value.trim(); if (!c.empresa) { hideLoading(); return alert("Nombre de la Empresa obligatorio."); }
-            c.contacto = document.getElementById('jur-contacto').value.trim(); if (!c.contacto) { hideLoading(); return alert("Nombre del Contacto Principal obligatorio."); }
-            c.nit = document.getElementById('jur-nit').value; c.nrc = document.getElementById('jur-nrc').value;
+            c.empresa = document.getElementById('jur-empresa').value.trim();
+            if (!c.empresa) return alert("Nombre de la Empresa obligatorio.");
+            c.contacto = document.getElementById('jur-contacto').value.trim();
+            if (!c.contacto) return alert("Nombre del Contacto Principal obligatorio.");
+            c.nit = document.getElementById('jur-nit').value;
+            c.nrc = document.getElementById('jur-nrc').value;
             c.rep_legal = document.getElementById('jur-rep-legal').value.trim();
-            c.profesion_rep = document.getElementById('jur-profesion-rep').value; c.domicilio_rep = document.getElementById('jur-domicilio-rep').value;
-            c.dui_rep = document.getElementById('jur-dui-rep').value; c.nit_rep = document.getElementById('jur-nit-rep').value;
+            c.profesion_rep = document.getElementById('jur-profesion-rep').value;
+            c.domicilio_rep = document.getElementById('jur-domicilio-rep').value;
+            c.dui_rep = document.getElementById('jur-dui-rep').value;
+            c.nit_rep = document.getElementById('jur-nit-rep').value;
             c.is_gran_contribuyente = document.getElementById('jur-gran-contribuyente').checked;
-
-            const uploadDoc = async (id, key) => { const el = document.getElementById(id); if (el && el.files.length > 0) { c.documentos[key] = await uploadFileToStorage(el.files[0], 'clientes'); } };
-            await Promise.all([
-                uploadDoc('jur-file-escritura', 'escritura'),
-                uploadDoc('jur-file-mods', 'mods_escritura'),
-                uploadDoc('jur-file-credencial', 'credencial'),
-                uploadDoc('jur-file-nit', 'nit'),
-                uploadDoc('jur-file-nrc', 'nrc'),
-                uploadDoc('jur-file-dui', 'dui')
-            ]);
         }
-        c.tipo = type; c.telefono = tel; c.correo = email; c.correo_fact = document.getElementById('cli-correo-fact').value;
+        c.tipo = type;
+        c.telefono = tel;
+        c.correo = email;
+        c.correo_fact = document.getElementById('cli-correo-fact').value;
         c.es_exportacion = document.getElementById('cli-es-exportacion').checked;
-        if (editId) { c.id = editId; const index = clients.findIndex(x => x.id === editId); if (index > -1) clients[index] = c; }
-        else {
-            c.id = 'C' + Date.now().toString();
-            c.createdBy = currentUser ? currentUser.id : 'sistema';
-            c.fecha_creacion = new Date().toISOString();
-            clients.push(c);
-        }
-        saveClientToDB(c);
+
+        // The server decides (duplicates by NIT / DUI, ownership, id). A blocked / cancelled save returns null.
+        const saved = await persistClientViaServer(c, editId);
+        if (!saved) return;
+        c = saved;
+        const at = clients.findIndex(x => x.id === c.id);
+        if (at > -1) clients[at] = c; else clients.push(c);
         closeModal('clientModal');
         if (document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block') {
-            renderClientSelect();
-            document.getElementById('new-cliente-select').value = c.id;
+            selectClientInSelector(c.id, getClientName(c.id));
         } else {
             renderClientsTable();
         }
@@ -1175,59 +2176,262 @@ function openNewModal() {
     }
     document.getElementById('newProspectModal').style.display = 'block';
 }
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-function renderClientSelect() {
-    const select = document.getElementById('new-cliente-select'); select.innerHTML = '<option value="">-- Selecciona Cliente --</option>';
-    let filtered = clients;
-    if (currentUser && currentUser.role === 'vendedor') {
-        filtered = filtered.filter(c => c.createdBy === currentUser.id);
-    }
-    filtered.forEach(c => { select.innerHTML += `<option value="${c.id}">${c.tipo === 'natural' ? `${c.nombres} ${c.apellidos}` : c.empresa}</option>`; });
-}
-function createNewProspect(e) {
-    e.preventDefault(); const clientId = document.getElementById('new-cliente-select').value; if (!clientId) return alert("Debes seleccionar un cliente");
+let currentClientReservationId = null;
 
-    let assignedVendorId = currentUser ? currentUser.id : 'sistema';
-    let assignedVendorName = currentUser ? currentUser.nombre : 'Sistema';
-    let assignedVendorRole = currentUser ? currentUser.role : '';
-
-    const vendorSelect = document.getElementById('new-vendedor-select');
-    if (vendorSelect && vendorSelect.value && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
-        const targetUser = users.find(u => u.id === vendorSelect.value);
-        if (targetUser) {
-            assignedVendorId = targetUser.id;
-            assignedVendorName = targetUser.nombre;
-            assignedVendorRole = targetUser.role;
+async function cancelPendingClientReservation() {
+    if (!currentClientReservationId) return;
+    const resId = currentClientReservationId;
+    currentClientReservationId = null;
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (fb && typeof CrmClients !== 'undefined') {
+        try {
+            await CrmClients.cancelReservation(fb, { reservationId: resId, dbSuffix: DB_SUFFIX });
+        } catch (e) {
+            console.warn('No se pudo cancelar la reserva pendiente:', e);
         }
     }
+}
 
-    const p = {
-        id: Date.now().toString(),
-        codigo: generateProspectCode(),
+function closeModal(id) {
+    if (id === 'clientModal') {
+        cancelPendingClientReservation();
+    }
+    document.getElementById(id).style.display = 'none';
+}
+// Selector of NEW opportunities. Deliberately NOT getVisibleClients(): that is the portfolio shown in the Clients
+// section. A vendedor with a Firebase session searches the WHOLE catalogue on the server (searchClientsCatalog: id,
+// name and a masked document hint only); picking a client never creates or modifies it. Gerente / gestor keep the
+// complete local list. A vendedor on the historical login has no server session, so the portfolio is the best available.
+function catalogueSearchActive() {
+    return !!(currentUser && currentUser.role === 'vendedor' && typeof CrmClients !== 'undefined' && CrmClients.hasSessionSync(firebase));
+}
+function getSelectorClientsLocal() {
+    return (currentUser && currentUser.role === 'vendedor') ? getVisibleClients() : clients;
+}
+function renderClientSelect() {
+    const select = document.getElementById('new-cliente-select'); select.innerHTML = '<option value="">-- Selecciona Cliente --</option>';
+    const search = document.getElementById('new-cliente-search');
+    const hint = document.getElementById('new-cliente-search-hint');
+    const active = catalogueSearchActive();
+    if (search) { search.style.display = active ? 'block' : 'none'; search.value = ''; }
+    if (hint) { hint.style.display = active ? 'block' : 'none'; hint.textContent = active ? 'Busca por nombre, NIT o DUI (mín. 2 letras o 4 dígitos). Verás todos los clientes del catálogo.' : ''; }
+    if (active) return;
+    getSelectorClientsLocal().forEach(c => { select.add(new Option(c.tipo === 'natural' ? `${c.nombres} ${c.apellidos}` : c.empresa, c.id)); });
+}
+// Makes sure `id` is an option of the selector and selects it (a catalogue client may not be in the results list).
+function selectClientInSelector(id, label) {
+    const select = document.getElementById('new-cliente-select');
+    if (!select) return;
+    if (![...select.options].some(o => o.value === id)) select.add(new Option(label || id, id));
+    select.value = id;
+}
+let catalogueSearchTimer = null, catalogueSearchSeq = 0;
+function onClientCatalogSearchInput() {
+    clearTimeout(catalogueSearchTimer);
+    catalogueSearchTimer = setTimeout(runClientCatalogSearch, 300);
+}
+async function runClientCatalogSearch() {
+    const search = document.getElementById('new-cliente-search');
+    const hint = document.getElementById('new-cliente-search-hint');
+    const select = document.getElementById('new-cliente-select');
+    if (!search || !hint || !select) return;
+    const seq = ++catalogueSearchSeq;
+    const q = search.value.trim();
+    try {
+        const res = await CrmClients.searchCatalog(firebase, { q, dbSuffix: DB_SUFFIX });
+        if (seq !== catalogueSearchSeq) return; // a newer search is in flight
+        const keep = select.value ? { id: select.value, label: select.options[select.selectedIndex].text } : null;
+        select.innerHTML = '<option value="">-- Selecciona Cliente --</option>';
+        if (keep) select.add(new Option(keep.label, keep.id));
+        (res.results || []).forEach(r => { if (!keep || keep.id !== r.id) select.add(new Option(CrmClients.catalogOptionLabel(r), r.id)); });
+        if (keep) select.value = keep.id;
+        hint.textContent = res.tooShort ? 'Escribe al menos 2 letras o 4 dígitos para buscar.'
+            : (res.results || []).length === 0 ? 'Sin resultados. Si el cliente no existe, usa "+ Nuevo".'
+            : `${res.results.length} resultado(s)${res.truncated ? ' (hay más: afina la búsqueda)' : ''}. ★ = ya está en tu cartera.`;
+    } catch (err) {
+        if (seq === catalogueSearchSeq) hint.textContent = CrmClients.errorMessage(err);
+    }
+}
+
+// Creates / edits a client through Cloud Functions with server reservation and hierarchical storage.
+// Returns the saved client, or null when nothing was saved (duplicate, review declined, error, no session).
+async function persistClientViaServer(c, editId) {
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmClients === 'undefined' || !CrmClients.hasSessionSync(fb)) {
+        hideLoading();
+        alert(typeof CrmClients !== 'undefined' ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+        return null;
+    }
+    let confirmReview = false;
+
+    // A) EDIT EXISTING CLIENT
+    if (editId) {
+        const filesStaged = hasStagedClientFiles(c.tipo);
+        if (filesStaged) {
+            showLoading('Subiendo documentos del cliente...');
+            try {
+                c.baseDocumentos = (window._activeClientBaseDocs !== undefined && window._activeClientBaseDocs !== null)
+                    ? JSON.parse(JSON.stringify(window._activeClientBaseDocs))
+                    : (c.documentos ? JSON.parse(JSON.stringify(c.documentos)) : {});
+                c.documentos = await uploadClientStagedFiles(editId, c.tipo, c.documentos);
+            } catch (uploadErr) {
+                hideLoading();
+                alert("Error al subir documentos: " + uploadErr.message);
+                return null;
+            }
+        } else {
+            // General data update: do NOT send documentos so live Firestore documents remain untouched
+            delete c.documentos;
+            delete c.baseDocumentos;
+        }
+
+        showLoading('Guardando cambios en cliente...');
+        for (let attempt = 0; attempt < 2; attempt++) {
+            let res;
+            try {
+                res = await CrmClients.updateClient(fb, { id: editId, client: c, dbSuffix: DB_SUFFIX, confirmReview });
+            } catch (err) {
+                hideLoading();
+                alert(CrmClients.errorMessage(err));
+                return null;
+            }
+            if (res.status === 'duplicate') {
+                hideLoading();
+                alert(CrmClients.duplicateMessage(res));
+                return null;
+            }
+            if (res.status === 'needs-review') {
+                hideLoading();
+                if (!confirm(CrmClients.reviewMessage(res))) return null;
+                showLoading('Guardando cliente...');
+                confirmReview = true;
+                continue;
+            }
+            const mergedClient = Object.assign({}, c, res.client || {});
+            window._activeClientBaseDocs = (mergedClient.documentos && typeof mergedClient.documentos === 'object')
+                ? JSON.parse(JSON.stringify(mergedClient.documentos))
+                : null;
+            return mergedClient;
+        }
+        return null;
+    }
+
+    // B) CREATE NEW CLIENT (RESERVATION -> UPLOAD -> FINALIZE)
+    let reservationId = null;
+    showLoading('Validando y reservando registro de cliente...');
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        let res;
+        try {
+            res = await CrmClients.reserveCreation(fb, { client: c, dbSuffix: DB_SUFFIX, confirmReview });
+        } catch (err) {
+            hideLoading();
+            alert(CrmClients.errorMessage(err));
+            return null;
+        }
+
+        if (res.status === 'duplicate') {
+            hideLoading();
+            alert(CrmClients.duplicateMessage(res));
+            const modalOpen = document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block';
+            if (modalOpen && res.matches && res.matches.length === 1) {
+                closeModal('clientModal');
+                selectClientInSelector(res.matches[0].clientId, res.matches[0].nombre);
+            }
+            return null;
+        }
+
+        if (res.status === 'needs-review') {
+            hideLoading();
+            if (!confirm(CrmClients.reviewMessage(res))) return null;
+            showLoading('Confirmando revisión de cliente...');
+            confirmReview = true;
+            continue;
+        }
+
+        if (res.status === 'reserved' && res.reservationId) {
+            reservationId = res.reservationId;
+            currentClientReservationId = reservationId;
+            break;
+        }
+
+        hideLoading();
+        alert('Respuesta inesperada al reservar cliente: ' + (res.status || 'error'));
+        return null;
+    }
+
+    if (!reservationId) return null;
+
+    // STEP 2: Upload staged files with active server reservation
+    try {
+        c.documentos = await uploadClientStagedFiles(reservationId, c.tipo, c.documentos);
+    } catch (uploadErr) {
+        hideLoading();
+        console.error('Error al subir documentos de la reserva:', uploadErr);
+        if (confirm(`Error al subir documentos: ${uploadErr.message}. ¿Deseas cancelar la reserva para intentar de nuevo?`)) {
+            await cancelPendingClientReservation();
+        }
+        return null;
+    }
+
+    // STEP 3: Finalize Client Creation
+    showLoading('Formalizando creación del cliente...');
+    let finRes;
+    try {
+        finRes = await CrmClients.finalizeCreation(fb, { reservationId, client: c, dbSuffix: DB_SUFFIX, confirmReview });
+    } catch (finErr) {
+        hideLoading();
+        alert(CrmClients.errorMessage(finErr));
+        return null;
+    }
+
+    if (finRes.status === 'duplicate') {
+        hideLoading();
+        alert(CrmClients.duplicateMessage(finRes));
+        return null;
+    }
+    if (finRes.status !== 'created' && finRes.status !== 'ok') {
+        hideLoading();
+        alert('No se pudo formalizar el cliente: ' + (finRes.status || 'error desconocido'));
+        return null;
+    }
+
+    currentClientReservationId = null; // Successfully finalized!
+    return Object.assign({}, c, finRes.client || { id: reservationId });
+}
+// The opportunity is created by createProspectAdmin: the server decides who creates it (from the Firebase session), the code
+// and the initial history. The browser only sends what the user typed and, for manager/gestor, an optional assignee id.
+async function createNewProspect(e) {
+    e.preventDefault(); const clientId = document.getElementById('new-cliente-select').value; if (!clientId) return alert("Debes seleccionar un cliente");
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
+
+    const prospect = {
         clientId: clientId,
-        createdBy: currentUser ? currentUser.id : 'sistema',
-        createdByName: currentUser ? currentUser.nombre : 'Sistema',
-        createdByRole: currentUser ? currentUser.role : '',
-        vendedorId: assignedVendorId,
-        vendedorName: assignedVendorName,
-        vendedorRole: assignedVendorRole,
         proyecto: document.getElementById('new-proyecto').value,
         origen: document.getElementById('new-origen').value,
         tipo_proyecto: document.getElementById('new-tipo-proyecto').value,
-        tipo_producto: document.getElementById('new-tipo-producto').value,
-        fecha_creacion: new Date().toISOString(),
-        etapa: 'prospecto',
-        estado: 'activo',
-        stage_timestamps: { 'prospecto': new Date().toISOString() },
-        logs: [],
-        datos: {},
-        facturas: []
+        tipo_producto: document.getElementById('new-tipo-producto').value
     };
-    addLogToProspect(p, `Prospecto creado por ${p.createdByName}. Vendedor asignado: ${p.vendedorName}. Origen: ${p.origen}`, true);
-    saveProspectToDB(p);
-    closeModal('newProspectModal');
-    document.getElementById('newProspectForm').reset();
-    renderList();
+    const vendorSelect = document.getElementById('new-vendedor-select');
+    if (vendorSelect && vendorSelect.value && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+        prospect.vendedorId = vendorSelect.value; // only a hint: the server re-checks the role and that the user exists
+    }
+
+    showLoading('Creando prospecto...');
+    try {
+        const res = await CrmCommercial.createProspect(fb, { prospect, dbSuffix: DB_SUFFIX });
+        if (res && res.prospect && res.prospect.id && !prospects.some(x => x.id === res.prospect.id)) prospects.push(res.prospect);
+        closeModal('newProspectModal');
+        document.getElementById('newProspectForm').reset();
+        renderList();
+    } catch (err) {
+        alert(CrmCommercial.errorMessage(err));
+    } finally {
+        hideLoading();
+    }
 }
 
 // ========================
@@ -1350,11 +2554,7 @@ function renderFinancials(p) {
             if (ordContainer) {
                 let ocDocLink = '';
                 if (o.doc_oferta) {
-                    if (typeof o.doc_oferta === 'object' && o.doc_oferta.url) {
-                        ocDocLink = `<a href="${o.doc_oferta.url}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Doc</a>`;
-                    } else if (typeof o.doc_oferta === 'string') {
-                        ocDocLink = `<a href="${o.doc_oferta}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Doc</a>`;
-                    }
+                    ocDocLink = `<span style="margin-left:5px;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.ordenes_cambio?.find(oc => oc.id === '${o.id}')?.doc_oferta, 'Oferta OC', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 Doc</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.ordenes_cambio?.find(oc => oc.id === '${o.id}')?.doc_oferta, 'Oferta OC', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; font-size:0.75rem; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>`;
                 }
                 ordContainer.innerHTML += `<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${color}; margin-top:2px;">
                     <span>↳ ${o.desc} ${ocDocLink}
@@ -1403,11 +2603,7 @@ function renderFinancials(p) {
                 f.pagos.map((pay, i) => {
                     let docLink = '';
                     if (pay.doc_comprobante) {
-                        if (typeof pay.doc_comprobante === 'object' && pay.doc_comprobante.url) {
-                            docLink = `<a href="${pay.doc_comprobante.url}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Comprobante</a>`;
-                        } else if (typeof pay.doc_comprobante === 'string') {
-                            docLink = `<a href="${pay.doc_comprobante}" target="_blank" style="color:var(--brand-gold); margin-left:5px; text-decoration:none;">📄 Comprobante</a>`;
-                        }
+                        docLink = `<span style="margin-left:5px;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 Comprobante</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; font-size:0.75rem; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>`;
                     }
                     let lbl = pay.metodo === 'retencion_1pct' ? '<span style="color:var(--brand-gold);">[Retención 1%]</span>' : 'Abono:';
                     let met = pay.metodo === 'retencion_1pct' ? 'Comprobante' : (pay.metodo || 'N/A');
@@ -1422,7 +2618,7 @@ function renderFinancials(p) {
                         <strong style="font-size:1.1rem; color:white;">${f.numero}</strong> <span class="badge ${isPaid ? 'ganado' : 'activo'} ml-2">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
                         <span class="cursor-pointer" style="margin-left:10px; font-size:0.8rem; color:var(--brand-gold);" onclick="editInvoice('${f.id}')">[Editar Factura]</span>
                         ${invoiceIndex > 0 ? `<span class="cursor-pointer" style="margin-left:5px; font-size:0.8rem; color:var(--danger);" onclick="deleteInvoice('${f.id}')">[Eliminar Factura]</span>` : `<span style="margin-left:5px; font-size:0.8rem; color:var(--text-muted);" title="La factura de anticipo no puede ser eliminada">[Eliminar Factura]</span>`}
-                        ${f.doc_factura ? (typeof f.doc_factura === 'object' && f.doc_factura.url ? `<a href="${f.doc_factura.url}" target="_blank" style="font-size:0.8rem; color:var(--brand-gold); margin-left:10px; text-decoration:none;">📄 ${f.doc_factura.name || 'Ver Documento'}</a>` : `<a href="${f.doc_factura}" target="_blank" style="font-size:0.8rem; color:var(--brand-gold); margin-left:10px; text-decoration:none;">📄 Ver Documento</a>`) : ''}
+                        ${f.doc_factura ? `<span style="margin-left:10px; font-size:0.8rem;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${f.numero}', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 ${typeof f.doc_factura === 'object' && f.doc_factura.name ? f.doc_factura.name : 'Factura'}</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${f.numero}', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>` : ''}
                         <div style="font-size:0.9rem; color:var(--text-secondary); margin-top:4px;">Facturado: ${formatCurrency(f.monto)} | Saldo Pendiente: <span style="color:var(--danger)">${formatCurrency(pSaldo)}</span></div>
                     </div>
                     ${!isPaid ? `<button class="btn-success" onclick="showPaymentForm('${f.id}', '${f.numero}')" style="padding:0.4rem 0.8rem; font-size:0.8rem;">+ Abonar a Factura</button>` : ''}
@@ -1476,12 +2672,36 @@ function editChangeOrder(id) {
     document.getElementById('changeOrderModal').style.display = 'block';
 }
 
+// ===== Opportunity workflow: server operations (functions/prospectWorkflowService.js) =====
+// Common wrapper of the operations below. It checks that there is a Firebase session (the server authorizes every call anyway), shows the
+// loading indicator, words server rejections, and NEVER falls back to writing the document from the browser: when there is no session or
+// the call fails, the operation simply does not happen and the user is told why. File uploads (Storage) happen inside `operation` BEFORE the
+// call; what is sent to the server is the user's input and the file references, never the opportunity document.
+// Returns the server answer, or null when nothing was saved. The realtime listener refreshes the screen with the stored result.
+async function runWorkflowOp(loadingMessage, operation) {
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        return null;
+    }
+    showLoading(loadingMessage);
+    try {
+        return await operation(fb);
+    } catch (err) {
+        // A rejection of the callable carries the `functions/...` code; anything else (e.g. a failed upload) keeps its own message.
+        if (err && String(err.code || '').startsWith('functions/')) alert(CrmCommercial.errorMessage(err));
+        else alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
+        console.error(err);
+        return null;
+    } finally {
+        hideLoading();
+    }
+}
+
 async function processChangeOrder(e) {
     e.preventDefault();
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-
-    if (!p.ordenes_cambio) p.ordenes_cambio = [];
 
     const editId = document.getElementById('co-id-edit').value;
     const tipo = document.getElementById('co-tipo').value;
@@ -1492,59 +2712,14 @@ async function processChangeOrder(e) {
     const fOferta = document.getElementById('co-oferta');
     const fCostos = document.getElementById('co-costos');
 
-    showLoading('Subiendo documentos de la orden de cambio...');
-    try {
-        let docOferta = null;
-        let docCostos = null;
-
-        if (fOferta && fOferta.files.length > 0) docOferta = await uploadFileToStorage(fOferta.files[0], 'ordenes_cambio');
-        if (fCostos && fCostos.files.length > 0) docCostos = await uploadFileToStorage(fCostos.files[0], 'ordenes_cambio');
-
-        if (editId) {
-            const idx = p.ordenes_cambio.findIndex(x => x.id === editId);
-            if (idx !== -1) {
-                p.ordenes_cambio[idx].tipo = tipo;
-                p.ordenes_cambio[idx].desc = desc;
-                p.ordenes_cambio[idx].precio = precio;
-                p.ordenes_cambio[idx].costo = costo;
-                if (docOferta) p.ordenes_cambio[idx].doc_oferta = docOferta;
-                if (docCostos) p.ordenes_cambio[idx].doc_costos = docCostos;
-
-                if (!p.documentos) p.documentos = {};
-                if (docOferta) p.documentos['oc_' + editId + '_oferta'] = docOferta;
-                if (docCostos) p.documentos['oc_' + editId + '_costos'] = docCostos;
-
-                addLogToProspect(p, `Orden de Cambio editada: ${desc}`, true);
-            }
-        } else {
-            const orden = {
-                id: Date.now().toString(),
-                fecha: new Date().toISOString(),
-                tipo: tipo,
-                desc: desc,
-                precio: precio,
-                costo: costo,
-                doc_oferta: docOferta,
-                doc_costos: docCostos
-            };
-            p.ordenes_cambio.push(orden);
-            let sign = tipo === 'aumento' ? '+' : '-';
-            addLogToProspect(p, `Orden de Cambio (${tipo.toUpperCase()}): ${desc}. Monto: ${sign}${formatCurrency(precio)}.`, true);
-
-            if (!p.documentos) p.documentos = {};
-            if (docOferta) p.documentos['oc_' + orden.id + '_oferta'] = docOferta;
-            if (docCostos) p.documentos['oc_' + orden.id + '_costos'] = docCostos;
-        }
-
-        saveProspectToDB(p);
-        closeModal('changeOrderModal');
-        renderFinancials(p);
-        renderInfo(p);
-    } catch (err) {
-        alert("Error al guardar la orden de cambio: " + err.message);
-    } finally {
-        hideLoading();
-    }
+    // saveChangeOrderAdmin: type, amounts and files are validated on the server; the order is added / edited by id inside a transaction on the
+    // stored document, so another user's changes made meanwhile are not overwritten. A retry reuses the same opId.
+    const res = await runWorkflowOp('Subiendo documentos de la orden de cambio...', async fb => {
+        const docOferta = (fOferta && fOferta.files.length > 0) ? await uploadFileToStorage(fOferta.files[0], 'ordenes_cambio', { prospectId: p.id }) : null;
+        const docCostos = (fCostos && fCostos.files.length > 0) ? await uploadFileToStorage(fCostos.files[0], 'ordenes_cambio', { prospectId: p.id }) : null;
+        return CrmCommercial.saveChangeOrder(fb, { prospectId: p.id, orderId: editId || undefined, tipo, desc, precio, costo, doc_oferta: docOferta || undefined, doc_costos: docCostos || undefined, dbSuffix: DB_SUFFIX });
+    });
+    if (res) closeModal('changeOrderModal');
 }
 
 function showInvoiceForm() {
@@ -1581,6 +2756,7 @@ function editInvoice(id) {
 async function processInvoice(e) {
     if (e) e.preventDefault();
     const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
     const editId = document.getElementById('inv-id-edit').value;
     const n = document.getElementById('inv-numero').value.trim(); const m = parseFloat(document.getElementById('inv-monto').value);
     const fileEl = document.getElementById('inv-file');
@@ -1589,44 +2765,13 @@ async function processInvoice(e) {
     if (isNaN(m) || m <= 0) return alert("Ingrese un monto válido mayor a cero.");
     if (!editId && fileEl.files.length === 0) return alert("Debe adjuntar la copia de la factura.");
 
-    if (!p.facturas) p.facturas = [];
-
-    const subtotal = getProjectSubtotal(p);
-    const client = clients.find(c => c.id === p.clientId);
-    const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
-    const totalConIVA = isExport ? subtotal : subtotal * 1.13;
-    let totalFacturado = p.facturas.reduce((acc, f) => f.id !== editId ? acc + f.monto : acc, 0);
-
-    if ((totalFacturado + m) > (totalConIVA + 0.1)) {
-        return alert(`Error: El monto a facturar excede el saldo restante del proyecto. Saldo máximo a facturar: ${formatCurrency(totalConIVA - totalFacturado)}`);
-    }
-
-    showLoading('Subiendo factura a la nube...');
-    try {
-        let docName = null;
-        if (fileEl.files.length > 0) {
-            docName = await uploadFileToStorage(fileEl.files[0], 'facturas');
-        }
-
-        if (editId) {
-            const idx = p.facturas.findIndex(f => f.id === editId);
-            if (idx !== -1) {
-                p.facturas[idx].numero = n;
-                p.facturas[idx].monto = m;
-                if (docName) p.facturas[idx].doc_factura = docName;
-                addLogToProspect(p, `Factura editada: ${n} por ${formatCurrency(m)}`, true);
-            }
-        } else {
-            p.facturas.push({ id: Date.now().toString(), numero: n, monto: m, doc_factura: docName, pagos: [], fecha: new Date().toISOString() });
-            addLogToProspect(p, `Factura/CCF emitida: ${n} por ${formatCurrency(m)}`, true);
-        }
-
-        saveProspectToDB(p); document.getElementById('invoice-form').style.display = 'none'; renderFinancials(p); renderLogs(p);
-    } catch (err) {
-        alert("Error al subir factura: " + err.message);
-    } finally {
-        hideLoading();
-    }
+    // saveInvoiceAdmin: the balance ceiling (13% VAT / export, change orders) is checked on the server against the STORED invoices, in
+    // the same transaction that writes the invoice; two people invoicing at once cannot jointly exceed it.
+    const res = await runWorkflowOp('Subiendo factura a la nube...', async fb => {
+        const doc = fileEl.files.length > 0 ? await uploadFileToStorage(fileEl.files[0], 'facturas', { prospectId: p.id }) : null;
+        return CrmCommercial.saveInvoice(fb, { prospectId: p.id, invoiceId: editId || undefined, numero: n, monto: m, doc_factura: doc || undefined, dbSuffix: DB_SUFFIX });
+    });
+    if (res) document.getElementById('invoice-form').style.display = 'none';
 }
 
 function showPaymentForm(invoiceId, invoiceNumero) {
@@ -1685,7 +2830,7 @@ function editPayment(invoiceId, paymentIndex) {
     document.getElementById('payment-form').style.display = 'block'; document.getElementById('invoice-form').style.display = 'none';
     document.getElementById('pay-target-invoice-text').textContent = `Editando abono en Factura ${f.numero}`;
     document.getElementById('pay-invoice-id').value = invoiceId;
-    document.getElementById('pay-idx-edit').value = paymentIndex;
+    document.getElementById('pay-idx-edit').value = pay.id || pay.fecha; // key of the payment, not its position
     document.getElementById('pay-monto-nuevo').value = pay.monto;
     document.getElementById('pay-monto-nuevo').dataset.invoiceTotal = f.monto;
 
@@ -1711,53 +2856,26 @@ function editPayment(invoiceId, paymentIndex) {
 async function processPayment(e) {
     if (e) e.preventDefault();
     const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
     const m = parseFloat(document.getElementById('pay-monto-nuevo').value);
     const met = document.getElementById('pay-metodo').value;
     const ref = document.getElementById('pay-ref').value.trim();
     const invId = document.getElementById('pay-invoice-id').value;
-    const editIdx = document.getElementById('pay-idx-edit').value;
+    // For an edit this holds the key of the payment (its id, or its fecha for payments saved before they had an id), not a position.
+    const editKey = document.getElementById('pay-idx-edit').value;
     const fileEl = document.getElementById('pay-file');
 
-    if (!editIdx && fileEl && fileEl.files.length === 0) return alert("Debe adjuntar el comprobante de pago.");
+    if (!editKey && fileEl && fileEl.files.length === 0) return alert("Debe adjuntar el comprobante de pago.");
     if (isNaN(m) || m <= 0) return alert("Ingrese un monto de pago válido.");
+    if (!p.facturas || !p.facturas.some(f => f.id === invId)) return;
 
-    const fac = p.facturas.find(f => f.id === invId);
-    if (!fac) return;
-
-    let yaCobrado = (fac.pagos || []).reduce((acc, pay, i) => i.toString() !== editIdx ? acc + parseFloat(pay.monto) : acc, 0);
-    let saldoPendiente = fac.monto - yaCobrado;
-
-    if (m > (saldoPendiente + 0.1)) {
-        return alert(`El abono supera el saldo de esta factura. Saldo pendiente: ${formatCurrency(saldoPendiente)}`);
-    }
-
-    if (!fac.pagos) fac.pagos = [];
-
-    showLoading('Subiendo comprobante de pago...');
-    try {
-        let docName = null;
-        if (fileEl && fileEl.files.length > 0) {
-            docName = await uploadFileToStorage(fileEl.files[0], 'pagos');
-        }
-
-        if (editIdx !== '') {
-            const i = parseInt(editIdx);
-            fac.pagos[i].monto = m;
-            fac.pagos[i].metodo = met;
-            fac.pagos[i].ref = ref;
-            if (docName) fac.pagos[i].doc_comprobante = docName;
-            addLogToProspect(p, `Abono editado en factura ${fac.numero}: ${formatCurrency(m)} [${met}]`, true);
-        } else {
-            fac.pagos.push({ monto: m, metodo: met, ref: ref, doc_comprobante: docName, fecha: new Date().toISOString() });
-            addLogToProspect(p, `Pago recibido: ${formatCurrency(m)} vía ${met} a cuenta de Factura ${fac.numero}`, true);
-        }
-
-        saveProspectToDB(p); document.getElementById('payment-form').style.display = 'none'; renderFinancials(p); renderLogs(p);
-    } catch (err) {
-        alert("Error al subir comprobante de pago: " + err.message);
-    } finally {
-        hideLoading();
-    }
+    // savePaymentAdmin: the balance ceiling, the 1% retention rule (large taxpayers only), the history entry and the audit are decided on the
+    // server from the stored invoice. A retry after an uncertain failure reuses the same opId, so a payment cannot be recorded twice.
+    const res = await runWorkflowOp('Subiendo comprobante de pago...', async fb => {
+        const doc = (fileEl && fileEl.files.length > 0) ? await uploadFileToStorage(fileEl.files[0], 'pagos', { prospectId: p.id }) : null;
+        return CrmCommercial.savePayment(fb, { prospectId: p.id, invoiceId: invId, paymentKey: editKey || undefined, monto: m, metodo: met, ref, doc_comprobante: doc || undefined, dbSuffix: DB_SUFFIX });
+    });
+    if (res) document.getElementById('payment-form').style.display = 'none';
 }
 
 function renderTracker(p) {
@@ -1796,8 +2914,12 @@ function renderInfo(p) {
     }
     if (p.datos.visitante) list.innerHTML += `<li><strong>Visitó:</strong> ${p.datos.visitante} (${p.datos.fecha_visita})</li>`;
     if (p.datos.fecha_inicio) list.innerHTML += `<li><strong>Est. Inicio:</strong> ${p.datos.fecha_inicio}</li>`;
-    if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span></li>`;
-    if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)} <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span></li>`;
+    // Base price / cost: corrected only by manager / gestor and only BEFORE the closing (editProspectBasePriceAdmin enforces both on the
+    // server against the STORED role and state; hiding the link is just the courtesy, not the protection).
+    const canEditBase = !!currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor') && p.estado === 'activo';
+    const editBaseLink = canEditBase ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span>` : '';
+    if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)}${editBaseLink}</li>`;
+    if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)}${editBaseLink}</li>`;
     if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
 
     const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
@@ -1811,11 +2933,13 @@ function renderInfo(p) {
                     <span>Autorizar sin Contrato</span>
                 </label>
             </li>`;
+            if (!isAuthorized && noContractRequestsOf(p).some(r => r.estado === 'pendiente')) list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
         } else {
             if (isAuthorized) {
                 list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
             } else {
                 list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato (> $10k)</strong></li>`;
+                list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
             }
         }
     }
@@ -1833,13 +2957,24 @@ function renderInfo(p) {
 
     function dlLink(doc) {
         if (!doc) return '';
-        let name = typeof doc === 'object' ? doc.name : doc;
-        let url = typeof doc === 'object' && doc.url ? doc.url : '#';
-
-        if (url === '#') {
-            return `<a href="#" onclick="alert('El archivo no está en la nube: ${name}'); return false;" style="color:var(--brand-gold)">${name}</a>`;
+        let name = typeof doc === 'object' ? (doc.name || 'Documento') : doc;
+        let id = 'doc_' + Math.random().toString(36).substring(2, 9);
+        if (typeof window !== 'undefined') {
+            if (!window._docStore) window._docStore = new Map();
+            window._docStore.set(id, doc);
+        }
+        const previewable = isFormatPreviewable(name);
+        const pId = (p && p.id) ? p.id : '';
+        if (previewable) {
+            return `<span class="doc-link-item" style="display:inline-flex; align-items:center; gap:6px; margin:2px 0;">` +
+                   `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--brand-gold); cursor:pointer; text-decoration:underline;" title="Previsualizar">👁️ ${escapeHtmlDoc(name)}</a>` +
+                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--text-secondary); text-decoration:none; font-size:0.75rem; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); cursor:pointer;" title="Descargar archivo">⬇️ Descargar</a>` +
+                   `</span>`;
         } else {
-            return `<a href="${url}" target="_blank" style="color:var(--brand-gold)">${name}</a>`;
+            return `<span class="doc-link-item" style="display:inline-flex; align-items:center; gap:6px; margin:2px 0;">` +
+                   `<span style="color:var(--text-primary); font-weight:500;">📁 ${escapeHtmlDoc(name)}</span>` +
+                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--brand-gold); text-decoration:none; font-size:0.75rem; background:rgba(217,119,6,0.15); padding:2px 8px; border-radius:4px; border:1px solid rgba(217,119,6,0.3); font-weight:600; cursor:pointer;" title="Descargar archivo">⬇️ Descargar</a>` +
+                   `</span>`;
         }
     }
 
@@ -1871,100 +3006,103 @@ function renderInfo(p) {
     }
 }
 
-window.toggleManagerApproval = async function (checked) {
+// Manager-only decision resolved by setNoContractAuthorizationAdmin: the server re-checks (live) that the caller is a manager,
+// stores who authorised from the Firebase session, writes the history entry and the audit record. No direct write here.
+async function applyNoContractAuthorization(checked) {
     const p = prospects.find(x => x.id === currentProspectId);
-    if (!p) return;
-
-    if (!p.datos) p.datos = {};
-    if (checked) {
-        p.datos.autorizado_sin_contrato = true;
-        p.datos.autorizado_por = currentUser ? currentUser.nombre : 'Gerente';
-        addLogToProspect(p, `Autorización de venta sin contrato otorgada por gerente: ${p.datos.autorizado_por}`, true);
-    } else {
-        p.datos.autorizado_sin_contrato = false;
-        delete p.datos.autorizado_por;
-        addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
+    if (!p) return false;
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        return false;
     }
-
     showLoading('Guardando autorización...');
     try {
-        await saveProspectToDB(p);
-        openDetail(p.id);
+        const res = await CrmCommercial.setNoContractAuthorization(fb, { prospectId: p.id, authorized: !!checked, dbSuffix: DB_SUFFIX });
+        if (!p.datos) p.datos = {};
+        p.datos.autorizado_sin_contrato = !!checked;
+        if (checked) p.datos.autorizado_por = (res && res.autorizado_por) || p.datos.autorizado_por; else delete p.datos.autorizado_por;
+        return true;
     } catch (e) {
-        alert("Error al guardar autorización: " + e.message);
+        alert(CrmCommercial.errorMessage(e));
+        return false;
     } finally {
         hideLoading();
     }
+}
+
+window.toggleManagerApproval = async function (checked) {
+    if (await applyNoContractAuthorization(checked)) openDetail(currentProspectId);
+    else { const p = prospects.find(x => x.id === currentProspectId); if (p) openDetail(p.id); }
 };
 
 window.toggleManagerApprovalInForm = async function (checked) {
-    const p = prospects.find(x => x.id === currentProspectId);
-    if (!p) return;
+    if (await applyNoContractAuthorization(checked)) { openDetail(currentProspectId); showAdvanceForm(); }
+    else { const p = prospects.find(x => x.id === currentProspectId); if (p) { openDetail(p.id); showAdvanceForm(); } }
+};
 
-    if (!p.datos) p.datos = {};
-    if (checked) {
-        p.datos.autorizado_sin_contrato = true;
-        p.datos.autorizado_por = currentUser ? currentUser.nombre : 'Gerente';
-        addLogToProspect(p, `Autorización de venta sin contrato otorgada por gerente: ${p.datos.autorizado_por}`, true);
+// Request / resolve flow for the exception (state kept on the opportunity: `solicitudes_sin_contrato`). Everything here is only the
+// presentation and the call: who asks / resolves, the dates and the authorization fields are set by the server from the session, and
+// the server refuses a manager's own request being resolved by him, a repeated approval and any non-manager resolution.
+const escapeHtmlText = s => String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+function noContractRequestsOf(p) { return Array.isArray(p && p.solicitudes_sin_contrato) ? p.solicitudes_sin_contrato.filter(Boolean) : []; }
+function renderNoContractRequestHTML(p) {
+    const reqs = noContractRequestsOf(p);
+    const pending = reqs.find(r => r.estado === 'pendiente');
+    const last = reqs.length ? reqs[reqs.length - 1] : null;
+    const isManager = !!currentUser && currentUser.role === 'manager';
+    const canAsk = !!currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor');
+    let html = '<div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; font-size: 0.8rem; color: var(--text-secondary);">';
+    if (pending) {
+        html += `<div>\u23F3 <strong>Solicitud de autorización sin contrato pendiente</strong> de ${escapeHtmlText(pending.solicitante_nombre || pending.solicitante_id)} (${formatDate(pending.fecha_solicitud)}).<br>Motivo: ${escapeHtmlText(pending.motivo)}</div>`;
+        if (isManager) {
+            html += `<div style="margin-top:6px;"><button type="button" class="btn-primary" style="padding:4px 8px; font-size:0.75rem;" onclick="resolveNoContractRequest('${escapeHtmlText(pending.id)}','approve')">Aprobar</button> <button type="button" class="btn-danger" style="padding:4px 8px; font-size:0.75rem; margin-left:4px;" onclick="resolveNoContractRequest('${escapeHtmlText(pending.id)}','reject')">Rechazar</button></div>`;
+        }
     } else {
-        p.datos.autorizado_sin_contrato = false;
-        delete p.datos.autorizado_por;
-        addLogToProspect(p, `Autorización de venta sin contrato revocada por gerente: ${currentUser ? currentUser.nombre : 'Gerente'}`, true);
+        if (last && last.estado === 'rechazada') {
+            html += `<div style="color: var(--danger);">\u274C Última solicitud rechazada por ${escapeHtmlText(last.resuelto_por || 'el gerente')} (${formatDate(last.fecha_resolucion)}). Motivo: ${escapeHtmlText(last.motivo_decision)}</div>`;
+        }
+        if (canAsk) {
+            html += `<div style="margin-top:6px;">Esta autorización solo la concede un gerente desde su propia sesión. Puedes pedírsela con el motivo:<br><button type="button" class="btn-secondary" style="padding:4px 8px; font-size:0.75rem; margin-top:4px;" onclick="requestNoContractAuthorization()">Solicitar autorización sin contrato</button></div>`;
+        } else if (!isManager) {
+            html += '<div>La autorización sin contrato solo puede otorgarla un gerente desde su propia sesión.</div>';
+        }
     }
+    return html + '</div>';
+}
 
-    showLoading('Guardando autorización...');
-    try {
-        await saveProspectToDB(p);
-        openDetail(p.id);
-        showAdvanceForm();
-    } catch (e) {
-        alert("Error al guardar autorización: " + e.message);
-    } finally {
-        hideLoading();
-    }
-};
-
-window.applyManagerBypass = async function () {
-    const managerId = document.getElementById('adv-auth-manager').value;
-    const password = document.getElementById('adv-auth-password').value;
-
-    if (!managerId) {
-        return alert("Por favor seleccione un Gerente.");
-    }
-    if (!password) {
-        return alert("Por favor ingrese la contraseña del Gerente.");
-    }
-
-    const manager = users.find(u => u.id === managerId);
-    if (!manager) {
-        return alert("Gerente no encontrado.");
-    }
-
-    // Check password
-    if (manager.password !== password) {
-        return alert("Contraseña de gerente incorrecta.");
-    }
-
+window.requestNoContractAuthorization = async function () {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-
-    if (!p.datos) p.datos = {};
-    p.datos.autorizado_sin_contrato = true;
-    p.datos.autorizado_por = manager.nombre;
-    addLogToProspect(p, `Autorización de venta sin contrato otorgada en formulario de cierre por gerente: ${manager.nombre}`, true);
-
-    showLoading('Aplicando autorización...');
-    try {
-        await saveProspectToDB(p);
-        openDetail(p.id);
-        showAdvanceForm();
-        alert("✔️ Autorización aplicada exitosamente.");
-    } catch (e) {
-        alert("Error al guardar autorización: " + e.message);
-    } finally {
-        hideLoading();
-    }
+    const motivo = String(prompt('Indica el motivo por el que esta venta debe cerrarse sin contrato (se enviará al gerente):') || '').trim();
+    if (!motivo) return alert('La solicitud requiere un motivo. No se envió nada.');
+    const res = await runWorkflowOp('Enviando solicitud...', fb => CrmCommercial.requestNoContractAuthorization(fb, { prospectId: p.id, motivo, dbSuffix: DB_SUFFIX }));
+    if (!res) return;
+    alert(res.status === 'unchanged' ? 'La solicitud ya estaba registrada y sigue pendiente.' : 'Solicitud enviada al gerente.');
+    openDetail(p.id);
 };
+
+window.resolveNoContractRequest = async function (requestId, decision) {
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p || (decision !== 'approve' && decision !== 'reject')) return;
+    let motivoDecision = '';
+    if (decision === 'reject') {
+        motivoDecision = String(prompt('Indica el motivo del rechazo (obligatorio):') || '').trim();
+        if (!motivoDecision) return alert('El rechazo requiere un motivo. No se resolvió la solicitud.');
+    } else {
+        if (!confirm('¿Aprobar el cierre de esta venta sin contrato?')) return;
+        motivoDecision = String(prompt('Comentario de la aprobación (opcional):') || '').trim();
+    }
+    const res = await runWorkflowOp('Resolviendo solicitud...', fb => CrmCommercial.resolveNoContractAuthorization(fb, { prospectId: p.id, requestId, decision, motivoDecision, dbSuffix: DB_SUFFIX }));
+    if (!res) return;
+    openDetail(p.id);
+};
+
+// REMOVED (window.applyManagerBypass): it let a non-manager type a manager's password, compared it in the browser against the plaintext
+// `password` field that every client downloads, and then rewrote the whole opportunity with `autorizado_sin_contrato`. The exception for
+// large installation projects is now granted only by a manager from his OWN Firebase session: directly (applyNoContractAuthorization ->
+// setNoContractAuthorizationAdmin) or by approving a seller's request (requestNoContractAuthorizationAdmin ->
+// resolveNoContractAuthorizationAdmin). Both check the manager LIVE on the server, store the author and write the audit.
 
 function renderLogs(p) {
     const cont = document.getElementById('logs-container');
@@ -1994,13 +3132,21 @@ function deleteLog(prospectId, idx) {
     if (!confirm('¿Estás seguro de eliminar esta nota?')) return;
     let pObj = prospects.find(x => x.id === prospectId);
     if (!pObj || !pObj.logs) return;
+    const entry = pObj.logs[idx];
+    if (!entry) return;
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
 
-    pObj.logs.splice(idx, 1);
-
-    const cleanObj = JSON.parse(JSON.stringify(pObj));
-    db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
+    // The server identifies the note by date + text (not by array position, which can be stale) and authorizes the author/role.
+    CrmCommercial.deleteLog(fb, { prospectId, date: entry.date, text: entry.text, dbSuffix: DB_SUFFIX }).then(res => {
+        if (res && (res.status === 'deleted' || res.status === 'absent')) {
+            const at = pObj.logs.findIndex(l => l && l.date === entry.date && l.text === entry.text);
+            if (at !== -1) pObj.logs.splice(at, 1);
+        }
         renderLogs(pObj);
-    }).catch(err => alert("Error al eliminar nota: " + err.message));
+    }).catch(err => alert(CrmCommercial.errorMessage(err)));
 }
 
 function addLogToProspect(p, text, isAuto = false) {
@@ -2012,25 +3158,27 @@ function addLogToProspect(p, text, isAuto = false) {
 function addLog() {
     const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
     const btnEl = textEl.nextElementSibling;
-    if (btnEl) btnEl.disabled = true;
 
     let pObj = prospects.find(x => x.id === currentProspectId);
-    if (!pObj) { if (btnEl) btnEl.disabled = false; return; }
+    if (!pObj) return;
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
+    if (btnEl) btnEl.disabled = true;
 
-    addLogToProspect(pObj, text, false);
-
-    // Purga total: romper referencia y limpiar campos undefined para Firebase
-    const cleanObj = JSON.parse(JSON.stringify(pObj));
-
-    db.collection(`prospects${DB_SUFFIX}`).doc(cleanObj.id).set(cleanObj).then(() => {
+    // The author comes from the Firebase session on the server; a retry after an uncertain failure reuses the same opId.
+    CrmCommercial.addLog(fb, { prospectId: pObj.id, text, dbSuffix: DB_SUFFIX }).then(res => {
+        if (res && res.entry) {
+            if (!Array.isArray(pObj.logs)) pObj.logs = [];
+            pObj.logs.push(res.entry);
+        }
         textEl.value = '';
-        if (btnEl) btnEl.disabled = false;
         renderLogs(pObj);
     }).catch(err => {
-        alert("Error al guardar la nota. Revisa tu conexión o permisos: " + err.message);
+        alert(CrmCommercial.errorMessage(err));
         console.error(err);
-        if (btnEl) btnEl.disabled = false;
-    });
+    }).finally(() => { if (btnEl) btnEl.disabled = false; });
 }
 
 
@@ -2065,6 +3213,7 @@ function showNewProposalForm() {
 
 async function processNewProposal() {
     const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
     const c = parseFloat(document.getElementById('prop-costo').value);
     const pr = parseFloat(document.getElementById('prop-precio').value);
     if (isNaN(c) || isNaN(pr)) return alert("Completa costos y precios.");
@@ -2073,27 +3222,15 @@ async function processNewProposal() {
     const files2 = window.stagedFiles && window.stagedFiles['prop-file2'] ? window.stagedFiles['prop-file2'] : [];
     if (files1.length === 0 || files2.length === 0) return alert("Debe subir la nueva oferta y el cuadro de costos.");
 
-    showLoading('Subiendo nueva propuesta...');
-    try {
-        p.costo_venta = c; p.precio_cotizado = pr;
-
-        const uploadTasks = [];
-        uploadTasks.push(Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_oferta = urls));
-        uploadTasks.push(Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_costos = urls));
-
-        await Promise.all(uploadTasks);
-
-        const namesOferta = files1.map(f => f.name).join(', ');
-        const namesCostos = files2.map(f => f.name).join(', ');
-
-        addLogToProspect(p, `NUEVA PROPUESTA: Precio ${formatCurrency(pr)}, Costo ${formatCurrency(c)}. Docs: ${namesOferta}, ${namesCostos}`, true);
-        saveProspectToDB(p);
-        openDetail(p.id);
-    } catch (e) {
-        alert("Error al subir archivos de propuesta: " + e.message);
-    } finally {
-        hideLoading();
-    }
+    // registerProposalAdmin: only in an active opportunity in negotiation; price, cost, documents, history and audit are written together.
+    const res = await runWorkflowOp('Subiendo nueva propuesta...', async fb => {
+        const [docOferta, docCostos] = await Promise.all([
+            Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos', { prospectId: p.id }))),
+            Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos', { prospectId: p.id })))
+        ]);
+        return CrmCommercial.registerProposal(fb, { prospectId: p.id, costo_venta: c, precio_cotizado: pr, doc_oferta: docOferta, doc_costos: docCostos, dbSuffix: DB_SUFFIX });
+    });
+    if (res) openDetail(p.id);
 }
 
 // Google Maps auto-script removed per user request
@@ -2250,7 +3387,7 @@ function showAdvanceForm() {
                         <span>\u26A0 Requiere Contrato</span>
                     </div>
                     <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 8px;">
-                        Esta venta supera los $10k e instalación, por lo que requiere un contrato y documentos de la empresa. Si el Gerente aprueba exceptuar el contrato, puede autorizarlo marcándolo en el panel lateral o ingresando sus credenciales aquí abajo.
+                        Esta venta supera los $10k e instalación, por lo que requiere un contrato y documentos de la empresa. Si el Gerente aprueba exceptuar el contrato, puede autorizarlo marcándolo desde su propia sesión (en el panel lateral o en este formulario).
                     </p>`;
 
                 if (currentUser && currentUser.role === 'manager') {
@@ -2258,21 +3395,10 @@ function showAdvanceForm() {
                         <input type="checkbox" id="adv-auth-no-contract-checkbox" onchange="toggleManagerApprovalInForm(this.checked)">
                         <span>Autorizar sin Contrato (Modo Gerente)</span>
                     </label>`;
-                } else {
-                    const managers = users.filter(u => u.role === 'manager' && u.activo !== false);
-                    const managerOpts = managers.map(m => `<option value="${m.id}">${m.nombre}</option>`).join('');
-                    formHTML += `<div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;">
-                        <span style="font-size: 0.8rem; font-weight: bold; color: var(--brand-gold); display: block; margin-bottom: 4px;">Autorización en Sitio por Gerente:</span>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <select id="adv-auth-manager" style="flex: 1; min-width: 150px; padding: 4px; background: rgba(0,0,0,0.2); color: white; border: 1px solid var(--panel-border); border-radius: 4px;">
-                                <option value="">-- Seleccione Gerente --</option>
-                                ${managerOpts}
-                            </select>
-                            <input type="password" id="adv-auth-password" placeholder="Contraseña de Gerente" style="flex: 1; min-width: 150px; padding: 4px; background: rgba(0,0,0,0.2); color: white; border: 1px solid var(--panel-border); border-radius: 4px;">
-                            <button type="button" class="btn-primary" style="padding: 4px 12px; font-size: 0.85rem;" onclick="applyManagerBypass()">Autorizar</button>
-                        </div>
-                    </div>`;
                 }
+                // No password is typed or compared here: the exception is granted only by a manager from his own session, either directly
+                // or by approving the seller's request (requestNoContractAuthorizationAdmin / resolveNoContractAuthorizationAdmin).
+                formHTML += renderNoContractRequestHTML(p);
                 formHTML += `<input type="checkbox" id="adv-auth-no-contract" style="display: none;">
                 </div>`;
             }
@@ -2309,86 +3435,71 @@ function showAdvanceForm() {
     if (document.getElementById('adv-file2-list')) renderStagedFiles('adv-file2');
 }
 
+// Stage transitions are decided by advanceProspectStageAdmin: it reads the CURRENT document, enforces the order of the stages and the
+// closing requirements, computes the advance invoice (VAT / export, payment form) and writes the history, the timestamps and the audit
+// record. This function only collects what the user typed and the file references returned by the uploads; the checks below are
+// a courtesy (fast feedback), not the rule. There is no fallback write.
 async function processAdvance(nextStage) {
     const p = prospects.find(x => x.id === currentProspectId);
-    const author = currentUser ? currentUser.nombre : 'Sistema';
-    let logMsg = `Avanzó a etapa: ${nextStage}.`;
+    if (!p) return;
+    const data = {};
 
     if (nextStage === 'levantamiento') {
         const dI = document.getElementById('adv-inicio').value;
         const v = document.getElementById('adv-visitante').value.trim();
-        let u = "", dF = "", dist = "";
 
         if (p.tipo_proyecto !== 'Fabricación') {
-            const elF = document.getElementById('adv-fecha'); dF = elF ? elF.value : "";
-            const elU = document.getElementById('adv-ubicacion'); u = elU ? elU.value.trim() : "";
-            const elDist = document.getElementById('adv-distancia'); dist = elDist ? elDist.value : "";
+            const elF = document.getElementById('adv-fecha');
+            const elU = document.getElementById('adv-ubicacion');
+            const elDist = document.getElementById('adv-distancia');
+            const dist = elDist ? elDist.value : "";
             if (!dist) return alert("Completa la distancia a la fábrica.");
+            data.fecha_visita = elF ? elF.value : "";
+            data.ubicacion = elU ? elU.value.trim() : "";
+            data.distancia = parseFloat(dist);
         }
 
         if (!v) return alert("Completa el vendedor/visitante.");
+        data.visitante = v; data.fecha_inicio = dI;
 
         const files = window.stagedFiles && window.stagedFiles['adv-file'] ? window.stagedFiles['adv-file'] : [];
-
-        showLoading('Subiendo documentos de levantamiento...');
-        try {
-            if (p.tipo_proyecto !== 'Fabricación') {
-                p.datos.ubicacion = u; p.datos.distancia = dist; p.datos.fecha_visita = dF;
-            }
-            p.datos.visitante = v; p.datos.fecha_inicio = dI;
-            if (files.length > 0) {
-                p.datos.doc_levantamiento = await Promise.all(files.map(file => uploadFileToStorage(file, 'proyectos')));
-            }
-        } catch (e) {
-            hideLoading();
-            return alert("Error al subir archivo: " + e.message);
-        }
-        hideLoading();
+        const ok = await runWorkflowOp('Subiendo documentos de levantamiento...', async fb => {
+            if (files.length > 0) data.doc_levantamiento = await Promise.all(files.map(file => uploadFileToStorage(file, 'proyectos', { prospectId: p.id })));
+            return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage, data, dbSuffix: DB_SUFFIX });
+        });
+        if (!ok) return;
     } else if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
         const c = parseFloat(document.getElementById('adv-costo').value); const pr = parseFloat(document.getElementById('adv-precio').value); const prob = document.getElementById('adv-prob').value;
         if (isNaN(c) || isNaN(pr) || !prob) return alert("Completa costos, precios y probabilidad.");
 
         const files1 = window.stagedFiles && window.stagedFiles['adv-file'] ? window.stagedFiles['adv-file'] : [];
         const files2 = window.stagedFiles && window.stagedFiles['adv-file2'] ? window.stagedFiles['adv-file2'] : [];
-
-        if (nextStage === 'cotizacion' || nextStage === 'negociacion') {
-            const hasOferta = (files1.length > 0) || (p.datos && p.datos.doc_oferta);
-            const hasCostos = (files2.length > 0) || (p.datos && p.datos.doc_costos);
-            if (!hasOferta || !hasCostos) {
-                return alert("Es obligatorio adjuntar tanto la Oferta como el Cuadro de Costos.");
-            }
+        const hasOferta = (files1.length > 0) || (p.datos && p.datos.doc_oferta);
+        const hasCostos = (files2.length > 0) || (p.datos && p.datos.doc_costos);
+        if (!hasOferta || !hasCostos) {
+            return alert("Es obligatorio adjuntar tanto la Oferta como el Cuadro de Costos.");
         }
 
-        showLoading('Subiendo cotizaciones y costos...');
-        try {
-            p.costo_venta = c; p.precio_cotizado = pr;
-            p.probabilidad = prob === 'alta' ? 75 : prob === 'media' ? 50 : prob === 'baja' ? 25 : 10;
-
-            const uploadTasks = [];
-            if (files1.length > 0) {
-                uploadTasks.push(Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_oferta = urls));
-            }
-            if (files2.length > 0) {
-                uploadTasks.push(Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos'))).then(urls => p.datos.doc_costos = urls));
-            }
-            await Promise.all(uploadTasks);
-
-            logMsg += ` (Cotizado: ${formatCurrency(pr)}, Costo: ${formatCurrency(c)})`;
-        } catch (e) {
-            hideLoading();
-            return alert("Error al subir archivo: " + e.message);
-        }
-        hideLoading();
+        data.costo_venta = c; data.precio_cotizado = pr; data.probabilidad = prob;
+        const ok = await runWorkflowOp('Subiendo cotizaciones y costos...', async fb => {
+            if (files1.length > 0) data.doc_oferta = await Promise.all(files1.map(file => uploadFileToStorage(file, 'proyectos', { prospectId: p.id })));
+            if (files2.length > 0) data.doc_costos = await Promise.all(files2.map(file => uploadFileToStorage(file, 'proyectos', { prospectId: p.id })));
+            return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage, data, dbSuffix: DB_SUFFIX });
+        });
+        if (!ok) return;
     } else if (nextStage === 'cierre') {
-        const fp = document.getElementById('adv-forma-pago').value; if (!fp) return alert("Selecciona la forma de pago."); p.forma_pago = fp;
+        const fp = document.getElementById('adv-forma-pago').value; if (!fp) return alert("Selecciona la forma de pago.");
         const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if (!facNum) return alert("Ingresa el número de factura de anticipo.");
-        if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); p.encargado = enc; logMsg += ` (Encargado: ${enc})`; }
+        data.forma_pago = fp; data.factura_anticipo = facNum;
+        if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); data.encargado = enc; }
 
         const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+        // Only reflects the manager's STORED authorization (the checkbox is rendered from it); the server decides from the stored value too.
         const authNoContractEl = document.getElementById('adv-auth-no-contract');
         const bypassContract = authNoContractEl ? authNoContractEl.checked : false;
 
         const c = clients.find(x => x.id === p.clientId);
+        if (!c) return alert("No se encontró el cliente de esta oportunidad.");
         if (!c.documentos) c.documentos = {};
 
         // DUI is always mandatory for all closing transactions
@@ -2416,65 +3527,32 @@ async function processAdvance(nextStage) {
         const f2 = document.getElementById('adv-file2');
         if (!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
 
-        if (isBigInstalacion && bypassContract) {
-            logMsg += ` (Autorizado sin contrato por gerente: ${p.datos.autorizado_por || 'Gerente'})`;
-        }
-
-        showLoading('Generando cierre y subiendo documentos finales...');
-        try {
-            const uploadTasks = [];
-            if (isBigInstalacion && !bypassContract) {
-                uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_contrato = url));
-            } else {
-                uploadTasks.push(uploadFileToStorage(f1.files[0], 'proyectos').then(url => p.datos.doc_oferta_firmada = url));
-            }
-            uploadTasks.push(uploadFileToStorage(f2.files[0], 'facturas').then(url => p.datos.doc_comprobante = url));
-
-            await Promise.all(uploadTasks);
-
-
-            p.estado = 'ganado'; p.probabilidad = 100; p.fecha_cierre = new Date().toISOString();
-        } catch (e) {
-            hideLoading();
-            return alert("Error al subir archivo de cierre: " + e.message);
-        }
-        hideLoading();
-
-        p.facturas = [];
-        const subtotal = p.precio_cotizado || 0;
-        const client = clients.find(c => c.id === p.clientId);
-        const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
-        const totalConIVA = isExport ? subtotal : subtotal * 1.13;
-        let expectedPercentage = 0;
-        if (fp === '70/30') expectedPercentage = 0.70;
-        else if (fp === '50/50') expectedPercentage = 0.50;
-        else if (fp === '100% anticipado') expectedPercentage = 1.0;
-        const advanceAmount = totalConIVA * expectedPercentage;
-
-        p.facturas.push({
-            id: Date.now().toString(),
-            numero: facNum,
-            monto: advanceAmount,
-            doc_factura: p.datos.doc_comprobante || '',
-            pagos: [],
-            fecha: new Date().toISOString()
+        const ok = await runWorkflowOp('Generando cierre y subiendo documentos finales...', async fb => {
+            const [docFirmado, docComprobante] = await Promise.all([
+                uploadFileToStorage(f1.files[0], 'proyectos', { prospectId: p.id }),
+                uploadFileToStorage(f2.files[0], 'facturas', { prospectId: p.id })
+            ]);
+            data.doc_firmado = docFirmado; data.doc_comprobante = docComprobante;
+            return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage, data, dbSuffix: DB_SUFFIX });
         });
-
-        logMsg = `¡VENTA CERRADA! Proyecto ${p.codigo || ''} generado con factura PENDIENTE ${facNum} por ${formatCurrency(advanceAmount)}`;
+        if (!ok) return;
     }
 
-    p.etapa = nextStage; p.stage_timestamps[nextStage] = new Date().toISOString();
-    addLogToProspect(p, logMsg, true); saveProspectToDB(p); document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
+    document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
 }
 
 function showLoseForm() {
     let opts = MOTIVOS_PERDIDA.map(m => `<option value="${m}">${m}</option>`).join('');
     document.getElementById('advance-form-container').innerHTML = `<div class="form-group mt-4"><label style="color:var(--danger)">Motivo de pérdida</label><select id="lose-reason" required><option value="">-- Selecciona --</option>${opts}</select><button class="btn-danger mt-2" onclick="processLose()">Confirmar Pérdida</button><button class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button></div>`;
 }
-function processLose() {
+async function processLose() {
     const reason = document.getElementById('lose-reason').value; if (!reason) return alert("Debes seleccionar un motivo.");
-    const p = prospects.find(x => x.id === currentProspectId); p.estado = 'perdido'; p.motivo_perdida = reason; p.fecha_perdida = new Date().toISOString();
-    addLogToProspect(p, `Marcado como PERDIDO. Motivo: ${reason}`, true); saveProspectToDB(p); document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    // markProspectLostAdmin validates the reason and that the opportunity is still active, and writes history and audit.
+    const res = await runWorkflowOp('Registrando pérdida...', fb => CrmCommercial.markLost(fb, { prospectId: p.id, reason, dbSuffix: DB_SUFFIX }));
+    if (!res) return;
+    document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
 }
 
 // ========================
@@ -2956,23 +4034,9 @@ function generarContrato(prospectId) {
     }
 }
 
-function reportToManager(p, itemType, itemDetail) {
-    if (!currentUser) return;
-
-    try {
-        db.collection(`audit_logs${DB_SUFFIX}`).add({
-            fecha: new Date().toISOString(),
-            usuario: currentUser.email || 'desconocido',
-            proyectoId: p.id || 'N/A',
-            proyectoNombre: getClientName(p.clientId) || 'Desconocido',
-            item: itemType || 'Desconocido',
-            detalle: itemDetail || '',
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-        }).catch(e => console.error("Error auditing", e));
-    } catch (e) {
-        console.error("Error in reportToManager:", e);
-    }
-}
+// REMOVED: reportToManager wrote the manager's audit notice (audit_logs) from the browser, with the e-mail the browser claimed to be.
+// The deletion callables (deleteChangeOrderAdmin / deleteInvoiceAdmin / deletePaymentAdmin / deleteProspectAdmin) write that notice on
+// the server, in the same transaction as the change, with the authenticated identity.
 
 // ========================
 // EDIT & DELETE FINANCIALS
@@ -2986,90 +4050,53 @@ function openEditBasePriceModal() {
     document.getElementById('editBasePriceModal').style.display = 'block';
 }
 
-function processEditBasePrice(e) {
+async function processEditBasePrice(e) {
     e.preventDefault();
-    try {
-        const p = prospects.find(x => x.id === currentProspectId);
-        if (!p) return;
-        const oldP = p.precio_cotizado || 0;
-        const oldC = p.costo_venta || 0;
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    const precio = parseFloat(document.getElementById('eb-precio').value);
+    const costo = parseFloat(document.getElementById('eb-costo').value);
+    const motivo = document.getElementById('eb-motivo').value.trim();
+    if (isNaN(precio) || isNaN(costo)) return alert("Ingresa un precio y un costo válidos.");
+    if (!motivo) return alert("Indica el motivo de la corrección.");
 
-        p.precio_cotizado = parseFloat(document.getElementById('eb-precio').value);
-        p.costo_venta = parseFloat(document.getElementById('eb-costo').value);
-        const motivo = document.getElementById('eb-motivo').value;
-
-        addLogToProspect(p, `Corrección de sistema: Precio original modificado de ${formatCurrency(oldP)} a ${formatCurrency(p.precio_cotizado)} y Costo de ${formatCurrency(oldC)} a ${formatCurrency(p.costo_venta)}. Motivo: ${motivo}`, true);
-        saveProspectToDB(p);
-        closeModal('editBasePriceModal');
-        renderFinancials(p);
-        renderInfo(p);
-    } catch (err) {
-        alert("Ocurrió un error al guardar los cambios: " + err.message);
-    }
+    // editProspectBasePriceAdmin: the previous values and the history entry come from the stored document, not from this copy.
+    const res = await runWorkflowOp('Guardando corrección...', fb => CrmCommercial.editBasePrice(fb, { prospectId: p.id, precio, costo, motivo, dbSuffix: DB_SUFFIX }));
+    if (res) closeModal('editBasePriceModal');
 }
 
-function deleteChangeOrder(id) {
+async function deleteChangeOrder(id) {
     if (!confirm("¿Estás seguro de eliminar esta orden de cambio?")) return;
-    try {
-        const p = prospects.find(x => x.id === currentProspectId);
-        if (!p || !p.ordenes_cambio) return;
-        const idx = p.ordenes_cambio.findIndex(o => o.id === id);
-        if (idx === -1) return;
-        const o = p.ordenes_cambio[idx];
-
-        p.ordenes_cambio.splice(idx, 1);
-        addLogToProspect(p, `Orden de Cambio eliminada: ${o.desc} (${formatCurrency(o.precio)})`, true);
-        reportToManager(p, 'Orden de Cambio', `${o.desc} (${formatCurrency(o.precio)})`);
-        saveProspectToDB(p);
-        renderFinancials(p);
-        renderInfo(p);
-    } catch (err) {
-        alert("Ocurrió un error al eliminar: " + err.message);
-    }
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p || !p.ordenes_cambio || !p.ordenes_cambio.some(o => o.id === id)) return;
+    // The server removes it by id, writes the history entry, the audit record and the manager's panel notice.
+    await runWorkflowOp('Eliminando orden de cambio...', fb => CrmCommercial.deleteChangeOrder(fb, { prospectId: p.id, orderId: id, dbSuffix: DB_SUFFIX }));
 }
 
-function deleteInvoice(id) {
+async function deleteInvoice(id) {
     if (!confirm("¿Estás seguro de eliminar esta factura? Todo su historial de pagos se borrará también.")) return;
-    try {
-        const p = prospects.find(x => x.id === currentProspectId);
-        if (!p || !p.facturas) return;
-        const idx = p.facturas.findIndex(f => f.id === id);
-        if (idx === -1) return;
-        if (idx === 0) {
-            alert("Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error.");
-            return;
-        }
-        const f = p.facturas[idx];
-
-        p.facturas.splice(idx, 1);
-        addLogToProspect(p, `Factura eliminada: ${f.numero} (${formatCurrency(f.monto)})`, true);
-        reportToManager(p, 'Factura', `${f.numero} (${formatCurrency(f.monto)})`);
-        saveProspectToDB(p);
-        renderFinancials(p);
-        renderInfo(p);
-    } catch (err) {
-        alert("Ocurrió un error al eliminar: " + err.message);
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p || !p.facturas) return;
+    const idx = p.facturas.findIndex(f => f.id === id);
+    if (idx === -1) return;
+    if (idx === 0) {
+        alert("Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error.");
+        return;
     }
+    await runWorkflowOp('Eliminando factura...', fb => CrmCommercial.deleteInvoice(fb, { prospectId: p.id, invoiceId: id, dbSuffix: DB_SUFFIX }));
 }
 
-function deletePayment(invoiceId, paymentIndex) {
+async function deletePayment(invoiceId, paymentIndex) {
     if (!confirm("¿Estás seguro de eliminar este abono?")) return;
-    try {
-        const p = prospects.find(x => x.id === currentProspectId);
-        if (!p || !p.facturas) return;
-        const f = p.facturas.find(x => x.id === invoiceId);
-        if (!f || !f.pagos) return;
-
-        const pay = f.pagos[paymentIndex];
-        f.pagos.splice(paymentIndex, 1);
-        addLogToProspect(p, `Abono eliminado de factura ${f.numero}: ${formatCurrency(pay.monto)}`, true);
-        reportToManager(p, 'Abono', `${formatCurrency(pay.monto)} de la factura ${f.numero}`);
-        saveProspectToDB(p);
-        renderFinancials(p);
-        renderInfo(p);
-    } catch (err) {
-        alert("Ocurrió un error al eliminar: " + err.message);
-    }
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p || !p.facturas) return;
+    const f = p.facturas.find(x => x.id === invoiceId);
+    if (!f || !f.pagos) return;
+    const pay = f.pagos[paymentIndex];
+    if (!pay) return;
+    // The position is only used to find the payment the user clicked; the server addresses it by id (or fecha, for payments
+    // saved before they had an id), so a stale position cannot delete a different payment.
+    await runWorkflowOp('Eliminando abono...', fb => CrmCommercial.deletePayment(fb, { prospectId: p.id, invoiceId, paymentKey: pay.id || pay.fecha, dbSuffix: DB_SUFFIX }));
 }
 
 function deleteClient(id) {
@@ -3083,48 +4110,36 @@ function deleteClient(id) {
     }
 
     if (!confirm(`¿Estás SEGURO de que deseas eliminar permanentemente el cliente "${c.nombres || c.empresa || id}"?\n\nEsta acción NO se puede deshacer.`)) return;
-
-    try {
-        db.collection(`clients${DB_SUFFIX}`).doc(id).delete();
-        db.collection(`audit_logs${DB_SUFFIX}`).add({
-            timestamp: new Date().toISOString(),
-            usuario: currentUser.nombre,
-            tipo_item: 'Cliente',
-            cliente_nombre: c.nombres || c.empresa || id,
-            proyecto_desc: 'N/A',
-            detalle_eliminado: `Cliente eliminado por completo`
-        });
-        alert("Cliente eliminado exitosamente.");
-    } catch (e) {
-        alert("Error al eliminar cliente: " + e.message);
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
     }
+
+    // deleteClientAdmin re-checks the manager role live, refuses clients with projects, frees the identifiers and writes the audit.
+    CrmCommercial.deleteClient(fb, { clientId: id, dbSuffix: DB_SUFFIX })
+        .then(() => alert("Cliente eliminado exitosamente."))
+        .catch(err => alert(CrmCommercial.errorMessage(err)));
 }
 
-function deleteProspect() {
+// Logical deletion (deleteProspectAdmin): the opportunity is MARKED as deleted (who / when / why) and disappears from the listings;
+// its data, the files and the manufacturing project stay untouched. The reason is mandatory and is validated by the server too.
+async function deleteProspect() {
     if (!currentProspectId) return;
     if (!currentUser || currentUser.role !== 'manager') return alert("Permiso denegado.");
 
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    const c = clients.find(x => x.id === p.clientId);
 
-    if (!confirm(`¿Estás EXTREMADAMENTE SEGURO de que deseas eliminar por completo el proyecto "${p.proyecto}"?\n\nSE BORRARÁ TODO (Historial, Facturas, Abonos, Archivos referenciados).\nEsta acción NO se puede deshacer.`)) return;
+    if (!confirm(`¿Eliminar el proyecto "${p.proyecto}"?\n\nSe marcará como eliminado y dejará de aparecer en los listados. No se borran sus datos, ni los archivos, ni el proyecto de fabricación asociado.`)) return;
+    const motivo = String(prompt('Indica el motivo de la eliminación (obligatorio):') || '').trim();
+    if (!motivo) return alert("La eliminación requiere un motivo. No se eliminó nada.");
 
-    try {
-        db.collection(`prospects${DB_SUFFIX}`).doc(p.id).delete();
-        db.collection(`audit_logs${DB_SUFFIX}`).add({
-            timestamp: new Date().toISOString(),
-            usuario: currentUser.nombre,
-            tipo_item: 'Proyecto',
-            cliente_nombre: c ? (c.nombres || c.empresa || c.id) : 'Desconocido',
-            proyecto_desc: p.proyecto,
-            detalle_eliminado: `Proyecto completo (${p.codigo || p.id}) eliminado`
-        });
-        alert("Proyecto eliminado exitosamente.");
-        goBackFromDetail();
-    } catch (e) {
-        alert("Error al eliminar proyecto: " + e.message);
-    }
+    // deleteProspectAdmin re-checks the manager role live, marks the opportunity and writes the audit record and the panel
+    // notice with the authenticated identity. The browser no longer deletes the document nor writes audit_logs.
+    const res = await runWorkflowOp('Eliminando proyecto...', fb => CrmCommercial.deleteProspect(fb, { prospectId: p.id, motivo, dbSuffix: DB_SUFFIX }));
+    if (!res) return;
+    alert("Proyecto eliminado exitosamente.");
+    goBackFromDetail();
 }
 
 
