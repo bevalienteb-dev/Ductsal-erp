@@ -638,88 +638,97 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
         }
     }
 
-    if (typeof showLoading === 'function') showLoading(`Descargando ${fileName}...`);
+    if (typeof showLoading === 'function') showLoading(`Preparando documento ${fileName}...`);
 
     try {
-        const storageInstance = (typeof storage !== 'undefined' && storage) ? storage : firebase.storage();
-        const fileRef = storageInstance.ref(storagePath);
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        if (!fb || !fb.functions) {
+            throw new Error('SDK de Firebase Functions no disponible en el cliente');
+        }
 
-        // Límite de seguridad: 35 MB por buffer en memoria
-        const MAX_BLOB_SIZE = 35 * 1024 * 1024;
-        const blob = await fileRef.getBlob(MAX_BLOB_SIZE);
+        const fn = fb.functions().httpsCallable('getSecureDownloadUrlAdmin');
+        const dbSuffix = typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : '_prod';
+        const res = await fn({
+            storagePath,
+            fileName,
+            dbSuffix,
+            prospectId: options.prospectId || (typeof currentProspectId !== 'undefined' ? currentProspectId : null),
+            clientId: options.clientId || null
+        });
 
-        const blobUrl = URL.createObjectURL(blob);
+        const data = res && res.data;
+        if (!data || !data.signedUrl) {
+            throw new Error('No se recibió la URL de descarga segura del servidor.');
+        }
+
+        const safeDownloadName = data.fileName || fileName;
 
         if (options && options.download) {
             const a = document.createElement('a');
             a.style.display = 'none';
-            a.href = blobUrl;
-            a.download = fileName;
+            a.href = data.signedUrl;
+            a.download = safeDownloadName;
             document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
-        } else if (previewTab && !previewTab.closed) {
-            previewTab.location.href = blobUrl;
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
-        } else {
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = fileName;
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+            setTimeout(() => {
+                if (a.parentNode) a.parentNode.removeChild(a);
+            }, 2000);
+            return;
+        }
+
+        // Intento de visualización inline mediante Blob si el entorno lo permite (mismo origen o CORS)
+        let openedInline = false;
+        try {
+            const resp = await fetch(data.signedUrl);
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                if (previewTab && !previewTab.closed) {
+                    previewTab.location.href = blobUrl;
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+                    openedInline = true;
+                } else {
+                    window.open(blobUrl, '_blank');
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+                    openedInline = true;
+                }
+            }
+        } catch (fetchErr) {
+            console.warn('[Storage Security] Fetch directo a Blob no disponible; navegando a URL firmada segura:', fetchErr);
+        }
+
+        // Si fetch a Blob no fue posible (ej. CORS o navegador estricto), navegar directamente a la URL firmada
+        if (!openedInline) {
+            if (previewTab && !previewTab.closed) {
+                previewTab.location.href = data.signedUrl;
+            } else {
+                window.open(data.signedUrl, '_blank');
+            }
         }
     } catch (error) {
         console.error('[Storage Security] Error al visualizar documento:', error);
         let userMessage = 'Error al cargar el archivo.';
-        let isLargeFile = false;
+        const errCode = error.code || '';
+        const errMsg = error.message || '';
 
-        if (error.code === 'storage/unauthorized') {
-            userMessage = 'Acceso denegado: No tienes permiso para visualizar este documento según las políticas de seguridad.';
-        } else if (error.code === 'storage/object-not-found') {
+        if (errCode === 'functions/permission-denied' || errMsg.includes('permission-denied') || error.code === 'storage/unauthorized') {
+            userMessage = 'Acceso denegado: No tienes autorización para visualizar este documento según las políticas comerciales.';
+        } else if (errCode === 'functions/not-found' || errMsg.includes('not-found') || error.code === 'storage/object-not-found') {
             userMessage = 'El archivo solicitado ya no existe en el almacenamiento.';
-        } else if (error.code === 'storage/canceled') {
-            userMessage = 'Descarga cancelada por el usuario.';
-        } else if (error.message && error.message.includes('CORS')) {
-            userMessage = 'Error de conexión con el almacenamiento (CORS). Contacta al administrador.';
-        } else if (error.message && (error.message.includes('size') || error.code === 'storage/cannot-slice-blob')) {
-            userMessage = 'El archivo supera el límite de memoria del visor seguro (35 MB).';
-            isLargeFile = true;
+        } else if (errCode === 'functions/unauthenticated' || errMsg.includes('unauthenticated') || error.code === 'storage/unauthenticated') {
+            userMessage = 'Sesión expirada o no autenticada. Inicia sesión nuevamente.';
+        } else if (errMsg.includes('network') || errCode === 'functions/unavailable') {
+            userMessage = 'Error de conexión con el servidor. Verifica tu conexión a internet.';
         }
 
         if (previewTab && !previewTab.closed) {
-            if (isLargeFile) {
-                previewTab.document.write(`
-                    <div style="padding:2.5rem; font-family:system-ui, sans-serif; color:#f8fafc; background:#1e293b; height:100vh; text-align:center;">
-                        <div style="font-size:3rem; margin-bottom:1rem;">📦</div>
-                        <h3 style="color:#fbbf24; margin-bottom:0.5rem;">Archivo de Gran Tamaño</h3>
-                        <p style="color:#94a3b8; max-width:500px; margin:0 auto 1.5rem auto;">
-                            El archivo <strong>${escapeHtmlDoc(fileName)}</strong> supera el límite de memoria del visor interactivo (35 MB). Puedes descargarlo directamente en tu equipo.
-                        </p>
-                        <button id="dl-large-btn" style="background:#2563eb; color:#fff; border:none; padding:10px 20px; font-size:1rem; border-radius:6px; cursor:pointer; font-weight:600;">
-                            ⬇️ Descargar Archivo Completo
-                        </button>
-                    </div>
-                `);
-                try {
-                    const btn = previewTab.document.getElementById('dl-large-btn');
-                    if (btn) {
-                        btn.onclick = function() {
-                            downloadSecureDocument(storagePath, fileName);
-                        };
-                    }
-                } catch (e) {
-                    console.warn('[Storage Security] No se pudo vincular botón de descarga en pestaña grande:', e);
-                }
-            } else {
-                previewTab.document.write(`
-                    <div style="padding:2rem; font-family:system-ui, sans-serif; color:#ef4444; background:#1e293b; height:100vh;">
-                        <h3>⚠️ Error al abrir el documento</h3>
-                        <p>${escapeHtmlDoc(userMessage)}</p>
-                        <p style="font-size:0.8rem; color:#94a3b8;">Detalle técnico: ${escapeHtmlDoc(error.code || error.message || '')}</p>
-                    </div>
-                `);
-            }
+            previewTab.document.write(`
+                <div style="padding:2rem; font-family:system-ui, sans-serif; color:#ef4444; background:#1e293b; height:100vh;">
+                    <h3>⚠️ Error al abrir el documento</h3>
+                    <p>${escapeHtmlDoc(userMessage)}</p>
+                    <p style="font-size:0.8rem; color:#94a3b8;">Detalle técnico: ${escapeHtmlDoc(error.code || error.message || '')}</p>
+                </div>
+            `);
         } else {
             alert(userMessage);
         }
