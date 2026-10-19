@@ -366,3 +366,28 @@ describe('editing name / role of Auth-linked users goes through updateUserAdmin'
     expect(CrmAuth.updateErrorMessage(fnError('unavailable'))).toMatch(/No se pudo confirmar/);
   });
 });
+
+describe('obsolete auth text removal (UI cleanliness)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const htmlPath = path.resolve(__dirname, '../../index.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  test('login password input does not contain obsolete first-time blank password hints', () => {
+    expect(html).not.toMatch(/en blanco si es primera vez/i);
+    expect(html).toMatch(/<input type="password" id="login-password" placeholder="Contraseña"/);
+  });
+
+  test('user creation modal does not contain obsolete self-created password note', () => {
+    expect(html).not.toMatch(/El usuario definirá su contraseña la primera vez/i);
+    expect(html).not.toMatch(/definirá su contraseña/i);
+  });
+
+  test('password input and form actions remain fully intact', () => {
+    expect(html).toContain('id="login-password"');
+    expect(html).toContain('id="login-email"');
+    expect(html).toContain('processLogin(event)');
+    expect(html).toContain('id="userModal"');
+  });
+});
+

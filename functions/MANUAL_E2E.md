@@ -99,8 +99,7 @@ registrado en vez de enviarse por correo.
 4. Login con `vendedor.manual@ductsal-test.invalid` y la contraseña (`⌘V`). También debe funcionar escribiendo el correo con mayúsculas.
 
 **Observa:** entra como "Vendedor Manual", rol "Vendedor".
-Nota conocida: el campo dice "en blanco si es primera vez" (texto histórico); para este tipo de usuario dejarlo en blanco
-da la alerta "Ingresa tu contraseña.". Comunícame si esto te confunde.
+Nota: el campo de contraseña muestra "Contraseña". Si el campo se deja en blanco, el formulario solicita ingresar la contraseña.
 
 ## 6. El vendedor no puede usar funciones administrativas
 
