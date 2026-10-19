@@ -923,6 +923,84 @@ Inspección en vivo efectuada mediante `functions/scripts/simulateSec03Backfill.
 
 ---
 
+### Fase 2.5 — Procedimiento de Ejecución del Backfill, Matriz de Cambios y Rollback Quirúrgico
+
+#### 1. Arquitectura del Ejecutor de Backfill (`executeSec03Backfill.js`)
+El procedimiento de backfill operativo se implementa en [`functions/scripts/executeSec03Backfill.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/scripts/executeSec03Backfill.js) bajo cinco salvaguardas arquitectónicas inquebrantables:
+1. **Modalidad de Simulación Obligatoria por Defecto:** Cualquier invocación sin banderas explícitas opera en `--dry-run` (0 escrituras en Firestore). Requiere simultáneamente `--apply`, `--confirm-apply`, `--op-id <token>` y `--allow-authorized-production-run` para escribir.
+2. **Idempotencia Estricta:** Antes de emitir cualquier mutación, evalúa en memoria el documento actual. Si los campos en Firestore ya coinciden con la propuesta (por ejemplo, tras una ejecución previa o corrección manual), la operación se clasifica como `NOOP` y no consume escrituras ni genera ruido de auditoría.
+3. **Lotes Atómicos Controlados (`BATCH_SIZE = 50`):** Las escrituras se segmentan en lotes de 50 documentos utilizando `db.batch()`, garantizando atomicidad por lote y evitando la contención de transacciones globales.
+4. **Registro de Proveniencia Quirúrgica (Antes/Después):** Cada documento modificado almacena una entrada en la colección de auditoría `sec03MigrationAudit_prod/<opId>` y en un archivo local JSON con el snapshot exacto de sus campos previos (`before`) y aplicados (`after`).
+5. **Rollback Quirúrgico No Destructivo:** La reversión compara el estado actual con el valor aplicado (`after`). Si un usuario comercial legítimo modificó el registro con posterioridad (ej. reasignó el vendedor o avanzó de etapa), la reversión detecta la colisión (`COLLISION_CONCURRENT_USER_MODIFICATION`), **omite sobrescribir el campo** y lo preserva intacto.
+
+---
+
+#### 2. Matriz Exhaustiva de Cambios de Datos (SEC-03 F2.5)
+
+| Conjunto de Datos | Población | Estado Actual en Producción | Regla de Derivación y Parche Propuesto | Atribución Verificada |
+|---|:---:|---|---|---|
+| **Prospectos sin `createdBy`** | **24** | `createdBy: null`, `vendedor: "Alejandra Ayala"`, `vendedorId: null` (en 23/24). Importación masiva `OPP-1777081074183-0` a `23`. | `patch = { createdBy: "1776904514932", vendedorId: "1776904514932" }` | **Alejandra Ayala** (100% de evidencia textual y temporal unánime). |
+| **Prospectos sin `vendedorId`** | **58** | `createdBy: "1776904514932"`, `vendedorId: null`, `vendedor: undefined`. | `patch = { vendedorId: "1776904514932" }` | **Alejandra Ayala** (estandarización simétrica del creador). |
+| **Clientes Históricos de Alejandra** | **40** | `createdBy: null`, `visibleTo: null`, `closingVendors: null`. | `patch = { createdBy: "1776904514932", visibleTo: [...], closingVendors: [...] }` | **Alejandra Ayala** (100% de prospectos vinculados creados y gestionados por ella). |
+| **Cliente "AR Multiservicios"** | **1** | Doc `C1784933224052`: `createdBy: null`, `visibleTo: null`, `closingVendors: null`. Prospecto único `1784933235289` creado y asignado a Gustavo. | `patch = { createdBy: "1784221928346", visibleTo: ["1784221928346"], closingVendors: [] }` | **Gustavo Velásquez** (`1784221928346`, vendedor inactivo). **PROHIBIDO REASIGNAR SILENCIOSAMENTE.** |
+| **Cartera Completa de Clientes** | **107** | 107 clientes carecen de `visibleTo` (100%). | Se calculan `visibleTo` (vendedores vinculados) y `closingVendors` (vendedores en etapa cierre activo). | Cobertura total de la cartera (66 con `createdBy` preexistente + 41 resueltos unánimes). |
+| **Directorio de Usuarios (`userDirectory_prod`)** | **5** | Colección vacía (0 documentos). | Proyección estricta: `{ id, nombre, role, activo }`. Exclusión total de contraseñas, emails, claims o UIDs. | 2 gerentes activos, 1 gestor activo, 1 vendedor activo, 1 vendedor inactivo. |
+
+---
+
+#### 3. Política y Procedimiento para "AR Multiservicios"
+1. **Preservación Estricta de la Autoría Histórica:**  
+   El cliente `C1784933224052` ("AR Multiservicios") fue captado por Gustavo Velásquez (`1784221928346`) antes de su inactivación. El backfill asignará deterministamente:
+   ```json
+   {
+     "createdBy": "1784221928346",
+     "visibleTo": ["1784221928346"],
+     "closingVendors": []
+   }
+   ```
+2. **Prohibición de Atribución Ficticia:**  
+   Está estrictamente prohibido falsear la historia asignando `createdBy: "1776904514932"` (Alejandra) o `"1788471603604"` (Roberto) a este documento.
+3. **Procedimiento de Reasignación Administrativa:**  
+   Dado que Gustavo Velásquez está inactivo (`activo: false`) y las reglas de seguridad denegarán el acceso a vendedores ajenos a `visibleTo`, la activación operativa del cliente requiere que Gerencia (`role: 'manager'`) ejecute una reasignación formal mediante la Cloud Function `reassignProspectAdmin`:
+   - **Paso 1:** Gerente accede al detalle de la oportunidad `1784933235289`.
+   - **Paso 2:** Selecciona al nuevo vendedor activo (ej. Roberto Flores).
+   - **Paso 3:** El backend valida la sesión del gerente, actualiza `vendedorId: "1788471603604"`, registra la entrada en `prospect.logs` con la identidad del gerente y fecha/hora, y el trigger `syncClientVisibility` incorpora atómicamente a Roberto en `visibleTo` del cliente sin alterar su `createdBy` histórico.
+
+---
+
+#### 4. Procedimiento de Ejecución del Backfill
+
+```bash
+# 1. Ejecutar simulación obligatoria (Dry-Run — CERO escrituras):
+NODE_PATH=functions/node_modules node functions/scripts/executeSec03Backfill.js
+
+# 2. Revisar el archivo de preview generado: sec03_plan_<opId>.json
+
+# 3. Solo tras autorización formal de Gerencia, ejecutar la mutación real:
+NODE_PATH=functions/node_modules node functions/scripts/executeSec03Backfill.js \
+  --apply \
+  --confirm-apply \
+  --op-id <opId_generado> \
+  --allow-authorized-production-run
+```
+
+---
+
+#### 5. Procedimiento de Rollback Quirúrgico
+
+Si se detecta alguna discrepancia posterior a la aplicación, se revierte exclusivamente la operación deseada sin degradar la seguridad del sistema:
+
+```bash
+# Ejecutar rollback quirúrgico (detecta y respeta modificaciones concurrentes):
+NODE_PATH=functions/node_modules node functions/scripts/executeSec03Backfill.js \
+  --rollback \
+  --confirm-rollback \
+  --op-id <opId_a_revertir> \
+  --allow-authorized-production-run
+```
+
+---
+
 ### Fase 3 — Vinculación Comercial
 
 #### 1. Objetivo

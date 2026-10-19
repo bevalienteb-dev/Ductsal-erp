@@ -185,9 +185,36 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
     throw fail(10, 'ABORTED: too much contention');
   }
 
+  function batch() {
+    const writes = [];
+    return {
+      set(ref, data, opts = {}) {
+        writes.push({ op: 'set', col: ref.col, id: ref.id, data, merge: !!opts.merge });
+        return this;
+      },
+      create(ref, data) {
+        writes.push({ op: 'create', col: ref.col, id: ref.id, data });
+        return this;
+      },
+      update(ref, data) {
+        writes.push({ op: 'update', col: ref.col, id: ref.id, data });
+        return this;
+      },
+      delete(ref) {
+        writes.push({ op: 'delete', col: ref.col, id: ref.id });
+        return this;
+      },
+      async commit() {
+        await tick();
+        commit(writes);
+      }
+    };
+  }
+
   return {
     state,
     collection,
+    batch,
     runTransaction,
     // ---- test helpers (not part of the Firestore API) ----
     clear() {
