@@ -1,0 +1,259 @@
+rules_version = '2';
+
+// =============================================================================================================
+// CANDIDATE for the isolated emulator ONLY: firestore.rules + TABLET (plant) sessions.  NOT DEPLOYED, NOT the shared file.
+// Everything outside the "fabricacion + tablets" section is the shared firestore.rules byte for byte (a unit test compares the
+// commercial match blocks), so the CRM behaves exactly as before.
+//
+// Tablet session = a Firebase Auth CUSTOM TOKEN minted by the `plantLogin` Cloud Function after it validated PIN + numeric
+// password on the server. Its claims are { plant: true, role, cid } and its uid is `plant_<cid>`.
+//   - It is never a commercial session: validSession() (commercial) requires users_prod/<cid>.authUid == request.auth.uid, and the
+//     uid `plant_<cid>` can never equal an Auth uid stored in a CRM profile. clients / prospects / users / audit_logs / system
+//     writes / proyectos_fabricacion stay denied for it.
+//   - tabletSession() re-reads the CURRENT profile on every request (active, same role): a deactivation or a change of stations
+//     applies at once, without waiting for the token (<= 1 h) to expire.
+//   - WRITES are limited to what operador.js really writes (field allow-lists measured from the code), on the stations the profile
+//     owns. READS of the production collections are open to every active tablet session because operador.js reads across stations
+//     (see PLANT_AUTH.md, "Read isolation").
+// =============================================================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- session helpers ----------
+    function crmRoles()   { return ['manager', 'gestor', 'vendedor']; }
+    function plantRoles() { return ['jefe_produccion', 'recepcion', 'dibujante', 'operario', 'encargado_armado', 'control_calidad', 'despacho']; }
+    function role()       { return request.auth.token.get('role', ''); }
+    function hasClaims() {
+      return request.auth != null
+        && request.auth.token.get('cid', '') != ''
+        && (role() in crmRoles() || role() in plantRoles());
+    }
+    function me() { return request.auth.token.cid; }
+    function myProfile() {
+      return get(/databases/$(database)/documents/users_prod/$(request.auth.token.cid)).data;
+    }
+    function validSession() {
+      return hasClaims()
+        && myProfile().authUid == request.auth.uid
+        && myProfile().activo == true
+        && myProfile().role == role();
+    }
+    function isManager() {
+      return validSession() && role() == 'manager' && request.auth.token.get('manager', false) == true;
+    }
+    function isGestor()     { return validSession() && role() == 'gestor'; }
+    function isVendedor()   { return validSession() && role() == 'vendedor'; }
+    function isPrivileged() { return isManager() || isGestor(); }
+    function isPlant()      { return validSession() && role() in plantRoles(); }
+    function isJefe()       { return validSession() && role() == 'jefe_produccion'; }
+
+    // ---------- tablet (plant) sessions: custom token from plantLogin ----------
+    function tabletRoles() { return ['operario', 'encargado_armado', 'jefe_produccion', 'control_calidad', 'despacho']; }
+    function tabletProfile() {
+      return get(/databases/$(database)/documents/users_prod/$(request.auth.token.cid)).data;
+    }
+    function tabletSession() {
+      return request.auth != null
+        && request.auth.token.get('plant', false) == true
+        && request.auth.token.get('cid', '') != ''
+        && request.auth.uid == 'plant_' + request.auth.token.cid
+        && request.auth.token.get('role', '') in tabletRoles()
+        && tabletProfile().get('activo', false) == true
+        && tabletProfile().get('role', '') == request.auth.token.role;
+    }
+    function prodStations() {
+      return ['ADL (Piezas Rectas)', 'ADL (Lamina)', 'CNC (Lamina)', 'CNC (Fibra)', 'Cierres/Armado/Doblado', 'Esquinas',
+              'Soldadura', 'Piezas Especiales', 'Aislado', 'Pintura'];
+    }
+    // Stations the profile may operate: same table as operador.js (handleLogin): jefe = all production stations,
+    // QA = Quality Control (+ Despacho when also_does_dispatch), despacho = Despacho, the others = their own `stations`.
+    function myStations() {
+      return request.auth.token.role == 'jefe_produccion' ? prodStations()
+        : request.auth.token.role == 'control_calidad'
+          ? (tabletProfile().get('also_does_dispatch', false) == true ? ['Quality Control', 'Despacho'] : ['Quality Control'])
+        : request.auth.token.role == 'despacho' ? ['Despacho']
+        : tabletProfile().get('stations', []);
+    }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function productionTablet() { return request.auth.token.role in ['operario', 'encargado_armado', 'jefe_produccion']; }
+
+    // fabricacion_tasks: a station advances ITS tasks (fields measured in operador.js / op-qa.js / op-despacho.js) ...
+    function taskOwnKeys() {
+      return ['status', 'started_at', 'finished_at', 'operator_id', 'operator_name', 'headcount', 'pauses', 'duracion_minutos',
+              'tipo_pieza_principal', 'cut_report', 'cnc_report', 'cad_report', 'continuacion_manual', 'psi_inicio', 'psi_fin',
+              'argon_consumido', 'spool_id', 'spool_codigo', 'spool_tipo', 'spool_espesor', 'piezas_soldadas', 'cambio_cilindro',
+              'psi_cambio', 'psi_nuevo_inicio'];
+    }
+    function tabletTaskOwn() {
+      return resource.data.get('station', '') in myStations()
+        && changed().hasOnly(taskOwnKeys())
+        && (!('operator_id' in changed())
+            || request.resource.data.operator_id == request.auth.token.cid || request.resource.data.operator_id == null);
+    }
+    // ... finishing a task releases the tasks of OTHER stations that were waiting for it (unblockDependents) ...
+    function tabletUnblock() {
+      return changed().hasOnly(['status', 'depends_on', 'devuelta_de_qa'])
+        && resource.data.get('status', '') == 'bloqueada'
+        && request.resource.data.status == 'pendiente'
+        && request.resource.data.depends_on.size() == 0;
+    }
+    // ... and Quality Control sends failed pieces back to a station (op-qa.js).
+    function tabletQaRework() {
+      return request.auth.token.role == 'control_calidad'
+        && changed().hasOnly(['status', 'finished_at', 'started_at', 'operator_id', 'operator_name', 'devuelta_de_qa',
+                              'qa_defect_reported', 'qa_defect_comment', 'qa_defect_at'])
+        && request.resource.data.status == 'pendiente'
+        && request.resource.data.operator_id == null && request.resource.data.started_at == null && request.resource.data.finished_at == null;
+    }
+    // fabricacion (parent order): only the stage / QA / dispatch fields, only the transitions the flow performs.
+    function tabletOrderUpdate() {
+      return (productionTablet()
+              && changed().hasOnly(['etapa', 'stage_timestamps', 'laminas_manuales'])
+              && (!('etapa' in changed())
+                  || (request.resource.data.etapa == 'Quality Control' && resource.data.get('etapa', '') in ['Fabricación', 'Quality Control'])))
+          || (request.auth.token.role == 'control_calidad'
+              && changed().hasOnly(['qa_status', 'qa_started_at', 'qa_pauses', 'qa_pieces_status', 'etapa', 'errores_dibujo',
+                                    'errores_fabricacion', 'stage_timestamps'])
+              && (!('etapa' in changed())
+                  || (request.resource.data.etapa in ['Despacho', 'Dibujo', 'Fabricación'] && resource.data.get('etapa', '') == 'Quality Control')))
+          || ('Despacho' in myStations()
+              && changed().hasOnly(['bom', 'dispatch_registry', 'etapa', 'stage_timestamps'])
+              && (!('etapa' in changed())
+                  || (request.resource.data.etapa == 'Entregado' && resource.data.get('etapa', '') == 'Despacho')));
+    }
+    function spoolCreateKeys() { return ['codigo', 'tipo', 'espesor', 'peso_inicial', 'unidad', 'status', 'piezas_soldadas', 'creada_at']; }
+
+    // ---------- users: written ONLY by Cloud Functions (Admin SDK) ----------
+    match /users_prod/{userId} {
+      allow get: if validSession() && (isManager() || userId == me());
+      allow list: if isManager();
+      allow write: if false;
+    }
+    // Password-free directory (id, nombre, role, activo) kept by Cloud Functions, for assignment lists.
+    match /userDirectory_prod/{userId} {
+      allow read: if validSession();
+      allow write: if false;
+    }
+
+    // ---------- clients ----------
+    // Portfolio of a vendedor = clients they created + clients linked (clientId) to opportunities they created or
+    // are assigned to. `visibleTo` is that second set, maintained ONLY by the syncClientVisibility triggers.
+    // The CATALOGUE (selecting any client for a new opportunity) is NOT a Firestore read: it is the
+    // searchClientsCatalog callable, which returns id / name / masked hint only.
+    function clientVisible(d) {
+      return isPrivileged()
+        || (isVendedor() && (d.createdBy == me() || me() in d.get('visibleTo', [])));
+    }
+    // Identity fields (type, NIT, DUI) can only change through updateClientAdmin, which keeps the
+    // clientIdentifiers index consistent. Clients are created ONLY through createClientAdmin.
+    function identityKept() {
+      return request.resource.data.get('nit', '') == resource.data.get('nit', '')
+        && request.resource.data.get('dui', '') == resource.data.get('dui', '')
+        && request.resource.data.get('tipo', '') == resource.data.get('tipo', '');
+    }
+    match /clients_prod/{clientId} {
+      allow get, list: if clientVisible(resource.data);
+      allow create: if false;
+      allow update: if (isPrivileged() || (isVendedor() && clientVisible(resource.data)))
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.get('visibleTo', null) == resource.data.get('visibleTo', null)
+        && identityKept();
+      allow delete: if isManager();   // target: callable (no projects, audit, files, index release)
+    }
+
+    // ---------- prospects (opportunities / projects) ----------
+    function prospectMine(d) {
+      return d.createdBy == me() || d.get('vendedorId', '') == me();
+    }
+    function flag(d, k) { return d.get('datos', {}).get(k, null); }
+    // "Sale authorised without contract" is a manager decision: nobody else may change it.
+    function noContractFlagsKept() {
+      return flag(request.resource.data, 'autorizado_sin_contrato') == flag(resource.data, 'autorizado_sin_contrato')
+        && flag(request.resource.data, 'autorizado_por') == flag(resource.data, 'autorizado_por');
+    }
+    match /prospects_prod/{prospectId} {
+      allow get, list: if isPrivileged() || (isVendedor() && prospectMine(resource.data));
+      // Any existing client may be chosen (catalogue). Choosing a client never changes the client's createdBy.
+      allow create: if (isPrivileged() || isVendedor())
+        && request.resource.data.id == prospectId
+        && request.resource.data.createdBy == me()
+        && (isPrivileged() || request.resource.data.get('vendedorId', '') == me())
+        && (isManager() || flag(request.resource.data, 'autorizado_sin_contrato') == null)
+        && exists(/databases/$(database)/documents/clients_prod/$(request.resource.data.clientId));
+      allow update: if request.resource.data.createdBy == resource.data.createdBy
+        && (
+          isManager()
+          || (isGestor() && noContractFlagsKept())
+          || (isVendedor() && prospectMine(resource.data) && noContractFlagsKept()
+              && request.resource.data.get('vendedorId', '') == resource.data.get('vendedorId', '')
+              && request.resource.data.clientId == resource.data.clientId)
+        );
+      allow delete: if isManager();   // target: callable (audit + Storage cleanup)
+    }
+
+    // ---------- settings / audit ----------
+    match /system_prod/{docId} {
+      allow read: if validSession() || tabletSession();   // tablets read the settings (USB list ...) and never write them
+      allow write: if isManager() || isJefe();
+    }
+    // append-only; readable by managers only. (Target: written by the server so `usuario` cannot be forged.)
+    match /audit_logs_prod/{logId} {
+      allow read: if isManager();
+      allow create: if validSession() && request.resource.data.keys().size() <= 20;
+      allow update, delete: if false;
+    }
+
+    // ---------- fabricacion + tablets (DESIGN: role-level, to refine with the plant flows) ----------
+    // Plant roles get NO access to clients / prospects: operador.html never reads them, and the fabricacion
+    // views must carry the project names they need inside proyectos_fabricacion.
+    match /fabricacion_prod/{docId} {
+      allow read: if isManager() || isGestor() || isPlant() || tabletSession();
+      allow create, update: if isManager() || (isPlant() && role() in ['jefe_produccion', 'recepcion', 'dibujante']);
+      allow update: if tabletSession() && tabletOrderUpdate();
+      allow delete: if isManager() || isJefe();
+    }
+    match /fabricacion_tasks_prod/{docId} {
+      allow read: if isManager() || isGestor() || isPlant() || tabletSession();
+      allow create, delete: if isManager() || isJefe();
+      allow update: if isManager() || isPlant();   // commercial-auth plant sessions (unchanged)
+      allow update: if tabletSession() && (tabletTaskOwn() || tabletUnblock() || tabletQaRework());
+    }
+    match /proyectos_fabricacion_prod/{docId} {
+      allow read: if isManager() || isGestor() || isPlant();
+      allow create, update: if isManager() || isGestor() || isJefe();
+      allow delete: if isManager() || isJefe();
+    }
+    match /bobinas_soldadura_prod/{docId} {
+      allow read: if isManager() || isPlant() || tabletSession();
+      allow write: if isManager() || (isPlant() && role() in ['jefe_produccion', 'operario', 'encargado_armado']);
+      // welding spools: only the Soldadura station (jefe included); never deleted from a tablet
+      allow create: if tabletSession() && 'Soldadura' in myStations()
+        && request.resource.data.keys().hasOnly(spoolCreateKeys()) && request.resource.data.status == 'activa';
+      allow update: if tabletSession() && 'Soldadura' in myStations()
+        && changed().hasOnly(['piezas_soldadas', 'status', 'terminada_at', 'finished_task_id', 'finished_order_code'])
+        && (!('status' in changed()) || (resource.data.get('status', '') == 'activa' && request.resource.data.status == 'terminada'));
+    }
+    // NOTE: `config` and `alertas_maquinas` have no environment suffix in the code (shared by local and prod).
+    match /config/{docId} {
+      allow read: if isManager() || isGestor() || isPlant() || tabletSession();
+      allow write: if isManager() || isJefe();
+    }
+    match /config/estado_equipos {
+      allow write: if isManager() || isPlant() || tabletSession();   // machine status reported from the tablets
+    }
+    match /alertas_maquinas/{alertId} {
+      allow read: if isManager() || isPlant() || tabletSession();
+      allow create: if isManager() || isPlant();
+      allow update: if isManager() || isJefe();
+      // tablets report a failure (create, not yet read) and mark alerts as read; nothing else
+      allow create: if tabletSession() && request.resource.data.keys().hasOnly(['tipo', 'estacion', 'equipo', 'operador', 'codigo_orden', 'proyecto', 'created_at', 'leida'])
+        && request.resource.data.leida == false;
+      allow update: if tabletSession() && changed().hasOnly(['leida']) && request.resource.data.leida == true;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

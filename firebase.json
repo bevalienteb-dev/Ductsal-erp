@@ -1,0 +1,21 @@
+{
+  "functions": {
+    "source": "functions",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "*.local",
+      "**/__tests__/**",
+      "**/isolated-tests/**",
+      "**/emulator-tests/**",
+      "**/test-helpers/**",
+      "**/scripts/**",
+      "**/*.md",
+      "**/*.sh",
+      "**/jest.*.config.js",
+      "**/jest.config.js"
+    ]
+  }
+}

@@ -1,0 +1,192 @@
+rules_version = '2';
+
+// =============================================================================================================
+// Ductsal - Cloud Storage security rules (PROPOSED, NOT DEPLOYED). Applies per bucket: the CRM tries
+// ductsal-erp.firebasestorage.app first and ductsal-erp.appspot.com as fallback; both need these rules.
+//
+// Everything requires a VALID SESSION (see the Firestore rules): custom claims { role, cid } plus an active CRM
+// profile linked to the same Auth uid. Objects are write-once: no overwrite, no delete, no listing.
+//
+// Path families:
+//   prod_files/prospects/{prospectId}/{folder}/{file}  documents of an opportunity / project
+//   prod_files/clients/{cid}/identificacion/{file}     DUI attachment (visible to creator, privileged, active vendors)
+//   prod_files/clients/{cid}/legal/{file}              Escrituras, Credenciales, NIT, NRC (creator, privileged, closing vendors)
+//   prod_files/clients/{cid}/{file}                    direct client files (creator, privileged, reservation holder)
+//   prod_files/{folder}/{file}                         LEGACY flat paths (transitional read) + fabricacion uploads
+//   everything else (local_files/**, other buckets' paths ...)  denied
+//
+// LIMITS rules cannot fix (see CLIENT_CATALOG_AND_DEDUPE.md):
+//  - download URLs with a token ("getDownloadURL") ignore these rules: links already stored in Firestore keep
+//    working for anyone who has them until the object tokens are rotated;
+//  - getDownloadURL() itself needs `get`, so uploads from a session that is not valid are rejected here.
+// =============================================================================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function crmRoles()   { return ['manager', 'gestor', 'vendedor']; }
+    function plantRoles() { return ['jefe_produccion', 'recepcion', 'dibujante', 'operario', 'encargado_armado', 'control_calidad', 'despacho']; }
+    function role()       { return request.auth.token.get('role', ''); }
+    function me()         { return request.auth.token.cid; }
+    function profile() {
+      return firestore.get(/databases/(default)/documents/users_prod/$(request.auth.token.cid)).data;
+    }
+
+    // Valid CRM session: Firebase Auth user linked via authUid in profile
+    function validCrmSession() {
+      return request.auth != null
+        && request.auth.token.get('cid', '') != ''
+        && role() in crmRoles()
+        && profile() != null
+        && profile().get('authUid', '') == request.auth.uid
+        && profile().get('activo', false) == true
+        && profile().get('role', '') == role();
+    }
+
+    // Valid Plant / Tablet session:
+    // Supports real plant tablets (Custom Token from plantLogin: uid == 'plant_' + cid, claim plant == true, no authUid required in profile)
+    // as well as web plant staff with Firebase Auth accounts (profile.authUid == request.auth.uid).
+    function validPlantSession() {
+      return request.auth != null
+        && request.auth.token.get('cid', '') != ''
+        && role() in plantRoles()
+        && profile() != null
+        && profile().get('activo', false) == true
+        && profile().get('role', '') == role()
+        && (
+          (
+            request.auth.token.get('plant', false) == true
+            && request.auth.uid == 'plant_' + request.auth.token.cid
+          )
+          || (
+            request.auth.token.get('plant', false) != true
+            && profile().get('authUid', '') == request.auth.uid
+          )
+        );
+    }
+
+    function validSession() { return validCrmSession() || validPlantSession(); }
+    function isPrivileged() { return validCrmSession() && (role() == 'manager' || role() == 'gestor'); }
+    function isPlant()      { return validPlantSession() && role() in plantRoles(); }
+    function isCrm()        { return validCrmSession() && role() in crmRoles(); }
+
+    function getProspect(pid) {
+      return firestore.get(/databases/(default)/documents/prospects_prod/$(pid)).data;
+    }
+    function ownsProspect(pid) {
+      let p = getProspect(pid);
+      return p != null && (p.createdBy == me() || p.get('vendedorId', '') == me());
+    }
+
+    function getClient(cid) {
+      return firestore.get(/databases/(default)/documents/clients_prod/$(cid)).data;
+    }
+    function isClientOwner(cid) {
+      let c = getClient(cid);
+      return c != null && c.get('createdBy', '') == me();
+    }
+    function isClientVisible(cid) {
+      let c = getClient(cid);
+      return c != null && (me() in c.get('visibleTo', []));
+    }
+    function isClientClosing(cid) {
+      let c = getClient(cid);
+      return c != null && (me() in c.get('closingVendors', []));
+    }
+
+    function getReservation(cid) {
+      return firestore.get(/databases/(default)/documents/client_reservations_prod/$(cid)).data;
+    }
+    function isReservationOwner(cid) {
+      let r = getReservation(cid);
+      return r != null && r.get('createdBy', '') == me();
+    }
+    function isReservationValid(cid) {
+      let r = getReservation(cid);
+      return r != null
+        && r.get('createdBy', '') == me()
+        && r.get('status', '') == 'reserved'
+        && (
+          (r.expiresAt != null && request.time < r.expiresAt)
+          || (r.get('expiresAtMs', 0) > 0 && request.time.toMillis() < r.expiresAtMs)
+        );
+    }
+    function isAuthorizedClientUpload(cid) {
+      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isReservationValid(cid) || cid == me()));
+    }
+    function isAuthorizedLegalUpload(cid) {
+      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid)));
+    }
+
+    // Write-once: an upload over an existing object is refused. Real Storage already evaluates that as `update`
+    // (denied below); the explicit condition also makes it hold in the emulator, which evaluates EVERY upload as `create`.
+    function isNew() { return resource == null; }
+    function knownProspectFolder(f) { return f in ['proyectos', 'facturas', 'pagos', 'ordenes_cambio']; }
+    function plantFolder(f)         { return f in ['requerimientos', 'fabricacion_archivos']; }
+
+    // SEC-05 H-05: Límites de tamaño segmentados por familia de ruta.
+    // Solo las carpetas de proyectos y fabricación de planta permiten hasta 100 MiB (planos CAD, levantamientos, ZIPs).
+    // Las carpetas administrativas y legales mantienen límites acotados para evitar abusos.
+    function maxBytesForFolder(f) {
+      return (f == 'proyectos' || plantFolder(f)) ? 100 * 1024 * 1024
+           : f == 'ordenes_cambio'                ? 35 * 1024 * 1024
+           : f == 'legal'                         ? 25 * 1024 * 1024
+           : (f == 'facturas' || f == 'clientes') ? 15 * 1024 * 1024
+           : 10 * 1024 * 1024; // identificacion, pagos, etc.
+    }
+    function sizeOkFor(f) {
+      return request.resource != null && request.resource.size <= maxBytesForFolder(f);
+    }
+    function sizeOk() { return request.resource != null && request.resource.size < 20 * 1024 * 1024; }
+
+    // The file inputs accept any type today: deny the active-content types until the business confirms an allow-list.
+    function typeOk() {
+      return request.resource.contentType == null
+        || !request.resource.contentType.matches('(?i).*(html|xml|javascript|svg|x-msdownload|x-sh|x-httpd-php).*');
+    }
+
+    // ---------- Opportunity / project files (hierarchical) ----------
+    match /prod_files/prospects/{pid}/{folder}/{file} {
+      allow get: if isPrivileged() || (isCrm() && ownsProspect(pid));
+      allow create: if isNew() && knownProspectFolder(folder) && sizeOkFor(folder) && typeOk()
+        && (isPrivileged() || (isCrm() && ownsProspect(pid)));
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Client: Identification / DUI files ----------
+    match /prod_files/clients/{cid}/identificacion/{file} {
+      allow get: if isPrivileged()
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+      allow create: if isNew() && sizeOkFor('identificacion') && typeOk() && isAuthorizedClientUpload(cid);
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Client: Sensitive Legal files (Escritura, Credencial, NIT, NRC) ----------
+    match /prod_files/clients/{cid}/legal/{file} {
+      allow get: if isPrivileged()
+        || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+      allow create: if isNew() && sizeOkFor('legal') && typeOk() && isAuthorizedLegalUpload(cid);
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Client: direct files (transitional / general client documents) ----------
+    match /prod_files/clients/{cid}/{file} {
+      allow get: if isPrivileged() || (isCrm() && (isClientOwner(cid) || cid == me() || isReservationOwner(cid)));
+      allow create: if isNew() && sizeOkFor('clientes') && typeOk() && isAuthorizedClientUpload(cid);
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Fabricacion & Legacy flat paths (transitional read, write restricted) ----------
+    match /prod_files/{folder}/{file} {
+      allow get: if isPrivileged()
+        || isPlant()
+        || (isCrm() && (knownProspectFolder(folder) || folder == 'clientes'));
+      allow create: if isNew() && plantFolder(folder) && sizeOkFor(folder) && typeOk() && (isPrivileged() || isPlant());
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Default Deny ----------
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

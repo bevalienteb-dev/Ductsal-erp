@@ -1,0 +1,12 @@
+# Node modules
+node_modules/
+# Service account keys (ignore only key files)
+serviceAccountKey.json
+# OS generated files
+.DS_Store
+# Build artifacts
+
+# Logs and temporary files
+*.log
+# PDF assets (keep if needed, otherwise add explicitly)
+# Bancoagrícola.pdf

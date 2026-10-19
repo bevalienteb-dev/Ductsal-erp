@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// ISOLATED EMULATOR ONLY - never deploy. Models the ASSUMPTION that the shared project today lets any client read and write
+// everything (that is what the code of both modules relies on: operador.html has no Firebase Auth SDK and fabricacion's
+// index.html loads none either). The real production rules were NOT read. It is used as a BASELINE in
+// jointValidation.iso.js: an operation replay that is refused here is a badly built replay, not a rules finding.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
