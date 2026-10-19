@@ -832,6 +832,97 @@ Si la validación de gerencia falla, suspender el inicio de sesión comercial, n
 
 ---
 
+### Fase 2.5 — Simulación y Planificación del Backfill de Datos para Endurecimiento de Reglas
+
+#### 1. Objetivo
+Simular exhaustivamente y en modo **estrictamente de solo lectura** la migración y saneamiento de datos necesarios en las colecciones comerciales (`prospects_prod`, `clients_prod` y `userDirectory_prod`) antes de poder activar las reglas de seguridad restrictivas de Firestore y Storage, garantizando cero interrupción en la operativa comercial y de planta.
+
+#### 2. Recuentos Comprobados en Vivo (`ductsal-erp`)
+Inspección en vivo efectuada mediante `functions/scripts/simulateSec03Backfill.js` utilizando credenciales de administrador delegadas:
+
+| Colección en Producción | Total Documentos | Estado Actual Auditado | Acción Requerida en Backfill |
+|---|:---:|---|---|
+| `users_prod` | **5** | 2 gerentes activos, 1 gestor activo, 1 vendedor activo, 1 vendedor inactivo (`Gustavo Velásquez`, `1784221928346`). | Fuente de verdad para el directorio público. |
+| `userDirectory_prod` | **0** | Colección vacía (100% ausente). | Sincronizar los 5 usuarios con proyección segura `{ id, nombre, role, activo }`. |
+| `clients_prod` | **107** | 107 sin `visibleTo` (100%); 41 sin `createdBy`; 0 con prospectos huérfanos (107/107 con prospectos vinculados). | Calcular `visibleTo` y `closingVendors` reactivos; asignar `createdBy` unánime a los 41 históricos. |
+| `prospects_prod` | **166** | 84 con `createdBy` y `vendedorId`; 24 sin `createdBy`; 58 con `createdBy` pero sin `vendedorId`; 0 huérfanos. | Resolver `createdBy` y `vendedorId` en los 24 documentos de Alejandra Ayala; estandarizar `vendedorId` en los 58 documentos. |
+
+#### 3. Esquema Propuesto y Reglas de Derivación
+
+##### A. Oportunidades (`prospects_prod`)
+- **Regla de Derivación de `createdBy` y `vendedorId`:**
+  - En los 24 documentos faltantes de `createdBy` (`OPP-1777081074183-0` a `OPP-1777081083975-23`), la propiedad `vendedor` indica textualmente `"Alejandra Ayala"` y 1 de ellos contiene `vendedorId: "1776904514932"`.
+  - Existe evidencia incontrovertible de autoría e importación histórica en lote por parte de Alejandra Ayala. Se propone el parche seguro `{ createdBy: "1776904514932", vendedorId: "1776904514932" }`.
+- **Estandarización de `vendedorId`:**
+  - En los 58 documentos creados por `1776904514932` que carecen de `vendedorId`, se estandariza `vendedorId: "1776904514932"` para asegurar indexación dual simétrica.
+- **Conflictos y Ambigüedades:** **0 documentos ambiguos.** Todos los prospectos de la base corresponden a usuarios conocidos.
+
+##### B. Clientes (`clients_prod`)
+- **Regla de Derivación de `visibleTo` y `closingVendors`:**
+  - Se calculan de forma idéntica a la Cloud Function reactiva `syncClientVisibility` (`functions/clientsService.js:recomputeVisibility`).
+  - Para cada cliente, se examinan sus prospectos activos vinculados (`p.eliminado !== true`).
+  - `visibleTo`: Lista ordenada de identificadores de vendedores únicos (`[p.createdBy, p.vendedorId]`, excluyendo `'sistema'`).
+  - `closingVendors`: Subconjunto de vendedores con prospectos en etapa `cierre` y estado distinto de `perdido`.
+- **Resolución de `createdBy` para 41 Clientes Históricos:**
+  - De los 41 clientes sin `createdBy`, el 100% cuenta con prospectos asociados.
+  - **40 clientes** tienen la totalidad de sus prospectos creados y gestionados unánimemente por Alejandra Ayala (`1776904514932`).
+  - **1 cliente** (`C1784933224052`, "AR Multiservicios") tiene la totalidad de sus prospectos gestionados por Gustavo Velásquez (`1784221928346`).
+  - **0 clientes** presentan propiedad dividida o vendedores en conflicto.
+  - Se propone asignar `createdBy` unánime a cada uno de ellos, respaldado por la trazabilidad de sus prospectos.
+
+##### C. Directorio Seguro (`userDirectory_prod`)
+- **Campos Autorizados:**
+  ```json
+  {
+    "id": "string (CID)",
+    "nombre": "string",
+    "role": "manager | gestor | vendedor",
+    "activo": true | false
+  }
+  ```
+- **Campos Excluidos de Forma Estricta y Definitiva:**
+  `password`, `email`, `authUid`, `authProvider`, `creado`, `hasPassword`, tokens de acceso o metadatos de sesión.
+
+#### 4. Resultados del Dry-Run Automatizado
+
+```text
+================================================================
+       SEC-03 FASE F2: SIMULACIÓN DE BACKFILL (DRY-RUN)        
+          ESTRICTAMENTE SOLO LECTURA — ZERO ESCRITURAS         
+================================================================
+[SIMULATION] Target Project: ductsal-erp
+[SIMULATION] Live counts: users=5, userDir=0, clients=107, prospects=166
+
+--- 1. PROSPECTS_PROD (TOTAL: 166) ---
+- Al día (createdBy y vendedorId presentes): 84
+- Propuestas de actualización: 82
+  * Lote de 24 sin createdBy resueltos: 24
+  * Lote de 58 sin vendedorId estandarizados: 58
+- Casos ambiguos / revisión manual: 0
+
+--- 2. CLIENTS_PROD (TOTAL: 107) ---
+- Al día: 0
+- Propuestas de actualización visibleTo / closingVendors: 66
+- Clientes sin createdBy resueltos por prospectos unánimes: 41
+- Clientes huérfanos / ambiguos / revisión manual: 0
+
+--- 3. USERDIRECTORY_PROD (TOTAL ACTUAL: 0) ---
+- Documentos a sincronizar desde users_prod: 5
+- Documentos a actualizar: 0
+- Documentos huérfanos a eliminar: 0
+================================================================
+```
+
+#### 5. Compatibilidad de Consultas y Bloqueos Críticos Antes de Endurecer Reglas
+
+> [!CAUTION]
+> **BLOQUEO TÉCNICO DE PRODUCCIÓN (CONDICIÓN NO-GO PARA REGLAS FIRESTORE/STORAGE):**  
+> Antes de poder desplegar las reglas restrictivas candidatas de Firestore (`firestore.rules`) y Storage (`storage.rules`), deben cumplirse dos condiciones indispensables:
+> 1. **Backfill Real de Datos (Fase F2.5b):** El script de backfill debe ejecutarse con escrituras en producción (previa autorización explícita) para poblar `visibleTo` en los 107 clientes y poblar los 5 registros de `userDirectory_prod`. Sin este backfill, los vendedores verán su cartera completamente vacía al aplicarse la regla `clientVisible()`.
+> 2. **SEC-02 (Terminales de Taller en Fabricación):** La aplicación de operarios en taller (`../fabricacion-dev/operador.html` y `operador.js`) realiza actualmente lecturas **sin autenticación** sobre `users_prod` (para validar PIN) y sobre `system_prod/settings`. **Si se despliegan las reglas de Firestore en este momento, todas las tablets de la planta quedarán bloqueadas de inmediato con error 403 (PERMISSION_DENIED).** El endurecimiento de reglas no debe ejecutarse hasta que la integración de `plantLogin` de SEC-02 esté completada en las terminales del taller.
+
+---
+
 ### Fase 3 — Vinculación Comercial
 
 #### 1. Objetivo
