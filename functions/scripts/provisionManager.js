@@ -225,10 +225,11 @@ async function provisionManager(admin, {
   suffix = '_prod',
   purgePassword = false,
   opId = null,
-  actor = null
+  actor = null,
+  targetProject = null
 } = {}) {
   // 0. Explicit Firebase Project Verification (H-01)
-  const EXPECTED_PROJECT_ID = 'ductsal-erp';
+  const EXPECTED_PROJECT_ID = targetProject || 'ductsal-erp';
   const resolution = resolveAdminProjectId(admin);
 
   if (resolution.contradiction) {

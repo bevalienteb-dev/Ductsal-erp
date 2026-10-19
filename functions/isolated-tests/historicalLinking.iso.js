@@ -27,7 +27,13 @@ const { clearIsolatedFirestore, loadFirestoreRules, assertIsolatedUp, PROJECT } 
 const { provisionManager } = require('../scripts/provisionManager');
 
 if (!getApps().length) initializeApp({ projectId: PROJECT });
-const adminNamespace = { auth: getAuth, firestore: getFirestore };
+const adminNamespace = {
+  auth: getAuth,
+  firestore: getFirestore,
+  app: () => getApps()[0],
+  apps: getApps(),
+  options: { projectId: PROJECT }
+};
 const auth = getAuth();
 const db = getFirestore();
 
@@ -179,7 +185,8 @@ describe('Sales Reporting — Vinculación controlada en entorno aislado', () =>
       email: 'benjamin@ductsal-test.invalid',
       nombre: 'Benjamin Valiente',
       password: PASSWORDS.BEN,
-      suffix: '_prod'
+      suffix: '_prod',
+      targetProject: PROJECT
     });
 
     const den = await provisionManager(adminNamespace, {
@@ -187,7 +194,8 @@ describe('Sales Reporting — Vinculación controlada en entorno aislado', () =>
       email: 'denys@ductsal-test.invalid',
       nombre: 'Denys Gonzalez',
       password: PASSWORDS.DEN,
-      suffix: '_prod'
+      suffix: '_prod',
+      targetProject: PROJECT
     });
 
     // Both get verified Auth accounts with { role: 'manager', manager: true, cid }

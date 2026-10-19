@@ -49,6 +49,11 @@ describe('A. unauthenticated / unlinked / inactive identities', () => {
     deny(`self-signup account without claims get ${col}`, () => fsApi.get(col, id, T.noClaims));
   }
   deny('anon list clients', () => fsApi.query('clients_prod', null, T.anon));
+  deny('anon list prospects', () => fsApi.query('prospects_prod', null, T.anon));
+  deny('anon list user directory', () => fsApi.query('userDirectory_prod', null, T.anon));
+  deny('anon list audit logs', () => fsApi.query('audit_logs_prod', null, T.anon));
+  deny('self-signup account list user directory', () => fsApi.query('userDirectory_prod', null, T.noClaims));
+  deny('self-signup account list prospects', () => fsApi.query('prospects_prod', null, T.noClaims));
   deny('anon write a prospect', () => fsApi.set('prospects_prod', 'P1', { id: 'P1', createdBy: V1, vendedorId: V1, clientId: 'C1', datos: {} }, T.anon));
   deny('anon create a user profile', () => fsApi.create('users_prod', 'EVIL', { id: 'EVIL', role: 'manager', activo: true, authUid: 'x' }, T.anon));
   deny('self-signup create a manager profile', () => fsApi.create('users_prod', 'EVIL2', { id: 'EVIL2', role: 'manager', activo: true, authUid: 'uid-selfsignup' }, T.noClaims));
