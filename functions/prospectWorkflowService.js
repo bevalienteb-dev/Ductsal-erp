@@ -50,7 +50,8 @@ const POLICY = {
   deletePayment: ['manager', 'gestor', 'vendedor'],
   // Approved decision: only manager / gestor, and only BEFORE the opportunity is closed (checked against the stored state).
   editBasePrice: ['manager', 'gestor'],
-  deleteProspect: ['manager-live']
+  deleteProspect: ['manager-live'],
+  reactivateProspect: ['manager-live']
 };
 
 const fmtMoney = n => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n) || 0);
@@ -683,7 +684,114 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  return { advanceStage, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect };
+  // =====================================================================================================
+  // Reactivation of a lost opportunity (manager only, live check)
+  // =====================================================================================================
+  async function reactivateProspect({ caller, prospectId, motivo }) {
+    await requireManager(caller, 'reactivar proyectos');
+    reqDocId(prospectId, 'prospectId');
+    const reason = reqString(motivo, 'El motivo de la reactivación', 500);
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+
+      if (p.eliminado === true) {
+        throw precondition('No se puede reactivar una oportunidad que fue eliminada lógicamente');
+      }
+
+      // Idempotency: retry with same reason on an active project returns unchanged
+      if (p.estado === 'activo') {
+        if (p.motivo_reactivacion === reason) {
+          return { status: 'unchanged', estado: 'activo', etapa: p.etapa };
+        }
+        throw precondition('La oportunidad ya se encuentra activa');
+      }
+
+      if (p.estado === 'ganado') {
+        throw precondition('La oportunidad ya está ganada, no se puede reactivar desde pérdida');
+      }
+
+      if (p.estado !== 'perdido') {
+        throw precondition(`No se puede reactivar una oportunidad en estado "${p.estado}" (solo proyectos perdidos)`);
+      }
+
+      // Restore prior commercial stage
+      let targetStage = p.etapa;
+      if (!STAGES.includes(targetStage)) {
+        const ts = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
+        const recorded = STAGES.filter(s => !!ts[s]);
+        targetStage = recorded.length > 0 ? recorded[recorded.length - 1] : 'prospecto';
+      }
+
+      const at = iso();
+      const priorLoss = {
+        motivo: p.motivo_perdida || 'Desconocido',
+        fecha: p.fecha_perdida || null,
+        etapa: p.etapa || targetStage
+      };
+
+      const lossHistory = (Array.isArray(p.historial_perdidas) ? p.historial_perdidas : []).concat([priorLoss]);
+
+      const patch = {
+        estado: 'activo',
+        etapa: targetStage,
+        motivo_perdida: FieldValue.delete(),
+        fecha_perdida: FieldValue.delete(),
+        ultima_perdida: priorLoss,
+        historial_perdidas: lossHistory,
+        reactivado_por_id: caller.cid,
+        reactivado_por: caller.name || 'Gerente',
+        fecha_reactivacion: at,
+        motivo_reactivacion: reason,
+        logs: withLog(p, caller, `Proyecto REACTIVADO por gerente ${caller.name || 'Gerente'}. Motivo: ${reason}. Etapa activa: ${targetStage}.`)
+      };
+
+      // Read client before any writes (Firestore transactions requirement: all reads before writes)
+      let clientRef = null;
+      let clientExists = false;
+      if (p.clientId) {
+        clientRef = col('clients').doc(p.clientId);
+        const clientSnap = await tx.get(clientRef);
+        clientExists = clientSnap.exists;
+      }
+
+      tx.update(ref, patch);
+
+      // Restore client visibility & closing vendors if applicable
+      if (clientRef && clientExists) {
+        const visibleVendors = [p.vendedorId, p.createdBy, caller.cid].filter(v => v && v !== 'sistema');
+        const clientPatch = {};
+        if (visibleVendors.length > 0) {
+          clientPatch.visibleTo = FieldValue.arrayUnion(...visibleVendors);
+        }
+        if (targetStage === 'cierre' && p.vendedorId && p.vendedorId !== 'sistema') {
+          clientPatch.closingVendors = FieldValue.arrayUnion(p.vendedorId);
+        }
+        if (Object.keys(clientPatch).length > 0) {
+          tx.update(clientRef, clientPatch);
+        }
+      }
+
+      addAudit(tx, caller, 'reactivateProspect', prospectId, {
+        motivo: reason,
+        etapa: targetStage,
+        motivoPerdidaPrevio: priorLoss.motivo,
+        fechaPerdidaPrevia: priorLoss.fecha
+      });
+
+      return {
+        status: 'reactivated',
+        estado: 'activo',
+        etapa: targetStage,
+        motivo_reactivacion: reason
+      };
+    });
+  }
+
+  return { advanceStage, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
 }
 
 module.exports = { createProspectWorkflowService, POLICY, STAGES, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };

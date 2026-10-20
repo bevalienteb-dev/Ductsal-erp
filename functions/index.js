@@ -1488,6 +1488,10 @@ exports.deletePaymentAdmin = functions.https.onCall((data, context) => runWorkfl
 exports.deleteProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.deleteProspect({ caller, prospectId: d.prospectId, motivo: d.motivo })));
 
+/** { prospectId, motivo, dbSuffix? } -> { status: 'reactivated' | 'unchanged', estado, etapa, motivo_reactivacion } (manager only, live check) */
+exports.reactivateLostProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.reactivateProspect({ caller, prospectId: d.prospectId, motivo: d.motivo })));
+
 // ======================================================================================================
 // SEC-05: Secure Document Download (Universal Downloads & Large File Streaming)
 // ======================================================================================================

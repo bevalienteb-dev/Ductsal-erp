@@ -2458,10 +2458,14 @@ function openDetail(id) {
     const payForm = document.getElementById('payment-form'); if (payForm) payForm.style.display = 'none';
     const invForm = document.getElementById('invoice-form'); if (invForm) invForm.style.display = 'none';
 
-    // Show Delete Prospect button for managers
+    // Show Delete / Reactivate Prospect buttons for managers
     const btnDeleteProspect = document.getElementById('btn-delete-prospect');
     if (btnDeleteProspect) {
-        btnDeleteProspect.style.display = (currentUser && currentUser.role === 'manager') ? 'block' : 'none';
+        btnDeleteProspect.style.display = (currentUser && currentUser.role === 'manager') ? 'inline-block' : 'none';
+    }
+    const btnReactivateProspect = document.getElementById('btn-reactivate-prospect');
+    if (btnReactivateProspect) {
+        btnReactivateProspect.style.display = (currentUser && currentUser.role === 'manager' && p.estado === 'perdido') ? 'inline-block' : 'none';
     }
 
     const actionContainer = document.getElementById('action-buttons-container');
@@ -4149,6 +4153,32 @@ async function deleteProspect() {
     if (!res) return;
     alert("Proyecto eliminado exitosamente.");
     goBackFromDetail();
+}
+
+// Reactivation of lost opportunity (reactivateLostProspectAdmin): restores an opportunity marked as lost to active status,
+// preserving its loss history and restoring commercial stage and visibility. Only managers can perform this.
+async function reactivateLostProspect() {
+    if (!currentProspectId) return;
+    if (!currentUser || currentUser.role !== 'manager') return alert("Permiso denegado: solo un usuario con rol de gerencia puede reactivar proyectos.");
+
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    if (p.estado !== 'perdido') return alert("Solo se pueden reactivar proyectos que se encuentren en estado 'perdido'.");
+    if (p.eliminado === true) return alert("No se puede reactivar un proyecto eliminado lógicamente.");
+
+    if (!confirm(`¿Deseas reactivar el proyecto "${p.proyecto}"?\n\nEl proyecto volverá a estar activo en su etapa comercial previa y se restaurará la visibilidad comercial para su equipo.`)) return;
+    const motivo = String(prompt('Indica el motivo de la reactivación (obligatorio):') || '').trim();
+    if (!motivo) return alert("La reactivación requiere un motivo obligatorio. Operación cancelada.");
+
+    const res = await runWorkflowOp('Reactivando proyecto...', fb => CrmCommercial.reactivateProspect(fb, { prospectId: p.id, motivo, dbSuffix: DB_SUFFIX }));
+    if (!res) return;
+    const resData = (res && res.data) || {};
+    alert(`Proyecto reactivado exitosamente. Etapa activa: ${resData.etapa || p.etapa || 'restaurada'}.`);
+    p.estado = 'activo';
+    if (resData.etapa) p.etapa = resData.etapa;
+    delete p.motivo_perdida;
+    delete p.fecha_perdida;
+    openDetail(p.id);
 }
 
 

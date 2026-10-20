@@ -32,11 +32,20 @@ defineWorkflowSuite({
 });
 
 describe('policy and construction', () => {
-  test('every operation has an explicit policy entry; only deleteProspect needs the live manager check', () => {
-    expect(Object.keys(POLICY).sort()).toEqual(['advanceStage', 'deleteChangeOrder', 'deleteInvoice', 'deletePayment', 'deleteProspect', 'editBasePrice', 'markLost', 'registerProposal', 'saveChangeOrder', 'saveInvoice', 'savePayment']);
+  test('every operation has an explicit policy entry; deleteProspect and reactivateProspect need the live manager check', () => {
+    expect(Object.keys(POLICY).sort()).toEqual([
+      'advanceStage', 'deleteChangeOrder', 'deleteInvoice', 'deletePayment', 'deleteProspect',
+      'editBasePrice', 'markLost', 'reactivateProspect', 'registerProposal', 'saveChangeOrder',
+      'saveInvoice', 'savePayment'
+    ]);
     expect(POLICY.deleteProspect).toEqual(['manager-live']);
+    expect(POLICY.reactivateProspect).toEqual(['manager-live']);
     expect(POLICY.editBasePrice).toEqual(['manager', 'gestor']);
-    for (const [k, v] of Object.entries(POLICY)) if (k !== 'deleteProspect' && k !== 'editBasePrice') expect(v).toEqual(['manager', 'gestor', 'vendedor']);
+    for (const [k, v] of Object.entries(POLICY)) {
+      if (k !== 'deleteProspect' && k !== 'reactivateProspect' && k !== 'editBasePrice') {
+        expect(v).toEqual(['manager', 'gestor', 'vendedor']);
+      }
+    }
   });
   test('refuses to be built without the commercial kit', () => {
     const fdb = createFakeFirestore();

@@ -388,4 +388,209 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       expect(p1.datos.autorizado_por_id).toBe(USERS.mgr.id);
     });
   });
+
+  describe('Reactivate Lost Prospect (SEC-04 / SEC-06)', () => {
+    beforeEach(async () => {
+      // Mark P1 lost first
+      await wfSvc.markLost({
+        caller: caller('v1'),
+        prospectId: 'P1',
+        reason: 'Precio'
+      });
+      const p1Lost = db.data('prospects_prod/P1');
+      expect(p1Lost.estado).toBe('perdido');
+      expect(p1Lost.motivo_perdida).toBe('Precio');
+    });
+
+    test('active manager can reactivate a lost prospect, restoring stage and visibility atomically', async () => {
+      const res = await wfSvc.reactivateProspect({
+        caller: caller('mgr'),
+        prospectId: 'P1',
+        motivo: 'Cliente retomó contacto y aceptó renegociar condiciones'
+      });
+
+      expect(res.status).toBe('reactivated');
+      expect(res.estado).toBe('activo');
+      expect(res.etapa).toBe('prospecto'); // P1 was in stage 'prospecto'
+
+      const p1 = db.data('prospects_prod/P1');
+      expect(p1.estado).toBe('activo');
+      expect(p1.etapa).toBe('prospecto');
+      expect(p1.motivo_perdida).toBeUndefined();
+      expect(p1.fecha_perdida).toBeUndefined();
+      expect(p1.motivo_reactivacion).toBe('Cliente retomó contacto y aceptó renegociar condiciones');
+      expect(p1.reactivado_por_id).toBe(USERS.mgr.id);
+      expect(p1.createdBy).toBe(USERS.v1.id); // createdBy NEVER modified
+      expect(p1.vendedorId).toBe(USERS.v1.id);
+
+      // Verify loss history preserved
+      expect(Array.isArray(p1.historial_perdidas)).toBe(true);
+      expect(p1.historial_perdidas.length).toBe(1);
+      expect(p1.historial_perdidas[0].motivo).toBe('Precio');
+      expect(p1.ultima_perdida.motivo).toBe('Precio');
+
+      // Verify client visibleTo
+      const c1 = db.data('clients_prod/C1');
+      expect(c1.visibleTo).toContain(USERS.v1.id);
+      expect(c1.visibleTo).toContain(USERS.mgr.id);
+    });
+
+    test('restoring a prospect lost during cierre restores closingVendors', async () => {
+      await db.seed('prospects_prod/P_CIERRE', {
+        id: 'P_CIERRE',
+        codigo: '202603099',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        estado: 'perdido',
+        etapa: 'cierre',
+        motivo_perdida: 'Cliente desiste',
+        fecha_perdida: '2026-03-10T10:00:00.000Z',
+        eliminado: false
+      });
+
+      const res = await wfSvc.reactivateProspect({
+        caller: caller('mgr'),
+        prospectId: 'P_CIERRE',
+        motivo: 'Dirección autorizó descuento especial de cierre'
+      });
+
+      expect(res.status).toBe('reactivated');
+      expect(res.etapa).toBe('cierre');
+
+      const p = db.data('prospects_prod/P_CIERRE');
+      expect(p.estado).toBe('activo');
+      expect(p.etapa).toBe('cierre');
+
+      const c1 = db.data('clients_prod/C1');
+      expect(c1.closingVendors).toContain(USERS.v1.id);
+    });
+
+    test('vendedor and gestor cannot reactivate lost prospect', async () => {
+      // Vendedor attempt
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('v1'),
+          prospectId: 'P1',
+          motivo: 'Intento de reactivación por vendedor'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Gestor attempt
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          motivo: 'Intento de reactivación por gestor'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('inactive user or non-verified manager cannot reactivate', async () => {
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('inact'),
+          prospectId: 'P1',
+          motivo: 'Intento inactivo'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Manager unverified in live claim check
+      env.liveManagers.delete('uid-mgr');
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P1',
+          motivo: 'Intento sin live claim'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('cannot reactivate an active, won, or logically deleted prospect', async () => {
+      // 1. Reactivate P1 first to make it active
+      await wfSvc.reactivateProspect({
+        caller: caller('mgr'),
+        prospectId: 'P1',
+        motivo: 'Primera reactivacion'
+      });
+
+      // Attempting to reactivate an already active prospect with different motive -> rejected
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P1',
+          motivo: 'Segunda reactivacion con otro motivo'
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+      // 2. Won prospect
+      await db.seed('prospects_prod/P_WON', {
+        id: 'P_WON',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        estado: 'ganado',
+        etapa: 'cierre',
+        eliminado: false
+      });
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P_WON',
+          motivo: 'Reactivar ganado'
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+      // 3. Logically deleted prospect
+      await db.seed('prospects_prod/P_DEL', {
+        id: 'P_DEL',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        estado: 'perdido',
+        eliminado: true
+      });
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P_DEL',
+          motivo: 'Reactivar eliminado'
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+    });
+
+    test('motivo is strictly required and validated', async () => {
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P1',
+          motivo: ''
+        })
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+
+      await expect(
+        wfSvc.reactivateProspect({
+          caller: caller('mgr'),
+          prospectId: 'P1',
+          motivo: null
+        })
+      ).rejects.toMatchObject({ code: 'invalid-argument' });
+    });
+
+    test('idempotency: retrying reactivation with same motive returns unchanged', async () => {
+      const first = await wfSvc.reactivateProspect({
+        caller: caller('mgr'),
+        prospectId: 'P1',
+        motivo: 'Reactivación por renegociación presupuestaria'
+      });
+      expect(first.status).toBe('reactivated');
+
+      // Retry
+      const retry = await wfSvc.reactivateProspect({
+        caller: caller('mgr'),
+        prospectId: 'P1',
+        motivo: 'Reactivación por renegociación presupuestaria'
+      });
+      expect(retry.status).toBe('unchanged');
+      expect(retry.estado).toBe('activo');
+    });
+  });
 });

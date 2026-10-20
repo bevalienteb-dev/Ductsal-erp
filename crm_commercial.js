@@ -173,6 +173,11 @@
         return call(fb, 'deleteProspectAdmin', { prospectId, motivo, dbSuffix });
     }
 
+    // Reactivation of lost opportunity (manager only). The reason is required.
+    function reactivateProspect(fb, { prospectId, motivo, dbSuffix }) {
+        return call(fb, 'reactivateLostProspectAdmin', { prospectId, motivo, dbSuffix });
+    }
+
     // ---------- wording ----------
     function serverMessage(err) {
         const m = err && typeof err.message === 'string' ? err.message.trim() : '';
@@ -215,6 +220,7 @@
         savePayment,
         deletePayment,
         deleteProspect,
+        reactivateProspect,
         errorMessage,
         _pendingOps: pendingOps
     };

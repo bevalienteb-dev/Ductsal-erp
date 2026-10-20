@@ -54,6 +54,7 @@ lo que otro usuario haya escrito entre tanto (notas, autorización, facturas) no
 | `saveInvoiceAdmin` / `deleteInvoiceAdmin` | número, monto, archivo; `invoiceId` para editar/borrar | Solo `ganado`; el tope (subtotal con IVA/exportación + órdenes de cambio) se comprueba **contra lo almacenado dentro de la misma transacción** (dos facturas simultáneas no pueden superarlo; tolerancia de 0,10 como la página); la factura de anticipo (índice 0) no se puede borrar | `opId` guardado en la factura | `saveInvoice` / `deleteInvoice` + aviso al borrar |
 | `savePaymentAdmin` / `deletePaymentAdmin` | monto, método, referencia, comprobante; `paymentKey` (id del abono, o su `fecha` en abonos históricos) para editar/borrar | Solo `ganado`; tope de saldo de la factura; `retencion_1pct` solo si el cliente es gran contribuyente; **se direccionan por clave, no por posición** | `opId` guardado en el abono | `savePayment` / `deletePayment` + aviso al borrar |
 | `deleteProspectAdmin` | `prospectId`, `motivo` (obligatorio) | **Solo gerente (en vivo)**. **Eliminación lógica** (§7.4): marca `eliminado`, quién, cuándo y por qué; no borra el documento, ni `proyectos_fabricacion`, ni archivos | ya eliminada → `unchanged`; inexistente → `absent` | `deleteProspect` (`detail.logical: true`) + aviso en `audit_logs_*` con el motivo |
+| `reactivateLostProspectAdmin` | `prospectId`, `motivo` (obligatorio) | **Solo gerente (en vivo)**. **Reactivación de proyecto perdido** (§7.5): restaura estado a `activo` en la etapa comercial previa; archiva `historial_perdidas` y `ultima_perdida`; remueve `motivo_perdida` y `fecha_perdida` del documento raíz; sincroniza atómicamente `visibleTo` del cliente y `closingVendors` si la etapa restaurada es `cierre` | reintento con mismo motivo → `unchanged`; estado activo/ganado/eliminado → rechazo | `commercialAudit_*` (`reactivateProspect`) + log de sistema en la oportunidad |
 
 Validación común: importes numéricos finitos y no negativos; referencias de archivo `{name, url}` cuya URL empiece por
 `https://firebasestorage.googleapis.com/v0/b/` (solo bajo el emulador de Functions se aceptan también `http://127.0.0.1:` y
@@ -94,6 +95,7 @@ directas (hay una prueba estática que lo vigila).
 | Cambiar etapa / avanzar, perder, nueva propuesta, corregir precio (`processAdvance`, `processLose`, `processNewProposal`, `processEditBasePrice`) | **migradas** | `advanceProspectStageAdmin`, `markProspectLostAdmin`, `registerProposalAdmin`, `editProspectBasePriceAdmin` |
 | Órdenes de cambio, facturas, abonos (alta, edición, borrado) | **migradas** | `save/deleteChangeOrderAdmin`, `save/deleteInvoiceAdmin`, `save/deletePaymentAdmin` |
 | Eliminar oportunidad (`deleteProspect`) | **migrada**; ahora eliminación lógica con motivo obligatorio; el listener de oportunidades omite `eliminado === true` | `deleteProspectAdmin` |
+| Reactivar oportunidad perdida (`reactivateLostProspect`) | **nueva**; visible solo a managers en proyectos con `estado === 'perdido'`, confirmación, motivo obligatorio, actualiza vista tras respuesta del servidor | `reactivateLostProspectAdmin` |
 | Bloque "migrar localStorage a Firebase" y administrador inicial automático | **retirados**: solo detecta y avisa; importación explícita en [LEGACY_IMPORT.md](LEGACY_IMPORT.md) | `scripts/importLegacyLocalStorage.js` (solo emuladores) |
 | `reportToManager` | **eliminada**: escribía en `audit_logs` con el correo que el navegador decía tener | — |
 | `applyManagerBypass` (formulario de contraseña del gerente) | **eliminada**: comparaba una contraseña en texto plano en JavaScript y escribía directo. La autorización la concede el gerente desde su propia sesión (`setNoContractAuthorizationAdmin`) | `setNoContractAuthorizationAdmin` |
@@ -324,9 +326,26 @@ inalterable hasta endurecer las reglas.
   oportunidad eliminada devuelve `not-found` "La oportunidad fue eliminada" (probado con vendedor dueño, gestor y gerente).
 * **Recuperación/consulta administrativa: no implementada** (no está definido quién la usaría).
 * Efecto cruzado a revisar: `fabricacion-dev` **no conoce** `eliminado` y sigue leyendo `prospects`, así que una oportunidad eliminada lógicamente
-  **seguirá apareciendo en fabricación** (antes desaparecía con el borrado físico). No se modificó fabricación; ver §7.5.
+  **seguirá apareciendo en fabricación** (antes desaparecía con el borrado físico). No se modificó fabricación; ver §7.6.
 
-### 7.5 Limitaciones y decisiones adicionales pendientes
+### 7.5 Reactivación de oportunidades comerciales perdidas (`reactivateLostProspectAdmin`)
+
+* **Autorización en el servidor:** Solo gerente verificado en vivo (`requireManager(caller, 'reactivar proyectos')`). Vendedores, gestores o usuarios inactivos son rechazados con `permission-denied`.
+* **Validación de estado:** Comprobación estricta en Firestore. Solo se pueden reactivar oportunidades con `estado === 'perdido'` y `eliminado !== true`. Proyectos activos, ganados o eliminados lógicamente son rechazados con `failed-precondition`.
+* **Restauración de etapa comercial previa:** En el sistema comercial, al marcar una pérdida (`markProspectLostAdmin`), `etapa` no se sobreescribe (se mantiene la etapa en que se encontraba la oportunidad). La reactivación restaura esta etapa validada. Si la etapa fuera desconocida o corrupta, consulta cronológicamente el último valor registrado en `stage_timestamps` (o fallback a `'prospecto'`), documentando la razón.
+* **Preservación y aislamiento del historial de pérdida:**
+  - El motivo y fecha de pérdida anteriores se archivan en `historial_perdidas` (array) y en `ultima_perdida` (objeto).
+  - Los campos raíz `motivo_perdida` y `fecha_perdida` se eliminan atómicamente con `FieldValue.delete()` para evitar que consultas analíticas o tableros de control sigan contabilizando simultáneamente el proyecto como perdido y activo.
+* **Auditoría e integridad:**
+  - Registra `reactivado_por_id`, `reactivado_por`, `fecha_reactivacion`, `motivo_reactivacion` y un mensaje detallado en `logs`.
+  - `createdBy` original y demás campos comerciales (documentos, propuestas, órdenes, facturas) permanecen estrictamente inmutables.
+  - Se genera registro en `commercialAudit_*` con la acción `reactivateProspect`.
+* **Sincronización de visibilidad y closingVendors:**
+  - Dentro de la misma transacción (cumpliendo la regla de que todas las lecturas preceden a las escrituras en Firestore), se asegura que el vendedor asignado, el creador y el gerente queden en `clients_*.visibleTo`.
+  - Si la etapa restaurada es `'cierre'`, se agrega de nuevo el vendedor asignado a `clients_*.closingVendors` mediante `FieldValue.arrayUnion`.
+* **Idempotencia:** Reintentar la operación con el mismo motivo devuelve `{ status: 'unchanged', estado: 'activo', etapa }` sin alterar el documento ni duplicar registros de auditoría.
+
+### 7.6 Limitaciones y decisiones adicionales pendientes
 
 1. `deleteClientAdmin` sigue bloqueando el borrado de un cliente mientras **cualquier** oportunidad lo referencie, incluidas las eliminadas
    lógicamente (decidir si deben contar).
