@@ -6,6 +6,7 @@
 const { createFakeFirestore } = require('../test-helpers/fakeFirestore');
 const { createCommercialService } = require('../commercialService');
 const { createProspectWorkflowService } = require('../prospectWorkflowService');
+const { createStorageService } = require('../storageService');
 
 const CLOCK = new Date('2026-03-20T12:00:00.000Z');
 
@@ -871,6 +872,252 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         data: { visitante: 'V2', distancia: 5 }
       });
       expect(advV2.status).toBe('advanced');
+    });
+  });
+
+  describe('Audit Remediation (H-01, H-02, H-03, H-04 & Postclosing Alignment)', () => {
+    let mockFiles;
+    let mockBucket;
+    let storageSvc;
+
+    beforeEach(() => {
+      mockFiles = new Map();
+      mockBucket = {
+        name: 'ductsal-erp.firebasestorage.app',
+        file: (filePath) => ({
+          exists: async () => [mockFiles.has(filePath)],
+          getMetadata: async () => {
+            const f = mockFiles.get(filePath);
+            if (!f) throw new Error('Not found');
+            return [{ size: f.size, contentType: f.contentType }];
+          },
+          getSignedUrl: async () => [`https://storage.googleapis.com/test-bucket/${filePath}?signed=true`]
+        })
+      };
+
+      storageSvc = createStorageService({
+        db,
+        bucket: mockBucket,
+        suffix: '_prod',
+        defaultExpirationSeconds: 900
+      });
+    });
+
+    test('H-01: Reassigned vendor cannot access or mutate prospect even if they were the original creator (createdBy == me)', async () => {
+      // Seed client and prospect originally created by V1 and assigned to V1
+      await db.seed('clients_prod/C_H01', {
+        id: 'C_H01',
+        tipo: 'juridica',
+        empresa: 'Audit Corp',
+        createdBy: USERS.v1.id,
+        visibleTo: [USERS.v1.id],
+        closingVendors: []
+      });
+
+      await db.seed('prospects_prod/P_H01', {
+        id: 'P_H01',
+        clientId: 'C_H01',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'prospecto',
+        estado: 'activo',
+        precio_cotizado: 5000,
+        costo_venta: 3000,
+        datos: {},
+        logs: [],
+        facturas: []
+      });
+
+      // Manager reassigns P_H01 to V2
+      await commSvc.reassign({
+        caller: caller('mgr'),
+        prospectId: 'P_H01',
+        vendedorId: USERS.v2.id
+      });
+
+      // Verification: createdBy remains V1 (commission attribution intact)
+      const pAfter = db.data('prospects_prod/P_H01');
+      expect(pAfter.createdBy).toBe(USERS.v1.id);
+      expect(pAfter.vendedorId).toBe(USERS.v2.id);
+
+      // Operational mutation attempt by V1 is denied
+      await expect(
+        wfSvc.advanceStage({
+          caller: caller('v1'),
+          prospectId: 'P_H01',
+          nextStage: 'levantamiento',
+          data: { visitante: 'V1' }
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Modification attempt by V1 via addLog is denied
+      await expect(
+        commSvc.addLog({
+          caller: caller('v1'),
+          prospectId: 'P_H01',
+          text: 'Intento de log no autorizado',
+          opId: 'op-h01-log-attempt'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Marking lost attempt by V1 is denied
+      await expect(
+        wfSvc.markLost({
+          caller: caller('v1'),
+          prospectId: 'P_H01',
+          reason: 'Precio'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('H-02: Former vendor is denied download access to documents of reassigned prospect', async () => {
+      const filePath = 'prod_files/prospects/P_H02/cotizaciones/cotizacion_v1.pdf';
+      mockFiles.set(filePath, { size: 1024, contentType: 'application/pdf' });
+
+      // Prospect created by V1, currently assigned to V2
+      await db.seed('prospects_prod/P_H02', {
+        id: 'P_H02',
+        clientId: 'C_H02',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v2.id,
+        etapa: 'cotizacion',
+        estado: 'activo',
+        cotizaciones: [{ name: 'cotizacion_v1.pdf', storagePath: filePath }]
+      });
+
+      // V1 (former vendor, now reassigned) tries to download
+      await expect(
+        storageSvc.getSecureDownloadUrl({
+          caller: caller('v1'),
+          storagePath: filePath,
+          prospectId: 'P_H02'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // V2 (active assigned vendor) is allowed to download
+      const v2Res = await storageSvc.getSecureDownloadUrl({
+        caller: caller('v2'),
+        storagePath: filePath,
+        prospectId: 'P_H02'
+      });
+      expect(v2Res.signedUrl).toBeDefined();
+    });
+
+    test('H-03: Gestor is denied download access to open/unclosed prospect created by another vendor', async () => {
+      const filePath = 'prod_files/prospects/P_H03/levantamientos/plano.pdf';
+      mockFiles.set(filePath, { size: 2048, contentType: 'application/pdf' });
+
+      // Open unclosed opportunity created by V1, assigned to V1
+      await db.seed('prospects_prod/P_H03', {
+        id: 'P_H03',
+        clientId: 'C_H03',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'levantamiento',
+        estado: 'activo',
+        levantamiento_archivo: { name: 'plano.pdf', storagePath: filePath }
+      });
+
+      // Gestor attempts to download without legitimate postclosing or authorship
+      await expect(
+        storageSvc.getSecureDownloadUrl({
+          caller: caller('ges'),
+          storagePath: filePath,
+          prospectId: 'P_H03'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('H-03 / Postclosing Alignment: Gestor is granted download access once prospect enters postclosing across all valid criteria', async () => {
+      const filePathA = 'prod_files/prospects/P_POST_A/cierre/contrato_a.pdf';
+      const filePathB = 'prod_files/prospects/P_POST_B/cierre/contrato_b.pdf';
+      const filePathC = 'prod_files/prospects/P_POST_C/cierre/contrato_c.pdf';
+      const filePathD = 'prod_files/prospects/P_POST_D/cierre/contrato_d.pdf';
+      mockFiles.set(filePathA, { size: 1000, contentType: 'application/pdf' });
+      mockFiles.set(filePathB, { size: 1000, contentType: 'application/pdf' });
+      mockFiles.set(filePathC, { size: 1000, contentType: 'application/pdf' });
+      mockFiles.set(filePathD, { size: 1000, contentType: 'application/pdf' });
+
+      // Criterion 1: postcierre_habilitado === true (even if marked perdido)
+      await db.seed('prospects_prod/P_POST_A', {
+        id: 'P_POST_A',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        estado: 'perdido',
+        postcierre_habilitado: true,
+        contrato_archivo: { name: 'contrato_a.pdf', storagePath: filePathA }
+      });
+
+      // Criterion 2: fecha_cierre set
+      await db.seed('prospects_prod/P_POST_B', {
+        id: 'P_POST_B',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        fecha_cierre: '2026-02-15T10:00:00.000Z',
+        contrato_archivo: { name: 'contrato_b.pdf', storagePath: filePathB }
+      });
+
+      // Criterion 3: stage_timestamps.cierre set
+      await db.seed('prospects_prod/P_POST_C', {
+        id: 'P_POST_C',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        stage_timestamps: { cierre: '2026-02-20T14:00:00.000Z' },
+        contrato_archivo: { name: 'contrato_c.pdf', storagePath: filePathC }
+      });
+
+      // Criterion 4: facturas.length > 0
+      await db.seed('prospects_prod/P_POST_D', {
+        id: 'P_POST_D',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        facturas: [{ numero: 'FAC-001', monto: 1000 }],
+        contrato_archivo: { name: 'contrato_d.pdf', storagePath: filePathD }
+      });
+
+      const resA = await storageSvc.getSecureDownloadUrl({ caller: caller('ges'), storagePath: filePathA, prospectId: 'P_POST_A' });
+      const resB = await storageSvc.getSecureDownloadUrl({ caller: caller('ges'), storagePath: filePathB, prospectId: 'P_POST_B' });
+      const resC = await storageSvc.getSecureDownloadUrl({ caller: caller('ges'), storagePath: filePathC, prospectId: 'P_POST_C' });
+      const resD = await storageSvc.getSecureDownloadUrl({ caller: caller('ges'), storagePath: filePathD, prospectId: 'P_POST_D' });
+
+      expect(resA.signedUrl).toBeDefined();
+      expect(resB.signedUrl).toBeDefined();
+      expect(resC.signedUrl).toBeDefined();
+      expect(resD.signedUrl).toBeDefined();
+    });
+
+    test('H-04: Reassigned vendor loses visibility to client when their only prospect was reassigned', async () => {
+      // Client C_H04 created by Gestor, visible to V1 because V1 has prospect P_H04
+      await db.seed('clients_prod/C_H04', {
+        id: 'C_H04',
+        tipo: 'juridica',
+        empresa: 'Client H04 Test',
+        createdBy: USERS.ges.id,
+        visibleTo: [USERS.ges.id, USERS.v1.id],
+        closingVendors: []
+      });
+
+      await db.seed('prospects_prod/P_H04', {
+        id: 'P_H04',
+        clientId: 'C_H04',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'prospecto',
+        estado: 'activo',
+        facturas: []
+      });
+
+      // Reassign P_H04 to V2
+      await commSvc.reassign({
+        caller: caller('mgr'),
+        prospectId: 'P_H04',
+        vendedorId: USERS.v2.id
+      });
+
+      // Client visibility in database was updated: V1 removed, V2 added
+      const cAfter = db.data('clients_prod/C_H04');
+      expect(cAfter.visibleTo).toContain(USERS.v2.id);
+      expect(cAfter.visibleTo).not.toContain(USERS.v1.id);
     });
   });
 });

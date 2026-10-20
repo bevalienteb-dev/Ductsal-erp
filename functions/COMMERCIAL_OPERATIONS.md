@@ -418,3 +418,76 @@ Si en el futuro se requiriera unificar formalmente el campo `postcierre_habilita
 3. **Inmutabilidad de campos comerciales:** Ningún otro campo (`createdBy`, `vendedorId`, importes, facturas) debe ser modificado.
 4. **Reversibilidad y registro:** Almacenar el registro de cambios previo/posterior en una colección de migración.
 > **Importante:** Conforme a las restricciones de seguridad del proyecto, este procedimiento queda únicamente documentado y **no se ejecuta en producción**.
+
+### 7.8 Remediación Integral de Seguridad Comercial, Postcierre y Archivos Adjuntos (Hallazgos H-01, H-02, H-03, H-04)
+
+Durante la auditoría técnica exhaustiva se detectaron cuatro hallazgos de seguridad entre las capas de Firestore Rules, Storage Rules, Cloud Functions y el cliente Frontend (`app_core.js`). A continuación se detalla la remediación integral implementada y verificada:
+
+#### 1. Hallazgo H-01: Aislamiento de vendedores en oportunidades reasignadas
+- **Causa raíz:** `firestore.rules` evaluaba `createdBy == me()` en `prospectMine()`, y el frontend configuraba un listener en tiempo real con `where('createdBy', '==', userId)`. Si un gerente reasignaba un prospecto de Vendedor A a Vendedor B, Vendedor A continuaba recibiendo actualizaciones y pudiendo consultar la oportunidad completa en el navegador.
+- **Remediación en Firestore Rules:**
+  - `prospectMine(d)` se actualizó para exigir:
+    ```javascript
+    d.get('vendedorId', '') == me() || (d.get('vendedorId', '') == '' && d.createdBy == me())
+    ```
+    Si existe un `vendedorId` asignado y difiere del usuario autenticado, la regla deniega el acceso a la lectura, aun si el usuario fue el creador original.
+- **Remediación en Frontend (`app_core.js`):**
+  - Se eliminó el listener redundante `unsubCreated` (`where('createdBy', '==', userId)`) para el rol `vendedor`. Los vendedores escuchan en tiempo real exclusivamente los prospectos donde están asignados operativamente (`where('vendedorId', '==', userId)`).
+  - En `openDetail(id)`: se implementó una barrera de navegación defensiva que redirige y notifica con alerta si un vendedor intenta abrir por URL directa una oportunidad no asignada a él.
+- **Remediación en Cloud Functions:**
+  - `canAccessProspect` y `requireProspectAccess` validan de forma estricta que la operación comercial corresponde exclusivamente al responsable operativo vigente (`p.vendedorId === caller.cid`).
+- **Inmutabilidad y Comisiones:**
+  - `createdBy` se mantiene 100% inmutable en la base de datos tras las reasignaciones, garantizando la trazabilidad histórica de comisiones y auditoría original.
+
+#### 2. Hallazgo H-02: Revocación de acceso a archivos adjuntos en prospectos reasignados
+- **Causa raíz:** `storage.rules` utilizaba `ownsProspect(pid)` verificando únicamente `p.createdBy == me()`. Asimismo, `storageService.verifyDocumentAccess` permitía a los vendedores descargar archivos si `p.createdBy === caller.cid`. El vendedor anterior conservaba la capacidad de descargar cotizaciones, planos y contratos tras ser reasignado el lead.
+- **Remediación en Storage Rules:**
+  - `ownsProspect(pid)` se actualizó para verificar al responsable vigente:
+    ```javascript
+    p.get('vendedorId', '') == me() || (p.get('vendedorId', '') == '' && p.createdBy == me())
+    ```
+- **Remediación en Cloud Functions (`storageService.js`):**
+  - La autorización de documentos de prospectos para rol `vendedor` exige:
+    ```javascript
+    p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid)
+    ```
+  - Un vendedor anterior reasignado que solicita una URL de descarga firmada recibe inmediatamente `permission-denied`.
+
+#### 3. Hallazgo H-03: Autorización legítima de Gestores para archivos adjuntos
+- **Causa raíz:** En `storage.rules` y `storageService.js`, el rol `gestor` estaba catalogado como rol privilegiado con acceso de lectura sin restricciones a cualquier carpeta de cualquier prospecto comercial, incluyendo oportunidades abiertas no cerradas de vendedores ajenos.
+- **Remediación en Storage Rules:**
+  - Se añadieron las funciones `isPostclosing(d)` y `gestorCanReadProspect(pid)`.
+  - La regla de descarga de adjuntos de prospectos (`match /prod_files/prospects/{pid}/{folder}/{file}`) restringe a los gestores:
+    ```javascript
+    isManager() || (isGestor() && gestorCanReadProspect(pid)) || (isCrm() && ownsProspect(pid))
+    ```
+    Donde `gestorCanReadProspect(pid)` requiere que el gestor sea el autor directo (`p.createdBy == me()`) o que el proyecto haya entrado legítimamente a postcierre (`isPostclosing(p)`).
+- **Remediación en Cloud Functions (`storageService.js`):**
+  - Se eliminó el bypass incondicional para `gestor` en documentos de prospectos.
+  - El gestor solo puede descargar adjuntos de un prospecto si es su creador original (`p.createdBy === caller.cid`) o si el expediente ha ingresado válidamente a postcierre (`hasEnteredPostclosing(p)`).
+  - Los documentos a nivel de cliente (`clients_prod`) se mantienen accesibles para gestores a fin de permitir la consulta de credenciales tributarias y documentación legal de empresas.
+
+#### 4. Hallazgo H-04: Aislamiento de Clientes en interfaz tras reasignación
+- **Causa raíz:** En `app_core.js`, la función `getVisibleClients()` relacionaba prospectos con clientes evaluando `p.createdBy === currentUser.id || p.vendedorId === currentUser.id`. Esto causaba que un vendedor siguiera viendo al cliente en el catálogo comercial tras haber sido reasignada su única oportunidad.
+- **Remediación en Frontend (`app_core.js`):**
+  - `getVisibleClients()` fue modificado para vincular clientes únicamente mediante oportunidades donde el usuario es el responsable operativo asignado:
+    ```javascript
+    p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id)
+    ```
+  - Además de los clientes creados directamente por el vendedor (`c.createdBy === currentUser.id`) o explícitamente presentes en `c.visibleTo`.
+- **Alineación con el Backend:**
+  - Al reasignar un prospecto en `commercialService.reassign`, el backend remueve transaccionalmente al vendedor anterior de `client.visibleTo` si no conserva otras oportunidades con ese cliente, garantizando sincronización total entre backend y frontend.
+
+#### 5. Alineación Multi-Criterio de Postcierre entre Capas
+Para resolver discrepancias entre las distintas capas, se unificó la definición de "proyecto que ha ingresado legítimamente a postcierre":
+- **Criterios equivalentes reconocidos:**
+  1. `postcierre_habilitado === true` (marcador canónico persistente).
+  2. `fecha_cierre` definida (indica cierre formal de la venta).
+  3. `stage_timestamps.cierre` definido (indica paso histórico por etapa cierre).
+  4. `facturas.length > 0` (indica existencia de facturación comercial vinculada).
+- **Consistencia entre capas:**
+  - `firestore.rules`: función `isPostclosing(d)`.
+  - `storage.rules`: función `isPostclosing(d)`.
+  - `functions/commercialService.js` y `functions/storageService.js`: función `hasEnteredPostclosing(p)`.
+  - Frontend (`app_core.js`): visualización y acceso a expedientes de postcierre.
+- **Persistencia garantizada:** Si un proyecto cumplió cualquiera de estos criterios válidos, el gestor conserva de forma permanente el acceso a postcierre aunque posteriormente el proyecto cambie de estado a `perdido` o sea cancelado.

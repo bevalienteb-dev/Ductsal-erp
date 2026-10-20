@@ -1082,31 +1082,15 @@ function attachDataListeners(role, userId) {
             );
             activeUnsubscribers.push(unsubOwn, unsubPostclosing, unsubWon);
         } else if (role === 'vendedor') {
-            // Vendedores listen to: 1) createdBy == userId, 2) vendedorId == userId
-            let createdProspects = [];
-            let assignedProspects = [];
-            const mergeProspects = () => {
-                const dict = {};
-                createdProspects.forEach(p => { dict[p.id] = p; });
-                assignedProspects.forEach(p => { dict[p.id] = p; });
-                prospects = Object.values(dict).filter(p => p.eliminado !== true);
-                checkInitialLoad();
-            };
-            const unsubCreated = db.collection(`prospects${DB_SUFFIX}`).where('createdBy', '==', userId).onSnapshot(
-                snap => {
-                    createdProspects = snap.docs.map(doc => doc.data());
-                    mergeProspects();
-                },
-                err => console.warn('[CRM] Listener prospects (creados) no disponible:', err && err.message)
-            );
+            // Vendedores listen strictly to assigned leads (vendedorId == userId)
             const unsubAssigned = db.collection(`prospects${DB_SUFFIX}`).where('vendedorId', '==', userId).onSnapshot(
                 snap => {
-                    assignedProspects = snap.docs.map(doc => doc.data());
-                    mergeProspects();
+                    prospects = snap.docs.map(doc => doc.data()).filter(p => p.eliminado !== true);
+                    checkInitialLoad();
                 },
                 err => console.warn('[CRM] Listener prospects (asignados) no disponible:', err && err.message)
             );
-            activeUnsubscribers.push(unsubCreated, unsubAssigned);
+            activeUnsubscribers.push(unsubAssigned);
         }
     } catch (e) {
         console.warn('[CRM] Error al suscribir a prospectos:', e && e.message);
@@ -1678,9 +1662,16 @@ function getVisibleClients() {
     if (!currentUser || currentUser.role !== 'vendedor') return clients;
     const related = new Set();
     prospects.forEach(p => {
-        if (p.createdBy === currentUser.id || p.vendedorId === currentUser.id) related.add(p.clientId);
+        const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);
+        if (isAssigned && p.eliminado !== true && p.clientId) {
+            related.add(p.clientId);
+        }
     });
-    return clients.filter(c => c.createdBy === currentUser.id || related.has(c.id));
+    return clients.filter(c => 
+        c.createdBy === currentUser.id || 
+        related.has(c.id) || 
+        (Array.isArray(c.visibleTo) && c.visibleTo.includes(currentUser.id))
+    );
 }
 
 function renderClientsTable() {
@@ -2506,6 +2497,22 @@ async function createNewProspect(e) {
 // ========================
 function openDetail(id) {
     currentProspectId = id; const p = prospects.find(x => x.id === id); if (!p) return;
+    if (currentUser && currentUser.role === 'vendedor') {
+        const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);
+        if (!isAssigned) {
+            alert('No tienes acceso a esta oportunidad');
+            showView('list-view');
+            return;
+        }
+    }
+    if (currentUser && currentUser.role === 'gestor') {
+        const isOwnOrPost = p.createdBy === currentUser.id || hasEnteredPostclosing(p);
+        if (!isOwnOrPost) {
+            alert('No tienes acceso a esta oportunidad');
+            showView('list-view');
+            return;
+        }
+    }
     showView('detail-view');
     document.getElementById('detail-cliente').textContent = getClientName(p.clientId);
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;

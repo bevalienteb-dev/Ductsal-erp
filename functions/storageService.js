@@ -132,6 +132,14 @@ function objectReferencesStoragePath(obj, targetPath, depth = 0) {
   return false;
 }
 
+function hasEnteredPostclosing(p) {
+  if (!p || typeof p !== 'object') return false;
+  return p.postcierre_habilitado === true
+    || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
+    || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre)
+    || (Array.isArray(p.facturas) && p.facturas.length > 0);
+}
+
 function createStorageService({ db, bucket, suffix = '_prod' }) {
   if (!db) throw new Error('db is required');
   if (!bucket) throw new Error('bucket is required');
@@ -188,8 +196,8 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     const folder = parts[1];
     const entityId = parts[2];
 
-    // Privileged roles (manager, gestor) have access to all CRM documents
-    if (PRIVILEGED_ROLES.includes(caller.role)) {
+    // Manager has unrestricted access to all CRM documents
+    if (caller.role === 'manager') {
       return true;
     }
 
@@ -202,6 +210,11 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     // If caller is plant role trying to access commercial documents
     if (PLANT_ROLES.includes(caller.role)) {
       throw new ServiceError('permission-denied', 'Personal de planta no tiene acceso a documentos comerciales');
+    }
+
+    // Gestor has full access to client documents (catalog verification)
+    if (caller.role === 'gestor' && folder === 'clients') {
+      return true;
     }
 
     // Commercial seller (vendedor) checks:
@@ -234,8 +247,18 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       if (p.eliminado === true) {
         throw new ServiceError('not-found', 'La oportunidad fue eliminada');
       }
-      if (p.createdBy === caller.cid || p.vendedorId === caller.cid) {
-        return true;
+      if (caller.role === 'gestor') {
+        if (p.createdBy === caller.cid || hasEnteredPostclosing(p)) {
+          return true;
+        }
+        throw new ServiceError('permission-denied', 'No tienes acceso a los documentos de esta oportunidad');
+      }
+      if (caller.role === 'vendedor') {
+        const hasAccess = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
+        if (hasAccess) {
+          return true;
+        }
+        throw new ServiceError('permission-denied', 'No tienes acceso a los documentos de esta oportunidad');
       }
       throw new ServiceError('permission-denied', 'No tienes acceso a los documentos de esta oportunidad');
     }
@@ -251,7 +274,14 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         if (p.eliminado === true) {
           prospectCheck = { error: new ServiceError('not-found', 'La oportunidad fue eliminada') };
         } else {
-          const hasAccess = (p.createdBy === caller.cid || p.vendedorId === caller.cid);
+          let hasAccess = false;
+          if (caller.role === 'manager') {
+            hasAccess = true;
+          } else if (caller.role === 'gestor') {
+            hasAccess = p.createdBy === caller.cid || hasEnteredPostclosing(p);
+          } else if (caller.role === 'vendedor') {
+            hasAccess = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
+          }
           if (hasAccess) {
             if (objectReferencesStoragePath(p, storagePath)) {
               return true;
@@ -270,7 +300,8 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       const cSnap = await db.collection(names.clients).doc(context.clientId).get();
       if (cSnap.exists) {
         const c = cSnap.data();
-        const hasAccess = (c.createdBy === caller.cid || (Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid)) || (Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid)));
+        const hasAccess = caller.role === 'manager' || caller.role === 'gestor'
+          || (c.createdBy === caller.cid || (Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid)) || (Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid)));
         if (hasAccess) {
           if (objectReferencesStoragePath(c, storagePath)) {
             return true;

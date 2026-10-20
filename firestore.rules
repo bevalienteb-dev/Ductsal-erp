@@ -85,12 +85,14 @@ service cloud.firestore {
 
     // ---------- prospects (opportunities / projects) ----------
     function prospectMine(d) {
-      return d.createdBy == me() || d.get('vendedorId', '') == me();
+      return d.get('vendedorId', '') == me()
+        || (d.get('vendedorId', '') == '' && d.createdBy == me());
     }
     function isPostclosing(d) {
       return d.get('postcierre_habilitado', false) == true
         || d.get('fecha_cierre', '') != ''
-        || d.get('stage_timestamps', {}).get('cierre', '') != '';
+        || d.get('stage_timestamps', {}).get('cierre', '') != ''
+        || d.get('facturas', []).size() > 0;
     }
     function flag(d, k) { return d.get('datos', {}).get(k, null); }
     // "Sale authorised without contract" is a manager decision: nobody else may change it.
@@ -103,7 +105,7 @@ service cloud.firestore {
         || (isGestor() && (resource.data.createdBy == me() || isPostclosing(resource.data)))
         || (isVendedor() && prospectMine(resource.data));
       allow list: if isManager()
-        || (isGestor() && (resource.data.createdBy == me() || resource.data.get('postcierre_habilitado', false) == true || resource.data.get('estado', '') == 'ganado'))
+        || (isGestor() && (resource.data.createdBy == me() || isPostclosing(resource.data) || resource.data.get('estado', '') == 'ganado'))
         || (isVendedor() && prospectMine(resource.data));
       // Any existing client may be chosen (catalogue). Choosing a client never changes the client's createdBy.
       allow create: if (isManager() || isGestor() || isVendedor())

@@ -252,6 +252,24 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
       const res = await storageService.getSecureDownloadUrl({ caller, storagePath: path });
       expect(res.signedUrl).toBeDefined();
     });
+
+    test('gestor puede descargar documentos de un prospecto de otro vendedor si ha entrado a postcierre (H-03/Postcierre)', async () => {
+      const path = 'prod_files/prospects/P_POST/facturas/fac1.pdf';
+      mockFiles.set(path, { size: 5000, contentType: 'application/pdf' });
+
+      await db.collection('prospects_prod').doc('P_POST').set({
+        id: 'P_POST',
+        createdBy: 'V_CARLOS',
+        vendedorId: 'V_CARLOS',
+        estado: 'perdido',
+        postcierre_habilitado: true,
+        fecha_postcierre: '2026-03-01T00:00:00.000Z'
+      });
+
+      const caller = { uid: 'uid-ges', role: 'gestor', cid: 'G_01' };
+      const res = await storageService.getSecureDownloadUrl({ caller, storagePath: path });
+      expect(res.signedUrl).toBeDefined();
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -269,6 +287,42 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
       });
 
       const caller = { uid: 'uid-bob', role: 'vendedor', cid: 'V_BOB' };
+      await expect(storageService.getSecureDownloadUrl({ caller, storagePath: path }))
+        .rejects.toThrow('No tienes acceso a los documentos de esta oportunidad');
+    });
+
+    test('vendedor anterior de prospecto reasignado recibe permission-denied al intentar descargar (H-02)', async () => {
+      const path = 'prod_files/prospects/P_REASSIGN/proyectos/plano.pdf';
+      mockFiles.set(path, { size: 4000, contentType: 'application/pdf' });
+
+      // Prospect created by V_ALICE but reassigned to V_BOB
+      await db.collection('prospects_prod').doc('P_REASSIGN').set({
+        id: 'P_REASSIGN',
+        createdBy: 'V_ALICE',
+        vendedorId: 'V_BOB'
+      });
+
+      // V_ALICE tries to download file of reassigned prospect
+      const caller = { uid: 'uid-alice', role: 'vendedor', cid: 'V_ALICE' };
+      await expect(storageService.getSecureDownloadUrl({ caller, storagePath: path }))
+        .rejects.toThrow('No tienes acceso a los documentos de esta oportunidad');
+    });
+
+    test('gestor es rechazado al solicitar documentos de oportunidad abierta de otro vendedor (H-03)', async () => {
+      const path = 'prod_files/prospects/P_OPEN_VEN/proyectos/oferta.pdf';
+      mockFiles.set(path, { size: 4000, contentType: 'application/pdf' });
+
+      // Open unclosed prospect owned by V_ALICE
+      await db.collection('prospects_prod').doc('P_OPEN_VEN').set({
+        id: 'P_OPEN_VEN',
+        createdBy: 'V_ALICE',
+        vendedorId: 'V_ALICE',
+        etapa: 'cotizacion',
+        estado: 'activo'
+      });
+
+      // Gestor G_01 tries to download file of unclosed prospect
+      const caller = { uid: 'uid-ges', role: 'gestor', cid: 'G_01' };
       await expect(storageService.getSecureDownloadUrl({ caller, storagePath: path }))
         .rejects.toThrow('No tienes acceso a los documentos de esta oportunidad');
     });

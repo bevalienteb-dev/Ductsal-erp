@@ -141,10 +141,10 @@ describe('getVisibleClients for vendedores', () => {
     expect(ids(asUser(S, U.v2).api.getVisibleClients())).toEqual(['CTEST-VIS-C1']);
   });
 
-  test('an opportunity created by the vendedor but assigned to someone else keeps its client visible to the creator', () => {
+  test('an opportunity created by the vendedor but assigned to someone else transfers client visibility to assignee only', () => {
     const S = world();
     S.prospects.push(prospect('P-X', 'C-V3', U.v2.id, U.v3.id)); // created by seller 2, assigned to seller 3
-    expect(ids(asUser(S, U.v2).api.getVisibleClients())).toEqual(['C-V3', 'CTEST-VIS-C1']);
+    expect(ids(asUser(S, U.v2).api.getVisibleClients())).toEqual(['CTEST-VIS-C1']);
     expect(ids(asUser(S, U.v3).api.getVisibleClients())).toEqual(['C-V3']);
   });
 
@@ -241,19 +241,19 @@ describe('reassigning an opportunity (real reassignVendor)', () => {
     expect(ui.alerts).toEqual(['no-session']);
   });
 
-  test('the creator keeps both the opportunity and its client after a reassignment (same rule as the opportunity list)', async () => {
+  test('reassigning an opportunity removes client visibility if vendor has no other links and did not create client', async () => {
     const S = world();
     const { api, ui } = asUser(S, U.mgr);
     ui.promptAnswer = U.v1.email;
     await api.reassignVendor('TEST-VIS-P2'); // created by seller 2, now assigned to seller 1
     expect(S.prospects.find((p) => p.id === 'TEST-VIS-P2').vendedorId).toBe(U.v1.id);
     expect(ids(asUser(S, U.v1).api.getVisibleClients())).toEqual(['CTEST-VIS-C1']);
-    expect(ids(asUser(S, U.v2).api.getVisibleClients())).toEqual(['CTEST-VIS-C1']); // still its creator
+    expect(ids(asUser(S, U.v2).api.getVisibleClients())).toEqual([]); // no longer linked to CTEST-VIS-C1
   });
 
   test('invariant: after every reassignment, each client of a visible opportunity is visible', async () => {
     // Same criterion renderList applies to opportunities for a vendedor.
-    const visibleProspects = (S, u) => S.prospects.filter((p) => p.createdBy === u.id || p.vendedorId === u.id);
+    const visibleProspects = (S, u) => S.prospects.filter((p) => p.vendedorId === u.id || (p.createdBy === u.id && (!p.vendedorId || p.vendedorId === u.id)));
     const S = world();
     S.prospects.push(prospect('P-A', 'C-MGR', U.mgr.id, U.v1.id), prospect('P-B', 'C-V3', U.v3.id, U.v3.id));
     const sellers = [U.v1, U.v2, U.v3, U.vNone];

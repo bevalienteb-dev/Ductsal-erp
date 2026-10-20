@@ -65,6 +65,8 @@ service firebase.storage {
     }
 
     function validSession() { return validCrmSession() || validPlantSession(); }
+    function isManager()    { return validCrmSession() && role() == 'manager'; }
+    function isGestor()     { return validCrmSession() && role() == 'gestor'; }
     function isPrivileged() { return validCrmSession() && (role() == 'manager' || role() == 'gestor'); }
     function isPlant()      { return validPlantSession() && role() in plantRoles(); }
     function isCrm()        { return validCrmSession() && role() in crmRoles(); }
@@ -72,9 +74,22 @@ service firebase.storage {
     function getProspect(pid) {
       return firestore.get(/databases/(default)/documents/prospects_prod/$(pid)).data;
     }
+    function isPostclosing(d) {
+      return d.get('postcierre_habilitado', false) == true
+        || d.get('fecha_cierre', '') != ''
+        || d.get('stage_timestamps', {}).get('cierre', '') != ''
+        || d.get('facturas', []).size() > 0;
+    }
+    function gestorCanReadProspect(pid) {
+      let p = getProspect(pid);
+      return p != null && (p.createdBy == me() || isPostclosing(p));
+    }
     function ownsProspect(pid) {
       let p = getProspect(pid);
-      return p != null && (p.createdBy == me() || p.get('vendedorId', '') == me());
+      return p != null && (
+        p.get('vendedorId', '') == me()
+        || (p.get('vendedorId', '') == '' && p.createdBy == me())
+      );
     }
 
     function getClient(cid) {
@@ -146,9 +161,11 @@ service firebase.storage {
 
     // ---------- Opportunity / project files (hierarchical) ----------
     match /prod_files/prospects/{pid}/{folder}/{file} {
-      allow get: if isPrivileged() || (isCrm() && ownsProspect(pid));
+      allow get: if isManager()
+        || (isGestor() && gestorCanReadProspect(pid))
+        || (isCrm() && ownsProspect(pid));
       allow create: if isNew() && knownProspectFolder(folder) && sizeOkFor(folder) && typeOk()
-        && (isPrivileged() || (isCrm() && ownsProspect(pid)));
+        && (isManager() || (isGestor() && (ownsProspect(pid) || gestorCanReadProspect(pid))) || (isCrm() && ownsProspect(pid)));
       allow list, update, delete: if false;
     }
 
