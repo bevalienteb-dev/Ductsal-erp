@@ -1268,6 +1268,9 @@ if (typeof window !== 'undefined') {
     if (typeof clearOppDateFilter !== 'undefined') window.clearOppDateFilter = clearOppDateFilter;
     if (typeof toggleOppSort !== 'undefined') window.toggleOppSort = toggleOppSort;
     if (typeof updateOppSortIcons !== 'undefined') window.updateOppSortIcons = updateOppSortIcons;
+    if (typeof setOppStatusFilter !== 'undefined') window.setOppStatusFilter = setOppStatusFilter;
+    if (typeof getOppStatusFilter !== 'undefined') window.getOppStatusFilter = getOppStatusFilter;
+    if (typeof renderList !== 'undefined') window.renderList = renderList;
 }
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -1287,6 +1290,9 @@ if (typeof module !== 'undefined' && module.exports) {
         isProjectFullyPaid: typeof isProjectFullyPaid !== 'undefined' ? isProjectFullyPaid : undefined,
         setProjPaymentFilter: typeof setProjPaymentFilter !== 'undefined' ? setProjPaymentFilter : undefined,
         getProjPaymentFilter: typeof getProjPaymentFilter !== 'undefined' ? getProjPaymentFilter : undefined,
+        setOppStatusFilter: typeof setOppStatusFilter !== 'undefined' ? setOppStatusFilter : undefined,
+        getOppStatusFilter: typeof getOppStatusFilter !== 'undefined' ? getOppStatusFilter : undefined,
+        renderList: typeof renderList !== 'undefined' ? renderList : undefined,
         renderSheetTable: typeof renderSheetTable !== 'undefined' ? renderSheetTable : undefined,
         renderClientExpedienteSection: typeof renderClientExpedienteSection !== 'undefined' ? renderClientExpedienteSection : undefined,
         parseProspectDate: typeof parseProspectDate !== 'undefined' ? parseProspectDate : undefined,
@@ -2590,6 +2596,19 @@ function getClientName(clientId) {
     return client.tipo === 'natural' ? `${client.nombres} ${client.apellidos}` : client.empresa;
 }
 
+let oppStatusFilter = 'activas';
+
+function getOppStatusFilter() {
+    return oppStatusFilter;
+}
+
+function setOppStatusFilter(filterKey) {
+    if (['activas', 'perdidas', 'todas'].includes(filterKey)) {
+        oppStatusFilter = filterKey;
+        renderList();
+    }
+}
+
 function renderList() {
     let filtered = prospects;
     if (currentUser && currentUser.role === 'gestor') {
@@ -2602,10 +2621,44 @@ function renderList() {
     const tbody = document.getElementById('opp-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-    let visibleProspects = filtered.filter(p => p.estado !== 'ganado');
+
+    // Won prospects belong to Proyectos y Cobros module
+    const baseProspects = filtered.filter(p => p.estado !== 'ganado');
+
+    // Update status filter badge counters
+    const countActivas = baseProspects.filter(p => p.estado !== 'perdido').length;
+    const countPerdidas = baseProspects.filter(p => p.estado === 'perdido').length;
+    const countTodas = baseProspects.length;
+
+    const elActivas = document.getElementById('count-opp-activas');
+    if (elActivas) elActivas.textContent = countActivas;
+    const elPerdidas = document.getElementById('count-opp-perdidas');
+    if (elPerdidas) elPerdidas.textContent = countPerdidas;
+    const elTodas = document.getElementById('count-opp-todas');
+    if (elTodas) elTodas.textContent = countTodas;
+
+    // Update active class on status pills
+    ['activas', 'perdidas', 'todas'].forEach(key => {
+        const btn = document.getElementById(`filter-opp-${key}`);
+        if (btn) {
+            if (key === oppStatusFilter) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+
+    // Apply status filter: default 'activas' strictly excludes lost opportunities
+    let visibleProspects = baseProspects;
+    if (oppStatusFilter === 'activas') {
+        visibleProspects = baseProspects.filter(p => p.estado !== 'perdido');
+    } else if (oppStatusFilter === 'perdidas') {
+        visibleProspects = baseProspects.filter(p => p.estado === 'perdido');
+    } else if (oppStatusFilter === 'todas') {
+        visibleProspects = baseProspects;
+    }
 
     // Apply Search Filter
-    const searchVal = document.getElementById('opp-search') ? document.getElementById('opp-search').value.toLowerCase().trim() : '';
+    const searchEl = document.getElementById('opp-search');
+    const searchVal = (searchEl && typeof searchEl.value === 'string') ? searchEl.value.toLowerCase().trim() : '';
     if (searchVal) {
         visibleProspects = visibleProspects.filter(p => {
             const codeMatch = (p.codigo || '').toLowerCase().includes(searchVal) || p.id.substring(p.id.length - 4).toLowerCase().includes(searchVal);
@@ -2623,8 +2676,10 @@ function renderList() {
     }
 
     // Apply Date Range Filter (Fecha de Ingreso)
-    const dateStartVal = document.getElementById('opp-date-start') ? document.getElementById('opp-date-start').value : '';
-    const dateEndVal = document.getElementById('opp-date-end') ? document.getElementById('opp-date-end').value : '';
+    const dateStartEl = document.getElementById('opp-date-start');
+    const dateEndEl = document.getElementById('opp-date-end');
+    const dateStartVal = (dateStartEl && typeof dateStartEl.value === 'string') ? dateStartEl.value : '';
+    const dateEndVal = (dateEndEl && typeof dateEndEl.value === 'string') ? dateEndEl.value : '';
     const btnClearDates = document.getElementById('btn-clear-opp-dates');
     if (btnClearDates) {
         btnClearDates.style.display = (dateStartVal || dateEndVal) ? 'inline-block' : 'none';
@@ -2711,7 +2766,10 @@ function renderList() {
     }
 
     if (visibleProspects.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
+        const emptyMsg = oppStatusFilter === 'perdidas'
+            ? 'No hay oportunidades marcadas como perdidas.'
+            : 'No se encontraron oportunidades.';
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">${emptyMsg}</td></tr>`;
         return;
     }
 

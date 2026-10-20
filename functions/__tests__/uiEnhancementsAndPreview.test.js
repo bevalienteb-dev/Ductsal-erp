@@ -21,7 +21,8 @@ global.document = {
     style: {},
     classList: { add: () => {}, remove: () => {} },
     innerHTML: '',
-    textContent: ''
+    textContent: '',
+    value: ''
   }),
   addEventListener: () => {}
 };
@@ -657,6 +658,589 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
       expect(indexHtml).toContain('id="docs-count-badge"');
       expect(indexHtml).toContain('id="docs-list"');
       expect(indexHtml).toContain('id="stage-workflow-box"');
+    });
+  });
+
+  // =========================================================================
+  // 11. Opportunity List Status Filter: Hiding Lost Opportunities by Default
+  // =========================================================================
+  describe('11. Opportunity List Status Filter: Hiding Lost Opportunities by Default', () => {
+    const getOppStatusFilter = appCore.getOppStatusFilter;
+    const setOppStatusFilter = appCore.setOppStatusFilter;
+    const parseProspectDate = appCore.parseProspectDate;
+
+    const sampleDataset = [
+      { id: 'opp_act1', codigo: '2026-001', proyecto: 'Edificio Titanium', estado: 'activo', fecha_creacion: '2026-02-01T10:00:00.000Z' },
+      { id: 'opp_act2', codigo: '2026-002', proyecto: 'Torre Aluna', estado: 'activo', fecha_creacion: '2026-03-15T12:00:00.000Z' },
+      { id: 'opp_lost1', codigo: '2026-003', proyecto: 'Bodega San Jorge', estado: 'perdido', motivo_perdida: 'Precio', fecha_creacion: '2026-03-20T14:00:00.000Z' },
+      { id: 'opp_lost2', codigo: '2026-004', proyecto: 'Plaza Las Flores', estado: 'perdido', motivo_perdida: 'Tiempo de entrega', fecha_creacion: '2026-04-01T16:00:00.000Z' },
+      { id: 'opp_won1', codigo: '2026-005', proyecto: 'Hospital Metropolitano', estado: 'ganado', fecha_creacion: '2026-01-10T09:00:00.000Z' }
+    ];
+
+    test('default status filter is "activas"', () => {
+      expect(getOppStatusFilter()).toBe('activas');
+    });
+
+    test('setOppStatusFilter accepts "activas", "perdidas", "todas" and ignores invalid values', () => {
+      setOppStatusFilter('perdidas');
+      expect(getOppStatusFilter()).toBe('perdidas');
+
+      setOppStatusFilter('todas');
+      expect(getOppStatusFilter()).toBe('todas');
+
+      setOppStatusFilter('invalido_random');
+      expect(getOppStatusFilter()).toBe('todas'); // unchanged
+
+      setOppStatusFilter('activas');
+      expect(getOppStatusFilter()).toBe('activas');
+    });
+
+    test('initial state strictly hides lost opportunities and won opportunities', () => {
+      setOppStatusFilter('activas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const visible = base.filter(p => p.estado !== 'perdido');
+
+      expect(visible.map(p => p.id)).toEqual(['opp_act1', 'opp_act2']);
+      expect(visible.some(p => p.estado === 'perdido')).toBe(false);
+      expect(visible.some(p => p.estado === 'ganado')).toBe(false);
+    });
+
+    test('activating filter "perdidas" displays exclusively lost opportunities', () => {
+      setOppStatusFilter('perdidas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const visible = base.filter(p => p.estado === 'perdido');
+
+      expect(visible.map(p => p.id)).toEqual(['opp_lost1', 'opp_lost2']);
+      expect(visible.every(p => p.estado === 'perdido')).toBe(true);
+    });
+
+    test('activating filter "todas" displays both active and lost opportunities, excluding won', () => {
+      setOppStatusFilter('todas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const visible = base;
+
+      expect(visible.map(p => p.id)).toEqual(['opp_act1', 'opp_act2', 'opp_lost1', 'opp_lost2']);
+      expect(visible.some(p => p.estado === 'perdido')).toBe(true);
+      expect(visible.some(p => p.estado === 'activo')).toBe(true);
+      expect(visible.some(p => p.estado === 'ganado')).toBe(false);
+    });
+
+    test('switching back to "activas" hides lost opportunities again', () => {
+      setOppStatusFilter('todas');
+      expect(getOppStatusFilter()).toBe('todas');
+
+      setOppStatusFilter('activas');
+      expect(getOppStatusFilter()).toBe('activas');
+
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const visible = base.filter(p => p.estado !== 'perdido');
+      expect(visible.map(p => p.id)).toEqual(['opp_act1', 'opp_act2']);
+      expect(visible.some(p => p.estado === 'perdido')).toBe(false);
+    });
+
+    test('text search cannot reintroduce lost opportunities when filter is "activas"', () => {
+      setOppStatusFilter('activas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const statusFiltered = base.filter(p => p.estado !== 'perdido');
+
+      // Search term matching lost opportunity "San Jorge" or "Bodega"
+      const searchVal = 'jorge';
+      const searchResult = statusFiltered.filter(p =>
+        (p.proyecto || '').toLowerCase().includes(searchVal) ||
+        (p.codigo || '').toLowerCase().includes(searchVal)
+      );
+
+      expect(searchResult.length).toBe(0);
+      expect(searchResult.some(p => p.id === 'opp_lost1')).toBe(false);
+    });
+
+    test('text search works correctly within "perdidas" filter', () => {
+      setOppStatusFilter('perdidas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const statusFiltered = base.filter(p => p.estado === 'perdido');
+
+      const searchVal = 'flores';
+      const searchResult = statusFiltered.filter(p =>
+        (p.proyecto || '').toLowerCase().includes(searchVal) ||
+        (p.codigo || '').toLowerCase().includes(searchVal)
+      );
+
+      expect(searchResult.map(p => p.id)).toEqual(['opp_lost2']);
+    });
+
+    test('date range filter combines seamlessly with status filter', () => {
+      // March 2026: 2026-03-01 to 2026-03-31
+      const startTime = new Date(2026, 2, 1, 0, 0, 0, 0).getTime();
+      const endTime = new Date(2026, 2, 31, 23, 59, 59, 999).getTime();
+
+      // Under 'activas': only opp_act2 (March 15)
+      setOppStatusFilter('activas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const activeOnly = base.filter(p => p.estado !== 'perdido');
+      const dateFilteredActive = activeOnly.filter(p => {
+        const d = parseProspectDate(p.fecha_creacion);
+        const t = d ? d.getTime() : 0;
+        return t >= startTime && t <= endTime;
+      });
+      expect(dateFilteredActive.map(p => p.id)).toEqual(['opp_act2']);
+
+      // Under 'perdidas': only opp_lost1 (March 20)
+      setOppStatusFilter('perdidas');
+      const lostOnly = base.filter(p => p.estado === 'perdido');
+      const dateFilteredLost = lostOnly.filter(p => {
+        const d = parseProspectDate(p.fecha_creacion);
+        const t = d ? d.getTime() : 0;
+        return t >= startTime && t <= endTime;
+      });
+      expect(dateFilteredLost.map(p => p.id)).toEqual(['opp_lost1']);
+    });
+
+    test('date sorting preserves the allowed set of records without leaking lost opportunities', () => {
+      setOppStatusFilter('activas');
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const activeOnly = base.filter(p => p.estado !== 'perdido');
+
+      const sortedAsc = [...activeOnly].sort((a, b) =>
+        parseProspectDate(a.fecha_creacion).getTime() - parseProspectDate(b.fecha_creacion).getTime()
+      );
+      expect(sortedAsc.map(p => p.id)).toEqual(['opp_act1', 'opp_act2']);
+      expect(sortedAsc.some(p => p.estado === 'perdido')).toBe(false);
+
+      const sortedDesc = [...activeOnly].sort((a, b) =>
+        parseProspectDate(b.fecha_creacion).getTime() - parseProspectDate(a.fecha_creacion).getTime()
+      );
+      expect(sortedDesc.map(p => p.id)).toEqual(['opp_act2', 'opp_act1']);
+      expect(sortedDesc.some(p => p.estado === 'perdido')).toBe(false);
+    });
+
+    test('badge counters accurately reflect active, lost and all opportunities', () => {
+      const base = sampleDataset.filter(p => p.estado !== 'ganado');
+      const countActivas = base.filter(p => p.estado !== 'perdido').length;
+      const countPerdidas = base.filter(p => p.estado === 'perdido').length;
+      const countTodas = base.length;
+
+      expect(countActivas).toBe(2);
+      expect(countPerdidas).toBe(2);
+      expect(countTodas).toBe(4);
+    });
+
+    test('HTML contains the status filter pills and badges', () => {
+      const freshIndexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+      expect(freshIndexHtml).toContain('id="opp-status-pills"');
+      expect(freshIndexHtml).toContain('id="filter-opp-activas"');
+      expect(freshIndexHtml).toContain('id="filter-opp-perdidas"');
+      expect(freshIndexHtml).toContain('id="filter-opp-todas"');
+      expect(freshIndexHtml).toContain('id="count-opp-activas"');
+      expect(freshIndexHtml).toContain('id="count-opp-perdidas"');
+      expect(freshIndexHtml).toContain('id="count-opp-todas"');
+    });
+
+    test('Proyectos y Cobros 100% paid hiding behavior remains completely intact and undisturbed', () => {
+      const isProjectFullyPaid = appCore.isProjectFullyPaid;
+      const getProjPaymentFilter = appCore.getProjPaymentFilter;
+
+      // Default proj filter is 'pendientes'
+      expect(getProjPaymentFilter()).toBe('pendientes');
+
+      const mockProjs = [
+        { id: 'pr1', clientId: 'cli_local', precio_cotizado: 1000, facturas: [{ monto: 1130, pagos: [{ monto: 500 }] }] },
+        { id: 'pr2', clientId: 'cli_local', precio_cotizado: 500, facturas: [{ monto: 565, pagos: [{ monto: 565 }] }] }
+      ];
+
+      // pr2 is fully paid (hidden by default under 'pendientes')
+      expect(isProjectFullyPaid(mockProjs[0])).toBe(false);
+      expect(isProjectFullyPaid(mockProjs[1])).toBe(true);
+
+      const pendingOnly = mockProjs.filter(p => !isProjectFullyPaid(p));
+      expect(pendingOnly.map(p => p.id)).toEqual(['pr1']);
+
+      const paidOnly = mockProjs.filter(p => isProjectFullyPaid(p));
+      expect(paidOnly.map(p => p.id)).toEqual(['pr2']);
+    });
+  });
+
+  // =========================================================================
+  // 12. Integrated DOM Flow Tests for renderList() & Status Filter Pills
+  // =========================================================================
+  describe('12. Integrated DOM Flow Tests for renderList() & Status Filter Pills', () => {
+    const between = (from, to) => {
+      const a = appCoreSrc.indexOf(from);
+      const b = appCoreSrc.indexOf(to, a);
+      if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
+      return appCoreSrc.slice(a, b);
+    };
+
+    const REAL_SRC = [
+      between('// Variables Globales de Ordenamiento para Oportunidades', 'function reassignVendor'),
+      between('function updateOppSortIcons()', 'function toggleProjSort'),
+      'const formatCurrency = (val) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(val || 0);',
+      'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));',
+      'const KPI_LIMITS = { "prospecto": 7, "levantamiento": 10, "cotizacion": 7, "negociacion": 21, "cierre": 5 };',
+      between('function getClientName', 'function renderProjectsList')
+    ].join('\n');
+
+    function createSandboxEnvironment(customState = {}) {
+      const elements = {};
+      const getEl = (id) => {
+        if (!elements[id]) {
+          const classes = new Set();
+          elements[id] = {
+            id,
+            tagName: 'DIV',
+            value: '',
+            style: {},
+            textContent: '',
+            _innerHTML: '',
+            children: [],
+            classList: {
+              add: (c) => classes.add(c),
+              remove: (c) => classes.delete(c),
+              contains: (c) => classes.has(c),
+              toArray: () => Array.from(classes)
+            },
+            get innerHTML() { return this._innerHTML; },
+            set innerHTML(val) {
+              this._innerHTML = val;
+              this.children = [];
+            },
+            appendChild(child) {
+              this.children.push(child);
+            }
+          };
+        }
+        return elements[id];
+      };
+
+      const document = {
+        getElementById: (id) => getEl(id),
+        createElement: (tag) => {
+          const classes = new Set();
+          return {
+            tagName: tag.toUpperCase(),
+            style: {},
+            classList: {
+              add: (c) => classes.add(c),
+              remove: (c) => classes.delete(c),
+              contains: (c) => classes.has(c)
+            },
+            innerHTML: '',
+            onclick: null
+          };
+        }
+      };
+
+      // Pre-populate standard UI elements
+      [
+        'opp-table-body', 'filter-opp-activas', 'filter-opp-perdidas', 'filter-opp-todas',
+        'count-opp-activas', 'count-opp-perdidas', 'count-opp-todas', 'opp-count-badge',
+        'opp-search', 'opp-date-start', 'opp-date-end', 'btn-clear-opp-dates'
+      ].forEach(id => getEl(id));
+
+      const defaultProspects = [
+        { id: 'opp_1', codigo: 'OPP-101', proyecto: 'Torre Mayor', estado: 'activo', etapa: 'cotizacion', precio_cotizado: 25000, fecha_creacion: '2026-02-10T10:00:00.000Z', clientId: 'cli_1', vendedorId: 'v1' },
+        { id: 'opp_2', codigo: 'OPP-102', proyecto: 'Edificio Titanium', estado: 'activo', etapa: 'negociacion', precio_cotizado: 18000, fecha_creacion: '2026-03-15T12:00:00.000Z', clientId: 'cli_2', vendedorId: 'v1' },
+        { id: 'opp_3', codigo: 'OPP-103', proyecto: 'Bodega San Jorge', estado: 'perdido', motivo_perdida: 'Precio', etapa: 'levantamiento', precio_cotizado: 12000, fecha_creacion: '2026-03-20T14:00:00.000Z', clientId: 'cli_1', vendedorId: 'v1' },
+        { id: 'opp_4', codigo: 'OPP-104', proyecto: 'Plaza Flores', estado: 'perdido', motivo_perdida: 'Desiste', etapa: 'prospecto', precio_cotizado: 9000, fecha_creacion: '2026-01-20T08:00:00.000Z', clientId: 'cli_2', vendedorId: 'v2' },
+        { id: 'opp_5', codigo: 'OPP-105', proyecto: 'Hospital Metropolitano', estado: 'ganado', etapa: 'cierre', precio_cotizado: 45000, fecha_creacion: '2026-01-05T09:00:00.000Z', clientId: 'cli_1', vendedorId: 'v1' }
+      ];
+
+      const S = {
+        prospects: customState.prospects || defaultProspects,
+        clients: customState.clients || [
+          { id: 'cli_1', empresa: 'Constructora Central S.A.', tipo: 'juridico' },
+          { id: 'cli_2', nombres: 'Carlos', apellidos: 'Mendoza', tipo: 'natural' }
+        ],
+        users: customState.users || [
+          { id: 'm1', nombre: 'Gerente General', role: 'manager' },
+          { id: 'v1', nombre: 'Roberto Flores', role: 'vendedor' },
+          { id: 'v2', nombre: 'Ana Ayala', role: 'gestor' }
+        ],
+        currentUser: customState.currentUser !== undefined ? customState.currentUser : { id: 'm1', nombre: 'Gerente General', role: 'manager' }
+      };
+
+      const openedDetails = [];
+      const openDetail = (id) => { openedDetails.push(id); };
+
+      const scope = new Function(
+        'S', 'document', 'openDetail',
+        'with(S) {\n' + REAL_SRC + '\n return { renderList, setOppStatusFilter, getOppStatusFilter, clearOppDateFilter, toggleOppSort, updateOppSortIcons };\n}'
+      );
+
+      const api = scope(S, document, openDetail);
+      return { api, elements, document, S, openedDetails };
+    }
+
+    test('initial state strictly hides lost opportunities and won opportunities in real DOM', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.renderList();
+
+      const tbody = elements['opp-table-body'];
+      // Only 2 active opportunities (opp_1, opp_2) should be rendered
+      expect(tbody.children.length).toBe(2);
+
+      // Verify no rendered row contains lost or won IDs or texts
+      tbody.children.forEach(row => {
+        expect(row.innerHTML).not.toContain('OPP-103');
+        expect(row.innerHTML).not.toContain('OPP-104');
+        expect(row.innerHTML).not.toContain('OPP-105');
+        expect(row.innerHTML).not.toContain('PERDIDO');
+        expect(row.innerHTML).not.toContain('GANADO');
+      });
+
+      // Verify active pill class
+      expect(elements['filter-opp-activas'].classList.contains('active')).toBe(true);
+      expect(elements['filter-opp-perdidas'].classList.contains('active')).toBe(false);
+      expect(elements['filter-opp-todas'].classList.contains('active')).toBe(false);
+
+      // Verify badge counters
+      expect(elements['count-opp-activas'].textContent).toBe(2);
+      expect(elements['count-opp-perdidas'].textContent).toBe(2);
+      expect(elements['count-opp-todas'].textContent).toBe(4);
+      expect(elements['opp-count-badge'].textContent).toBe('2 oportunidades');
+    });
+
+    test('switching to "perdidas" renders only lost opportunities and updates active pill button', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.setOppStatusFilter('perdidas');
+
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(2);
+
+      // Verify only lost opportunities are in tbody
+      tbody.children.forEach(row => {
+        expect(row.innerHTML).toContain('PERDIDO');
+        expect(row.innerHTML).not.toContain('GANADO');
+      });
+      const rowHtmls = tbody.children.map(r => r.innerHTML).join(' ');
+      expect(rowHtmls).toContain('OPP-103');
+      expect(rowHtmls).toContain('OPP-104');
+      expect(rowHtmls).not.toContain('OPP-101');
+      expect(rowHtmls).not.toContain('OPP-102');
+
+      // Verify pill states
+      expect(elements['filter-opp-activas'].classList.contains('active')).toBe(false);
+      expect(elements['filter-opp-perdidas'].classList.contains('active')).toBe(true);
+      expect(elements['filter-opp-todas'].classList.contains('active')).toBe(false);
+      expect(elements['opp-count-badge'].textContent).toBe('2 oportunidades');
+    });
+
+    test('switching to "todas" renders active and lost opportunities, but never won', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.setOppStatusFilter('todas');
+
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(4);
+
+      const rowHtmls = tbody.children.map(r => r.innerHTML).join(' ');
+      expect(rowHtmls).toContain('OPP-101');
+      expect(rowHtmls).toContain('OPP-102');
+      expect(rowHtmls).toContain('OPP-103');
+      expect(rowHtmls).toContain('OPP-104');
+      expect(rowHtmls).not.toContain('OPP-105'); // won is strictly excluded from commercial opportunities
+
+      expect(elements['filter-opp-todas'].classList.contains('active')).toBe(true);
+      expect(elements['opp-count-badge'].textContent).toBe('4 oportunidades');
+    });
+
+    test('switching back to "activas" hides lost opportunities again and restores active pill state', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.setOppStatusFilter('todas');
+      expect(elements['opp-table-body'].children.length).toBe(4);
+
+      api.setOppStatusFilter('activas');
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(2);
+
+      tbody.children.forEach(row => {
+        expect(row.innerHTML).not.toContain('PERDIDO');
+      });
+      expect(elements['filter-opp-activas'].classList.contains('active')).toBe(true);
+      expect(elements['filter-opp-perdidas'].classList.contains('active')).toBe(false);
+      expect(elements['filter-opp-todas'].classList.contains('active')).toBe(false);
+    });
+
+    test('text search cannot reintroduce lost opportunities when active pill is "activas"', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.renderList();
+
+      // Search for lost opportunity keyword "Bodega" or "San Jorge"
+      elements['opp-search'].value = 'Jorge';
+      api.renderList();
+
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(0);
+      expect(tbody.innerHTML).toContain('No se encontraron oportunidades.');
+      expect(elements['opp-count-badge'].textContent).toBe('0 oportunidades');
+
+      // Pill badges still reflect total portfolio numbers (2, 2, 4)
+      expect(elements['count-opp-activas'].textContent).toBe(2);
+      expect(elements['count-opp-perdidas'].textContent).toBe(2);
+      expect(elements['count-opp-todas'].textContent).toBe(4);
+    });
+
+    test('text search works correctly within "perdidas" filter', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.setOppStatusFilter('perdidas');
+
+      elements['opp-search'].value = 'San Jorge';
+      api.renderList();
+
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(1);
+      expect(tbody.children[0].innerHTML).toContain('OPP-103');
+      expect(tbody.children[0].innerHTML).toContain('Bodega San Jorge');
+      expect(elements['opp-count-badge'].textContent).toBe('1 oportunidad');
+    });
+
+    test('empty state under "perdidas" displays specific message "No hay oportunidades marcadas como perdidas."', () => {
+      const { api, elements } = createSandboxEnvironment({
+        prospects: [
+          { id: 'opp_act', codigo: 'OPP-1', proyecto: 'Torre', estado: 'activo', fecha_creacion: '2026-03-01', clientId: 'cli_1' }
+        ]
+      });
+
+      api.setOppStatusFilter('perdidas');
+      const tbody = elements['opp-table-body'];
+      expect(tbody.children.length).toBe(0);
+      expect(tbody.innerHTML).toContain('No hay oportunidades marcadas como perdidas.');
+      expect(elements['opp-count-badge'].textContent).toBe('0 oportunidades');
+    });
+
+    test('date range filter combines seamlessly with status filter in real DOM', () => {
+      const { api, elements } = createSandboxEnvironment();
+
+      // Range: March 2026 (2026-03-01 to 2026-03-31)
+      elements['opp-date-start'].value = '2026-03-01';
+      elements['opp-date-end'].value = '2026-03-31';
+
+      // Under 'activas': only opp_2 (March 15) is in range; opp_1 is in Feb
+      api.renderList();
+      expect(elements['opp-table-body'].children.length).toBe(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-102');
+      expect(elements['opp-count-badge'].textContent).toBe('1 oportunidad');
+
+      // Under 'perdidas': only opp_3 (March 20) is in range; opp_4 is in Jan
+      api.setOppStatusFilter('perdidas');
+      expect(elements['opp-table-body'].children.length).toBe(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-103');
+      expect(elements['opp-count-badge'].textContent).toBe('1 oportunidad');
+    });
+
+    test('date sorting preserves allowed records without leaking lost opportunities', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.setOppStatusFilter('activas');
+
+      // Toggle sort by fecha
+      api.toggleOppSort('fecha'); // asc
+      expect(elements['opp-table-body'].children.length).toBe(2);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-101'); // Feb 10
+      expect(elements['opp-table-body'].children[1].innerHTML).toContain('OPP-102'); // Mar 15
+
+      api.toggleOppSort('fecha'); // desc
+      expect(elements['opp-table-body'].children.length).toBe(2);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-102'); // Mar 15
+      expect(elements['opp-table-body'].children[1].innerHTML).toContain('OPP-101'); // Feb 10
+
+      // In both directions, lost opportunities NEVER appear
+      elements['opp-table-body'].children.forEach(row => {
+        expect(row.innerHTML).not.toContain('PERDIDO');
+      });
+    });
+
+    test('counter semantics: badge counters represent total portfolio universe while table badge represents visible filtered rows', () => {
+      const { api, elements } = createSandboxEnvironment();
+      api.renderList();
+
+      // Initially: 2 active, 2 lost, 4 total in the user's portfolio
+      expect(elements['count-opp-activas'].textContent).toBe(2);
+      expect(elements['count-opp-perdidas'].textContent).toBe(2);
+      expect(elements['count-opp-todas'].textContent).toBe(4);
+      expect(elements['opp-count-badge'].textContent).toBe('2 oportunidades');
+
+      // Apply search that narrows visible rows to 1
+      elements['opp-search'].value = 'Titanium';
+      api.renderList();
+
+      // Table counter updates to filtered visible rows (1)
+      expect(elements['opp-count-badge'].textContent).toBe('1 oportunidad');
+      expect(elements['opp-table-body'].children.length).toBe(1);
+
+      // Pill badges REMAIN unchanged, giving continuous context of the total portfolio
+      // (identical to Proyectos y Cobros semantics)
+      expect(elements['count-opp-activas'].textContent).toBe(2);
+      expect(elements['count-opp-perdidas'].textContent).toBe(2);
+      expect(elements['count-opp-todas'].textContent).toBe(4);
+    });
+
+    test('vendedor role isolation: vendedor only sees their own assigned active and lost opportunities', () => {
+      // User v1 (vendedor) is assigned to opp_1, opp_2, opp_3. opp_4 is assigned to v2.
+      const { api, elements } = createSandboxEnvironment({
+        currentUser: { id: 'v1', nombre: 'Roberto Flores', role: 'vendedor' }
+      });
+
+      api.renderList();
+      // v1 has 2 active (opp_1, opp_2) and 1 lost (opp_3). opp_4 is v2's and must be invisible.
+      expect(elements['count-opp-activas'].textContent).toBe(2);
+      expect(elements['count-opp-perdidas'].textContent).toBe(1);
+      expect(elements['count-opp-todas'].textContent).toBe(3);
+
+      expect(elements['opp-table-body'].children.length).toBe(2);
+
+      // In 'perdidas', v1 only sees opp_3 (not opp_4)
+      api.setOppStatusFilter('perdidas');
+      expect(elements['opp-table-body'].children.length).toBe(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-103');
+      expect(elements['opp-table-body'].children[0].innerHTML).not.toContain('OPP-104');
+
+      // In 'todas', v1 only sees 3 records (opp_1, opp_2, opp_3)
+      api.setOppStatusFilter('todas');
+      expect(elements['opp-table-body'].children.length).toBe(3);
+      const allHtml = elements['opp-table-body'].children.map(r => r.innerHTML).join(' ');
+      expect(allHtml).not.toContain('OPP-104');
+    });
+
+    test('gestor role isolation: gestor only sees opportunities they created or are assigned to', () => {
+      // User v2 (gestor) is assigned to opp_4.
+      const { api, elements } = createSandboxEnvironment({
+        currentUser: { id: 'v2', nombre: 'Ana Ayala', role: 'gestor' }
+      });
+
+      api.renderList();
+      // v2 has 0 active, 1 lost (opp_4)
+      expect(elements['count-opp-activas'].textContent).toBe(0);
+      expect(elements['count-opp-perdidas'].textContent).toBe(1);
+      expect(elements['count-opp-todas'].textContent).toBe(1);
+
+      // In active filter: empty
+      expect(elements['opp-table-body'].children.length).toBe(0);
+      expect(elements['opp-table-body'].innerHTML).toContain('No se encontraron oportunidades.');
+
+      // In lost filter: opp_4
+      api.setOppStatusFilter('perdidas');
+      expect(elements['opp-table-body'].children.length).toBe(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-104');
+    });
+
+    test('view switching and detail navigation preserve the selected status filter', () => {
+      const { api, elements } = createSandboxEnvironment();
+
+      // User selects 'perdidas'
+      api.setOppStatusFilter('perdidas');
+      expect(api.getOppStatusFilter()).toBe('perdidas');
+      expect(elements['filter-opp-perdidas'].classList.contains('active')).toBe(true);
+
+      // Simulating navigation to another view (e.g. clients) and returning to list-view
+      // which triggers renderList()
+      api.renderList();
+
+      // Filter remains 'perdidas', pill remains active, only lost opportunities rendered
+      expect(api.getOppStatusFilter()).toBe('perdidas');
+      expect(elements['filter-opp-perdidas'].classList.contains('active')).toBe(true);
+      expect(elements['filter-opp-activas'].classList.contains('active')).toBe(false);
+      expect(elements['opp-table-body'].children.length).toBe(2);
+      elements['opp-table-body'].children.forEach(row => {
+        expect(row.innerHTML).toContain('PERDIDO');
+      });
     });
   });
 });

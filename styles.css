@@ -241,4 +241,5 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
     .kpi-banner-grid { grid-template-columns: 1fr; }
     .opp-filters-bar { flex-direction: column; align-items: stretch; }
     .date-filter-box { flex-wrap: wrap; }
+    .filter-pills-group { flex-wrap: wrap; }
 }

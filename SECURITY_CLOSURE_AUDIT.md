@@ -509,7 +509,7 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 
 ---
 
-## 13. Matriz de Validación Post-Deployment y Funcional (SEC-03, SEC-04, SEC-05, SEC-07)
+## 13. Matriz de Validación Post-Deployment y Funcional (SEC-03, SEC-04, SEC-05, SEC-07, SEC-10)
 
 - **Fecha de Validación:** 2026-10-20
 - **Proyecto Firebase:** `ductsal-erp` (Número: 948658286825)
@@ -526,6 +526,7 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 | **SEC-04** | Cloud Functions Comerciales y de Workflow | 30 funciones en `us-central1`<br>(runtime `nodejs20`, 256MB) | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 100% PASS (1,375 unitarios + 248 aislados). Verificada autenticación obligatoria, validación de parámetros, autorización por rol, preservación de `vendedorId`/`createdBy`, aislamiento de gestor en prospección, y bloqueo absoluto de reasignación postcierre.<br>**Producción:** 30 funciones comerciales + 4 de usuario activas (total 34). Endpoints HTTPS responden HTTP 401 UNAUTHENTICATED a solicitudes anónimas. Operaciones autorizadas de escritura en vivo pendientes de prueba con usuario real en ventana controlada sin alterar datos de negocio. |
 | **SEC-05** | Cloud Storage Rules & Permiso IAM Cruzado | Ruleset `61cadd40-48ac-40f3-b799-e628fc261d9f`<br>Actualizado: `2026-10-20T05:00:42Z` | ✅ **VALIDADO** | ✅ **DESPLEGADO Y CERRADO** | Coincidencia 100% byte por byte con `storage.rules` local (10,388 bytes). Regla pública revocada. IAM `roles/firebaserules.firestoreServiceAgent` confirmado en la cuenta de servicio `service-948658286825@gcp-sa-firebasestorage.iam.gserviceaccount.com`. 127/127 tests aislados PASS (`storage.rules.iso.js`). |
 | **SEC-07** | Acceso Seguro a Archivos y Descarga Universal | `getSecureDownloadUrlAdmin`<br>+ `storageService.js`<br>+ Storage Rules | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 119 tests unitarios de storage + 127 tests de storage rules PASS. Vendedor asignado accede a sus archivos; vendedor no asignado es denegado; tras reasignación el vendedor anterior pierde acceso operativo; gestor mantiene acceso autorizado a expedientes y postcierre; proyectos válidamente cerrados retienen acceso multi-criterio sin exigir CCF repetido; URLs firmadas emitidas con expiración corta (15 min).<br>**Producción:** Función desplegada con Service Account `crm-downloads-sa@ductsal-erp.iam.gserviceaccount.com`; HTTP 401 verificado ante llamadas anónimas. No se descargaron ni expusieron archivos comerciales reales en producción. Enlaces históricos con tokens previos siguen activos hasta ejecución de SEC-08. |
+| **SEC-10** | Aislamiento y Descarga Segura de Documentos | `getSecureDownloadUrlAdmin`<br>+ `storageService.js` | ✅ **VALIDADO** (136 tests PASS) | 🟡 **PARCIALMENTE VALIDADO** | **Prueba Positiva en Producción:** Confirmada manualmente por el usuario en el ERP publicado (`ductsal-erp`): previsualización de PDF en visor modal (`ALUNA TOWER - ACT SALIDA LATERAL.pdf`) y descarga explícita funcionales para el usuario autorizado.<br>**Rechazo No Autenticado y Token Inválido en Producción:** Verificado rechazo estricto con `HTTP 401 UNAUTHENTICATED` ante llamadas anónimas y tokens forjados sin generar URLs firmadas.<br>**Aislamiento Horizontal y RBAC:** Probado al 100% en pruebas automatizadas unitarias e integradas.<br>**Pendiente en Producción:** Prueba negativa autenticada de aislamiento horizontal entre dos identidades de vendedores distintos (pendiente por no existir cuentas/documentos de prueba y para no manipular credenciales ni datos del personal real). |
 
 ---
 
@@ -592,3 +593,29 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 | **SEC-02** | Migración de identidades (Taller) | 🔴 **PENDIENTE** | Las tablets de taller en `fabricacion-dev` no utilizan Firebase Auth. Su despliegue con las reglas actuales rompería la operación de la planta. Requiere la integración autorizada de `plantLogin` antes de migrar sus sesiones. |
 | **SEC-08** | Rotación / revocación de tokens históricos de Storage | 🟡 **PENDIENTE** | Los enlaces históricos emitidos con `downloadTokens` antes de SEC-05 continúan respondiendo públicamente. Requiere la ejecución controlada del runbook de rotación/revocación documentado. |
 | **SEC-09** | Revisión administrativa de proyectos ambiguos | 🟡 **PENDIENTE** | Expedientes antiguos que solo posean `estado: 'ganado'` sin marcas fehacientes de cierre no reciben acceso a postcierre; la Gerencia General debe revisar manualmente su estatus administrativo fuera del sistema. |
+
+---
+
+### 13.6 SEC-10: Validación de Aislamiento y Autorización Documental en Producción
+
+- **Fecha de Auditoría:** 2026-10-20
+- **Componente Evaluado:** Cloud Function `getSecureDownloadUrlAdmin` (`functions/index.js`, `functions/storageService.js`)
+- **Estado General:** 🟡 **PARCIALMENTE VALIDADO**
+
+#### Resumen de Evidencias Verificadas:
+1. **Flujo Positivo en Producción (Validado Manualmente por el Usuario):**
+   - El usuario autorizado confirmó en el ERP publicado el funcionamiento correcto de la previsualización de PDF en el visor modal (`ALUNA TOWER - ACT SALIDA LATERAL.pdf`) y la descarga explícita mediante la Cloud Function desplegada en `ductsal-erp` (`us-central1`).
+2. **Rechazo de Peticiones No Autenticadas en Producción:**
+   - Petición de solo lectura enviada a `https://us-central1-ductsal-erp.cloudfunctions.net/getSecureDownloadUrlAdmin` sin encabezado de autorización: rechazo inmediato con `HTTP 401 UNAUTHENTICATED` (`message: "Authentication required"`). Constituye evidencia de exigencia de credenciales válidas en el endpoint, no de aislamiento horizontal entre identidades autenticadas.
+3. **Rechazo de Token Forjado / Inválido en Producción:**
+   - Petición con cabecera `Authorization: Bearer invalid_probe_token`: rechazo con `HTTP 401 UNAUTHENTICATED` (`message: "Unauthenticated"`). En ningún caso se emitieron URLs firmadas ni se ejecutaron lecturas en Storage. Constituye evidencia de rechazo a tokens apócrifos, no de aislamiento horizontal entre identidades autenticadas.
+4. **Aislamiento Horizontal y RBAC (Cubierto por Pruebas Automatizadas):**
+   - `storageSecurity.unit.test.js`: 26/26 PASS (listas blancas de carpetas, rechazo de path traversal `..`, `//`, `\`, acotamiento a `prod_files`).
+   - `storageReview.unit.test.js`: 20/20 PASS (vendedor A no puede descargar archivos de vendedor B usando ID propio; vendedor no accede con `clientId` o `prospectId` ajeno; rutas planas sin vínculo son denegadas).
+   - `storageDownload.unit.test.js`: 34/34 PASS (rechazo a vendedores no asignados, vendedores reasignados, gestores en oportunidades abiertas ajenas y personal de planta).
+   - `viewSecureDocumentFlow.test.js`: 9/9 PASS (integración cliente-servidor con `inline`/`attachment` y captura de errores `permission-denied`).
+   - Cobertura de pruebas automatizadas: 44 suites de Functions ejecutadas con 1,422 pruebas aprobadas al momento del despliegue (actualizada a 1,448 pruebas con las validaciones del filtro de oportunidades comerciales y su flujo integrado en DOM), complementando la cifra histórica de 1,751 pruebas acumuladas de toda la arquitectura (unitarias, integración y emuladores aislados).
+5. **Aislamiento Horizontal Autenticado en Producción (Pendiente):**
+   - Queda pendiente la prueba negativa autenticada en vivo de un vendedor intentando acceder deliberadamente al expediente de otro vendedor.
+   - **Motivo:** En el proyecto `ductsal-erp` existen únicamente las 4 cuentas reales de los empleados operativos de Ductsal. No existen cuentas de prueba segregadas ni expedientes de prueba aislados. Probar esto en producción requeriría usar credenciales de un empleado real para intentar acceder a un documento confidencial real de otro cliente, violando las reglas mandatorias de seguridad.
+   - **Próxima Acción para Cierre Definitivo:** Creación de dos identidades sintéticas de prueba (ej. `vendedor_test_a@ductsal.com` y `vendedor_test_b@ductsal.com`) y dos expedientes ficticios de prueba en Storage durante una ventana técnica autorizada, o la ejecución de una prueba guiada asistida por dos usuarios reales en sus puestos de trabajo.
