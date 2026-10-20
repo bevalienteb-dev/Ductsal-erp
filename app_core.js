@@ -383,109 +383,161 @@ async function uploadFileToStorage(file, folderName, options = {}) {
     if (!file) return null;
     let taskId;
 
-    // Probar primero el bucket ductsal-erp.firebasestorage.app y como respaldo ductsal-erp.appspot.com
-    const bucketsToTry = ["ductsal-erp.firebasestorage.app", "ductsal-erp.appspot.com"];
-    let lastError = null;
+    const ALLOWED_UPLOAD_EXT_MAP = {
+        'pdf': 'application/pdf',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xls': 'application/vnd.ms-excel',
+        'xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'doc': 'application/msword',
+        'dwg': 'image/vnd.dwg',
+        'dxf': 'image/vnd.dxf',
+        'rvt': 'application/vnd.autodesk.revit',
+        'rfa': 'application/vnd.autodesk.revit',
+        'rte': 'application/vnd.autodesk.revit',
+        'rft': 'application/vnd.autodesk.revit',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'webp': 'image/webp',
+        'gif': 'image/gif',
+        'tif': 'image/tiff',
+        'tiff': 'image/tiff',
+        'zip': 'application/zip'
+    };
 
-    for (let b = 0; b < bucketsToTry.length; b++) {
-        const bucketName = bucketsToTry[b];
-        try {
-            const processedFile = await compressImage(file, 1280, 1280, 0.7);
-            const ext = processedFile.name.split('.').pop();
-            const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-            
-            let storageRef;
-            try {
-                storageRef = firebase.app().storage(`gs://${bucketName}`).ref();
-            } catch (e) {
-                storageRef = storage.ref();
-            }
+    try {
+        const rawExt = (file.name.split('.').pop() || '').toLowerCase();
+        if (!ALLOWED_UPLOAD_EXT_MAP[rawExt]) {
+            const formatErr = new Error(`El archivo "${file.name}" tiene una extensión (.${rawExt}) no permitida en el ERP. Formatos admitidos: PDF, Excel (.xlsx, .xls), Word (.docx, .doc), CAD (.dwg, .dxf), Revit (.rvt, .rfa, .rte, .rft), Imágenes y ZIP.`);
+            formatErr.isFormatError = true;
+            alert('❌ ' + formatErr.message);
+            throw formatErr;
+        }
 
-            let fullPath;
-            if (options.prospectId) {
-                fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${Date.now()}_${safeName}`;
-            } else if (options.clientId) {
-                const subfolder = options.isLegal ? 'legal' : 'identificacion';
-                fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${Date.now()}_${safeName}`;
-            } else if (options.reservationId) {
-                const subfolder = options.isLegal ? 'legal' : 'identificacion';
-                fullPath = `${STORAGE_PREFIX}/clients/${options.reservationId}/${subfolder}/${Date.now()}_${safeName}`;
-            } else if (options.customPath) {
-                fullPath = `${STORAGE_PREFIX}/${options.customPath}`;
-            } else {
-                fullPath = `${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`;
-            }
+        const canonicalMime = ALLOWED_UPLOAD_EXT_MAP[rawExt] || file.type || 'application/octet-stream';
+        const processedFile = await compressImage(file, 1280, 1280, 0.7);
+        const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 
-            const fileRef = storageRef.child(fullPath);
+        // Utilizar exclusivamente el bucket canónico confirmado configurado en Firebase Storage
+        const storageRef = storage.ref();
 
-            taskId = Date.now().toString() + Math.random().toString();
-            activeUploads++;
-            uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size || 1000000 });
-            updateGlobalProgress();
+        let fullPath;
+        if (options.prospectId) {
+            fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${Date.now()}_${safeName}`;
+        } else if (options.clientId) {
+            const subfolder = options.isLegal ? 'legal' : 'identificacion';
+            fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${Date.now()}_${safeName}`;
+        } else if (options.reservationId) {
+            const subfolder = options.isLegal ? 'legal' : 'identificacion';
+            fullPath = `${STORAGE_PREFIX}/clients/${options.reservationId}/${subfolder}/${Date.now()}_${safeName}`;
+        } else if (options.customPath) {
+            fullPath = `${STORAGE_PREFIX}/${options.customPath}`;
+        } else {
+            fullPath = `${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`;
+        }
 
-            await new Promise((resolve, reject) => {
-                const uploadTask = fileRef.put(processedFile);
-                let timeoutId = null;
-                let lastTransferred = -1;
+        const fileRef = storageRef.child(fullPath);
 
-                // Watchdog de 12 segundos: si no transfiere datos, aborta para probar el siguiente bucket
-                const checkProgress = () => {
-                    const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
-                    if (currentTransferred === lastTransferred && currentTransferred === 0) {
-                        uploadTask.cancel();
-                        reject(new Error(`Timeout de subida en bucket ${bucketName}`));
-                    } else {
-                        lastTransferred = currentTransferred;
-                        timeoutId = setTimeout(checkProgress, 12000);
-                    }
-                };
-                timeoutId = setTimeout(checkProgress, 12000);
+        taskId = Date.now().toString() + Math.random().toString();
+        activeUploads++;
+        uploadProgressMap.set(taskId, { transferred: 0, total: processedFile.size || 1000000 });
+        updateGlobalProgress();
 
-                uploadTask.on('state_changed',
-                    (snapshot) => {
-                        uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
-                        updateGlobalProgress();
-                    },
-                    (error) => {
-                        if (timeoutId) clearTimeout(timeoutId);
-                        console.warn(`Error en subida Firebase Storage (bucket: ${bucketName}):`, error);
-                        reject(error);
-                    },
-                    () => {
-                        if (timeoutId) clearTimeout(timeoutId);
-                        resolve();
-                    }
-                );
-            });
+        await new Promise((resolve, reject) => {
+            const uploadTask = fileRef.put(processedFile, { contentType: canonicalMime });
+            let timeoutId = null;
+            let lastTransferred = 0;
+            let settled = false;
 
-            activeUploads--;
-            uploadProgressMap.delete(taskId);
-            updateGlobalProgress();
-
-            // SEC-05 H-04: No generar tokens públicos permanentes mediante getDownloadURL().
-            // Se retorna únicamente la referencia canónica protegida { name, storagePath, size, contentType }.
-            return {
-                name: processedFile.name,
-                storagePath: fileRef.fullPath,
-                size: processedFile.size,
-                contentType: processedFile.type || 'application/octet-stream'
+            const cleanupWatchdog = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
             };
 
-        } catch (e) {
-            if (typeof taskId !== 'undefined') {
-                activeUploads = Math.max(0, activeUploads - 1);
-                uploadProgressMap.delete(taskId);
-                updateGlobalProgress();
-            }
-            lastError = e;
-            console.warn(`Intento con bucket ${bucketName} falló:`, e);
-        }
-    }
+            // Watchdog de 25 segundos: solo aborta si tras 25s de inactividad de red no transfiere datos
+            const checkProgress = () => {
+                if (settled) return;
+                const currentTransferred = uploadProgressMap.get(taskId)?.transferred || 0;
+                if (currentTransferred === lastTransferred && currentTransferred === 0) {
+                    settled = true;
+                    cleanupWatchdog();
+                    uploadTask.cancel();
+                    const timeoutErr = new Error('Timeout de subida: La transferencia no avanzó tras 25 segundos. Comprueba tu conexión a internet.');
+                    timeoutErr.code = 'storage/canceled';
+                    timeoutErr.isTimeout = true;
+                    reject(timeoutErr);
+                } else {
+                    lastTransferred = currentTransferred;
+                    timeoutId = setTimeout(checkProgress, 25000);
+                }
+            };
+            timeoutId = setTimeout(checkProgress, 25000);
 
-    let errorMsg = lastError ? (lastError.message || lastError.code || JSON.stringify(lastError)) : "Error de red desconocido";
-    console.error("Error definitivo subiendo archivo a Firebase Storage:", lastError);
-    alert("❌ Error al subir el archivo a Firebase Storage:\n" + errorMsg + "\n\n💡 Si estás navegando en https://erp.ductsal.com, debes activar los permisos CORS en tu bucket de Firebase para permitir subidas desde tu dominio.");
-    throw lastError;
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    uploadProgressMap.set(taskId, { transferred: snapshot.bytesTransferred, total: snapshot.totalBytes });
+                    updateGlobalProgress();
+                },
+                (error) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanupWatchdog();
+                    console.warn('Error en subida Firebase Storage:', error);
+                    reject(error);
+                },
+                () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanupWatchdog();
+                    resolve();
+                }
+            );
+        });
+
+        activeUploads = Math.max(0, activeUploads - 1);
+        uploadProgressMap.delete(taskId);
+        updateGlobalProgress();
+
+        // SEC-05 H-04: No generar tokens públicos permanentes mediante getDownloadURL().
+        // Se retorna únicamente la referencia canónica protegida { name, storagePath, size, contentType }.
+        return {
+            name: processedFile.name,
+            storagePath: fileRef.fullPath,
+            size: processedFile.size,
+            contentType: processedFile.type || 'application/octet-stream'
+        };
+
+    } catch (e) {
+        if (typeof taskId !== 'undefined') {
+            activeUploads = Math.max(0, activeUploads - 1);
+            uploadProgressMap.delete(taskId);
+            updateGlobalProgress();
+        }
+
+        const isAuthError = e && (
+            e.code === 'storage/unauthorized'
+            || e.code === 'storage/unauthenticated'
+            || (e.serverResponse && (e.serverResponse.status === 403 || e.serverResponse.status === 401))
+            || (typeof e.message === 'string' && e.message.toLowerCase().includes('unauthorized'))
+        );
+
+        console.error('Error definitivo subiendo archivo a Firebase Storage:', e);
+
+        if (e && e.isFormatError) {
+            // Ya fue notificado en la validación inicial
+        } else if (isAuthError) {
+            alert('❌ Acceso denegado: No tienes autorización para subir documentos a este expediente o el formato/tamaño ha sido rechazado por las políticas de seguridad del ERP.');
+        } else if (e && e.isTimeout) {
+            alert('⏱️ La subida se interrumpió por inactividad de la red. Por favor, verifica tu conexión a internet e inténtalo de nuevo.');
+        } else {
+            const errorMsg = e ? (e.message || e.code || JSON.stringify(e)) : 'Error de red desconocido';
+            alert('❌ Error al subir el archivo a Firebase Storage:\n' + errorMsg);
+        }
+        throw e;
+    }
 }
 
 // ============================================================================

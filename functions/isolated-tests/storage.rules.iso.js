@@ -19,6 +19,11 @@ beforeAll(async () => {
   await seedUsers();
   await fsApi.seed('prospects_prod', 'PS1', { id: 'PS1', createdBy: V1, vendedorId: V1, clientId: 'C1', datos: {} });
   await fsApi.seed('prospects_prod', 'PS2', { id: 'PS2', createdBy: ID.MGR, vendedorId: V2, clientId: 'C1', datos: {} });
+  await fsApi.seed('prospects_prod', 'PS_COLAB', { id: 'PS_COLAB', createdBy: ID.GES, vendedorId: V2, clientId: 'C1', datos: {} });
+  await fsApi.seed('prospects_prod', 'PS_GES_OWN', { id: 'PS_GES_OWN', createdBy: ID.GES, vendedorId: ID.GES, clientId: 'C1', datos: {} });
+  await fsApi.seed('prospects_prod', 'PS_POST', { id: 'PS_POST', createdBy: V1, vendedorId: V1, clientId: 'C1', postcierre_habilitado: true, datos: {}, facturas: [{ id: 'FAC1' }] });
+  await fsApi.seed('prospects_prod', 'PS_REASSIGNED', { id: 'PS_REASSIGNED', createdBy: V1, vendedorId: V2, clientId: 'C1', datos: {} });
+  await fsApi.seed('prospects_prod', 'PS_HIST_NOCB', { id: 'PS_HIST_NOCB', vendedorId: V1, clientId: 'C1', datos: {} });
   await fsApi.seed('clients_prod', 'C1', {
     id: 'C1',
     tipo: 'empresa',
@@ -58,12 +63,15 @@ beforeAll(async () => {
   await fsApi.seed('users_prod', '1800000000013', { id: '1800000000013', nombre: 'Vendedor Spoof Plant', role: 'vendedor', activo: true, pin: '7777', password: '8888' });
   const s = await stApi.seed(SEEDED);
   if (s.status !== 200) throw new Error('storage seed failed: ' + s.status + ' ' + s.body.slice(0, 200));
+  await stApi.seed('prod_files/prospects/PS_COLAB/proyectos/propuesta-seed.pdf');
+  await stApi.seed('prod_files/prospects/PS_POST/facturas/fac-seed.pdf');
   await stApi.seed('prod_files/clients/' + V1 + '/dui-seed.pdf');
   await stApi.seed('prod_files/clients/C1/identificacion/dui.pdf');
   await stApi.seed('prod_files/clients/C1/legal/escritura.pdf');
   await stApi.seed('prod_files/proyectos/legacy.pdf');
   await stApi.seed('prod_files/requerimientos/req-seed.pdf');
   await stApi.seed('prod_files/fabricacion_archivos/fab-seed.pdf');
+  await stApi.seed('prod_files/prospects/PS_HIST_NOCB/proyectos/propuesta-seed.pdf');
   await stApi.seed('local_files/proyectos/legacy.pdf');
 });
 
@@ -82,19 +90,53 @@ describe('Storage: unauthenticated / unlinked / inactive', () => {
 });
 
 describe('Storage: opportunity / project files', () => {
+  // A. Operaciones en oportunidad ordinaria abierta (PS1 asignada a V1)
   allow('owner reads', () => stApi.download(SEEDED, T.v1));
   deny('unrelated vendedor reads', () => stApi.download(SEEDED, T.v3));
-  allow('gestor reads', () => stApi.download(SEEDED, T.ges));
+  deny('gestor cannot read another seller open lead (horizontal isolation)', () => stApi.download(SEEDED, T.ges));
   allow('manager reads', () => stApi.download(SEEDED, T.mgr));
   deny('plant operator reads commercial files', () => stApi.download(SEEDED, T.oper));
-  allow('assigned vendedor (not creator) reads PS2 file after upload by gestor', async () => {
-    const up = await stApi.upload('prod_files/prospects/PS2/facturas/inv.pdf', T.ges);
-    if (up.status !== 200) return up;
-    return stApi.download('prod_files/prospects/PS2/facturas/inv.pdf', T.v2);
-  });
-  allow('owner uploads a new file', () => stApi.upload(`${PS1}/new-owner.pdf`, T.v1));
+  allow('owner uploads a new project file', () => stApi.upload(`${PS1}/new-owner.pdf`, T.v1));
+  allow('owner uploads downpayment invoice file', () => stApi.upload('prod_files/prospects/PS1/facturas/anticipo.pdf', T.v1));
+  deny('vendedor cannot upload payments (postclosing only)', () => stApi.upload('prod_files/prospects/PS1/pagos/pago.pdf', T.v1));
+  deny('vendedor cannot upload change orders (postclosing only)', () => stApi.upload('prod_files/prospects/PS1/ordenes_cambio/oc.pdf', T.v1));
   deny('unrelated vendedor uploads into someone else opportunity', () => stApi.upload(`${PS1}/intruso.pdf`, T.v3));
-  allow('gestor uploads', () => stApi.upload(`${PS1}/by-gestor.pdf`, T.ges));
+  deny('gestor cannot upload into another seller open lead (horizontal isolation)', () => stApi.upload(`${PS1}/by-gestor.pdf`, T.ges));
+  allow('manager uploads into any opportunity folder', () => stApi.upload(`${PS1}/by-mgr.pdf`, T.mgr));
+
+  // B. Colaboración comercial: Gestora crea oportunidad y asigna vendedor operativo (PS_COLAB)
+  allow('gestor creator reads proposal file in collaborative lead', () => stApi.download('prod_files/prospects/PS_COLAB/proyectos/propuesta-seed.pdf', T.ges));
+  allow('assigned vendedor reads proposal file in collaborative lead', () => stApi.download('prod_files/prospects/PS_COLAB/proyectos/propuesta-seed.pdf', T.v2));
+  deny('unrelated vendedor cannot read collaborative lead', () => stApi.download('prod_files/prospects/PS_COLAB/proyectos/propuesta-seed.pdf', T.v1));
+  allow('gestor creator uploads quote/costs proposal in collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/proyectos/cotiz-alejandra.pdf', T.ges));
+  allow('gestor creator uploads downpayment invoice in collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/facturas/ccf-anticipo.pdf', T.ges));
+  deny('gestor creator cannot upload payments before closing', () => stApi.upload('prod_files/prospects/PS_COLAB/pagos/abono-anticipado.pdf', T.ges));
+  deny('gestor creator cannot upload change orders before closing', () => stApi.upload('prod_files/prospects/PS_COLAB/ordenes_cambio/oc-previa.pdf', T.ges));
+  allow('assigned vendedor uploads project file in collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/proyectos/levantamiento-v2.pdf', T.v2));
+  deny('assigned vendedor cannot upload payments', () => stApi.upload('prod_files/prospects/PS_COLAB/pagos/abono.pdf', T.v2));
+  deny('unrelated vendedor cannot upload to collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/proyectos/intruso.pdf', T.v1));
+
+  // C. Oportunidad directa de Gestora (PS_GES_OWN: gestora como vendedor y creador)
+  allow('gestor uploads project file to own managed lead', () => stApi.upload('prod_files/prospects/PS_GES_OWN/proyectos/oferta-propia.pdf', T.ges));
+  deny('vendedor cannot upload to gestor lead', () => stApi.upload('prod_files/prospects/PS_GES_OWN/proyectos/intruso.pdf', T.v1));
+
+  // D. Proyectos cerrados y operaciones postcierre (PS_POST en Proyectos y Cobros)
+  allow('gestor reads postclosing invoice', () => stApi.download('prod_files/prospects/PS_POST/facturas/fac-seed.pdf', T.ges));
+  allow('gestor uploads postclosing invoice', () => stApi.upload('prod_files/prospects/PS_POST/facturas/fac-avance.pdf', T.ges));
+  allow('gestor uploads postclosing payment receipt', () => stApi.upload('prod_files/prospects/PS_POST/pagos/comprobante-pago.pdf', T.ges));
+  allow('gestor uploads postclosing change order', () => stApi.upload('prod_files/prospects/PS_POST/ordenes_cambio/orden-1.pdf', T.ges));
+  deny('gestor cannot upload proposals to closed project', () => stApi.upload('prod_files/prospects/PS_POST/proyectos/oferta-post.pdf', T.ges));
+  deny('vendedor who closed project CANNOT upload payments in postclosing', () => stApi.upload('prod_files/prospects/PS_POST/pagos/pago-vendedor.pdf', T.v1));
+  deny('vendedor who closed project CANNOT upload change orders in postclosing', () => stApi.upload('prod_files/prospects/PS_POST/ordenes_cambio/oc-vendedor.pdf', T.v1));
+  deny('vendedor who closed project CANNOT upload invoices in postclosing', () => stApi.upload('prod_files/prospects/PS_POST/facturas/fac-vendedor.pdf', T.v1));
+  deny('vendedor who closed project CANNOT upload proposals after closing', () => stApi.upload('prod_files/prospects/PS_POST/proyectos/prop-post.pdf', T.v1));
+
+  // E. Aislamiento tras reasignación (PS_REASSIGNED: creada por V1, reasignada a V2)
+  allow('new assigned vendedor uploads to reassigned lead', () => stApi.upload('prod_files/prospects/PS_REASSIGNED/proyectos/nuevo-vendedor.pdf', T.v2));
+  deny('previous vendedor CANNOT upload after reassignment (H-01/H-02)', () => stApi.upload('prod_files/prospects/PS_REASSIGNED/proyectos/ex-vendedor.pdf', T.v1));
+  deny('previous vendedor CANNOT read after reassignment (H-01/H-02)', () => stApi.download('prod_files/prospects/PS_REASSIGNED/proyectos/nuevo-vendedor.pdf', T.v1));
+
+  // F. Restricciones de integridad, sobrescritura, borrado, tipos y tamaños
   deny('owner overwrites an existing file', () => stApi.upload(SEEDED, T.v1, { content: 'overwritten' }));
   deny('manager overwrites an existing file', () => stApi.upload(SEEDED, T.mgr, { content: 'overwritten' }));
   deny('owner deletes a file', () => stApi.del(SEEDED, T.v1));
@@ -107,7 +149,7 @@ describe('Storage: opportunity / project files', () => {
   deny('upload of active content (svg)', () => stApi.upload(`${PS1}/x.svg`, T.v1, { contentType: 'image/svg+xml' }));
   allow('upload of project file between 20 MB and 100 MB (e.g. 50 MB)', () => stApi.upload(`${PS1}/plano-50mb.dwg`, T.v1, { size: 50 * 1024 * 1024 }));
   deny('upload of project file exceeding 100 MB (e.g. 105 MB)', () => stApi.upload(`${PS1}/too-big.dwg`, T.v1, { size: 105 * 1024 * 1024 }));
-  deny('upload exceeding 10 MB in restricted pagos folder (e.g. 15 MB)', () => stApi.upload('prod_files/prospects/PS1/pagos/abono-15mb.pdf', T.v1, { size: 15 * 1024 * 1024 }));
+  deny('upload exceeding 10 MB in restricted pagos folder (e.g. 15 MB) by gestor in postclosing', () => stApi.upload('prod_files/prospects/PS_POST/pagos/abono-15mb.pdf', T.ges, { size: 15 * 1024 * 1024 }));
   deny('upload exceeding 15 MB in facturas folder (e.g. 20 MB)', () => stApi.upload('prod_files/prospects/PS1/facturas/fac-20mb.pdf', T.v1, { size: 20 * 1024 * 1024 }));
   deny('unauthorized vendedor cannot upload large project file to someone else opportunity', () => stApi.upload(`${PS1}/plano-intruso.dwg`, T.v3, { size: 50 * 1024 * 1024 }));
   deny('anonymous user cannot upload large project file', () => stApi.upload(`${PS1}/plano-anon.dwg`, T.anon, { size: 50 * 1024 * 1024 }));
@@ -315,3 +357,140 @@ describe('Storage: real fabrication tablet sessions (plantLogin tokens, no authU
   allow('authenticated CRM manager retains privileged read to requerimientos', () => stApi.download('prod_files/requerimientos/req-seed.pdf', T.mgr));
   allow('authenticated CRM manager retains privileged read to fabricacion_archivos', () => stApi.download('prod_files/fabricacion_archivos/fab-seed.pdf', T.mgr));
 });
+
+describe('Storage: document, CAD, Revit and engineering format policy (INC-UPLOAD-ALEJANDRA)', () => {
+  // 1. PDF
+  allow('owner uploads PDF proposal', () => stApi.upload(`${PS1}/propuesta-v1.pdf`, T.v1, { contentType: 'application/pdf' }));
+  allow('gestor uploads PDF in collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/proyectos/propuesta-ale.pdf', T.ges, { contentType: 'application/pdf' }));
+
+  // 2. Excel (.xlsx, .xls, .xlsm)
+  allow('owner uploads modern Excel spreadsheet (.xlsx)', () => stApi.upload(`${PS1}/cuadro-costos.xlsx`, T.v1, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }));
+  allow('gestor creator uploads Excel (.xlsx) in collaborative lead', () => stApi.upload('prod_files/prospects/PS_COLAB/proyectos/cuadro-costos-ale.xlsx', T.ges, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }));
+  allow('owner uploads legacy Excel spreadsheet (.xls)', () => stApi.upload(`${PS1}/presupuesto-antiguo.xls`, T.v1, {
+    contentType: 'application/vnd.ms-excel'
+  }));
+  allow('owner uploads macro-enabled Excel spreadsheet (.xlsm)', () => stApi.upload(`${PS1}/calculo-ductos.xlsm`, T.v1, {
+    contentType: 'application/vnd.ms-excel.sheet.macroEnabled.12'
+  }));
+
+  // 3. Word (.docx, .doc)
+  allow('owner uploads modern Word document (.docx)', () => stApi.upload(`${PS1}/especificaciones.docx`, T.v1, {
+    contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  }));
+  allow('owner uploads legacy Word document (.doc)', () => stApi.upload(`${PS1}/contrato-base.doc`, T.v1, {
+    contentType: 'application/msword'
+  }));
+
+  // 4. CAD (.dwg, .dxf)
+  allow('owner uploads AutoCAD DWG with image/vnd.dwg', () => stApi.upload(`${PS1}/plano-piso1.dwg`, T.v1, {
+    contentType: 'image/vnd.dwg'
+  }));
+  allow('owner uploads AutoCAD DWG with application/octet-stream', () => stApi.upload(`${PS1}/plano-ductos.dwg`, T.v1, {
+    contentType: 'application/octet-stream'
+  }));
+  allow('owner uploads AutoCAD DXF with image/vnd.dxf', () => stApi.upload(`${PS1}/corte-seccion.dxf`, T.v1, {
+    contentType: 'image/vnd.dxf'
+  }));
+  allow('owner uploads AutoCAD DXF with application/octet-stream', () => stApi.upload(`${PS1}/corte-seccion2.dxf`, T.v1, {
+    contentType: 'application/octet-stream'
+  }));
+  allow('plant operario uploads DWG drawing to requerimientos', () => stApi.upload('prod_files/requerimientos/taller-ducto.dwg', T.oper, {
+    contentType: 'application/octet-stream'
+  }));
+
+  // 5. Autodesk Revit (.rvt, .rfa, .rte, .rft)
+  allow('owner uploads Revit project model (.rvt)', () => stApi.upload(`${PS1}/edificio-bim.rvt`, T.v1, {
+    contentType: 'application/vnd.autodesk.revit'
+  }));
+  allow('owner uploads Revit project model (.rvt) with octet-stream', () => stApi.upload(`${PS1}/edificio-bim2.rvt`, T.v1, {
+    contentType: 'application/octet-stream'
+  }));
+  allow('owner uploads Revit family (.rfa)', () => stApi.upload(`${PS1}/difusor-aire.rfa`, T.v1, {
+    contentType: 'application/vnd.autodesk.revit'
+  }));
+  allow('owner uploads Revit template (.rte)', () => stApi.upload(`${PS1}/plantilla-ductsal.rte`, T.v1, {
+    contentType: 'application/octet-stream'
+  }));
+  allow('owner uploads Revit family template (.rft)', () => stApi.upload(`${PS1}/plantilla-familia.rft`, T.v1, {
+    contentType: 'application/octet-stream'
+  }));
+
+  // 6. Formatos de imagen (.jpg, .jpeg, .png, .webp, .gif, .tif, .tiff)
+  allow('owner uploads JPEG image', () => stApi.upload(`${PS1}/sitio-obra.jpg`, T.v1, { contentType: 'image/jpeg' }));
+  allow('owner uploads PNG screenshot', () => stApi.upload(`${PS1}/levantamiento.png`, T.v1, { contentType: 'image/png' }));
+  allow('owner uploads WebP photo', () => stApi.upload(`${PS1}/fachada.webp`, T.v1, { contentType: 'image/webp' }));
+  allow('owner uploads GIF animation/diagram', () => stApi.upload(`${PS1}/flujo-aire.gif`, T.v1, { contentType: 'image/gif' }));
+  allow('owner uploads TIFF scanned drawing', () => stApi.upload(`${PS1}/escaneo-original.tif`, T.v1, { contentType: 'image/tiff' }));
+  allow('owner uploads compressed ZIP package of drawings', () => stApi.upload(`${PS1}/paquete-planos.zip`, T.v1, {
+    contentType: 'application/zip'
+  }));
+
+  // 7. Rechazo estricto de ejecutables, scripts y contenido activo peligroso
+  deny('DENY executable (.exe) even claiming application/pdf', () => stApi.upload(`${PS1}/malware.exe`, T.v1, { contentType: 'application/pdf' }));
+  deny('DENY executable (.exe) with application/octet-stream', () => stApi.upload(`${PS1}/trojan.exe`, T.v1, { contentType: 'application/octet-stream' }));
+  deny('DENY double extension executable (.pdf.exe)', () => stApi.upload(`${PS1}/cotizacion.pdf.exe`, T.v1, { contentType: 'application/pdf' }));
+  deny('DENY shell script (.sh)', () => stApi.upload(`${PS1}/exploit.sh`, T.v1, { contentType: 'application/x-sh' }));
+  deny('DENY PHP script (.php)', () => stApi.upload(`${PS1}/backdoor.php`, T.v1, { contentType: 'application/x-httpd-php' }));
+  deny('DENY Windows batch file (.bat)', () => stApi.upload(`${PS1}/run.bat`, T.v1, { contentType: 'application/octet-stream' }));
+  deny('DENY Windows command file (.cmd)', () => stApi.upload(`${PS1}/run.cmd`, T.v1, { contentType: 'application/octet-stream' }));
+  deny('DENY JavaScript file (.js)', () => stApi.upload(`${PS1}/payload.js`, T.v1, { contentType: 'application/javascript' }));
+  deny('DENY HTML file (.html)', () => stApi.upload(`${PS1}/phishing.html`, T.v1, { contentType: 'text/html' }));
+  deny('DENY SVG file (.svg)', () => stApi.upload(`${PS1}/vector-xss.svg`, T.v1, { contentType: 'image/svg+xml' }));
+  deny('DENY standalone XML (.xml)', () => stApi.upload(`${PS1}/data.xml`, T.v1, { contentType: 'text/xml' }));
+  deny('DENY application/xml', () => stApi.upload(`${PS1}/config.xml`, T.v1, { contentType: 'application/xml' }));
+
+  // 8. Incoherencias de carpeta y restricciones por ámbito
+  deny('DENY CAD drawing (.dwg) in client identification/DUI folder', () => stApi.upload('prod_files/clients/C1/identificacion/plano.dwg', T.v1, { contentType: 'application/octet-stream' }));
+  deny('DENY Revit model (.rvt) in client identification/DUI folder', () => stApi.upload('prod_files/clients/C1/identificacion/modelo.rvt', T.v1, { contentType: 'application/octet-stream' }));
+  deny('DENY CAD drawing (.dwg) in pagos folder', () => stApi.upload('prod_files/prospects/PS_POST/pagos/plano.dwg', T.ges, { contentType: 'application/octet-stream' }));
+  deny('DENY ZIP package in pagos folder', () => stApi.upload('prod_files/prospects/PS_POST/pagos/abono.zip', T.ges, { contentType: 'application/zip' }));
+  allow('ALLOW invoice spreadsheet (.xlsx) in facturas folder', () => stApi.upload('prod_files/prospects/PS_POST/facturas/detalle-factura.xlsx', T.ges, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }));
+
+  // 9. Preservación del aislamiento horizontal comercial
+  deny('unrelated vendedor cannot upload CAD file into someone else lead', () => stApi.upload(`${PS1}/plano-intruso.dwg`, T.v3, { contentType: 'application/octet-stream' }));
+  deny('unrelated vendedor cannot upload Excel into someone else lead', () => stApi.upload(`${PS1}/costos-intruso.xlsx`, T.v3, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }));
+  deny('gestor cannot upload CAD into unassigned open lead', () => stApi.upload(`${PS1}/plano-gestor.dwg`, T.ges, { contentType: 'application/octet-stream' }));
+
+  // 10. Expedientes históricos sin campo createdBy (resiliencia CEL)
+  allow('vendedor reads historical prospect without createdBy', () => stApi.download('prod_files/prospects/PS_HIST_NOCB/proyectos/propuesta-seed.pdf', T.v1));
+  allow('vendedor uploads PDF to historical prospect without createdBy', () => stApi.upload('prod_files/prospects/PS_HIST_NOCB/proyectos/oferta-nocb.pdf', T.v1, { contentType: 'application/pdf' }));
+  allow('vendedor uploads Excel to historical prospect without createdBy', () => stApi.upload('prod_files/prospects/PS_HIST_NOCB/proyectos/costos-nocb.xlsx', T.v1, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }));
+  deny('unrelated vendedor cannot read historical lead without createdBy', () => stApi.download('prod_files/prospects/PS_HIST_NOCB/proyectos/propuesta-seed.pdf', T.v2));
+  deny('unrelated gestor cannot read historical open lead without createdBy', () => stApi.download('prod_files/prospects/PS_HIST_NOCB/proyectos/propuesta-seed.pdf', T.ges));
+  deny('unrelated gestor cannot upload to historical open lead without createdBy', () => stApi.upload('prod_files/prospects/PS_HIST_NOCB/proyectos/up-gestor.pdf', T.ges));
+  deny('unrelated vendedor cannot upload to historical open lead without createdBy', () => stApi.upload('prod_files/prospects/PS_HIST_NOCB/proyectos/up-v2.pdf', T.v2));
+
+  // 11. Límites de tamaño segmentados por carpeta (pruebas de frontera: límite exacto vs excedido)
+  // - proyectos: límite 100 MiB (104,857,600 bytes)
+  allow('proyectos allows file at exact 100 MiB limit', () => stApi.upload(`${PS1}/limit-100mb.dwg`, T.v1, { size: 100 * 1024 * 1024 }));
+  deny('proyectos denies file exceeding 100 MiB by 1 KiB', () => stApi.upload(`${PS1}/limit-100mb-plus.dwg`, T.v1, { size: 100 * 1024 * 1024 + 1024 }));
+  // - ordenes_cambio: límite 35 MiB (36,700,160 bytes)
+  allow('ordenes_cambio allows file at exact 35 MiB limit', () => stApi.upload('prod_files/prospects/PS_POST/ordenes_cambio/limit-35mb.pdf', T.ges, { size: 35 * 1024 * 1024 }));
+  deny('ordenes_cambio denies file exceeding 35 MiB by 1 KiB', () => stApi.upload('prod_files/prospects/PS_POST/ordenes_cambio/limit-35mb-plus.pdf', T.ges, { size: 35 * 1024 * 1024 + 1024 }));
+  // - legal: límite 25 MiB (26,214,400 bytes)
+  allow('legal folder allows file at exact 25 MiB limit', () => stApi.upload('prod_files/clients/C1/legal/limit-25mb.pdf', T.v1, { size: 25 * 1024 * 1024 }));
+  deny('legal folder denies file exceeding 25 MiB by 1 KiB', () => stApi.upload('prod_files/clients/C1/legal/limit-25mb-plus.pdf', T.v1, { size: 25 * 1024 * 1024 + 1024 }));
+  // - facturas: límite 15 MiB (15,728,640 bytes)
+  allow('facturas allows file at exact 15 MiB limit', () => stApi.upload('prod_files/prospects/PS1/facturas/limit-15mb.pdf', T.v1, { size: 15 * 1024 * 1024 }));
+  deny('facturas denies file exceeding 15 MiB by 1 KiB', () => stApi.upload('prod_files/prospects/PS1/facturas/limit-15mb-plus.pdf', T.v1, { size: 15 * 1024 * 1024 + 1024 }));
+  // - clientes (directo): límite 15 MiB (15,728,640 bytes)
+  allow('clientes direct folder allows file at exact 15 MiB limit', () => stApi.upload(`prod_files/clients/${V1}/limit-15mb.pdf`, T.v1, { size: 15 * 1024 * 1024 }));
+  deny('clientes direct folder denies file exceeding 15 MiB by 1 KiB', () => stApi.upload(`prod_files/clients/${V1}/limit-15mb-plus.pdf`, T.v1, { size: 15 * 1024 * 1024 + 1024 }));
+  // - identificacion: límite 10 MiB (10,485,760 bytes)
+  allow('identificacion allows file at exact 10 MiB limit', () => stApi.upload('prod_files/clients/C1/identificacion/limit-10mb.pdf', T.v1, { size: 10 * 1024 * 1024 }));
+  deny('identificacion denies file exceeding 10 MiB by 1 KiB', () => stApi.upload('prod_files/clients/C1/identificacion/limit-10mb-plus.pdf', T.v1, { size: 10 * 1024 * 1024 + 1024 }));
+  // - pagos: límite 10 MiB (10,485,760 bytes)
+  allow('pagos allows file at exact 10 MiB limit', () => stApi.upload('prod_files/prospects/PS_POST/pagos/limit-10mb.pdf', T.ges, { size: 10 * 1024 * 1024 }));
+  deny('pagos denies file exceeding 10 MiB by 1 KiB', () => stApi.upload('prod_files/prospects/PS_POST/pagos/limit-10mb-plus.pdf', T.ges, { size: 10 * 1024 * 1024 + 1024 }));
+});
+
