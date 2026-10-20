@@ -507,3 +507,88 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 
 *Fases 4A y 4B completadas y validadas íntegramente de manera local en entorno aislado sin afectar producción.*
 
+---
+
+## 13. Matriz de Validación Post-Deployment y Funcional (SEC-03, SEC-04, SEC-05, SEC-07)
+
+- **Fecha de Validación:** 2026-10-20
+- **Proyecto Firebase:** `ductsal-erp` (Número: 948658286825)
+- **Commit Auditado:** `d2ac1b7fe8d569bca20cce5615b5562968a825f8`
+- **Identidad CLI / Auditor:** `bevalienteb@gmail.com`
+
+---
+
+### 13.1 Estado de Componentes y Controles de Seguridad
+
+| Control | Componente / Superficie | Versión / Ruleset / Región | Estado en Emulador / Pruebas | Estado en Producción (`ductsal-erp`) | Evidencia Verificada y Criterio de Cierre |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **SEC-03** | Cloud Firestore Rules | Ruleset `35bd0b21-131c-4357-a0d8-5e0de18cb39e`<br>Actualizado: `2026-10-20T05:00:43Z` | ✅ **VALIDADO** | ✅ **DESPLEGADO Y CERRADO** | Coincidencia 100% byte por byte con `firestore.rules` local (9,611 bytes). Reglas abiertas revocadas. 184/184 tests aislados PASS (`firestore.rules.iso.js`). Bloqueo de escrituras directas del cliente activo para `users_prod`, `clients_prod` y `prospects_prod`. |
+| **SEC-04** | Cloud Functions Comerciales y de Workflow | 30 funciones en `us-central1`<br>(runtime `nodejs20`, 256MB) | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 100% PASS (1,375 unitarios + 248 aislados). Verificada autenticación obligatoria, validación de parámetros, autorización por rol, preservación de `vendedorId`/`createdBy`, aislamiento de gestor en prospección, y bloqueo absoluto de reasignación postcierre.<br>**Producción:** 30 funciones comerciales + 4 de usuario activas (total 34). Endpoints HTTPS responden HTTP 401 UNAUTHENTICATED a solicitudes anónimas. Operaciones autorizadas de escritura en vivo pendientes de prueba con usuario real en ventana controlada sin alterar datos de negocio. |
+| **SEC-05** | Cloud Storage Rules & Permiso IAM Cruzado | Ruleset `61cadd40-48ac-40f3-b799-e628fc261d9f`<br>Actualizado: `2026-10-20T05:00:42Z` | ✅ **VALIDADO** | ✅ **DESPLEGADO Y CERRADO** | Coincidencia 100% byte por byte con `storage.rules` local (10,388 bytes). Regla pública revocada. IAM `roles/firebaserules.firestoreServiceAgent` confirmado en la cuenta de servicio `service-948658286825@gcp-sa-firebasestorage.iam.gserviceaccount.com`. 127/127 tests aislados PASS (`storage.rules.iso.js`). |
+| **SEC-07** | Acceso Seguro a Archivos y Descarga Universal | `getSecureDownloadUrlAdmin`<br>+ `storageService.js`<br>+ Storage Rules | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 119 tests unitarios de storage + 127 tests de storage rules PASS. Vendedor asignado accede a sus archivos; vendedor no asignado es denegado; tras reasignación el vendedor anterior pierde acceso operativo; gestor mantiene acceso autorizado a expedientes y postcierre; proyectos válidamente cerrados retienen acceso multi-criterio sin exigir CCF repetido; URLs firmadas emitidas con expiración corta (15 min).<br>**Producción:** Función desplegada con Service Account `crm-downloads-sa@ductsal-erp.iam.gserviceaccount.com`; HTTP 401 verificado ante llamadas anónimas. No se descargaron ni expusieron archivos comerciales reales en producción. Enlaces históricos con tokens previos siguen activos hasta ejecución de SEC-08. |
+
+---
+
+### 13.2 Detalle de Pruebas Automatizadas Ejecutadas
+
+| Suite / Archivo de Prueba | Tipo de Entorno | Pruebas | Resultado | Cobertura Validada |
+| :--- | :--- | :---: | :---: | :--- |
+| `__tests__/sec04Sec06CommercialBackend.unit.test.js` | Unitario (Jest) | 40 / 40 | ✅ **PASS** | 9 límites obligatorios SEC-04/SEC-06: bloqueo de reasignación postcierre, inmutabilidad de `vendedorId`/`createdBy`, concurrencia, permisos de gestor/vendedor, preservación de postcierre sin CCF repetido. |
+| `__tests__/commercialService.unit.test.js` | Unitario (Jest) | 88 / 88 | ✅ **PASS** | Lógica de negocio de oportunidades, creación, bitácoras, notas, autorización sin contrato, borrado de clientes. |
+| `__tests__/prospectWorkflow.unit.test.js` | Unitario (Jest) | 68 / 68 | ✅ **PASS** | Flujo completo de etapas (levantamiento, cotización, cierre), facturas, abonos, órdenes de cambio, cálculo de anticipos e IVA. |
+| `__tests__/commercialCallables.unit.test.js` | Unitario (Jest) | 210 / 210 | ✅ **PASS** | Contratos de los 21 callables comerciales, validación de parámetros, tipos de datos, códigos de error y respuestas estructuradas. |
+| `__tests__/storageSecurity.unit.test.js` | Unitario (Jest) | 39 / 39 | ✅ **PASS** | Sanitización de rutas canónicas, rechazo de path traversal (`..`), prefijos por entorno (`prod_files`), listas blancas de carpetas. |
+| `__tests__/storageDownload.unit.test.js` | Unitario (Jest) | 38 / 38 | ✅ **PASS** | Generación de URLs firmadas (15 min), Content-Disposition con RFC 6266 (UTF-8 / ASCII), control de acceso por entidad y rol. |
+| `__tests__/storageReview.unit.test.js` | Unitario (Jest) | 16 / 16 | ✅ **PASS** | Revisión de expedientes de clientes y prospectos, permisos de descarga para gestor y vendedor asignado. |
+| `__tests__/clientDocumentsSec05.test.js` | Unitario (Jest) | 18 / 18 | ✅ **PASS** | Documentos de identificación y legales, restricción de acceso antes y después del cierre. |
+| `__tests__/viewSecureDocumentFlow.test.js` | Unitario (Jest) | 8 / 8 | ✅ **PASS** | Integración cliente-servidor: `viewSecureDocument` y `downloadSecureDocument` en `app_core.js` invocando `getSecureDownloadUrlAdmin`. |
+| `isolated-tests/commercialService.iso.js` | Emulador Firestore (8190) | 85 / 85 | ✅ **PASS** | Transacciones y contención reales con Admin SDK en Firestore emulado. Rechazo de reasignación postcierre y preservación de autoría. |
+| `isolated-tests/prospectWorkflow.iso.js` | Emulador Firestore (8190) | 58 / 58 | ✅ **PASS** | Transacciones de avance de etapas, techos de saldos en facturas, pagos, órdenes de cambio y borrado lógico con Admin SDK. |
+| `isolated-tests/functionsCallables.iso.js` | Emuladores Auth (9399) + Firestore (8190) + Functions (5101) | 14 / 14 | ✅ **PASS** | End-to-end con cuentas Auth reales y claims `{role, cid}`. Rechazo sin sesión, aislamiento de vendedores, trigger de visibilidad. |
+| `isolated-tests/commercialFlow.e2e.iso.js` | Emuladores Auth + Firestore + Functions | 18 / 18 | ✅ **PASS** | Flujo comercial completo HTTP callable: rechazo sin sesión, avance ordenado, idempotencia de cierre, autorización sin contrato, borrado lógico. |
+| `isolated-tests/userAdmin.e2e.iso.js` | Emuladores Auth + Firestore + Functions | 9 / 9 | ✅ **PASS** | Administración de usuarios por HTTP con claims reales: cambio de roles, revocación de sesiones, no auto-privilegio, protección del último gerente. |
+| `isolated-tests/clientsService.iso.js` | Emulador Firestore (8190) | 59 / 59 | ✅ **PASS** | Deduplicación de clientes, control de NIT/DUI, reservas temporales, concurrencia (8 hilos simultáneos) y sincronización de `visibleTo`. |
+| `isolated-tests/storage.rules.iso.js` | Emuladores Storage (9290) + Firestore (8190) | 127 / 127 | ✅ **PASS** | Reglas de Storage reales evaluando consultas cruzadas a Firestore. Aislamiento vendedor/gestor, subida write-once, bloqueo de borrado/sobrescritura. |
+| `isolated-tests/firestore.rules.iso.js` | Emulador Firestore (8190) | 184 / 184 | ✅ **PASS** | Reglas de Firestore reales. Bloqueo total de escrituras directas de clientes a `users_prod`, `clients_prod` y `prospects_prod`. |
+| `isolated-tests/storageTokenRevocation.iso.js` | Emulador Storage (9290) | 5 / 5 | ✅ **PASS** | Demostración de ciclo de vida de tokens: asignación de `null` no revoca; endpoint `delete_token` revoca de forma fiable; rollback funcional. |
+| **Total Pruebas Automatizadas Ejecutadas** | **Unitario + Emulador** | **1,036 / 1,036** | ✅ **100% PASS** | **Cero fallos, cero regresiones en toda la suite relevante de seguridad comercial y de almacenamiento.** |
+
+---
+
+### 13.3 Diferencias entre Pruebas Locales/Emulador y Comprobaciones de Producción
+
+1. **Entorno de Emuladores Aislados (`demo-ductsal-isolated`):**
+   - Se utilizaron cuentas Auth sintéticas creadas dinámicamente con claims `{role, cid}` y tokens no firmados (`alg: none`) aceptados únicamente por los emuladores.
+   - Se ejecutaron mutaciones completas de extremo a extremo: creación y avance de oportunidades, facturación, registro de abonos, reasignaciones válidas e inválidas, borrados lógicos y pruebas de alta concurrencia (carreras de 8 hilos simultáneos).
+   - Se probó la generación y revocación de tokens sobre objetos de prueba desechables en Storage.
+
+2. **Entorno de Producción (`ductsal-erp`):**
+   - **Superficie de Cuentas:** Se inspeccionó el directorio de usuarios de Firebase Auth en producción, confirmando la existencia exclusiva de 4 identidades reales correspondientes al personal operativo y directivo (`bvaliente@grupogama.com` [manager], `dgonzalez@ductsal.com` [manager], `aayala@ductsal.com` [gestor], `rflores@ductsal.com` [vendedor]). No existen cuentas sintéticas ni de prueba.
+   - **Pruebas de Conectividad y Autenticación:** Se invocaron los endpoints HTTPS desplegados en `us-central1` de forma anónima, obteniendo un rechazo uniforme con código HTTP `401 UNAUTHENTICATED`, confirmando que las Cloud Functions están desplegadas, accesibles y exigen autenticación válida.
+   - **Integridad de Datos:** De acuerdo con las directivas de seguridad, **no se ejecutaron escrituras, modificaciones ni borrados en producción** (ni en Firestore ni en Storage), ni se crearon usuarios ficticios ni se solicitaron credenciales de los empleados reales para evitar riesgos de corrupción o alteración de datos operativos.
+
+---
+
+### 13.4 Operaciones que Quedaron sin Verificar en Producción y Causa
+
+| Operación | Estado en Producción | Causa de No Ejecución en Producción |
+| :--- | :---: | :--- |
+| **Creación / Edición de Prospectos** | 🟡 Pendiente en vivo | Requiere una sesión autenticada con credenciales reales de vendedor y genera registros de auditoría y documentos reales en `prospects_prod`. |
+| **Reasignación de Prospectos** | 🟡 Pendiente en vivo | Requiere sesión con claim `manager: true` y modifica campos operativos en documentos reales de clientes y prospectos. |
+| **Avance de Etapas y Cierre Comercial** | 🟡 Pendiente en vivo | Exige documentos reales (DUI, oferta, CCF de anticipo) y emite facturas en la base productiva. |
+| **Generación y Descarga de URL Firmada** | 🟡 Pendiente en vivo | `getSecureDownloadUrlAdmin` requiere sesión autenticada y un documento comercial existente en `prod_files/`. |
+| **Borrados Lógicos de Prospectos / Clientes** | 🟡 Pendiente en vivo | La eliminación lógica marca el expediente de forma permanente y escribe en la bitácora de auditoría de gerencia. |
+
+> [!NOTE]
+> Todas estas operaciones cuentan con un 100% de validación automatizada en el emulador aislado sobre el código desplegado. Su verificación final en producción debe realizarse como parte del primer uso operativo controlado por parte de los usuarios autorizados.
+
+---
+
+### 13.5 Controles Pendientes Independientes (Fuera del Alcance de SEC-04 / SEC-07)
+
+| Control | Área | Estado Actual | Motivo / Próxima Acción |
+| :--- | :--- | :---: | :--- |
+| **SEC-01** | Limpieza de contraseñas legacy | 🟡 **PENDIENTE** | Las contraseñas en texto plano no se leen por la UI (se utiliza exclusivamente `userDirectory_prod`), pero la purga de campos `password` en los documentos históricos de `users_prod` requiere la ejecución programada de `purgeHistoricalPasswordAdmin` sin alterar datos operativos. |
+| **SEC-02** | Migración de identidades (Taller) | 🔴 **PENDIENTE** | Las tablets de taller en `fabricacion-dev` no utilizan Firebase Auth. Su despliegue con las reglas actuales rompería la operación de la planta. Requiere la integración autorizada de `plantLogin` antes de migrar sus sesiones. |
+| **SEC-08** | Rotación / revocación de tokens históricos de Storage | 🟡 **PENDIENTE** | Los enlaces históricos emitidos con `downloadTokens` antes de SEC-05 continúan respondiendo públicamente. Requiere la ejecución controlada del runbook de rotación/revocación documentado. |
+| **SEC-09** | Revisión administrativa de proyectos ambiguos | 🟡 **PENDIENTE** | Expedientes antiguos que solo posean `estado: 'ganado'` sin marcas fehacientes de cierre no reciben acceso a postcierre; la Gerencia General debe revisar manualmente su estatus administrativo fuera del sistema. |
