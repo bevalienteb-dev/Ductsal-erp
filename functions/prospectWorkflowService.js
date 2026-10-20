@@ -259,7 +259,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         const toAdd = [p.vendedorId, p.createdBy, caller.cid].filter(v => v && v !== 'sistema');
         for (const v of Array.from(new Set(toAdd))) {
           tx.update(col('clients').doc(p.clientId), {
-            closingVendors: FieldValue.arrayUnion(v)
+            closingVendors: FieldValue.arrayUnion(v),
+            visibleTo: FieldValue.arrayUnion(v)
           });
         }
       }

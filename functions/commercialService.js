@@ -197,6 +197,10 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       tx.create(col('prospects').doc(id), prospect);
       tx.set(counterRef, { last: seq, updatedAt: FieldValue.serverTimestamp() });
       tx.create(opRef, { kind: 'createProspect', status: 'succeeded', prospectId: id, codigo, payloadHash, createdBy: caller.cid, createdAt: FieldValue.serverTimestamp() });
+      const visibleVendors = [caller.cid, assignee.cid].filter(v => v && v !== 'sistema');
+      if (visibleVendors.length > 0) {
+        tx.update(col('clients').doc(clientId), { visibleTo: FieldValue.arrayUnion(...visibleVendors) });
+      }
       return { created: prospect };
     });
 
@@ -291,6 +295,9 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
 
       const logs = logsOf(p).concat([logEntry(caller, `Vendedor reasignado a: ${target.nombre} por ${caller.name}`, { auto: true })]);
       tx.update(ref, { vendedorId: target.cid, vendedorName: target.nombre, vendedorRole: target.role, logs });
+      if (p.clientId && target.cid && target.cid !== 'sistema') {
+        tx.update(col('clients').doc(p.clientId), { visibleTo: FieldValue.arrayUnion(target.cid) });
+      }
       if (p.etapa === 'cierre' && p.clientId) {
         if (target.cid && target.cid !== 'sistema') {
           tx.update(col('clients').doc(p.clientId), { closingVendors: FieldValue.arrayUnion(target.cid) });
