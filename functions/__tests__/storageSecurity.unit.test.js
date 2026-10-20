@@ -291,6 +291,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
 
   const who = (role, cid) => ({ uid: `uid-${cid}`, cid, role, name: role });
   const VEND = who('vendedor', 'V1');
+  const GEST = who('gestor', 'GES1');
 
   beforeEach(() => {
     fdb.clear();
@@ -339,6 +340,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
       vendedorId: 'V1',
       estado: 'ganado',
       etapa: 'cierre',
+      postcierre_habilitado: true,
       codigo: '202601002',
       precio_cotizado: 10000,
       costo_venta: 6000,
@@ -353,7 +355,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
     };
 
     const invRes = await workflow.saveInvoice({
-      caller: VEND,
+      caller: GEST,
       opId: 'op-invoice-001',
       prospectId: 'P2',
       numero: 'FAC-001',
@@ -370,7 +372,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
     };
 
     const payRes = await workflow.savePayment({
-      caller: VEND,
+      caller: GEST,
       opId: 'op-payment-001',
       prospectId: 'P2',
       invoiceId: invRes.invoice.id,
@@ -391,6 +393,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
       vendedorId: 'V1',
       estado: 'ganado',
       etapa: 'cierre',
+      postcierre_habilitado: true,
       codigo: '202601003',
       precio_cotizado: 10000,
       costo_venta: 6000,
@@ -410,7 +413,7 @@ describe('SEC-05: Document preservation in prospectWorkflowService', () => {
     };
 
     const ocRes = await workflow.saveChangeOrder({
-      caller: VEND,
+      caller: GEST,
       opId: 'op-changeorder-001',
       prospectId: 'P3',
       tipo: 'aumento',

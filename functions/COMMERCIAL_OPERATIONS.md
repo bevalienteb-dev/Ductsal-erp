@@ -18,10 +18,10 @@ de emulador (`assertEmulatorIsolated`) se aplica igual que en las funciones de c
 
 | Función | Quién puede | Qué decide el servidor (el navegador no puede) | Idempotencia / concurrencia | Auditoría |
 |---|---|---|---|---|
-| `createProspectAdmin` `{prospect, opId}` | manager, gestor, vendedor. Asignar a **otro** vendedor: solo manager/gestor | `id`, `codigo` (`AAAAMM`+secuencia anual por contador transaccional), `createdBy*`, `vendedor*` (nombre y rol del perfil destino), fechas, etapa, estado, primer log | `opId` obligatorio; reintento con el mismo `opId` devuelve el mismo registro; mismo `opId` con otro cuerpo/otro usuario se rechaza; colisión de `id` → siguiente id, nunca sobrescribe | `commercialAudit_*` |
-| `addProspectLogAdmin` `{prospectId, text, opId}` | quien tiene acceso a la oportunidad (creador/asignado; manager/gestor todas) | autor (`by`, `byName`) y fecha | `opId` guardado en la entrada: el reintento no duplica la nota | no (nota ordinaria) |
-| `deleteProspectLogAdmin` `{prospectId, date, text}` | manager/gestor: cualquier nota manual; vendedor: **solo las suyas**. Notas automáticas: nadie | qué nota (por fecha+texto, no por posición) | borrar algo ya borrado → `absent` sin error ni segunda auditoría | `commercialAudit_*` |
-| `reassignProspectAdmin` `{prospectId, vendedorId}` | manager, gestor | destino existente, no inactivo y de rol comercial (los usuarios históricos **sí** son destinos válidos: son personas que el CRM ya lista); nombre/rol; entrada de historial | misma asignación → `unchanged` sin escribir | `commercialAudit_*` |
+| `createProspectAdmin` `{prospect, opId}` | manager, gestor, vendedor. Asignar a **otro** vendedor: manager o gestor al crear | `id`, `codigo` (`AAAAMM`+secuencia anual por contador transaccional), `createdBy*` (inmutable), `vendedor*` (nombre y rol del perfil destino), fechas, etapa, estado, primer log | `opId` obligatorio; reintento con el mismo `opId` devuelve el mismo registro; mismo `opId` con otro cuerpo/otro usuario se rechaza; colisión de `id` → siguiente id, nunca sobrescribe | `commercialAudit_*` |
+| `addProspectLogAdmin` `{prospectId, text, opId}` | manager: todas; gestor: solo leads ingresados por él (`createdBy === caller.cid`) o proyectos en postcierre; vendedor: asignado (`vendedorId`) o creado | autor (`by`, `byName`) y fecha | `opId` guardado en la entrada: el reintento no duplica la nota | no (nota ordinaria) |
+| `deleteProspectLogAdmin` `{prospectId, date, text}` | manager: cualquier nota manual; gestor: manuales de sus leads/postcierre; vendedor: **solo las suyas**. Notas automáticas: nadie | qué nota (por fecha+texto, no por posición) | borrar algo ya borrado → `absent` sin error ni segunda auditoría | `commercialAudit_*` |
+| `reassignProspectAdmin` `{prospectId, vendedorId}` | **solo manager (en vivo)** (§7.7) | destino existente, no inactivo y de rol comercial; `createdBy` **inmutable**; recálculo transaccional de cartera (`visibleTo`/`closingVendors`); auditoría de autorización | misma asignación → `unchanged` sin escribir | `commercialAudit_*` |
 | `setNoContractAuthorizationAdmin` `{prospectId, authorized}` | **solo manager**, verificado en vivo contra Auth (claim `manager`) | quién autoriza (`autorizado_por`, `autorizado_por_id`), entrada de historial; además cierra la solicitud pendiente (→ `aprobada`) o marca la aprobada como `revocada` | mismo estado → `unchanged` | `commercialAudit_*` |
 | `requestNoContractAuthorizationAdmin` `{prospectId, motivo, opId}` (**nueva, §7.2**) | vendedor / gestor con acceso al registro (el gerente autoriza directo) | solicitante, rol, fecha, estado `pendiente` | `opId` guardado en la solicitud; misma persona + mismo motivo → `unchanged` | `commercialAudit_*` |
 | `resolveNoContractAuthorizationAdmin` `{prospectId, requestId, decision, motivoDecision}` (**nueva, §7.2**) | **solo manager** en vivo; nunca el solicitante | gerente que resuelve, fecha, estado final, `datos.autorizado_*` al aprobar | por estado almacenado: misma decisión → `unchanged`; contradictoria → rechazo | `commercialAudit_*` |
@@ -50,9 +50,9 @@ lo que otro usuario haya escrito entre tanto (notas, autorización, facturas) no
 | `markProspectLostAdmin` | `reason` | Motivo de la lista cerrada; solo `activo`; mismo motivo repetido → `unchanged`, otro motivo → rechazo | sí | `markLost` |
 | `registerProposalAdmin` | precio, costo, archivos de oferta y costos (obligatorios) | Solo en `activo` + `negociacion` | mismos valores → `unchanged` | `registerProposal` |
 | `editProspectBasePriceAdmin` | precio, costo, `motivo` (obligatorio) | **Solo manager/gestor** y **solo con `estado === 'activo'` almacenado** (§7.1); importes válidos; valores anteriores y entrada de historial salen del documento almacenado | mismos valores → `unchanged` | `editBasePrice` |
-| `saveChangeOrderAdmin` / `deleteChangeOrderAdmin` | tipo, descripción, importes, archivos; `orderId` para editar/borrar | Solo con `estado === 'ganado'`; alta por `opId` guardado en la orden; borrado por `id` | reintento con el mismo `opId` no duplica; borrar lo ya borrado → `absent` | `saveChangeOrder` / `deleteChangeOrder` + aviso en `audit_logs_*` al borrar |
-| `saveInvoiceAdmin` / `deleteInvoiceAdmin` | número, monto, archivo; `invoiceId` para editar/borrar | Solo `ganado`; el tope (subtotal con IVA/exportación + órdenes de cambio) se comprueba **contra lo almacenado dentro de la misma transacción** (dos facturas simultáneas no pueden superarlo; tolerancia de 0,10 como la página); la factura de anticipo (índice 0) no se puede borrar | `opId` guardado en la factura | `saveInvoice` / `deleteInvoice` + aviso al borrar |
-| `savePaymentAdmin` / `deletePaymentAdmin` | monto, método, referencia, comprobante; `paymentKey` (id del abono, o su `fecha` en abonos históricos) para editar/borrar | Solo `ganado`; tope de saldo de la factura; `retencion_1pct` solo si el cliente es gran contribuyente; **se direccionan por clave, no por posición** | `opId` guardado en el abono | `savePayment` / `deletePayment` + aviso al borrar |
+| `saveChangeOrderAdmin` / `deleteChangeOrderAdmin` | tipo, descripción, importes, archivos; `orderId` para editar/borrar | **Solo manager y gestor** (vendedor denegado). Requisito: haber entrado a postcierre (`hasEnteredPostclosing`); alta por `opId`; borrado por `id` | reintento con el mismo `opId` no duplica; borrar lo ya borrado → `absent` | `saveChangeOrder` / `deleteChangeOrder` + aviso en `audit_logs_*` al borrar |
+| `saveInvoiceAdmin` / `deleteInvoiceAdmin` | número, monto, archivo; `invoiceId` para editar/borrar | **Solo manager y gestor** (vendedor denegado). Requisito: haber entrado a postcierre (`hasEnteredPostclosing`); tope transaccional de saldo; factura de anticipo no eliminable | `opId` guardado en la factura | `saveInvoice` / `deleteInvoice` + aviso al borrar |
+| `savePaymentAdmin` / `deletePaymentAdmin` | monto, método, referencia, comprobante; `paymentKey` para editar/borrar | **Solo manager y gestor** (vendedor denegado). Requisito: haber entrado a postcierre (`hasEnteredPostclosing`); tope de saldo de la factura; retención 1% solo gran contribuyente | `opId` guardado en el abono | `savePayment` / `deletePayment` + aviso al borrar |
 | `deleteProspectAdmin` | `prospectId`, `motivo` (obligatorio) | **Solo gerente (en vivo)**. **Eliminación lógica** (§7.4): marca `eliminado`, quién, cuándo y por qué; no borra el documento, ni `proyectos_fabricacion`, ni archivos | ya eliminada → `unchanged`; inexistente → `absent` | `deleteProspect` (`detail.logical: true`) + aviso en `audit_logs_*` con el motivo |
 | `reactivateLostProspectAdmin` | `prospectId`, `motivo` (obligatorio) | **Solo gerente (en vivo)**. **Reactivación de proyecto perdido** (§7.5): restaura estado a `activo` en la etapa comercial previa; archiva `historial_perdidas` y `ultima_perdida`; remueve `motivo_perdida` y `fecha_perdida` del documento raíz; sincroniza atómicamente `visibleTo` del cliente y `closingVendors` si la etapa restaurada es `cierre` | reintento con mismo motivo → `unchanged`; estado activo/ganado/eliminado → rechazo | `commercialAudit_*` (`reactivateProspect`) + log de sistema en la oportunidad |
 
@@ -354,3 +354,67 @@ inalterable hasta endurecer las reglas.
 4. Quién (si alguien) podrá restaurar o consultar oportunidades eliminadas.
 5. `solicitudes_sin_contrato` y `eliminado*` solo serán inalterables desde el navegador cuando se endurezcan las reglas (excluido en esta fase).
 6. Las notificaciones al gerente son por estado: el gerente ve la solicitud pendiente en la oportunidad; no hay aviso push/correo.
+
+### 7.7 Modelo definitivo de permisos comerciales y cierre de seguridad (SEC-04 / SEC-06)
+
+Implementado y verificado el modelo estricto de tres perfiles para resolver definitivamente las brechas de permisos comerciales:
+
+#### 1. Matriz de permisos por perfil y operación
+
+| Operación | Gerente (`manager`) | Gestor (`gestor`) | Vendedor (`vendedor`) | Justificación / Mecanismo de seguridad |
+|---|---|---|---|---|
+| **Consultar oportunidades (Leads ordinarios)** | Todas | Solo los que ingresó originalmente (`createdBy == me`) | Solo asignados (`vendedorId == me`) o propios | Aislamiento horizontal estricto en Firestore Rules (`allow list/get`) y `canAccessProspect`. |
+| **Consultar «Proyectos y cobros» (Postcierre)** | Todos | Proyectos que entraron válidamente a postcierre (`hasEnteredPostclosing`) | **PROHIBIDO** | Vendedores denegados en UI (menú, rutas, vistas), Firestore rules y funciones backend. |
+| **Crear oportunidad** | Sí (puede asignar a cualquier vendedor) | Sí (puede asignar a vendedor o gestionar él mismo) | Sí (solo a su propio nombre) | Asignación a terceros en creación requiere rol privilegiado (`manager`/`gestor`). |
+| **Avanzar etapa (prospecto→levantamiento→cotización→negociación→cierre)** | Sí | Solo en sus propios leads | Solo en leads asignados a su cargo | Vendedores no pueden modificar oportunidades ajenas; gestores no pueden alterar leads de vendedores. |
+| **Reasignar oportunidad (`reassign`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida identidad en vivo con `requireManager(caller, 'reasignar oportunidades')`. |
+| **Editar precio base (`editBasePrice`)** | Sí (proyectos activos antes del cierre) | Sí (solo en leads creados por él) | **Prohibido** | Política comercial: los vendedores no pueden alterar precios base fuera del flujo de cotización. |
+| **Operaciones postcierre (facturas, pagos, órdenes de cambio)** | Sí | Sí (en expedientes con postcierre habilitado) | **Prohibido** | `POLICY` restringe a `['manager', 'gestor']`. Verificación en backend de `hasEnteredPostclosing`. |
+| **Reactivar proyectos perdidos (`reactivateLostProspect`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida con `requireManager`. |
+| **Eliminar oportunidad lógicamente (`deleteProspect`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida con `requireManager`. |
+| **Ajustes y Configuración (`updateSettings`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida con `requireManager`. |
+
+#### 2. Separación entre atribución original y responsable actual
+
+- **Atribución de comisiones inmutable:** `createdBy` representa al creador original del lead y **permanece estrictamente inmutable** a lo largo de todo el ciclo de vida del expediente. Ninguna operación comercial ni reasignación puede alterar `createdBy`.
+- **Responsable operativo actual:** `vendedorId` representa al responsable comercial operativo actual de la venta.
+- **Autoridad de reasignación:** Solo un gerente verificado en vivo puede reasignar un lead (`reassignProspectAdmin`). Gestores y vendedores que intenten reasignar son rechazados con `permission-denied`.
+- **Recálculo transaccional de visibilidad en clientes:**
+  - Al reasignar, el nuevo vendedor (`target.cid`) se agrega a `clients.visibleTo` (y a `clients.closingVendors` si la oportunidad está en etapa `cierre`).
+  - El vendedor anterior (`oldVendor`) se remueve de `clients.visibleTo` **si y solo si** no es el creador del cliente (`oldVendor !== client.createdBy`) y no conserva ninguna otra oportunidad activa o no eliminada vinculada a dicho cliente.
+  - El vendedor anterior se remueve de `clients.closingVendors` si no conserva ninguna otra oportunidad en etapa `cierre`.
+  - El cálculo se ejecuta atómicamente dentro de la transacción de reasignación.
+- **Historial y auditoría:** Cada reasignación registra en el historial del expediente quién autorizó la reasignación, el responsable anterior, el nuevo y la fecha (`logs`). Adicionalmente, escribe en `commercialAudit_*` un evento con `action: 'reassignProspect'` registrando `from`, `to`, `authorizedBy` y fecha del servidor.
+
+#### 3. Acceso persistente a «Proyectos y cobros» (Postcierre)
+
+- **Criterio de entrada:** Una oportunidad ingresa válidamente a postcierre cuando completa la transición a la etapa `cierre` cumpliendo todos los requisitos contractuales y de facturación de anticipo.
+- **Marcador persistente (`postcierre_habilitado`):**
+  - Al avanzar exitosamente a la etapa `cierre`, el servidor estampa de manera irreversible:
+    ```javascript
+    patch.postcierre_habilitado = true;
+    patch.fecha_postcierre = at;
+    ```
+- **Helper canónico (`hasEnteredPostclosing`):**
+  Reutiliza de forma determinista tanto el nuevo marcador persistente como los indicadores históricos equivalentes:
+  ```javascript
+  function hasEnteredPostclosing(p) {
+    if (!p || typeof p !== 'object') return false;
+    return p.postcierre_habilitado === true
+      || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
+      || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre)
+      || (Array.isArray(p.facturas) && p.facturas.length > 0);
+  }
+  ```
+- **Persistencia ante cambios de estado posteriores:**
+  Una vez que un proyecto tiene habilitado el postcierre, el gestor conserva acceso a «Proyectos y cobros» para consultar el expediente y registrar pagos o ajustes, **incluso si el proyecto pasa posteriormente a estado `perdido` o es cancelado**.
+- **No dependencia de `estado: 'ganado'` en cliente:** El acceso no depende de una bandera mutable enviada por el navegador, sino de la verificación server-side de `hasEnteredPostclosing(p)`.
+
+#### 4. Procedimiento de migración histórica para `postcierre_habilitado` (Solo Documentación — No ejecutar en producción)
+
+Si en el futuro se requiriera unificar formalmente el campo `postcierre_habilitado` en todos los documentos históricos de `prospects_prod`, el procedimiento idempotente es:
+1. **Fase de simulación obligatoria:** Ejecutar en modo solo lectura (`dry-run`) identificando proyectos que cumplen `hasEnteredPostclosing(p) === true` pero carecen de `postcierre_habilitado: true`.
+2. **Procesamiento por lotes (`batch` ≤ 250 docs):** Escribir `{ postcierre_habilitado: true, fecha_postcierre: p.fecha_cierre || p.stage_timestamps?.cierre || p.fecha_creacion }` únicamente en los documentos identificados.
+3. **Inmutabilidad de campos comerciales:** Ningún otro campo (`createdBy`, `vendedorId`, importes, facturas) debe ser modificado.
+4. **Reversibilidad y registro:** Almacenar el registro de cambios previo/posterior en una colección de migración.
+> **Importante:** Conforme a las restricciones de seguridad del proyecto, este procedimiento queda únicamente documentado y **no se ejecuta en producción**.

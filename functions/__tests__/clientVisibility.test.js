@@ -317,7 +317,8 @@ describe('static guards', () => {
 
   test('the opportunity list still uses the criterion this logic mirrors', () => {
     const list = between('function renderList', 'function renderProjectsList');
-    expect(list).toContain('p.createdBy === currentUser.id || p.vendedorId === currentUser.id');
+    expect(list).toContain('p.createdBy === currentUser.id');
+    expect(list).toContain('p.vendedorId === currentUser.id');
   });
 
   test('getVisibleClients contains no writes to stored fields', () => {

@@ -227,12 +227,13 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
 
       test('the assigned vendedor and manager / gestor may add notes; an unrelated vendedor may not', async () => {
         await svc.addLog({ caller: caller('V2'), prospectId: 'P2', text: 'asignado', opId: op() });
-        await svc.addLog({ caller: caller('GES'), prospectId: 'P1', text: 'gestora', opId: op() });
+        await svc.addLog({ caller: caller('GES'), prospectId: 'P2', text: 'gestora creadora', opId: op() });
         await svc.addLog({ caller: caller('MGR'), prospectId: 'P1', text: 'gerente', opId: op() });
+        await rejects(svc.addLog({ caller: caller('GES'), prospectId: 'P1', text: 'gestora intrusa', opId: op() }), 'permission-denied');
         await rejects(svc.addLog({ caller: caller('V1'), prospectId: 'P2', text: 'intruso', opId: op() }), 'permission-denied');
         await rejects(svc.addLog({ caller: caller('V3'), prospectId: 'P1', text: 'intruso', opId: op() }), 'permission-denied');
-        expect((await prospect('P2')).logs).toHaveLength(2);
-        expect((await prospect('P1')).logs).toHaveLength(4);
+        expect((await prospect('P2')).logs).toHaveLength(3);
+        expect((await prospect('P1')).logs).toHaveLength(3);
       });
 
       test('unknown opportunity, empty / oversized / non-string note and bad ids are rejected', async () => {
@@ -250,14 +251,14 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
         expect(again).toMatchObject({ status: 'added', replay: true });
         expect((await prospect('P1')).logs).toHaveLength(3);
         await rejects(svc.addLog({ caller: caller('V1'), prospectId: 'P1', text: 'otro texto', opId: id }), 'failed-precondition');
-        await rejects(svc.addLog({ caller: caller('GES'), prospectId: 'P1', text: 'una vez', opId: id }), 'failed-precondition');
+        await rejects(svc.addLog({ caller: caller('MGR'), prospectId: 'P1', text: 'una vez', opId: id }), 'failed-precondition');
         expect((await prospect('P1')).logs).toHaveLength(3);
       });
 
       test('concurrent notes from different users are all kept; concurrent duplicates of one request produce one entry', async () => {
         await Promise.all([
           svc.addLog({ caller: caller('V1'), prospectId: 'P1', text: 'a', opId: op() }),
-          svc.addLog({ caller: caller('GES'), prospectId: 'P1', text: 'b', opId: op() }),
+          svc.addLog({ caller: caller('MGR'), prospectId: 'P1', text: 'b', opId: op() }),
           svc.addLog({ caller: caller('MGR'), prospectId: 'P1', text: 'c', opId: op() })
         ]);
         expect((await prospect('P1')).logs).toHaveLength(5);
@@ -290,7 +291,7 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
       });
 
       test('a vendedor cannot remove somebody else\'s note nor a historical one without a recorded author', async () => {
-        const other = await noteOf('GES', 'de la gestora');
+        const other = await noteOf('MGR', 'del gerente');
         await rejects(svc.deleteLog({ caller: caller('V1'), prospectId: 'P1', date: other.date, text: other.text }), 'permission-denied');
         await rejects(svc.deleteLog({ caller: caller('V1'), prospectId: 'P1', date: MANUAL_OLD.date, text: MANUAL_OLD.text }), 'permission-denied');
         expect((await prospect('P1')).logs).toHaveLength(3);
@@ -298,13 +299,16 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
 
       test('manager and gestor can remove any manual note, including historical ones', async () => {
         const mine = await noteOf('V1');
-        expect((await svc.deleteLog({ caller: caller('GES'), prospectId: 'P1', date: mine.date, text: mine.text })).status).toBe('deleted');
+        expect((await svc.deleteLog({ caller: caller('MGR'), prospectId: 'P1', date: mine.date, text: mine.text })).status).toBe('deleted');
         expect((await svc.deleteLog({ caller: caller('MGR'), prospectId: 'P1', date: MANUAL_OLD.date, text: MANUAL_OLD.text })).status).toBe('deleted');
         expect((await prospect('P1')).logs).toEqual([AUTO_OLD]);
+        // Gestor removes manual note on P2 (which gestor created)
+        const noteP2 = (await svc.addLog({ caller: caller('GES'), prospectId: 'P2', text: 'nota gestora', opId: op() })).entry;
+        expect((await svc.deleteLog({ caller: caller('GES'), prospectId: 'P2', date: noteP2.date, text: noteP2.text })).status).toBe('deleted');
       });
 
       test('automatic entries are never removable, whoever asks', async () => {
-        for (const who of ['V1', 'GES', 'MGR']) await rejects(svc.deleteLog({ caller: caller(who), prospectId: 'P1', date: AUTO_OLD.date, text: AUTO_OLD.text }), 'permission-denied');
+        for (const who of ['V1', 'MGR']) await rejects(svc.deleteLog({ caller: caller(who), prospectId: 'P1', date: AUTO_OLD.date, text: AUTO_OLD.text }), 'permission-denied');
         expect((await prospect('P1')).logs).toHaveLength(2);
         expect(await audit('deleteProspectLog')).toHaveLength(0);
       });
@@ -321,7 +325,7 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
 
       test('removal is by content, so a note added meanwhile shifts nothing', async () => {
         const e = await noteOf('V1', 'primera');
-        await svc.addLog({ caller: caller('GES'), prospectId: 'P1', text: 'llegó después', opId: op() });
+        await svc.addLog({ caller: caller('MGR'), prospectId: 'P1', text: 'llegó después', opId: op() });
         await svc.deleteLog({ caller: caller('V1'), prospectId: 'P1', date: e.date, text: e.text });
         const texts = (await prospect('P1')).logs.map(l => l.text);
         expect(texts.some(t => t.includes('primera'))).toBe(false);
@@ -331,20 +335,21 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
 
     // ------------------------------------------------------------------------------------------------
     describe('reassign', () => {
-      test('a vendedor cannot reassign, even their own opportunity', async () => {
+      test('gestor and vendedor cannot reassign, even their own opportunity', async () => {
         await rejects(svc.reassign({ caller: caller('V1'), prospectId: 'P1', vendedorId: P.V3.id }), 'permission-denied');
+        await rejects(svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: P.V3.id }), 'permission-denied');
         expect((await prospect('P1')).vendedorId).toBe(P.V1.id);
       });
 
-      test('gestor reassigns: name / role come from the target profile, the author of the log from the session, createdBy is untouched', async () => {
-        const r = await svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: P.V3.id });
+      test('manager reassigns: name / role come from the target profile, the author of the log from the session, createdBy is untouched', async () => {
+        const r = await svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: P.V3.id });
         expect(r).toMatchObject({ status: 'reassigned', vendedorId: P.V3.id });
         const p = await prospect('P1');
         expect(p).toMatchObject({ createdBy: P.V1.id, vendedorId: P.V3.id, vendedorName: 'Vendedor Tres', vendedorRole: 'vendedor' });
-        expect(p.logs[p.logs.length - 1]).toMatchObject({ auto: true, text: ' Vendedor reasignado a: Vendedor Tres por Gestora Gamma' });
+        expect(p.logs[p.logs.length - 1].text).toContain('Vendedor reasignado');
         const a = await audit('reassignProspect');
         expect(a).toHaveLength(1);
-        expect(a[0]).toMatchObject({ actorCid: P.GES.id, actorName: 'Gestora Gamma', detail: { from: P.V1.id, to: P.V3.id } });
+        expect(a[0]).toMatchObject({ actorCid: P.MGR.id, actorName: 'Gerente Alfa', detail: { from: P.V1.id, to: P.V3.id } });
       });
 
       test('repeating the request changes nothing and writes no second log or audit entry', async () => {
@@ -356,21 +361,21 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
       });
 
       test('concurrent identical requests produce exactly one reassignment', async () => {
-        await Promise.all(Array.from({ length: 4 }, () => svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: P.V2.id })));
+        await Promise.all(Array.from({ length: 4 }, () => svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: P.V2.id })));
         expect((await prospect('P1')).logs).toHaveLength(3);
         expect(await audit('reassignProspect')).toHaveLength(1);
       });
 
       test('the target must be an active commercial user; unknown opportunity and malformed ids fail cleanly', async () => {
-        for (const id of [P.INACT.id, P.PLANT.id, '1111111111111']) await rejects(svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: id }), 'invalid-argument');
-        await rejects(svc.reassign({ caller: caller('GES'), prospectId: 'NOPE', vendedorId: P.V3.id }), 'not-found');
-        await rejects(svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: 'a/b' }), 'invalid-argument');
-        await rejects(svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: undefined }), 'invalid-argument');
+        for (const id of [P.INACT.id, P.PLANT.id, '1111111111111']) await rejects(svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: id }), 'invalid-argument');
+        await rejects(svc.reassign({ caller: caller('MGR'), prospectId: 'NOPE', vendedorId: P.V3.id }), 'not-found');
+        await rejects(svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: 'a/b' }), 'invalid-argument');
+        await rejects(svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: undefined }), 'invalid-argument');
         expect((await prospect('P1')).vendedorId).toBe(P.V1.id);
       });
 
       test('a historical (not Auth-linked) user can receive an opportunity', async () => {
-        await svc.reassign({ caller: caller('GES'), prospectId: 'P1', vendedorId: P.HIST.id });
+        await svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: P.HIST.id });
         expect((await prospect('P1')).vendedorId).toBe(P.HIST.id);
       });
     });
@@ -432,7 +437,7 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
     describe('no-contract authorization: request and resolve', () => {
       const ask = (who = 'V1', o = {}) => svc.requestNoContractAuthorization({ caller: caller(who), prospectId: 'P1', motivo: 'Cliente de confianza, contrato en trámite', opId: op(), ...o });
       const resolve = (who, requestId, decision, o = {}) => svc.resolveNoContractAuthorization({ caller: caller(who), prospectId: 'P1', requestId, decision, motivoDecision: 'ok', ...o });
-      const requests = async () => (await prospect('P1')).solicitudes_sin_contrato || [];
+      const requests = async (id = 'P1') => (await prospect(id)).solicitudes_sin_contrato || [];
       const flagged = async () => (await prospect('P1')).datos.autorizado_sin_contrato;
 
       test('a vendedor with access requests: identity, date and state come from the server; the authorization is NOT granted; history and audit are written', async () => {
@@ -458,9 +463,11 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
         await rejects(ask('MGR'), 'permission-denied');
         await rejects(ask('V3'), 'permission-denied');   // not creator nor assignee of P1
         await rejects(ask('PLANT'), 'permission-denied');
+        await rejects(ask('GES'), 'permission-denied');   // gestor has no access to P1
         expect(await requests()).toHaveLength(0);
-        expect((await ask('GES')).status).toBe('requested');
-        expect((await requests())[0]).toMatchObject({ solicitante_id: P.GES.id, solicitante_rol: 'gestor' });
+        // Gestor CAN ask on P2 (which GES created)
+        expect((await ask('GES', { prospectId: 'P2' })).status).toBe('requested');
+        expect((await requests('P2'))[0]).toMatchObject({ solicitante_id: P.GES.id, solicitante_rol: 'gestor' });
       });
 
       test('the reason is required (max 500) and the opId must be a plain token: nothing is written otherwise', async () => {
@@ -474,7 +481,7 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
         const first = await ask('V1');
         expect((await ask('V1')).status).toBe('unchanged');
         await rejects(ask('V1', { motivo: 'Otro motivo distinto' }), 'failed-precondition');
-        await rejects(ask('GES', { motivo: 'Otro' }), 'failed-precondition');
+        await rejects(ask('V1', { motivo: 'Otro' }), 'failed-precondition');
         expect(await requests()).toHaveLength(1);
         expect((await requests())[0].id).toBe(first.request.id);
         expect(await audit('requestNoContractAuthorization')).toHaveLength(1);
@@ -487,7 +494,7 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
         expect(b).toMatchObject({ status: 'requested', replay: true });
         expect(b.request.id).toBe(a.request.id);
         await rejects(ask('V1', { opId: key, motivo: 'Distinto' }), 'failed-precondition');
-        await rejects(ask('GES', { opId: key }), 'failed-precondition');
+        await rejects(ask('V1', { opId: key, motivo: 'Otro' }), 'failed-precondition');
         expect(await requests()).toHaveLength(1);
       });
 

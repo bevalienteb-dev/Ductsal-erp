@@ -72,6 +72,18 @@ function defineWorkflowSuite({ label, makeEnv }) {
         expect(await prospect('W1')).toEqual(before);
         expect(await audit()).toHaveLength(0);
       });
+      test('even the creator/owner vendedor is refused on postclosing operations (saveInvoice, savePayment, saveChangeOrder, deleteInvoice, deletePayment, deleteChangeOrder)', async () => {
+        await put(won());
+        const POST_OPS = {
+          saveInvoice: () => wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'B', monto: 1, doc_factura: file('f.pdf'), opId: op() }),
+          savePayment: () => wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', monto: 1, metodo: 'cheque', ref: 'r', doc_comprobante: file('c.pdf'), opId: op() }),
+          saveChangeOrder: () => wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', tipo: 'aumento', desc: 'd', precio: 1, costo: 1, opId: op() }),
+          deleteInvoice: () => wf.deleteInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1' }),
+          deletePayment: () => wf.deletePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'k' }),
+          deleteChangeOrder: () => wf.deleteChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'O1' })
+        };
+        for (const [name, run] of Object.entries(POST_OPS)) await rejects(run(), 'permission-denied');
+      });
       test('a plant role (operario) cannot use the commercial workflow, even if it is the creator', async () => {
         await put(won({ createdBy: P.PLANT.id }));
         await rejects(wf.editBasePrice({ caller: caller('PLANT'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x' }), 'permission-denied');
@@ -276,7 +288,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
           await put(negociacion());
           const [a, b] = await Promise.all([
             wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE }),
-            wf.advanceStage({ caller: caller('GES'), prospectId: 'W1', nextStage: 'cierre', data: CIE })
+            wf.advanceStage({ caller: caller('MGR'), prospectId: 'W1', nextStage: 'cierre', data: CIE })
           ]);
           expect([a.status, b.status].sort()).toEqual(['advanced', 'unchanged']);
           const p = await prospect('W1');
@@ -351,7 +363,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
       const toClose = (o = {}) => opp({ etapa: 'negociacion', tipo_proyecto: 'Fabricación e instalación', datos: { doc_oferta: [file('of.pdf')], doc_costos: [file('co.pdf')] }, ...o });
 
       test('editBasePrice by gestor / manager needs a reason, records old and new values and who, and a repeat is unchanged', async () => {
-        await put(opp({ etapa: 'negociacion' }));
+        await put(opp({ etapa: 'negociacion', createdBy: P.GES.id }));
         await rejects(editBase('GES', { motivo: '' }), 'invalid-argument');
         await rejects(editBase('GES', { precio: -1, motivo: 'x' }), 'invalid-argument');
         const r = await editBase('GES');
@@ -375,7 +387,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
 
       test('refused after the closing or the loss: the STORED state decides, whatever the interface believed or sent', async () => {
-        for (const stored of [won(), opp({ etapa: 'negociacion', estado: 'perdido', motivo_perdida: 'Precio' })]) {
+        for (const stored of [won({ createdBy: P.GES.id }), opp({ etapa: 'negociacion', estado: 'perdido', motivo_perdida: 'Precio', createdBy: P.GES.id })]) {
           await put(stored);
           const before = await prospect('W1');
           for (const who of ['MGR', 'GES']) {
@@ -388,7 +400,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
 
       test('effect on quotes and advances: before the closing the corrected price is the one the advance invoice is computed from; after it the edit is refused, so existing invoices are never recomputed', async () => {
-        await put(toClose({ precio_cotizado: 10000, costo_venta: 6000 }));
+        await put(toClose({ precio_cotizado: 10000, costo_venta: 6000, createdBy: P.GES.id, vendedorId: P.V1.id }));
         await editBase('GES', { precio: 8000, costo: 5000 });
         await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE_BASE });
         const closed = await prospect('W1');
@@ -420,10 +432,10 @@ function defineWorkflowSuite({ label, makeEnv }) {
     describe('change orders', () => {
       const CO = { tipo: 'aumento', desc: 'Ducto adicional', precio: 1000, costo: 600 };
       test('requires a won project; creates with generated id, documents indexed under the project documents', async () => {
-        await put(opp({ etapa: 'negociacion' }));
-        await rejects(wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, opId: op() }), 'failed-precondition');
+        await put(opp({ etapa: 'negociacion', createdBy: P.GES.id }));
+        await rejects(wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, opId: op() }), 'failed-precondition');
         await put(won());
-        const r = await wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, doc_oferta: file('o.pdf'), doc_costos: file('c.pdf'), opId: op() });
+        const r = await wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, doc_oferta: file('o.pdf'), doc_costos: file('c.pdf'), opId: op() });
         expect(r.status).toBe('created');
         const p = await prospect('W1');
         expect(p.ordenes_cambio).toHaveLength(1);
@@ -437,14 +449,14 @@ function defineWorkflowSuite({ label, makeEnv }) {
       test('retrying a creation with the same opId does not duplicate; the same opId with other data is refused', async () => {
         await put(won());
         const id = op();
-        await wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, opId: id });
-        expect((await wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, opId: id })).replay).toBe(true);
-        await rejects(wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, precio: 5, opId: id }), 'failed-precondition');
+        await wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, opId: id });
+        expect((await wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, opId: id })).replay).toBe(true);
+        await rejects(wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, precio: 5, opId: id }), 'failed-precondition');
         expect((await prospect('W1')).ordenes_cambio).toHaveLength(1);
       });
       test('validates type, description, money and attachments', async () => {
         await put(won());
-        const run = o => wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', ...CO, opId: op(), ...o });
+        const run = o => wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', ...CO, opId: op(), ...o });
         await rejects(run({ tipo: 'regalo' }), 'invalid-argument');
         await rejects(run({ desc: '' }), 'invalid-argument');
         await rejects(run({ precio: -1 }), 'invalid-argument');
@@ -454,25 +466,25 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('edits by id (not by position), keeps untouched fields and documents; an unknown id is not-found; identical edit is unchanged', async () => {
         await put(won({ ordenes_cambio: [{ id: 'O1', tipo: 'aumento', desc: 'a', precio: 100, costo: 50, doc_oferta: file('o1.pdf') }, { id: 'O2', tipo: 'disminucion', desc: 'b', precio: 10, costo: 5 }] }));
-        const r = await wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'O2', tipo: 'disminucion', desc: 'b2', precio: 20, costo: 5 });
+        const r = await wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', orderId: 'O2', tipo: 'disminucion', desc: 'b2', precio: 20, costo: 5 });
         expect(r.status).toBe('updated');
         const p = await prospect('W1');
         expect(p.ordenes_cambio[0]).toMatchObject({ id: 'O1', desc: 'a', doc_oferta: file('o1.pdf') });
         expect(p.ordenes_cambio[1]).toMatchObject({ id: 'O2', desc: 'b2', precio: 20 });
-        await rejects(wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'ZZ', tipo: 'aumento', desc: 'x', precio: 1, costo: 1 }), 'not-found');
-        expect((await wf.saveChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'O2', tipo: 'disminucion', desc: 'b2', precio: 20, costo: 5 })).status).toBe('unchanged');
+        await rejects(wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', orderId: 'ZZ', tipo: 'aumento', desc: 'x', precio: 1, costo: 1 }), 'not-found');
+        expect((await wf.saveChangeOrder({ caller: caller('GES'), prospectId: 'W1', orderId: 'O2', tipo: 'disminucion', desc: 'b2', precio: 20, costo: 5 })).status).toBe('unchanged');
         expect(await audit('editChangeOrder')).toHaveLength(1);
       });
       test('deleting removes only that order, writes the audit and the panel notice with the real identity; repeating is absent', async () => {
         await put(won({ ordenes_cambio: [{ id: 'O1', tipo: 'aumento', desc: 'a', precio: 100, costo: 50 }, { id: 'O2', tipo: 'aumento', desc: 'b', precio: 10, costo: 5 }] }));
-        const r = await wf.deleteChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'O1' });
+        const r = await wf.deleteChangeOrder({ caller: caller('GES'), prospectId: 'W1', orderId: 'O1' });
         expect(r.status).toBe('deleted');
         expect((await prospect('W1')).ordenes_cambio.map(o => o.id)).toEqual(['O2']);
-        expect((await audit('deleteChangeOrder'))[0]).toMatchObject({ actorCid: P.V1.id, detail: { orderId: 'O1' } });
+        expect((await audit('deleteChangeOrder'))[0]).toMatchObject({ actorCid: P.GES.id, detail: { orderId: 'O1' } });
         const n = await notices();
         expect(n).toHaveLength(1);
-        expect(n[0]).toMatchObject({ usuario: 'Vendedor Uno', usuarioId: P.V1.id, usuarioUid: 'uid-v1', proyectoId: 'W1', proyectoNombre: 'Industrias Delta', item: 'Orden de Cambio', source: 'callable' });
-        expect((await wf.deleteChangeOrder({ caller: caller('V1'), prospectId: 'W1', orderId: 'O1' })).status).toBe('absent');
+        expect(n[0]).toMatchObject({ usuario: 'Gestora Gamma', usuarioId: P.GES.id, usuarioUid: 'uid-ges', proyectoId: 'W1', proyectoNombre: 'Industrias Delta', item: 'Orden de Cambio', source: 'callable' });
+        expect((await wf.deleteChangeOrder({ caller: caller('GES'), prospectId: 'W1', orderId: 'O1' })).status).toBe('absent');
         expect(await notices()).toHaveLength(1);
       });
     });
@@ -482,8 +494,8 @@ function defineWorkflowSuite({ label, makeEnv }) {
       const INV = n => ({ numero: n, monto: 1000, doc_factura: file(`${n}.pdf`) });
       test('creates an invoice within the remaining balance (13% VAT, change orders counted); the document is required', async () => {
         await put(won());
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'B', monto: 1000, opId: op() }), 'invalid-argument');
-        const r = await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-1'), opId: op() });
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'B', monto: 1000, opId: op() }), 'invalid-argument');
+        const r = await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-1'), opId: op() });
         expect(r.status).toBe('created');
         const p = await prospect('W1');
         expect(p.facturas).toHaveLength(2);
@@ -493,35 +505,35 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('refuses what exceeds the balance (tolerance 0.10); an increase order raises the ceiling; an export client has no VAT', async () => {
         await put(won());
-        const e = await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'X', monto: 3390.2, doc_factura: file('x.pdf'), opId: op() }), 'failed-precondition');
+        const e = await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'X', monto: 3390.2, doc_factura: file('x.pdf'), opId: op() }), 'failed-precondition');
         expect(e.message).toMatch(/excede el saldo/);
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'X', monto: 3390.1, doc_factura: file('x.pdf'), opId: op() })).status).toBe('created');
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'X', monto: 3390.1, doc_factura: file('x.pdf'), opId: op() })).status).toBe('created');
         await put(won({ ordenes_cambio: [{ id: 'O1', tipo: 'aumento', desc: 'a', precio: 1000, costo: 1 }] }));
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'Y', monto: 4520, doc_factura: file('y.pdf'), opId: op() })).status).toBe('created');
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'Y', monto: 4520, doc_factura: file('y.pdf'), opId: op() })).status).toBe('created');
         await put(won({ clientId: 'CX', facturas: [{ id: 'F1', numero: 'A-1', monto: 7000, pagos: [] }] }));
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'Z', monto: 3000.5, doc_factura: file('z.pdf'), opId: op() }), 'failed-precondition');
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'Z', monto: 3000, doc_factura: file('z.pdf'), opId: op() })).status).toBe('created');
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'Z', monto: 3000.5, doc_factura: file('z.pdf'), opId: op() }), 'failed-precondition');
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'Z', monto: 3000, doc_factura: file('z.pdf'), opId: op() })).status).toBe('created');
       });
       test('a decrease order lowers the ceiling', async () => {
         await put(won({ ordenes_cambio: [{ id: 'O1', tipo: 'disminucion', desc: 'a', precio: 1000, costo: 1 }] }));
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'X', monto: 2300, doc_factura: file('x.pdf'), opId: op() }), 'failed-precondition');
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'X', monto: 2260, doc_factura: file('x.pdf'), opId: op() })).status).toBe('created');
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'X', monto: 2300, doc_factura: file('x.pdf'), opId: op() }), 'failed-precondition');
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'X', monto: 2260, doc_factura: file('x.pdf'), opId: op() })).status).toBe('created');
       });
       test('same opId does not duplicate; money must be positive; requires won', async () => {
         await put(won());
         const id = op();
-        await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-1'), opId: id });
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-1'), opId: id })).replay).toBe(true);
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-1'), monto: 5, opId: id }), 'failed-precondition');
+        await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-1'), opId: id });
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-1'), opId: id })).replay).toBe(true);
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-1'), monto: 5, opId: id }), 'failed-precondition');
         expect((await prospect('W1')).facturas).toHaveLength(2);
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-2'), monto: 0, opId: op() }), 'invalid-argument');
-        await put(opp());
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', ...INV('B-3'), opId: op() }), 'failed-precondition');
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-2'), monto: 0, opId: op() }), 'invalid-argument');
+        await put(opp({ createdBy: P.GES.id }));
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', ...INV('B-3'), opId: op() }), 'failed-precondition');
       });
       test('two simultaneous invoices that fit alone but not together: exactly one is accepted', async () => {
         await put(won());
         const res = await Promise.allSettled([
-          wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', numero: 'P1', monto: 2000, doc_factura: file('p1.pdf'), opId: op() }),
+          wf.saveInvoice({ caller: caller('MGR'), prospectId: 'W1', numero: 'P1', monto: 2000, doc_factura: file('p1.pdf'), opId: op() }),
           wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', numero: 'P2', monto: 2000, doc_factura: file('p2.pdf'), opId: op() })
         ]);
         expect(res.filter(r => r.status === 'fulfilled')).toHaveLength(1);
@@ -530,21 +542,21 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('edits an invoice by id keeping its payments; the advance invoice stays editable; unknown id is not-found', async () => {
         await put(won({ facturas: [{ id: 'F1', numero: 'A-1', monto: 7910, pagos: [{ id: 'PA', monto: 100, metodo: 'cheque', ref: 'r', fecha: 'd' }], fecha: 'x' }] }));
-        const r = await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', numero: 'A-1b', monto: 8000 });
+        const r = await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', numero: 'A-1b', monto: 8000 });
         expect(r.status).toBe('updated');
         expect((await prospect('W1')).facturas[0]).toMatchObject({ id: 'F1', numero: 'A-1b', monto: 8000, pagos: [{ id: 'PA', monto: 100 }] });
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'NOPE', numero: 'a', monto: 1 }), 'not-found');
-        await rejects(wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', numero: 'a', monto: 12000 }), 'failed-precondition');
-        expect((await wf.saveInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', numero: 'A-1b', monto: 8000 })).status).toBe('unchanged');
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'NOPE', numero: 'a', monto: 1 }), 'not-found');
+        await rejects(wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', numero: 'a', monto: 12000 }), 'failed-precondition');
+        expect((await wf.saveInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', numero: 'A-1b', monto: 8000 })).status).toBe('unchanged');
       });
       test('the first (advance) invoice cannot be deleted; others can, with audit and panel notice; repeating is absent', async () => {
         await put(won({ facturas: [{ id: 'F1', numero: 'A-1', monto: 7910, pagos: [] }, { id: 'F2', numero: 'A-2', monto: 100, pagos: [{ id: 'q', monto: 10 }] }] }));
-        await rejects(wf.deleteInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1' }), 'failed-precondition');
-        expect((await wf.deleteInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F2' })).status).toBe('deleted');
+        await rejects(wf.deleteInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1' }), 'failed-precondition');
+        expect((await wf.deleteInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F2' })).status).toBe('deleted');
         expect((await prospect('W1')).facturas.map(f => f.id)).toEqual(['F1']);
         expect((await audit('deleteInvoice'))[0].detail).toMatchObject({ invoiceId: 'F2', payments: 1 });
-        expect((await notices())[0]).toMatchObject({ item: 'Factura', usuarioId: P.V1.id });
-        expect((await wf.deleteInvoice({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F2' })).status).toBe('absent');
+        expect((await notices())[0]).toMatchObject({ item: 'Factura', usuarioId: P.GES.id });
+        expect((await wf.deleteInvoice({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F2' })).status).toBe('absent');
       });
     });
 
@@ -553,8 +565,8 @@ function defineWorkflowSuite({ label, makeEnv }) {
       const PAY = { monto: 1000, metodo: 'transferencia', ref: 'REF-1', doc_comprobante: file('pago.pdf') };
       test('registers a payment on an invoice with generated id; proof is required', async () => {
         await put(won());
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, doc_comprobante: undefined, opId: op() }), 'invalid-argument');
-        const r = await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: op() });
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, doc_comprobante: undefined, opId: op() }), 'invalid-argument');
+        const r = await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: op() });
         expect(r.status).toBe('created');
         const p = await prospect('W1');
         expect(p.facturas[0].pagos).toHaveLength(1);
@@ -564,31 +576,31 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('refuses a payment above the pending balance of the invoice (tolerance 0.10) and an unknown invoice / method', async () => {
         await put(won());
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 7910.2, opId: op() }), 'failed-precondition');
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'NOPE', ...PAY, opId: op() }), 'not-found');
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'efectivo', opId: op() }), 'invalid-argument');
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 0, opId: op() }), 'invalid-argument');
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, ref: '', opId: op() }), 'invalid-argument');
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 7910.1, opId: op() })).status).toBe('created');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 7910.2, opId: op() }), 'failed-precondition');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'NOPE', ...PAY, opId: op() }), 'not-found');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'efectivo', opId: op() }), 'invalid-argument');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 0, opId: op() }), 'invalid-argument');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, ref: '', opId: op() }), 'invalid-argument');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 7910.1, opId: op() })).status).toBe('created');
       });
       test('the 1% retention exists only for large-taxpayer clients', async () => {
         await put(won());
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() }), 'failed-precondition');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() }), 'failed-precondition');
         await put(won({ clientId: 'CG' }));
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() })).status).toBe('created');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() })).status).toBe('created');
       });
       test('same opId does not duplicate the payment; other data with that opId is refused', async () => {
         await put(won());
         const id = op();
-        await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: id });
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: id })).replay).toBe(true);
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5, opId: id }), 'failed-precondition');
+        await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: id });
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, opId: id })).replay).toBe(true);
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5, opId: id }), 'failed-precondition');
         expect((await prospect('W1')).facturas[0].pagos).toHaveLength(1);
       });
       test('two simultaneous payments that exceed the balance together: exactly one is accepted', async () => {
         await put(won());
         const res = await Promise.allSettled([
-          wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5000, opId: op() }),
+          wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5000, opId: op() }),
           wf.savePayment({ caller: caller('MGR'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5000, opId: op() })
         ]);
         expect(res.filter(r => r.status === 'fulfilled')).toHaveLength(1);
@@ -597,26 +609,26 @@ function defineWorkflowSuite({ label, makeEnv }) {
       test('edits and deletes by key (id, or fecha for historical payments), never by position', async () => {
         await put(won({ facturas: [{ id: 'F1', numero: 'A-1', monto: 7910, pagos: [{ monto: 100, metodo: 'cheque', ref: 'old', fecha: '2026-02-02T00:00:00.000Z' }, { id: 'P2', monto: 200, metodo: 'cheque', ref: 'new', fecha: '2026-02-03T00:00:00.000Z' }] }] }));
         // Edit the historical payment by its fecha.
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: '2026-02-02T00:00:00.000Z', monto: 150, metodo: 'cheque', ref: 'old2' })).status).toBe('updated');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: '2026-02-02T00:00:00.000Z', monto: 150, metodo: 'cheque', ref: 'old2' })).status).toBe('updated');
         let p = await prospect('W1');
         expect(p.facturas[0].pagos.map(x => x.monto)).toEqual([150, 200]);
         expect(p.facturas[0].pagos[0].ref).toBe('old2');
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'NOPE', monto: 1, metodo: 'cheque', ref: 'r' }), 'not-found');
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2', monto: 200, metodo: 'cheque', ref: 'new' })).status).toBe('unchanged');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'NOPE', monto: 1, metodo: 'cheque', ref: 'r' }), 'not-found');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2', monto: 200, metodo: 'cheque', ref: 'new' })).status).toBe('unchanged');
         // A stale client that thinks the payment is at position 0 cannot delete the wrong one: only the key counts.
-        expect((await wf.deletePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2' })).status).toBe('deleted');
+        expect((await wf.deletePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2' })).status).toBe('deleted');
         p = await prospect('W1');
         expect(p.facturas[0].pagos).toHaveLength(1);
         expect(p.facturas[0].pagos[0].ref).toBe('old2');
-        expect((await wf.deletePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2' })).status).toBe('absent');
-        expect((await audit('deletePayment'))[0]).toMatchObject({ actorCid: P.V1.id, detail: { invoiceId: 'F1', monto: 200 } });
+        expect((await wf.deletePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P2' })).status).toBe('absent');
+        expect((await audit('deletePayment'))[0]).toMatchObject({ actorCid: P.GES.id, detail: { invoiceId: 'F1', monto: 200 } });
         expect((await notices()).filter(n => n.item === 'Abono')).toHaveLength(1);
-        await rejects(wf.deletePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'NOPE', paymentKey: 'P2' }), 'not-found');
+        await rejects(wf.deletePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'NOPE', paymentKey: 'P2' }), 'not-found');
       });
       test('an edit that would exceed the balance is refused; it does not count the payment being edited twice', async () => {
         await put(won({ facturas: [{ id: 'F1', numero: 'A-1', monto: 1000, pagos: [{ id: 'P1', monto: 600, metodo: 'cheque', ref: 'a', fecha: 'd1' }, { id: 'P2', monto: 400, metodo: 'cheque', ref: 'b', fecha: 'd2' }] }] }));
-        await rejects(wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P1', monto: 700, metodo: 'cheque', ref: 'a' }), 'failed-precondition');
-        expect((await wf.savePayment({ caller: caller('V1'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P1', monto: 600.05, metodo: 'cheque', ref: 'a2' })).status).toBe('updated');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P1', monto: 700, metodo: 'cheque', ref: 'a' }), 'failed-precondition');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', paymentKey: 'P1', monto: 600.05, metodo: 'cheque', ref: 'a2' })).status).toBe('updated');
       });
     });
 

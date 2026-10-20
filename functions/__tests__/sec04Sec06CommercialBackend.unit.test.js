@@ -149,16 +149,16 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
     });
 
     test('reassigning prospect to another vendor adds target to visibleTo and rejects inactive target', async () => {
-      // Intento reasignar a inactivo -> rechazado
+      // Inactivo rechazado por manager
       await expect(
         commSvc.reassign({
-          caller: caller('ges'),
+          caller: caller('mgr'),
           prospectId: 'P1',
           vendedorId: USERS.inact.id
         })
       ).rejects.toMatchObject({ code: 'invalid-argument' });
 
-      // Vendedor común no puede reasignar
+      // Ni vendedor ni gestor pueden reasignar
       await expect(
         commSvc.reassign({
           caller: caller('v1'),
@@ -167,15 +167,24 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         })
       ).rejects.toMatchObject({ code: 'permission-denied' });
 
-      // Gestor reasigna P1 a V3 -> actualiza prospecto y client.visibleTo
+      await expect(
+        commSvc.reassign({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          vendedorId: USERS.v3.id
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Solo gerente reasigna P1 a V3 -> actualiza prospecto y client.visibleTo
       const res = await commSvc.reassign({
-        caller: caller('ges'),
+        caller: caller('mgr'),
         prospectId: 'P1',
         vendedorId: USERS.v3.id
       });
       expect(res.status).toBe('reassigned');
 
       const p1 = db.data('prospects_prod/P1');
+      expect(p1.createdBy).toBe(USERS.v1.id);
       expect(p1.vendedorId).toBe(USERS.v3.id);
 
       const c1 = db.data('clients_prod/C1');
@@ -204,6 +213,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
     });
 
     test('vendedor cannot edit base price (only manager and gestor)', async () => {
+      // Vendedor no puede editar precio base ni en su propio prospecto
       await expect(
         wfSvc.editBasePrice({
           caller: caller('v1'),
@@ -214,13 +224,48 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         })
       ).rejects.toMatchObject({ code: 'permission-denied' });
 
-      // Gestor sí puede editar precio base en prospecto activo
-      const res = await wfSvc.editBasePrice({
+      // Gestor NO puede editar precio base en un prospecto ingresado por un vendedor
+      await expect(
+        wfSvc.editBasePrice({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          precio: 18000,
+          costo: 11000,
+          motivo: 'Corrección aprobada de costos'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      // Gestor SÍ puede editar precio base en un prospecto que ingresó originalmente
+      await db.seed('prospects_prod/P_GES', {
+        id: 'P_GES',
+        clientId: 'C1',
+        createdBy: USERS.ges.id,
+        vendedorId: USERS.v2.id,
+        etapa: 'prospecto',
+        estado: 'activo',
+        precio_cotizado: 10000,
+        costo_venta: 6000,
+        datos: {},
+        logs: [],
+        facturas: []
+      });
+      const resGes = await wfSvc.editBasePrice({
         caller: caller('ges'),
+        prospectId: 'P_GES',
+        precio: 11000,
+        costo: 6500,
+        motivo: 'Ajuste inicial gestor'
+      });
+      expect(resGes.status).toBe('updated');
+      expect(db.data('prospects_prod/P_GES').precio_cotizado).toBe(11000);
+
+      // Gerente sí puede editar precio base en cualquier prospecto activo
+      const res = await wfSvc.editBasePrice({
+        caller: caller('mgr'),
         prospectId: 'P1',
         precio: 18000,
         costo: 11000,
-        motivo: 'Corrección aprobada de costos'
+        motivo: 'Corrección gerencial'
       });
       expect(res.status).toBe('updated');
       const p1 = db.data('prospects_prod/P1');
@@ -591,6 +636,241 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       });
       expect(retry.status).toBe('unchanged');
       expect(retry.estado).toBe('activo');
+    });
+  });
+
+  describe('Definitive Commercial Permissions Model (Manager, Gestor, Vendedor)', () => {
+    test('gestor lead isolation: gestor cannot access unclosed leads created by vendors or other gestores', async () => {
+      // P1 createdBy USERS.v1.id
+      await expect(
+        wfSvc.advanceStage({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          nextStage: 'levantamiento',
+          data: { visitante: 'Gestor', distancia: 5 }
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      await expect(
+        wfSvc.markLost({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          reason: 'Precio'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      await expect(
+        commSvc.addLog({
+          caller: caller('ges'),
+          prospectId: 'P1',
+          text: 'Nota del gestor',
+          opId: 'op_ges_p1_denied'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('gestor can access and manage direct-entry leads they created', async () => {
+      await db.seed('prospects_prod/P_DIRECT_GES', {
+        id: 'P_DIRECT_GES',
+        clientId: 'C1',
+        createdBy: USERS.ges.id,
+        vendedorId: USERS.ges.id,
+        etapa: 'prospecto',
+        estado: 'activo',
+        precio_cotizado: 5000,
+        costo_venta: 3000,
+        stage_timestamps: { prospecto: '2026-03-01T00:00:00.000Z' },
+        datos: {},
+        logs: [],
+        facturas: []
+      });
+
+      const adv = await wfSvc.advanceStage({
+        caller: caller('ges'),
+        prospectId: 'P_DIRECT_GES',
+        nextStage: 'levantamiento',
+        data: { visitante: 'Gestor Gamma', distancia: 8 }
+      });
+      expect(adv.status).toBe('advanced');
+
+      const log = await commSvc.addLog({
+        caller: caller('ges'),
+        prospectId: 'P_DIRECT_GES',
+        text: 'Seguimiento por gestor',
+        opId: 'op_ges_log_ok'
+      });
+      expect(log.status).toBe('added');
+    });
+
+    test('vendedor is strictly blocked from postclosing operations (saveInvoice, savePayment, saveChangeOrder)', async () => {
+      // Seed a won project that entered postclosing
+      await db.seed('prospects_prod/P_WON_V1', {
+        id: 'P_WON_V1',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'ganado',
+        postcierre_habilitado: true,
+        precio_cotizado: 10000,
+        costo_venta: 6000,
+        facturas: [{ id: 'F1', numero: 'FAC-001', monto: 7910, pagos: [] }],
+        ordenes_cambio: []
+      });
+
+      // Vendedor V1 created and is assigned, but CANNOT operate postclosing
+      await expect(
+        wfSvc.saveInvoice({
+          caller: caller('v1'),
+          prospectId: 'P_WON_V1',
+          numero: 'FAC-002',
+          monto: 1000,
+          doc_factura: { name: 'f2.pdf', url: 'https://firebasestorage.googleapis.com/v0/b/bucket/o/f2.pdf' },
+          opId: 'op_v1_inv_denied'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      await expect(
+        wfSvc.savePayment({
+          caller: caller('v1'),
+          prospectId: 'P_WON_V1',
+          invoiceId: 'F1',
+          monto: 1000,
+          metodo: 'transferencia',
+          ref: 'TRANS-1',
+          doc_comprobante: { name: 'c.pdf', url: 'https://firebasestorage.googleapis.com/v0/b/bucket/o/c.pdf' },
+          opId: 'op_v1_pay_denied'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      await expect(
+        wfSvc.saveChangeOrder({
+          caller: caller('v1'),
+          prospectId: 'P_WON_V1',
+          tipo: 'aumento',
+          desc: 'Adicional',
+          precio: 500,
+          costo: 300,
+          opId: 'op_v1_co_denied'
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('gestor has persistent postclosing access on any project that validly entered postclosing, even after status change', async () => {
+      // Seed a project that was won and entered postclosing, but then marked lost or cancelled
+      await db.seed('prospects_prod/P_POST_GES', {
+        id: 'P_POST_GES',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'perdido',
+        motivo_perdida: 'Cliente desiste',
+        postcierre_habilitado: true,
+        fecha_postcierre: '2026-03-01T00:00:00.000Z',
+        precio_cotizado: 10000,
+        costo_venta: 6000,
+        facturas: [{ id: 'F1', numero: 'FAC-001', monto: 7910, pagos: [] }],
+        ordenes_cambio: []
+      });
+
+      // Gestor can operate postclosing on this project even if estado is 'perdido' and was created by V1
+      const payRes = await wfSvc.savePayment({
+        caller: caller('ges'),
+        prospectId: 'P_POST_GES',
+        invoiceId: 'F1',
+        monto: 2000,
+        metodo: 'transferencia',
+        ref: 'ABONO-POST-GES',
+        doc_comprobante: { name: 'comp.pdf', url: 'https://firebasestorage.googleapis.com/v0/b/bucket/o/comp.pdf' },
+        opId: 'op_ges_post_pay'
+      });
+      expect(payRes.status).toBe('created');
+
+      const coRes = await wfSvc.saveChangeOrder({
+        caller: caller('ges'),
+        prospectId: 'P_POST_GES',
+        tipo: 'aumento',
+        desc: 'Ajuste postcierre',
+        precio: 500,
+        costo: 300,
+        opId: 'op_ges_post_co'
+      });
+      expect(coRes.status).toBe('created');
+    });
+
+    test('reassignment preserves createdBy immutable, transfers operation to new vendor, and recalculates client visibility', async () => {
+      // Create Client C2 owned by Gestor
+      await db.seed('clients_prod/C2', {
+        id: 'C2',
+        tipo: 'juridica',
+        empresa: 'Corporacion Beta',
+        createdBy: USERS.ges.id,
+        visibleTo: [USERS.ges.id, USERS.v1.id],
+        closingVendors: []
+      });
+
+      // Lead P2 on client C2: created by V1, assigned to V1
+      await db.seed('prospects_prod/P2', {
+        id: 'P2',
+        clientId: 'C2',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        vendedorName: USERS.v1.nombre,
+        etapa: 'prospecto',
+        estado: 'activo',
+        precio_cotizado: 8000,
+        costo_venta: 4800,
+        datos: {},
+        logs: [],
+        facturas: []
+      });
+
+      // Manager reassigns P2 from V1 to V2
+      const res = await commSvc.reassign({
+        caller: caller('mgr'),
+        prospectId: 'P2',
+        vendedorId: USERS.v2.id
+      });
+      expect(res.status).toBe('reassigned');
+
+      const p2After = db.data('prospects_prod/P2');
+      // Attribution integrity: createdBy is immutable
+      expect(p2After.createdBy).toBe(USERS.v1.id);
+      expect(p2After.vendedorId).toBe(USERS.v2.id);
+
+      // Audit trail registered
+      const auditLogs = await db.list('commercialAudit_prod');
+      const reassignAudit = auditLogs.find(a => a.action === 'reassignProspect' && a.targetId === 'P2');
+      expect(reassignAudit).toBeDefined();
+      expect(reassignAudit.actorCid).toBe(USERS.mgr.id);
+      expect(reassignAudit.detail.from).toBe(USERS.v1.id);
+      expect(reassignAudit.detail.to).toBe(USERS.v2.id);
+      expect(reassignAudit.detail.authorizedBy).toBe(USERS.mgr.id);
+
+      // Client C2 visibility: V1 removed (has no other leads for C2, not creator), V2 added
+      const c2After = db.data('clients_prod/C2');
+      expect(c2After.visibleTo).toContain(USERS.v2.id);
+      expect(c2After.visibleTo).toContain(USERS.ges.id);
+      expect(c2After.visibleTo).not.toContain(USERS.v1.id);
+
+      // V1 no longer has access to P2; V2 has access
+      await expect(
+        wfSvc.advanceStage({
+          caller: caller('v1'),
+          prospectId: 'P2',
+          nextStage: 'levantamiento',
+          data: { visitante: 'V1', distancia: 5 }
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+
+      const advV2 = await wfSvc.advanceStage({
+        caller: caller('v2'),
+        prospectId: 'P2',
+        nextStage: 'levantamiento',
+        data: { visitante: 'V2', distancia: 5 }
+      });
+      expect(advV2.status).toBe('advanced');
     });
   });
 });

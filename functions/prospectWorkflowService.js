@@ -37,17 +37,17 @@ const MAX_MONEY = 1e9;
 const MAX_FILES = 20;
 
 // Roles allowed per operation, on top of "has access to the opportunity" (creator / assignee, or manager / gestor).
-// Today: every CRM role with access, as in the page. `manager-live` = manager verified against Auth in real time.
 const POLICY = {
   advanceStage: ['manager', 'gestor', 'vendedor'],
   markLost: ['manager', 'gestor', 'vendedor'],
   registerProposal: ['manager', 'gestor', 'vendedor'],
-  saveChangeOrder: ['manager', 'gestor', 'vendedor'],
-  deleteChangeOrder: ['manager', 'gestor', 'vendedor'],
-  saveInvoice: ['manager', 'gestor', 'vendedor'],
-  deleteInvoice: ['manager', 'gestor', 'vendedor'],
-  savePayment: ['manager', 'gestor', 'vendedor'],
-  deletePayment: ['manager', 'gestor', 'vendedor'],
+  // Postcierre (Proyectos y cobros): only manager and gestor. Vendedor is prohibited.
+  saveChangeOrder: ['manager', 'gestor'],
+  deleteChangeOrder: ['manager', 'gestor'],
+  saveInvoice: ['manager', 'gestor'],
+  deleteInvoice: ['manager', 'gestor'],
+  savePayment: ['manager', 'gestor'],
+  deletePayment: ['manager', 'gestor'],
   // Approved decision: only manager / gestor, and only BEFORE the opportunity is closed (checked against the stored state).
   editBasePrice: ['manager', 'gestor'],
   deleteProspect: ['manager-live'],
@@ -84,7 +84,7 @@ const hasDoc = d => (Array.isArray(d) ? d.length > 0 : !!d);
 
 function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = ['https://firebasestorage.googleapis.com/v0/b/'] }) {
   if (!kit || typeof kit.col !== 'function') throw new Error('kit is required');
-  const { col, iso, logEntry, logsOf, auditEntry, auditRef, requireProspectAccess, requireManager } = kit;
+  const { col, iso, logEntry, logsOf, auditEntry, auditRef, requireProspectAccess, requireManager, hasEnteredPostclosing = (p => p && (p.postcierre_habilitado === true || !!p.fecha_cierre || (p.stage_timestamps && !!p.stage_timestamps.cierre) || (Array.isArray(p.facturas) && p.facturas.length > 0))) } = kit;
 
   // ---------- helpers ----------
   // A file reference is what uploadFileToStorage returns: { name, url }. The server cannot see the object, but it can
@@ -161,8 +161,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   const facturasOf = p => (Array.isArray(p.facturas) ? p.facturas : []);
   const sumPagos = f => (Array.isArray(f.pagos) ? f.pagos : []).reduce((a, x) => a + (parseFloat(x.monto) || 0), 0);
 
-  function requireWon(p) {
-    if (p.estado !== 'ganado') throw precondition('Esta operación solo está disponible en proyectos ganados');
+  function requirePostclosing(p) {
+    if (!hasEnteredPostclosing(p)) throw precondition('Esta operación solo está disponible en proyectos que hayan ingresado válidamente a Proyectos y cobros');
   }
   function uniqueId(taken, now) {
     let id = Number(now);
@@ -252,6 +252,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         const advanceAmount = round2(totalConIVA * FORMAS_PAGO[input.forma_pago]); // cents: the page stored e.g. 7909.999999999998
         patch.forma_pago = input.forma_pago;
         patch.estado = 'ganado'; patch.probabilidad = 100; patch.fecha_cierre = at;
+        patch.postcierre_habilitado = true; patch.fecha_postcierre = at;
         patch.facturas = [{ id: uniqueId([], Date.now()), numero: input.factura_anticipo, monto: advanceAmount, doc_factura: input.doc_comprobante, pagos: [], fecha: at }];
         logMsg = `¡VENTA CERRADA! Proyecto ${p.codigo || ''} generado con factura PENDIENTE ${input.factura_anticipo} por ${fmtMoney(advanceAmount)}`;
       }
@@ -429,7 +430,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const docCostos = (doc_costos === undefined || doc_costos === null) ? null : fileRef(doc_costos, 'Hoja de costos');
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      requireWon(p);
+      requirePostclosing(p);
       const orders = (Array.isArray(p.ordenes_cambio) ? p.ordenes_cambio : []).slice();
       const documentos = { ...(p.documentos && typeof p.documentos === 'object' ? p.documentos : {}) };
       let text; let order;
@@ -493,7 +494,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     if (!editing && !doc) throw bad('Debe adjuntar la copia de la factura');
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      requireWon(p);
+      requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p).slice();
       let invoice; let text;
@@ -534,7 +535,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      requireWon(p);
+      requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p);
       const i = facturas.findIndex(f => f && f.id === invoiceId);
@@ -567,7 +568,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     if (!editing && !doc) throw bad('Debe adjuntar el comprobante de pago');
     return db.runTransaction(async tx => {
       const { ref: pRef, p } = await loadProspect(tx, caller, prospectId);
-      requireWon(p);
+      requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
       if (!editing) {
@@ -615,7 +616,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     reqString(paymentKey, 'paymentKey', 64);
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      requireWon(p);
+      requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
       const fac = facturas.find(f => f && f.id === invoiceId);

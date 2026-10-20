@@ -176,10 +176,12 @@ describe('legitimate calls through the real entry points', () => {
     expect(p).toMatchObject({ createdBy: V1.id, createdByName: 'Vendedor Uno', createdByRole: 'vendedor', vendedorId: V1.id, etapa: 'prospecto', estado: 'activo' });
   });
 
-  test('createProspectAdmin: assigning to another user is refused for a vendedor and allowed for a gestor', async () => {
+  test('createProspectAdmin: assigning to another user is refused for a vendedor and allowed for a gestor and manager', async () => {
     await expect(fns.createProspectAdmin({ prospect: prospectInput({ vendedorId: V2.id }), opId: op() }, ctx(V1))).rejects.toMatchObject({ code: 'permission-denied' });
-    const r = await fns.createProspectAdmin({ prospect: prospectInput({ vendedorId: V2.id }), opId: op() }, ctx(GES));
-    expect(fdb.data(`prospects_prod/${r.prospect.id}`)).toMatchObject({ createdBy: GES.id, vendedorId: V2.id, vendedorName: 'Vendedor Dos' });
+    const rGes = await fns.createProspectAdmin({ prospect: prospectInput({ vendedorId: V2.id }), opId: op() }, ctx(GES));
+    expect(fdb.data(`prospects_prod/${rGes.prospect.id}`)).toMatchObject({ createdBy: GES.id, vendedorId: V2.id, vendedorName: 'Vendedor Dos' });
+    const r = await fns.createProspectAdmin({ prospect: prospectInput({ vendedorId: V2.id }), opId: op() }, ctx(MGR));
+    expect(fdb.data(`prospects_prod/${r.prospect.id}`)).toMatchObject({ createdBy: MGR.id, vendedorId: V2.id, vendedorName: 'Vendedor Dos' });
   });
 
   test('createProspectAdmin: a missing `prospect` object is an invalid argument', async () => {
@@ -202,9 +204,10 @@ describe('legitimate calls through the real entry points', () => {
     expect(r.status).toBe('deleted');
   });
 
-  test('reassignProspectAdmin: gestor reassigns, vendedor cannot', async () => {
+  test('reassignProspectAdmin: only manager reassigns; gestor and vendedor cannot', async () => {
     await expect(fns.reassignProspectAdmin({ prospectId: 'P1', vendedorId: V2.id }, ctx(V1))).rejects.toMatchObject({ code: 'permission-denied' });
-    const r = await fns.reassignProspectAdmin({ prospectId: 'P1', vendedorId: V2.id }, ctx(GES));
+    await expect(fns.reassignProspectAdmin({ prospectId: 'P1', vendedorId: V2.id }, ctx(GES))).rejects.toMatchObject({ code: 'permission-denied' });
+    const r = await fns.reassignProspectAdmin({ prospectId: 'P1', vendedorId: V2.id }, ctx(MGR));
     expect(r.status).toBe('reassigned');
     expect(fdb.data('prospects_prod/P1')).toMatchObject({ createdBy: V1.id, vendedorId: V2.id, vendedorName: 'Vendedor Dos' });
   });

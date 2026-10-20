@@ -76,7 +76,25 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   const iso = () => now().toISOString();
 
   // ---------- authorization ----------
-  const canAccessProspect = (caller, p) => PRIVILEGED.includes(caller.role) || (caller.role === 'vendedor' && (p.createdBy === caller.cid || p.vendedorId === caller.cid));
+  function hasEnteredPostclosing(p) {
+    if (!p || typeof p !== 'object') return false;
+    return p.postcierre_habilitado === true
+      || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
+      || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre)
+      || (Array.isArray(p.facturas) && p.facturas.length > 0);
+  }
+
+  const canAccessProspect = (caller, p) => {
+    if (!caller || !p) return false;
+    if (caller.role === 'manager') return true;
+    if (caller.role === 'gestor') {
+      return p.createdBy === caller.cid || hasEnteredPostclosing(p);
+    }
+    if (caller.role === 'vendedor') {
+      return p.vendedorId === caller.cid || (p.createdBy === caller.cid && (!p.vendedorId || p.vendedorId === caller.cid));
+    }
+    return false;
+  };
   // A logically deleted opportunity (`eliminado: true`) is gone for every ordinary operation: it cannot be read through
   // the callables nor modified. Checked before access so that nobody learns anything about it.
   const requireNotDeleted = p => {
@@ -266,7 +284,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
 
   // ---------- reassignment ----------
   async function reassign({ caller, prospectId, vendedorId }) {
-    requirePrivileged(caller, 'reasignar vendedores');
+    await requireManager(caller, 'reasignar oportunidades');
     reqDocId(prospectId, 'prospectId');
     reqDocId(vendedorId, 'vendedorId');
     return db.runTransaction(async tx => {
@@ -278,35 +296,69 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const target = await readAssignee(tx, vendedorId);
       if (p.vendedorId === target.cid) return { status: 'unchanged', vendedorId: target.cid }; // retry of an applied request
 
-      let removeOldClosing = false;
-      if (p.etapa === 'cierre' && p.clientId && p.vendedorId && p.vendedorId !== 'sistema') {
+      let clientRef = null;
+      let clientSnap = null;
+      let hasOtherProspects = false;
+      let hasOtherClosing = false;
+      let isClientCreator = false;
+
+      if (p.clientId) {
+        clientRef = col('clients').doc(p.clientId);
+        clientSnap = await tx.get(clientRef);
         const otherSnap = await tx.get(
           col('prospects')
             .where('clientId', '==', p.clientId)
-            .where('etapa', '==', 'cierre')
         );
-        const remaining = otherSnap.docs.some(d => {
-          if (d.id === prospectId) return false;
+        const otherDocs = otherSnap.docs.filter(d => d.id !== prospectId && (d.data() || {}).eliminado !== true);
+        hasOtherProspects = otherDocs.some(d => {
           const op = d.data() || {};
-          return op.eliminado !== true && op.estado !== 'perdido' && (op.vendedorId === p.vendedorId || op.createdBy === p.vendedorId);
+          return op.vendedorId === p.vendedorId || op.createdBy === p.vendedorId;
         });
-        removeOldClosing = !remaining;
+        hasOtherClosing = otherDocs.some(d => {
+          const op = d.data() || {};
+          return op.etapa === 'cierre' && op.estado !== 'perdido' && (op.vendedorId === p.vendedorId || op.createdBy === p.vendedorId);
+        });
+        isClientCreator = clientSnap.exists && (clientSnap.data() || {}).createdBy === p.vendedorId;
       }
 
-      const logs = logsOf(p).concat([logEntry(caller, `Vendedor reasignado a: ${target.nombre} por ${caller.name}`, { auto: true })]);
+      const logs = logsOf(p).concat([logEntry(caller, `Vendedor reasignado de ${p.vendedorName || p.vendedorId || 'N/A'} a ${target.nombre} por gerente ${caller.name}`, { auto: true })]);
       tx.update(ref, { vendedorId: target.cid, vendedorName: target.nombre, vendedorRole: target.role, logs });
-      if (p.clientId && target.cid && target.cid !== 'sistema') {
-        tx.update(col('clients').doc(p.clientId), { visibleTo: FieldValue.arrayUnion(target.cid) });
-      }
-      if (p.etapa === 'cierre' && p.clientId) {
+
+      if (clientRef && clientSnap && clientSnap.exists) {
+        const clientData = clientSnap.data() || {};
+        const clientPatch = {};
+        const visibleSet = new Set(Array.isArray(clientData.visibleTo) ? clientData.visibleTo : []);
         if (target.cid && target.cid !== 'sistema') {
-          tx.update(col('clients').doc(p.clientId), { closingVendors: FieldValue.arrayUnion(target.cid) });
+          visibleSet.add(target.cid);
         }
-        if (removeOldClosing) {
-          tx.update(col('clients').doc(p.clientId), { closingVendors: FieldValue.arrayRemove(p.vendedorId) });
+        if (p.vendedorId && p.vendedorId !== 'sistema' && !hasOtherProspects && !isClientCreator) {
+          visibleSet.delete(p.vendedorId);
+        }
+        clientPatch.visibleTo = Array.from(visibleSet);
+
+        if (p.etapa === 'cierre') {
+          const closingSet = new Set(Array.isArray(clientData.closingVendors) ? clientData.closingVendors : []);
+          if (target.cid && target.cid !== 'sistema') {
+            closingSet.add(target.cid);
+          }
+          if (p.vendedorId && p.vendedorId !== 'sistema' && !hasOtherClosing) {
+            closingSet.delete(p.vendedorId);
+          }
+          clientPatch.closingVendors = Array.from(closingSet);
+        }
+        if (Object.keys(clientPatch).length > 0) {
+          tx.update(clientRef, clientPatch);
         }
       }
-      tx.create(auditRef(), auditEntry(caller, 'reassignProspect', 'prospect', prospectId, { from: p.vendedorId || null, to: target.cid }));
+
+      tx.create(auditRef(), auditEntry(caller, 'reassignProspect', 'prospect', prospectId, {
+        from: p.vendedorId || null,
+        fromName: p.vendedorName || null,
+        to: target.cid,
+        toName: target.nombre,
+        authorizedBy: caller.cid,
+        authorizedByName: caller.name
+      }));
       return { status: 'reassigned', vendedorId: target.cid, vendedorName: target.nombre, vendedorRole: target.role };
     });
   }
@@ -541,8 +593,8 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
     });
   }
 
-  const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names };
-  return { names, kit, createProspect, addLog, deleteLog, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
+  const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, hasEnteredPostclosing, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names };
+  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
 }
 
 module.exports = { createCommercialService, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };

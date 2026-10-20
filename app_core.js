@@ -40,6 +40,15 @@ if (isLocal) {
     console.warn("⚠️ MODO DESARROLLO LOCAL ACTIVADO: Conectado a las colecciones '_local' en Firebase.");
 }
 
+function hasEnteredPostclosing(p) {
+    if (!p || typeof p !== 'object') return false;
+    return p.postcierre_habilitado === true
+        || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
+        || !!(p.stage_timestamps && p.stage_timestamps.cierre)
+        || p.estado === 'ganado'
+        || (Array.isArray(p.facturas) && p.facturas.length > 0);
+}
+
 // Variables Globales de Ordenamiento para Oportunidades, Proyectos y Clientes
 let oppSortCol = ''; let oppSortDir = 'asc';
 let projSortCol = ''; let projSortDir = 'asc';
@@ -84,8 +93,8 @@ function getProspectVendorInfo(p) {
 function reassignVendor(prospectId) {
     const p = prospects.find(x => x.id === prospectId);
     if (!p) return;
-    if (!currentUser || (currentUser.role !== 'manager' && currentUser.role !== 'gestor')) {
-        return alert("Solo los Gestores y Gerentes pueden reasignar vendedores.");
+    if (!currentUser || currentUser.role !== 'manager') {
+        return alert("Solo los Gerentes pueden reasignar oportunidades.");
     }
     const currentVendor = getProspectVendorInfo(p);
     const activeUsers = users.filter(u => u.activo !== false);
@@ -1027,8 +1036,8 @@ function attachDataListeners(role, userId) {
 
     // 4. Prospects listener
     try {
-        if (role === 'manager' || role === 'gestor') {
-            // Privileged roles list all prospects
+        if (role === 'manager') {
+            // Manager lists all prospects
             const unsubProspects = db.collection(`prospects${DB_SUFFIX}`).onSnapshot(
                 snap => {
                     prospects = snap.docs.map(doc => doc.data()).filter(p => p.eliminado !== true);
@@ -1037,6 +1046,41 @@ function attachDataListeners(role, userId) {
                 err => console.warn('[CRM] Listener prospects no disponible:', err && err.message)
             );
             activeUnsubscribers.push(unsubProspects);
+        } else if (role === 'gestor') {
+            // Gestor listens to: 1) createdBy == userId (own leads), 2) postcierre_habilitado == true or estado == 'ganado' (projects in postclosing)
+            let ownProspects = [];
+            let postclosingProspects = [];
+            let wonProspects = [];
+            const mergeGestorProspects = () => {
+                const dict = {};
+                ownProspects.forEach(p => { dict[p.id] = p; });
+                postclosingProspects.forEach(p => { dict[p.id] = p; });
+                wonProspects.forEach(p => { dict[p.id] = p; });
+                prospects = Object.values(dict).filter(p => p.eliminado !== true);
+                checkInitialLoad();
+            };
+            const unsubOwn = db.collection(`prospects${DB_SUFFIX}`).where('createdBy', '==', userId).onSnapshot(
+                snap => {
+                    ownProspects = snap.docs.map(doc => doc.data());
+                    mergeGestorProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (gestor propios) no disponible:', err && err.message)
+            );
+            const unsubPostclosing = db.collection(`prospects${DB_SUFFIX}`).where('postcierre_habilitado', '==', true).onSnapshot(
+                snap => {
+                    postclosingProspects = snap.docs.map(doc => doc.data());
+                    mergeGestorProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (postcierre) no disponible:', err && err.message)
+            );
+            const unsubWon = db.collection(`prospects${DB_SUFFIX}`).where('estado', '==', 'ganado').onSnapshot(
+                snap => {
+                    wonProspects = snap.docs.map(doc => doc.data());
+                    mergeGestorProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (ganados) no disponible:', err && err.message)
+            );
+            activeUnsubscribers.push(unsubOwn, unsubPostclosing, unsubWon);
         } else if (role === 'vendedor') {
             // Vendedores listen to: 1) createdBy == userId, 2) vendedorId == userId
             let createdProspects = [];
@@ -1219,6 +1263,11 @@ async function removeSetting(type, index) {
 }
 
 function showView(viewId) {
+    if (viewId === 'projects-view' && currentUser && currentUser.role === 'vendedor') {
+        alert("Acceso denegado: el perfil de vendedor no tiene acceso al módulo de Proyectos y Cobros.");
+        showView('list-view');
+        return;
+    }
     lastViewedSection = viewId === 'detail-view' ? lastViewedSection : viewId;
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
@@ -1977,8 +2026,12 @@ function getClientName(clientId) {
 
 function renderList() {
     let filtered = prospects;
-    if (currentUser && currentUser.role === 'vendedor') {
-        filtered = filtered.filter(p => p.createdBy === currentUser.id || p.vendedorId === currentUser.id);
+    if (currentUser && currentUser.role === 'gestor') {
+        // Gestor only manages leads they entered originally
+        filtered = filtered.filter(p => p.createdBy === currentUser.id);
+    } else if (currentUser && currentUser.role === 'vendedor') {
+        // Vendedor manages assigned leads; prior vendor leaves operational access
+        filtered = filtered.filter(p => p.vendedorId === currentUser.id || (p.createdBy === currentUser.id && (!p.vendedorId || p.vendedorId === currentUser.id)));
     }
     const tbody = document.getElementById('opp-table-body'); tbody.innerHTML = '';
     let visibleProspects = filtered.filter(p => p.estado !== 'ganado');
@@ -2069,8 +2122,13 @@ function renderList() {
 }
 
 function renderProjectsList() {
+    if (currentUser && currentUser.role === 'vendedor') {
+        const tbody = document.getElementById('proj-table-body');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">Acceso no autorizado a este módulo.</td></tr>';
+        return;
+    }
     const tbody = document.getElementById('proj-table-body'); tbody.innerHTML = '';
-    const projects = prospects.filter(p => p.estado === 'ganado');
+    const projects = prospects.filter(p => hasEnteredPostclosing(p));
     if (projects.length === 0) { tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No hay proyectos cerrados / ganados todavía.</td></tr>'; return; }
 
     // Map projects to calculated objects for search and sort
@@ -2172,9 +2230,9 @@ function openNewModal() {
     const vendorGroup = document.getElementById('vendedor-assign-group');
     const vendorSelect = document.getElementById('new-vendedor-select');
     if (vendorGroup && vendorSelect) {
-        if (currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+        if (currentUser && currentUser.role === 'manager') {
             vendorGroup.style.display = 'block';
-            vendorSelect.innerHTML = `<option value="${currentUser.id}">Mismo Creador: ${currentUser.nombre} (${currentUser.role === 'manager' ? 'Gerente' : 'Gestor'})</option>`;
+            vendorSelect.innerHTML = `<option value="${currentUser.id}">Mismo Creador: ${currentUser.nombre} (Gerente)</option>`;
             users.filter(u => u.activo !== false && u.id !== currentUser.id).forEach(u => {
                 const rText = u.role === 'manager' ? 'Gerente' : (u.role === 'gestor' ? 'Gestor' : 'Vendedor');
                 vendorSelect.innerHTML += `<option value="${u.id}">${u.nombre} (${rText})</option>`;
@@ -2489,7 +2547,7 @@ function openDetail(id) {
             btn.onclick = () => showNewProposalForm();
             actionContainer.appendChild(btn);
         }
-    } else if (p.estado === 'ganado') {
+    } else if (p.estado === 'ganado' || (hasEnteredPostclosing(p) && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor'))) {
         actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; renderFinancials(p);
         if (btnSendFab && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
             btnSendFab.style.display = 'inline-block';
@@ -2914,7 +2972,7 @@ function renderInfo(p) {
 
     const vendor = getProspectVendorInfo(p);
     let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
-    if (currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
+    if (currentUser && currentUser.role === 'manager') {
         vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
     }
     vendorLinkHTML += `</li>`;

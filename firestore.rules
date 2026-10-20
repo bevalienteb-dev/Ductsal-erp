@@ -87,6 +87,11 @@ service cloud.firestore {
     function prospectMine(d) {
       return d.createdBy == me() || d.get('vendedorId', '') == me();
     }
+    function isPostclosing(d) {
+      return d.get('postcierre_habilitado', false) == true
+        || d.get('fecha_cierre', '') != ''
+        || d.get('stage_timestamps', {}).get('cierre', '') != '';
+    }
     function flag(d, k) { return d.get('datos', {}).get(k, null); }
     // "Sale authorised without contract" is a manager decision: nobody else may change it.
     function noContractFlagsKept() {
@@ -94,12 +99,17 @@ service cloud.firestore {
         && flag(request.resource.data, 'autorizado_por') == flag(resource.data, 'autorizado_por');
     }
     match /prospects_prod/{prospectId} {
-      allow get, list: if isPrivileged() || (isVendedor() && prospectMine(resource.data));
+      allow get: if isManager()
+        || (isGestor() && (resource.data.createdBy == me() || isPostclosing(resource.data)))
+        || (isVendedor() && prospectMine(resource.data));
+      allow list: if isManager()
+        || (isGestor() && (resource.data.createdBy == me() || resource.data.get('postcierre_habilitado', false) == true || resource.data.get('estado', '') == 'ganado'))
+        || (isVendedor() && prospectMine(resource.data));
       // Any existing client may be chosen (catalogue). Choosing a client never changes the client's createdBy.
-      allow create: if (isPrivileged() || isVendedor())
+      allow create: if (isManager() || isGestor() || isVendedor())
         && request.resource.data.id == prospectId
         && request.resource.data.createdBy == me()
-        && (isPrivileged() || request.resource.data.get('vendedorId', '') == me())
+        && (isManager() || request.resource.data.get('vendedorId', '') == me())
         && (isManager() || flag(request.resource.data, 'autorizado_sin_contrato') == null)
         && exists(/databases/$(database)/documents/clients_prod/$(request.resource.data.clientId));
       // SEC-04: Direct updates bypass server validation, audit logs, and closingVendors tracking.
