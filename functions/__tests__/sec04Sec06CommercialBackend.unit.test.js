@@ -1120,4 +1120,293 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       expect(cAfter.visibleTo).not.toContain(USERS.v1.id);
     });
   });
+
+  describe('Section 10: Validación de vendedorId como responsable que cierra', () => {
+    beforeEach(async () => {
+      // Seed client with complete corporate and legal documentation for closure
+      await db.seed('clients_prod/C_CLOSE', {
+        id: 'C_CLOSE',
+        tipo: 'juridica',
+        empresa: 'Corporativo Cierre S.A. de C.V.',
+        contacto: 'Lic. Roberto Gómez',
+        telefono: '2222-3333',
+        correo: 'info@cierre.com',
+        correo_fact: 'facturacion@cierre.com',
+        nit: '0614-010190-101-1',
+        nrc: '123456-7',
+        createdBy: USERS.mgr.id,
+        visibleTo: [USERS.mgr.id, USERS.v1.id, USERS.v2.id, USERS.ges.id],
+        closingVendors: [],
+        documentos: {
+          dui: { name: 'dui.pdf', storagePath: 'prod_files/clients/C_CLOSE/identificacion/dui.pdf' },
+          escritura: { name: 'escritura.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/escritura.pdf' },
+          credencial: { name: 'credencial.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/credencial.pdf' },
+          nit: { name: 'nit.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/nit.pdf' },
+          nrc: { name: 'nrc.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/nrc.pdf' }
+        }
+      });
+    });
+
+    test('1 & 2: Cierre por vendedor conserva vendedorId y registra CCF de anticipo', async () => {
+      await db.seed('prospects_prod/P_CLS_V1', {
+        id: 'P_CLS_V1',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        vendedorName: USERS.v1.nombre,
+        tipo_proyecto: 'Fabricación e instalación',
+        precio_cotizado: 15000,
+        costo_venta: 9000,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_V1/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_V1/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      const res = await wfSvc.advanceStage({
+        caller: caller('v1'),
+        prospectId: 'P_CLS_V1',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '70/30',
+          factura_anticipo: 'CCF-001-V1',
+          encargado: 'Carlos Instalador',
+          doc_firmado: { name: 'contrato.pdf', storagePath: 'prod_files/prospects/P_CLS_V1/proyectos/contrato.pdf' },
+          doc_comprobante: { name: 'ccf_anticipo.pdf', storagePath: 'prod_files/prospects/P_CLS_V1/facturas/ccf_anticipo.pdf' }
+        }
+      });
+
+      expect(res.status).toBe('advanced');
+      expect(res.estado).toBe('ganado');
+
+      const pAfter = db.data('prospects_prod/P_CLS_V1');
+      expect(pAfter.vendedorId).toBe(USERS.v1.id);
+      expect(pAfter.createdBy).toBe(USERS.v1.id);
+      expect(pAfter.postcierre_habilitado).toBe(true);
+      expect(pAfter.fecha_cierre).toBeDefined();
+      expect(pAfter.facturas.length).toBe(1);
+      expect(pAfter.facturas[0].numero).toBe('CCF-001-V1');
+      expect(pAfter.facturas[0].doc_factura).toBeDefined();
+    });
+
+    test('3 & 6: Cierre por gestor cuando es el responsable efectivo conserva vendedorId del gestor sin ampliar permisos ajenos', async () => {
+      // Prospect assigned to Gestor as commercial responsible (e.g. direct entry or manager assignment)
+      await db.seed('prospects_prod/P_CLS_GES', {
+        id: 'P_CLS_GES',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.mgr.id,
+        vendedorId: USERS.ges.id,
+        vendedorName: USERS.ges.nombre,
+        tipo_proyecto: 'Fabricación e instalación',
+        precio_cotizado: 12000,
+        costo_venta: 7500,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_GES/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_GES/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      const res = await wfSvc.advanceStage({
+        caller: caller('ges'),
+        prospectId: 'P_CLS_GES',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'CCF-GES-99',
+          encargado: 'Mauricio Armador',
+          doc_firmado: { name: 'contrato.pdf', storagePath: 'prod_files/prospects/P_CLS_GES/proyectos/contrato.pdf' },
+          doc_comprobante: { name: 'ccf_anticipo.pdf', storagePath: 'prod_files/prospects/P_CLS_GES/facturas/ccf_anticipo.pdf' }
+        }
+      });
+
+      expect(res.status).toBe('advanced');
+      expect(res.estado).toBe('ganado');
+
+      const pAfter = db.data('prospects_prod/P_CLS_GES');
+      expect(pAfter.vendedorId).toBe(USERS.ges.id); // Gestor is identified as closing responsible
+      expect(pAfter.createdBy).toBe(USERS.mgr.id); // Creator immutable
+      expect(pAfter.postcierre_habilitado).toBe(true);
+      expect(pAfter.facturas[0].numero).toBe('CCF-GES-99');
+
+      // Gestor cannot close another vendor's open prospect
+      await db.seed('prospects_prod/P_CLS_OTHER', {
+        id: 'P_CLS_OTHER',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 5000,
+        costo_venta: 3000,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_OTHER/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_OTHER/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      await expect(
+        wfSvc.advanceStage({
+          caller: caller('ges'),
+          prospectId: 'P_CLS_OTHER',
+          nextStage: 'cierre',
+          data: {
+            forma_pago: '70/30',
+            factura_anticipo: 'CCF-HACK',
+            doc_firmado: { name: 'c.pdf', storagePath: 'prod_files/prospects/P_CLS_OTHER/proyectos/c.pdf' },
+            doc_comprobante: { name: 'p.pdf', storagePath: 'prod_files/prospects/P_CLS_OTHER/facturas/p.pdf' }
+          }
+        })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+    });
+
+    test('4: Cierre ejecutado por manager no sobrescribe vendedorId del responsable comercial', async () => {
+      await db.seed('prospects_prod/P_CLS_MGR', {
+        id: 'P_CLS_MGR',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        vendedorName: USERS.v1.nombre,
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 6000,
+        costo_venta: 3500,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_MGR/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_MGR/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      // Manager closes on behalf of operational flow
+      await wfSvc.advanceStage({
+        caller: caller('mgr'),
+        prospectId: 'P_CLS_MGR',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'CCF-MGR-01',
+          doc_firmado: { name: 'oferta_firmada.pdf', storagePath: 'prod_files/prospects/P_CLS_MGR/proyectos/oferta_firmada.pdf' },
+          doc_comprobante: { name: 'recibo.pdf', storagePath: 'prod_files/prospects/P_CLS_MGR/facturas/recibo.pdf' }
+        }
+      });
+
+      const pAfter = db.data('prospects_prod/P_CLS_MGR');
+      // Must NOT be overwritten with caller (manager); vendedorId remains USERS.v1.id
+      expect(pAfter.vendedorId).toBe(USERS.v1.id);
+      expect(pAfter.createdBy).toBe(USERS.v1.id);
+      expect(pAfter.estado).toBe('ganado');
+    });
+
+    test('5: Reasignación previa al cierre identifica al responsable que finalmente cierra', async () => {
+      await db.seed('prospects_prod/P_CLS_REASSIGN', {
+        id: 'P_CLS_REASSIGN',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        vendedorName: USERS.v1.nombre,
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 8000,
+        costo_venta: 4500,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_REASSIGN/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_REASSIGN/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      // Manager reassigns from V1 to V2 before closure
+      await commSvc.reassign({
+        caller: caller('mgr'),
+        prospectId: 'P_CLS_REASSIGN',
+        vendedorId: USERS.v2.id
+      });
+
+      const pMid = db.data('prospects_prod/P_CLS_REASSIGN');
+      expect(pMid.vendedorId).toBe(USERS.v2.id);
+      expect(pMid.createdBy).toBe(USERS.v1.id);
+
+      // V2 executes closure
+      const res = await wfSvc.advanceStage({
+        caller: caller('v2'),
+        prospectId: 'P_CLS_REASSIGN',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '50/50',
+          factura_anticipo: 'CCF-V2-FINAL',
+          doc_firmado: { name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_REASSIGN/proyectos/oferta.pdf' },
+          doc_comprobante: { name: 'anticipo.pdf', storagePath: 'prod_files/prospects/P_CLS_REASSIGN/facturas/anticipo.pdf' }
+        }
+      });
+
+      expect(res.status).toBe('advanced');
+      expect(res.estado).toBe('ganado');
+
+      const pAfter = db.data('prospects_prod/P_CLS_REASSIGN');
+      expect(pAfter.vendedorId).toBe(USERS.v2.id); // Identifies V2 as the closer
+      expect(pAfter.createdBy).toBe(USERS.v1.id);  // Historical origin preserved
+      expect(pAfter.facturas[0].numero).toBe('CCF-V2-FINAL');
+    });
+
+    test('7: Transición a cierre exige CCF de anticipo y datos de cliente completos', async () => {
+      // Incomplete client missing DUI and billing details
+      await db.seed('clients_prod/C_INCOMPLETE', {
+        id: 'C_INCOMPLETE',
+        tipo: 'natural',
+        nombres: 'Pedro',
+        createdBy: USERS.v1.id,
+        visibleTo: [USERS.v1.id],
+        closingVendors: [],
+        documentos: {}
+      });
+
+      await db.seed('prospects_prod/P_CLS_FAIL', {
+        id: 'P_CLS_FAIL',
+        clientId: 'C_INCOMPLETE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 4000,
+        costo_venta: 2000,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'oferta.pdf', storagePath: 'prod_files/prospects/P_CLS_FAIL/cotizaciones/oferta.pdf' }],
+          doc_costos: [{ name: 'costos.pdf', storagePath: 'prod_files/prospects/P_CLS_FAIL/cotizaciones/costos.pdf' }]
+        },
+        logs: [],
+        facturas: []
+      });
+
+      // Missing client fields rejection
+      await expect(
+        wfSvc.advanceStage({
+          caller: caller('v1'),
+          prospectId: 'P_CLS_FAIL',
+          nextStage: 'cierre',
+          data: {
+            forma_pago: '100% anticipado',
+            factura_anticipo: 'FAC-FAIL',
+            doc_firmado: { name: 'f.pdf', storagePath: 'prod_files/prospects/P_CLS_FAIL/proyectos/f.pdf' },
+            doc_comprobante: { name: 'c.pdf', storagePath: 'prod_files/prospects/P_CLS_FAIL/facturas/c.pdf' }
+          }
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+    });
+  });
 });

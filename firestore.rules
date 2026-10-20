@@ -102,10 +102,10 @@ service cloud.firestore {
     }
     match /prospects_prod/{prospectId} {
       allow get: if isManager()
-        || (isGestor() && (resource.data.createdBy == me() || isPostclosing(resource.data)))
+        || (isGestor() && (resource.data.get('vendedorId', '') == me() || resource.data.createdBy == me() || isPostclosing(resource.data)))
         || (isVendedor() && prospectMine(resource.data));
       allow list: if isManager()
-        || (isGestor() && (resource.data.createdBy == me() || isPostclosing(resource.data) || resource.data.get('estado', '') == 'ganado'))
+        || (isGestor() && (resource.data.get('vendedorId', '') == me() || resource.data.createdBy == me() || isPostclosing(resource.data)))
         || (isVendedor() && prospectMine(resource.data));
       // Any existing client may be chosen (catalogue). Choosing a client never changes the client's createdBy.
       allow create: if (isManager() || isGestor() || isVendedor())

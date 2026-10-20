@@ -82,7 +82,7 @@ service firebase.storage {
     }
     function gestorCanReadProspect(pid) {
       let p = getProspect(pid);
-      return p != null && (p.createdBy == me() || isPostclosing(p));
+      return p != null && (p.get('vendedorId', '') == me() || p.createdBy == me() || isPostclosing(p));
     }
     function ownsProspect(pid) {
       let p = getProspect(pid);

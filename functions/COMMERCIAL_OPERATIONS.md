@@ -491,3 +491,17 @@ Para resolver discrepancias entre las distintas capas, se unificó la definició
   - `functions/commercialService.js` y `functions/storageService.js`: función `hasEnteredPostclosing(p)`.
   - Frontend (`app_core.js`): visualización y acceso a expedientes de postcierre.
 - **Persistencia garantizada:** Si un proyecto cumplió cualquiera de estos criterios válidos, el gestor conserva de forma permanente el acceso a postcierre aunque posteriormente el proyecto cambie de estado a `perdido` o sea cancelado.
+
+#### 6. Validación de `vendedorId` como responsable que cierra y facultades operativas del Gestor
+- **Identificación del responsable de cierre:**
+  - `vendedorId` registra al responsable comercial operativo vigente al momento del cierre.
+  - Si el responsable es un vendedor, `vendedorId` almacena su identificador comercial (`cid`).
+  - Si el responsable es un gestor (por creación directa o por asignación gerencial), `vendedorId` almacena el identificador comercial del gestor.
+  - La ejecución de `advanceStage` a la etapa `cierre` **no sobrescribe** `vendedorId` con el usuario que ejecuta la función si un gerente realiza el avance operativo; el `vendedorId` original asignado se preserva intacto.
+  - En caso de reasignación previa al cierre, `reassign` actualiza `vendedorId` al nuevo responsable, asegurando que quien finalmente cierra la oportunidad quede registrado.
+- **Autorización de cierre para Gestor:**
+  - El gestor puede avanzar y cerrar oportunidades donde figure como `vendedorId` (asignado) o `createdBy` (creador).
+  - El gestor no puede acceder ni cerrar oportunidades abiertas ajenas (donde ni es `vendedorId` ni `createdBy`).
+  - La transición a `cierre` valida rigurosamente los requisitos comerciales existentes: datos del cliente completos, DUI del representante, documentación legal para contratos > $10,000, encargado de instalación y **comprobante / CCF de anticipo (`input.doc_comprobante` y `input.factura_anticipo`)**, estampando la factura de anticipo en `p.facturas[0]`.
+- **Limitación documentada:**
+  - Si un proyecto es reasignado con posterioridad a la fecha de cierre, el campo `vendedorId` reflejará al nuevo responsable operativo asignado para las labores de postcierre, dejando de reflejar de forma estática quién ejecutó el cierre original. Para auditar quién cerró originalmente un proyecto histórico reasignado posteriormente, la fuente fidedigna son los registros de auditoría inmutables `commercialAudit_*` (evento `closeSale`) y el historial `p.logs`. No se añade un campo `closedBy` ni lógica de comisiones al CRM, conservando el control externo gerencial.

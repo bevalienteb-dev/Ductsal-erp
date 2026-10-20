@@ -88,7 +88,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
     if (!caller || !p) return false;
     if (caller.role === 'manager') return true;
     if (caller.role === 'gestor') {
-      return p.createdBy === caller.cid || hasEnteredPostclosing(p);
+      return p.vendedorId === caller.cid || p.createdBy === caller.cid || hasEnteredPostclosing(p);
     }
     if (caller.role === 'vendedor') {
       return p.vendedorId === caller.cid || (p.createdBy === caller.cid && (!p.vendedorId || p.vendedorId === caller.cid));

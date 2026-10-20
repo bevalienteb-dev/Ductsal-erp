@@ -45,7 +45,6 @@ function hasEnteredPostclosing(p) {
     return p.postcierre_habilitado === true
         || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
         || !!(p.stage_timestamps && p.stage_timestamps.cierre)
-        || p.estado === 'ganado'
         || (Array.isArray(p.facturas) && p.facturas.length > 0);
 }
 
@@ -1047,15 +1046,15 @@ function attachDataListeners(role, userId) {
             );
             activeUnsubscribers.push(unsubProspects);
         } else if (role === 'gestor') {
-            // Gestor listens to: 1) createdBy == userId (own leads), 2) postcierre_habilitado == true or estado == 'ganado' (projects in postclosing)
+            // Gestor listens to: 1) createdBy == userId (own created leads), 2) vendedorId == userId (assigned leads), 3) postcierre_habilitado == true (postclosing projects)
             let ownProspects = [];
+            let assignedProspects = [];
             let postclosingProspects = [];
-            let wonProspects = [];
             const mergeGestorProspects = () => {
                 const dict = {};
                 ownProspects.forEach(p => { dict[p.id] = p; });
+                assignedProspects.forEach(p => { dict[p.id] = p; });
                 postclosingProspects.forEach(p => { dict[p.id] = p; });
-                wonProspects.forEach(p => { dict[p.id] = p; });
                 prospects = Object.values(dict).filter(p => p.eliminado !== true);
                 checkInitialLoad();
             };
@@ -1066,6 +1065,13 @@ function attachDataListeners(role, userId) {
                 },
                 err => console.warn('[CRM] Listener prospects (gestor propios) no disponible:', err && err.message)
             );
+            const unsubAssigned = db.collection(`prospects${DB_SUFFIX}`).where('vendedorId', '==', userId).onSnapshot(
+                snap => {
+                    assignedProspects = snap.docs.map(doc => doc.data());
+                    mergeGestorProspects();
+                },
+                err => console.warn('[CRM] Listener prospects (gestor asignados) no disponible:', err && err.message)
+            );
             const unsubPostclosing = db.collection(`prospects${DB_SUFFIX}`).where('postcierre_habilitado', '==', true).onSnapshot(
                 snap => {
                     postclosingProspects = snap.docs.map(doc => doc.data());
@@ -1073,14 +1079,7 @@ function attachDataListeners(role, userId) {
                 },
                 err => console.warn('[CRM] Listener prospects (postcierre) no disponible:', err && err.message)
             );
-            const unsubWon = db.collection(`prospects${DB_SUFFIX}`).where('estado', '==', 'ganado').onSnapshot(
-                snap => {
-                    wonProspects = snap.docs.map(doc => doc.data());
-                    mergeGestorProspects();
-                },
-                err => console.warn('[CRM] Listener prospects (ganados) no disponible:', err && err.message)
-            );
-            activeUnsubscribers.push(unsubOwn, unsubPostclosing, unsubWon);
+            activeUnsubscribers.push(unsubOwn, unsubAssigned, unsubPostclosing);
         } else if (role === 'vendedor') {
             // Vendedores listen strictly to assigned leads (vendedorId == userId)
             const unsubAssigned = db.collection(`prospects${DB_SUFFIX}`).where('vendedorId', '==', userId).onSnapshot(
@@ -2018,8 +2017,8 @@ function getClientName(clientId) {
 function renderList() {
     let filtered = prospects;
     if (currentUser && currentUser.role === 'gestor') {
-        // Gestor only manages leads they entered originally
-        filtered = filtered.filter(p => p.createdBy === currentUser.id);
+        // Gestor manages leads they entered originally OR leads assigned to them as responsible
+        filtered = filtered.filter(p => p.vendedorId === currentUser.id || p.createdBy === currentUser.id);
     } else if (currentUser && currentUser.role === 'vendedor') {
         // Vendedor manages assigned leads; prior vendor leaves operational access
         filtered = filtered.filter(p => p.vendedorId === currentUser.id || (p.createdBy === currentUser.id && (!p.vendedorId || p.vendedorId === currentUser.id)));
@@ -2506,7 +2505,7 @@ function openDetail(id) {
         }
     }
     if (currentUser && currentUser.role === 'gestor') {
-        const isOwnOrPost = p.createdBy === currentUser.id || hasEnteredPostclosing(p);
+        const isOwnOrPost = p.vendedorId === currentUser.id || p.createdBy === currentUser.id || hasEnteredPostclosing(p);
         if (!isOwnOrPost) {
             alert('No tienes acceso a esta oportunidad');
             showView('list-view');

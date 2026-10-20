@@ -278,7 +278,7 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
           if (caller.role === 'manager') {
             hasAccess = true;
           } else if (caller.role === 'gestor') {
-            hasAccess = p.createdBy === caller.cid || hasEnteredPostclosing(p);
+            hasAccess = p.vendedorId === caller.cid || p.createdBy === caller.cid || hasEnteredPostclosing(p);
           } else if (caller.role === 'vendedor') {
             hasAccess = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
           }
