@@ -1524,7 +1524,7 @@ exports.getSecureDownloadUrlAdmin = functions
       prospectId: data.prospectId,
       clientId: data.clientId,
       expiresInSeconds: data.expiresInSeconds || 900,
-      disposition: data.disposition || 'attachment'
+      disposition: (data.disposition === 'inline' || data.disposition === 'attachment') ? data.disposition : 'attachment'
     });
   } catch (e) {
     throw toHttpsError(e);

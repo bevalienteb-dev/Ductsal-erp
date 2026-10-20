@@ -105,8 +105,18 @@
                     <button class="btn-primary" onclick="openNewModal()">+ Nuevo Prospecto</button>
                 </header>
 
-                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
-                    <input type="text" id="opp-search" placeholder="🔍 Buscar oportunidad por código, cliente, proyecto, monto, etapa o estado..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                <div class="opp-filters-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+                    <div style="flex: 1; min-width: 280px;">
+                        <input type="text" id="opp-search" placeholder="🔍 Buscar por código, cliente, proyecto, monto, etapa, estado o fecha..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                    </div>
+                    <div class="date-filter-box" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.35rem 0.75rem; border: 1px solid var(--panel-border); border-radius: 6px;">
+                        <span style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">📅 Ingreso:</span>
+                        <input type="date" id="opp-date-start" title="Fecha inicial de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
+                        <span style="color: var(--text-muted); font-size: 0.8rem;">a</span>
+                        <input type="date" id="opp-date-end" title="Fecha final de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
+                        <button type="button" id="btn-clear-opp-dates" class="btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; display: none;" onclick="clearOppDateFilter()" title="Limpiar filtro de fechas">✕ Limpiar</button>
+                    </div>
+                    <div id="opp-count-badge" class="badge bg-neutral" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
                 </div>
 
                 <div class="table-container glass-panel">
@@ -117,6 +127,7 @@
                                 <th onclick="toggleOppSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-opp-cliente" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-opp-proyecto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('vendedor')" style="cursor: pointer;">Vendedor / Asesor <span id="sort-opp-vendedor" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleOppSort('fecha')" style="cursor: pointer;">Fecha de Ingreso <span id="sort-opp-fecha" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('etapa')" style="cursor: pointer;">Etapa Actual <span id="sort-opp-etapa" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('monto')" style="cursor: pointer;">Precio Cotizado <span id="sort-opp-monto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleOppSort('estado')" style="cursor: pointer;">Estado <span id="sort-opp-estado" style="color: var(--text-muted);">↕</span></th>
@@ -408,6 +419,37 @@
                     </div>
                 </header>
 
+                <!-- Resumen Comercial / KPI Hero (Prioridad 2) -->
+                <div class="commercial-hero-banner glass-panel mb-4" id="commercial-hero-banner">
+                    <div class="kpi-banner-grid">
+                        <div class="kpi-hero-card">
+                            <span class="kpi-label">Etapa Actual</span>
+                            <div class="kpi-val" id="hero-etapa" style="text-transform: capitalize;">-</div>
+                            <span id="detail-time-in-stage" class="badge bg-neutral" style="margin-top: 6px; display: inline-block;">Tiempo en etapa: 0 días</span>
+                        </div>
+                        <div class="kpi-hero-card">
+                            <span class="kpi-label">Vendedor / Responsable</span>
+                            <div class="kpi-val" id="hero-vendedor" style="font-size: 1.05rem;">-</div>
+                            <div id="hero-vendedor-action" style="margin-top: 4px; font-size: 0.75rem;"></div>
+                        </div>
+                        <div class="kpi-hero-card">
+                            <span class="kpi-label">Fecha de Ingreso</span>
+                            <div class="kpi-val" id="hero-fecha" style="font-size: 1.05rem;">-</div>
+                            <span id="hero-antiguedad" style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">-</span>
+                        </div>
+                        <div class="kpi-hero-card">
+                            <span class="kpi-label">Precio Cotizado</span>
+                            <div class="kpi-val highlight-gold" id="hero-precio" style="color: var(--brand-gold); font-size: 1.25rem;">$0</div>
+                            <div id="hero-precio-action" style="margin-top: 4px; font-size: 0.75rem;"></div>
+                        </div>
+                        <div class="kpi-hero-card">
+                            <span class="kpi-label">Costo Estimado</span>
+                            <div class="kpi-val" id="hero-costo" style="color: var(--danger); font-size: 1.05rem;">$0</div>
+                            <span id="hero-margen" style="font-size: 0.75rem; font-weight: 600; color: var(--success); display: block; margin-top: 4px;">Margen: $0 (0%)</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="detail-grid">
                     <div class="main-detail glass-panel">
                         <!-- Accounts Receivable / Billing Tracker (Only for Won Projects) -->
@@ -476,8 +518,8 @@
                                     <div class="form-group"><label>Monto a abonar</label><input type="number" id="pay-monto-nuevo" required step="0.01"></div>
                                     <div class="form-group"><label>Forma de Pago</label>
                                         <select id="pay-metodo" required onchange="handlePaymentMethodChange()">
-                                            <option value="transferencia">Transferencia</option>
-                                            <option value="cheque">Cheque</option>
+                                             <option value="transferencia">Transferencia</option>
+                                             <option value="cheque">Cheque</option>
                                         </select>
                                     </div>
                                     <div class="form-group full-width"><label>Referencia / Número de Cheque</label><input type="text" id="pay-ref" required></div>
@@ -487,44 +529,59 @@
                                 <button type="button" class="btn-secondary ml-2" onclick="document.getElementById('payment-form').style.display='none'">Cancelar</button>
                             </form>
                         </div>
-                        <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                            <h3 id="stage-title-text">Avance de Etapa</h3>
-                            <span id="detail-time-in-stage" class="badge bg-neutral">Tiempo en etapa: 0 días</span>
-                        </div>
-                        
-                        <div class="stage-tracker" id="stage-tracker">
-                            <!-- Stages timeline -->
+
+                        <!-- Stage Progress & Actions (Prioridad 3) -->
+                        <div id="stage-workflow-box" class="stage-workflow-box">
+                            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
+                                <h3 id="stage-title-text" style="font-size: 1.05rem; color: white; margin: 0;">Avance de Etapa</h3>
+                            </div>
+
+                            <div class="stage-tracker" id="stage-tracker">
+                                <!-- Stages timeline -->
+                            </div>
+
+                            <div id="advance-form-container" class="mt-3">
+                                <!-- Form injected by JS depending on next stage -->
+                            </div>
+
+                            <div class="action-buttons mt-3" id="action-buttons-container" style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                                <button class="btn-primary" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
+                                <button class="btn-danger ml-2" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                            </div>
                         </div>
 
-                        <div id="advance-form-container" class="mt-4">
-                            <!-- Form injected by JS depending on next stage -->
-                        </div>
-
-                        <div class="action-buttons mt-4" id="action-buttons-container">
-                            <button class="btn-primary" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
-                            <button class="btn-danger ml-2" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                        <!-- Información Complementaria (Prioridad 4) -->
+                        <div class="complementary-info-box mt-4">
+                            <h3 style="font-size: 1rem; color: var(--text-secondary); margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">Información Complementaria</h3>
+                            <ul class="info-list" id="info-list">
+                                <!-- Populated by JS -->
+                            </ul>
                         </div>
                     </div>
 
                     <div class="side-detail glass-panel">
-                        <h3>Información General</h3>
-                        <ul class="info-list" id="info-list">
-                            <!-- Populated by JS -->
-                        </ul>
-
-                        <h3 class="mt-4">Documentos Adjuntos</h3>
-                        <ul class="info-list" id="docs-list">
-                            <!-- Populated by JS -->
-                        </ul>
-
-                        <h3 class="mt-4">Notas Operativas</h3>
-                        <div class="logs-container" id="logs-container">
-                            <!-- Populated by JS -->
+                        <!-- Documentos Adjuntos (Prioridad 5) -->
+                        <div class="attached-docs-box">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">
+                                <h3 style="margin: 0; font-size: 1rem; color: white;">Documentos Adjuntos</h3>
+                                <span id="docs-count-badge" class="badge bg-neutral" style="font-size: 0.7rem;">0 docs</span>
+                            </div>
+                            <ul class="info-list docs-card-list" id="docs-list">
+                                <!-- Populated by JS -->
+                            </ul>
                         </div>
-                        
-                        <div class="add-log-box mt-2">
-                            <textarea id="new-log-text" placeholder="Escribe una nota operativa o seguimiento..."></textarea>
-                            <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota</button>
+
+                        <!-- Notas Operativas -->
+                        <div class="operational-logs-box mt-4">
+                            <h3 style="margin: 0 0 0.75rem 0; font-size: 1rem; color: white; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">Notas Operativas</h3>
+                            <div class="logs-container" id="logs-container">
+                                <!-- Populated by JS -->
+                            </div>
+
+                            <div class="add-log-box mt-2">
+                                <textarea id="new-log-text" placeholder="Escribe una nota operativa o seguimiento..."></textarea>
+                                <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota</button>
+                            </div>
                         </div>
                     </div>
                 </div>

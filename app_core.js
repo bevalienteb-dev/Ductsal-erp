@@ -53,6 +53,73 @@ let oppSortCol = ''; let oppSortDir = 'asc';
 let projSortCol = ''; let projSortDir = 'asc';
 let cliSortCol = ''; let cliSortDir = 'asc';
 
+/**
+ * Parsea con tolerancia cualquier representación de fecha de prospecto/oportunidad:
+ * - Objeto Date nativo
+ * - Timestamp de Firestore (con método .toDate() o propiedades .seconds / ._seconds)
+ * - Timestamp numérico (milisegundos o segundos)
+ * - String ISO o formato reconocible
+ * Retorna un objeto Date válido o null si es inexistente / inválido.
+ */
+function parseProspectDate(raw) {
+    if (!raw) return null;
+    if (raw instanceof Date) {
+        return isNaN(raw.getTime()) ? null : raw;
+    }
+    if (typeof raw === 'object') {
+        if (typeof raw.toDate === 'function') {
+            try {
+                const d = raw.toDate();
+                if (d instanceof Date && !isNaN(d.getTime())) return d;
+            } catch (_) {}
+        }
+        if (typeof raw.seconds === 'number') {
+            const d = new Date(raw.seconds * 1000);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        if (typeof raw._seconds === 'number') {
+            const d = new Date(raw._seconds * 1000);
+            return isNaN(d.getTime()) ? null : d;
+        }
+    }
+    if (typeof raw === 'number') {
+        const ms = raw < 1e11 ? raw * 1000 : raw;
+        const d = new Date(ms);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (!trimmed) return null;
+        const d = new Date(trimmed);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+}
+
+/**
+ * Formatea una fecha de ingreso canónica a DD/MM/AAAA.
+ * Si el registro no tiene fecha válida, retorna '-' para representar fecha desconocida de forma coherente.
+ */
+function formatProspectDate(raw) {
+    const d = parseProspectDate(raw);
+    if (!d) return '-';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+}
+
+/**
+ * Limpia el filtro de rango de fechas de ingreso de oportunidades y re-renderiza la lista.
+ */
+function clearOppDateFilter() {
+    const startEl = document.getElementById('opp-date-start');
+    const endEl = document.getElementById('opp-date-end');
+    if (startEl) startEl.value = '';
+    if (endEl) endEl.value = '';
+    renderList();
+}
+
 function toggleOppSort(column) {
     if (oppSortCol === column) {
         oppSortDir = oppSortDir === 'asc' ? 'desc' : 'asc';
@@ -134,7 +201,7 @@ function reassignVendor(prospectId) {
 }
 
 function updateOppSortIcons() {
-    const columns = ['codigo', 'cliente', 'proyecto', 'vendedor', 'etapa', 'monto', 'estado'];
+    const columns = ['codigo', 'cliente', 'proyecto', 'vendedor', 'fecha', 'etapa', 'monto', 'estado'];
     columns.forEach(col => {
         const el = document.getElementById(`sort-opp-${col}`);
         if (!el) return;
@@ -587,7 +654,8 @@ async function downloadSecureDocument(docRef, fallbackName = 'Documento', option
             fileName,
             dbSuffix,
             prospectId: reqProspectId,
-            clientId: reqClientId
+            clientId: reqClientId,
+            disposition: 'attachment'
         });
 
         const data = res && res.data;
@@ -698,16 +766,15 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
             : (options.clientId ? null : (typeof currentProspectId !== 'undefined' ? currentProspectId : null));
         const reqClientId = options.clientId || null;
 
+        const reqDisposition = (options && options.disposition) || (options && options.download ? 'attachment' : 'inline');
         const payload = {
             storagePath,
             fileName,
             dbSuffix,
             prospectId: reqProspectId,
-            clientId: reqClientId
+            clientId: reqClientId,
+            disposition: reqDisposition
         };
-        if (options && options.disposition) {
-            payload.disposition = options.disposition;
-        }
 
         const res = await fn(payload);
 
@@ -1196,6 +1263,11 @@ if (typeof window !== 'undefined') {
     if (typeof getProjPaymentFilter !== 'undefined') window.getProjPaymentFilter = getProjPaymentFilter;
     if (typeof renderSheetTable !== 'undefined') window.renderSheetTable = renderSheetTable;
     if (typeof renderClientExpedienteSection !== 'undefined') window.renderClientExpedienteSection = renderClientExpedienteSection;
+    if (typeof parseProspectDate !== 'undefined') window.parseProspectDate = parseProspectDate;
+    if (typeof formatProspectDate !== 'undefined') window.formatProspectDate = formatProspectDate;
+    if (typeof clearOppDateFilter !== 'undefined') window.clearOppDateFilter = clearOppDateFilter;
+    if (typeof toggleOppSort !== 'undefined') window.toggleOppSort = toggleOppSort;
+    if (typeof updateOppSortIcons !== 'undefined') window.updateOppSortIcons = updateOppSortIcons;
 }
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -1216,7 +1288,12 @@ if (typeof module !== 'undefined' && module.exports) {
         setProjPaymentFilter: typeof setProjPaymentFilter !== 'undefined' ? setProjPaymentFilter : undefined,
         getProjPaymentFilter: typeof getProjPaymentFilter !== 'undefined' ? getProjPaymentFilter : undefined,
         renderSheetTable: typeof renderSheetTable !== 'undefined' ? renderSheetTable : undefined,
-        renderClientExpedienteSection: typeof renderClientExpedienteSection !== 'undefined' ? renderClientExpedienteSection : undefined
+        renderClientExpedienteSection: typeof renderClientExpedienteSection !== 'undefined' ? renderClientExpedienteSection : undefined,
+        parseProspectDate: typeof parseProspectDate !== 'undefined' ? parseProspectDate : undefined,
+        formatProspectDate: typeof formatProspectDate !== 'undefined' ? formatProspectDate : undefined,
+        clearOppDateFilter: typeof clearOppDateFilter !== 'undefined' ? clearOppDateFilter : undefined,
+        toggleOppSort: typeof toggleOppSort !== 'undefined' ? toggleOppSort : undefined,
+        updateOppSortIcons: typeof updateOppSortIcons !== 'undefined' ? updateOppSortIcons : undefined
     };
 }
 
@@ -2522,7 +2599,9 @@ function renderList() {
         // Vendedor manages assigned leads; prior vendor leaves operational access
         filtered = filtered.filter(p => p.vendedorId === currentUser.id || (p.createdBy === currentUser.id && (!p.vendedorId || p.vendedorId === currentUser.id)));
     }
-    const tbody = document.getElementById('opp-table-body'); tbody.innerHTML = '';
+    const tbody = document.getElementById('opp-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
     let visibleProspects = filtered.filter(p => p.estado !== 'ganado');
 
     // Apply Search Filter
@@ -2537,13 +2616,62 @@ function renderList() {
             const stageMatch = (p.etapa || '').toLowerCase().includes(searchVal);
             const amountMatch = p.precio_cotizado ? formatCurrency(p.precio_cotizado).toLowerCase().includes(searchVal) || String(p.precio_cotizado).includes(searchVal) : false;
             const statusMatch = (p.estado || '').toLowerCase().includes(searchVal);
-            return codeMatch || clientMatch || projectMatch || vendorMatch || stageMatch || amountMatch || statusMatch;
+            const dateStr = formatProspectDate(p.fecha_creacion);
+            const dateMatch = dateStr !== '-' && dateStr.toLowerCase().includes(searchVal);
+            return codeMatch || clientMatch || projectMatch || vendorMatch || stageMatch || amountMatch || statusMatch || dateMatch;
         });
+    }
+
+    // Apply Date Range Filter (Fecha de Ingreso)
+    const dateStartVal = document.getElementById('opp-date-start') ? document.getElementById('opp-date-start').value : '';
+    const dateEndVal = document.getElementById('opp-date-end') ? document.getElementById('opp-date-end').value : '';
+    const btnClearDates = document.getElementById('btn-clear-opp-dates');
+    if (btnClearDates) {
+        btnClearDates.style.display = (dateStartVal || dateEndVal) ? 'inline-block' : 'none';
+    }
+
+    if (dateStartVal || dateEndVal) {
+        let startTime = null;
+        let endTime = null;
+        if (dateStartVal) {
+            const [y, m, d] = dateStartVal.split('-').map(Number);
+            startTime = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+        }
+        if (dateEndVal) {
+            const [y, m, d] = dateEndVal.split('-').map(Number);
+            endTime = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+        }
+
+        visibleProspects = visibleProspects.filter(p => {
+            const pDate = parseProspectDate(p.fecha_creacion);
+            if (!pDate) return false;
+            const pTime = pDate.getTime();
+            if (startTime !== null && pTime < startTime) return false;
+            if (endTime !== null && pTime > endTime) return false;
+            return true;
+        });
+    }
+
+    // Update Counter Badge
+    const countBadge = document.getElementById('opp-count-badge');
+    if (countBadge) {
+        countBadge.textContent = `${visibleProspects.length} ${visibleProspects.length === 1 ? 'oportunidad' : 'oportunidades'}`;
     }
 
     // Apply Sorting
     if (oppSortCol) {
         visibleProspects.sort((a, b) => {
+            if (oppSortCol === 'fecha') {
+                const dateA = parseProspectDate(a.fecha_creacion);
+                const dateB = parseProspectDate(b.fecha_creacion);
+                if (!dateA && !dateB) return 0;
+                if (!dateA) return 1;
+                if (!dateB) return -1;
+                return oppSortDir === 'asc'
+                    ? dateA.getTime() - dateB.getTime()
+                    : dateB.getTime() - dateA.getTime();
+            }
+
             let valA = '';
             let valB = '';
 
@@ -2583,7 +2711,7 @@ function renderList() {
     }
 
     if (visibleProspects.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron oportunidades.</td></tr>';
         return;
     }
 
@@ -2605,7 +2733,7 @@ function renderList() {
         const vendor = getProspectVendorInfo(p);
         const vendorBadge = vendor.role ? `<span style="font-size:0.75rem; color:var(--text-secondary); display:block;">(${vendor.role})</span>` : '';
 
-        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
+        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td>${formatProspectDate(p.fecha_creacion)}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -3153,11 +3281,13 @@ function openDetail(id) {
     const actionContainer = document.getElementById('action-buttons-container');
     const finTracker = document.getElementById('financial-tracker-container');
     const stageTitleText = document.getElementById('stage-title-text');
+    const stageWorkflowBox = document.getElementById('stage-workflow-box');
 
     const trackerContainer = document.getElementById('stage-tracker');
 
     if (p.estado === 'activo') {
         actionContainer.style.display = 'block'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Avance de Etapa"; document.getElementById('btn-advance').style.display = p.etapa === 'cierre' ? 'none' : 'inline-block';
+        if (stageWorkflowBox) stageWorkflowBox.style.display = 'block';
 
         const existingBtn = document.getElementById('btn-new-proposal');
         if (existingBtn) existingBtn.remove();
@@ -3170,8 +3300,11 @@ function openDetail(id) {
             actionContainer.appendChild(btn);
         }
     } else if (p.estado === 'ganado' || (hasEnteredPostclosing(p) && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor'))) {
-        actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; renderFinancials(p);
-    } else { actionContainer.style.display = 'none'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Línea de Tiempo"; }
+        actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; if (stageWorkflowBox) stageWorkflowBox.style.display = 'none'; renderFinancials(p);
+    } else {
+        actionContainer.style.display = 'none'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Línea de Tiempo";
+        if (stageWorkflowBox) stageWorkflowBox.style.display = 'block';
+    }
 
     let timeInStage = 0;
     if (p.stage_timestamps && p.stage_timestamps[p.etapa]) {
@@ -3580,72 +3713,123 @@ function renderTracker(p) {
 }
 
 function renderInfo(p) {
-    const list = document.getElementById('info-list');
-
-    // Evitar crasheo si p.fecha_creacion no existe (ej: importado de Excel)
-    let fechaDate = new Date();
-    if (p.fecha_creacion) {
-        let parsed = new Date(p.fecha_creacion);
-        if (!isNaN(parsed)) fechaDate = parsed;
-    }
+    if (!p) return;
+    if (!p.datos) p.datos = {};
 
     const vendor = getProspectVendorInfo(p);
-    let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
-    if (currentUser && currentUser.role === 'manager' && !hasEnteredPostclosing(p) && p.etapa !== 'cierre') {
-        vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
-    }
-    vendorLinkHTML += `</li>`;
+    const daysTotal = getDaysDifference(p.fecha_creacion);
+    const dateFormatted = formatProspectDate(p.fecha_creacion);
 
-    list.innerHTML = `<li><strong>Creación:</strong> ${fechaDate.toLocaleDateString('es-MX')}</li>${vendorLinkHTML}<li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
-    if (!p.datos) p.datos = {};
-    if (p.datos.ubicacion) {
-        list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
-        if (p.datos.distancia) list.innerHTML += `<li><span class="label">Distancia a fábrica:</span> ${p.datos.distancia} km</li>`;
-    }
-    if (p.datos.visitante) list.innerHTML += `<li><strong>Visitó:</strong> ${p.datos.visitante} (${p.datos.fecha_visita})</li>`;
-    if (p.datos.fecha_inicio) list.innerHTML += `<li><strong>Est. Inicio:</strong> ${p.datos.fecha_inicio}</li>`;
-    // Base price / cost: corrected only by manager / gestor and only BEFORE the closing (editProspectBasePriceAdmin enforces both on the
-    // server against the STORED role and state; hiding the link is just the courtesy, not the protection).
     const canEditBase = !!currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor') && p.estado === 'activo';
-    const editBaseLink = canEditBase ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span>` : '';
-    if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)}${editBaseLink}</li>`;
-    if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)}${editBaseLink}</li>`;
-    if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
+    const editBaseLink = canEditBase ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold); text-decoration:underline;" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span>` : '';
 
-    const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-    if (isBigInstalacionInfo && p.estado === 'activo') {
-        const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
-        const isManager = currentUser && currentUser.role === 'manager';
-        if (isManager) {
-            list.innerHTML += `<li>
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px; margin-bottom: 4px;">
-                    <input type="checkbox" id="info-auth-no-contract" ${isAuthorized ? 'checked' : ''} onchange="toggleManagerApproval(this.checked)">
-                    <span>Autorizar sin Contrato</span>
-                </label>
-            </li>`;
-            if (!isAuthorized && noContractRequestsOf(p).some(r => r.estado === 'pendiente')) list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
+    // 1. Resumen Comercial / KPI Hero (Prioridad 2)
+    const heroEtapa = document.getElementById('hero-etapa');
+    if (heroEtapa) heroEtapa.textContent = p.etapa || '-';
+
+    const heroVendedor = document.getElementById('hero-vendedor');
+    if (heroVendedor) {
+        heroVendedor.innerHTML = `<span>${vendor.name}</span> ${vendor.role ? `<span style="font-size:0.75rem; color:var(--text-secondary); font-weight:normal;">(${vendor.role})</span>` : ''}`;
+    }
+    const heroVendedorAction = document.getElementById('hero-vendedor-action');
+    if (heroVendedorAction) {
+        if (currentUser && currentUser.role === 'manager' && !hasEnteredPostclosing(p) && p.etapa !== 'cierre') {
+            heroVendedorAction.innerHTML = `<span class="cursor-pointer" style="color:var(--brand-gold); text-decoration:underline;" onclick="reassignVendor('${p.id}')">🔄 Reasignar vendedor</span>`;
         } else {
-            if (isAuthorized) {
-                list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
-            } else {
-                list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato (> $10k)</strong></li>`;
-                list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
-            }
+            heroVendedorAction.innerHTML = '';
         }
     }
 
-    if (p.estado === 'ganado') {
-        list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${p.forma_pago}</li>`;
-        if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${p.encargado}</li>`;
-    }
-    if (p.estado === 'perdido') list.innerHTML += `<li><strong style="color:var(--danger)">Motivo Pérdida:</strong> ${p.motivo_perdida}</li>`;
+    const heroFecha = document.getElementById('hero-fecha');
+    if (heroFecha) heroFecha.textContent = dateFormatted;
 
-    // Render Docs
+    const heroAntiguedad = document.getElementById('hero-antiguedad');
+    if (heroAntiguedad) {
+        heroAntiguedad.textContent = `${daysTotal} ${daysTotal === 1 ? 'día' : 'días'} desde ingreso`;
+    }
+
+    const heroPrecio = document.getElementById('hero-precio');
+    if (heroPrecio) heroPrecio.textContent = p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-';
+
+    const heroPrecioAction = document.getElementById('hero-precio-action');
+    if (heroPrecioAction) heroPrecioAction.innerHTML = editBaseLink;
+
+    const heroCosto = document.getElementById('hero-costo');
+    if (heroCosto) heroCosto.textContent = p.costo_venta ? formatCurrency(p.costo_venta) : '-';
+
+    const heroMargen = document.getElementById('hero-margen');
+    if (heroMargen) {
+        const numPrecio = parseFloat(p.precio_cotizado) || 0;
+        const numCosto = parseFloat(p.costo_venta) || 0;
+        if (numPrecio > 0) {
+            const margenVal = numPrecio - numCosto;
+            const margenPct = Math.round((margenVal / numPrecio) * 100);
+            const margenColor = margenVal >= 0 ? 'var(--success)' : 'var(--danger)';
+            heroMargen.style.color = margenColor;
+            heroMargen.textContent = `Margen: ${formatCurrency(margenVal)} (${margenPct}%)`;
+        } else {
+            heroMargen.textContent = 'Margen: -';
+        }
+    }
+
+    // 2. Información Complementaria en lista (Prioridad 4)
+    const list = document.getElementById('info-list');
+    if (list) {
+        let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
+        if (currentUser && currentUser.role === 'manager' && !hasEnteredPostclosing(p) && p.etapa !== 'cierre') {
+            vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
+        }
+        vendorLinkHTML += `</li>`;
+
+        list.innerHTML = `<li><strong>Creación:</strong> ${dateFormatted}</li>${vendorLinkHTML}<li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
+
+        if (p.datos.ubicacion) {
+            list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
+            if (p.datos.distancia) list.innerHTML += `<li><span class="label">Distancia a fábrica:</span> ${p.datos.distancia} km</li>`;
+        }
+        if (p.datos.visitante) list.innerHTML += `<li><strong>Visitó:</strong> ${p.datos.visitante} (${p.datos.fecha_visita || 'Sin fecha'})</li>`;
+        if (p.datos.fecha_inicio) list.innerHTML += `<li><strong>Est. Inicio:</strong> ${p.datos.fecha_inicio}</li>`;
+        if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)}${editBaseLink}</li>`;
+        if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)}${editBaseLink}</li>`;
+        if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
+
+        const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+        if (isBigInstalacionInfo && p.estado === 'activo') {
+            const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
+            const isManager = currentUser && currentUser.role === 'manager';
+            if (isManager) {
+                list.innerHTML += `<li>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px; margin-bottom: 4px;">
+                        <input type="checkbox" id="info-auth-no-contract" ${isAuthorized ? 'checked' : ''} onchange="toggleManagerApproval(this.checked)">
+                        <span>Autorizar sin Contrato</span>
+                    </label>
+                </li>`;
+                if (!isAuthorized && noContractRequestsOf(p).some(r => r.estado === 'pendiente')) list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
+            } else {
+                if (isAuthorized) {
+                    list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
+                } else {
+                    list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato (> $10k)</strong></li>`;
+                    list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
+                }
+            }
+        }
+
+        if (p.estado === 'ganado') {
+            list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${p.forma_pago || '-'}</li>`;
+            if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${p.encargado}</li>`;
+        }
+        if (p.estado === 'perdido') list.innerHTML += `<li><strong style="color:var(--danger)">Motivo Pérdida:</strong> ${p.motivo_perdida || '-'}</li>`;
+    }
+
+    // 3. Documentos Adjuntos (Prioridad 5)
     const docsList = document.getElementById('docs-list');
+    if (!docsList) return;
     docsList.innerHTML = '';
     let hasDocs = false;
+    let docCount = 0;
 
-    function dlLink(doc) {
+    function dlCard(doc, category) {
         if (!doc) return '';
         let name = typeof doc === 'object' ? (doc.name || 'Documento') : doc;
         let id = 'doc_' + Math.random().toString(36).substring(2, 9);
@@ -3655,44 +3839,74 @@ function renderInfo(p) {
         }
         const previewable = isFormatPreviewable(name);
         const pId = (p && p.id) ? p.id : '';
+        const ext = String(name || '').split('.').pop().toUpperCase() || 'DOC';
+        let icon = '📁';
+        if (ext === 'PDF') icon = '📄';
+        else if (ext === 'XLSX' || ext === 'XLS') icon = '📊';
+        else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].includes(ext)) icon = '🖼️';
+
         if (previewable) {
-            return `<span class="doc-link-item" style="display:inline-flex; align-items:center; gap:6px; margin:2px 0;">` +
-                   `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--brand-gold); cursor:pointer; text-decoration:underline;" title="Previsualizar">👁️ ${escapeHtmlDoc(name)}</a>` +
-                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--text-secondary); text-decoration:none; font-size:0.75rem; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); cursor:pointer;" title="Descargar archivo">⬇️ Descargar</a>` +
-                   `</span>`;
+            return `<li class="doc-card-row">` +
+                   `<div class="doc-card-info">` +
+                   `<span class="doc-card-category">${escapeHtmlDoc(category)}</span>` +
+                   `<span class="doc-card-name" title="${escapeHtmlDoc(name)}">${icon} ${escapeHtmlDoc(name)}</span>` +
+                   `</div>` +
+                   `<div class="doc-card-actions">` +
+                   `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>` +
+                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
+                   `</div>` +
+                   `</li>`;
         } else {
-            return `<span class="doc-link-item" style="display:inline-flex; align-items:center; gap:6px; margin:2px 0;">` +
-                   `<span style="color:var(--text-primary); font-weight:500;">📁 ${escapeHtmlDoc(name)}</span>` +
-                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" style="color:var(--brand-gold); text-decoration:none; font-size:0.75rem; background:rgba(217,119,6,0.15); padding:2px 8px; border-radius:4px; border:1px solid rgba(217,119,6,0.3); font-weight:600; cursor:pointer;" title="Descargar archivo">⬇️ Descargar</a>` +
-                   `</span>`;
+            return `<li class="doc-card-row">` +
+                   `<div class="doc-card-info">` +
+                   `<span class="doc-card-category">${escapeHtmlDoc(category)}</span>` +
+                   `<span class="doc-card-name" title="${escapeHtmlDoc(name)}">${icon} ${escapeHtmlDoc(name)}</span>` +
+                   `</div>` +
+                   `<div class="doc-card-actions">` +
+                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
+                   `</div>` +
+                   `</li>`;
         }
     }
 
-    function renderDocLinks(doc) {
-        if (!doc) return '';
-        if (Array.isArray(doc)) {
-            return doc.map(d => dlLink(d)).join(', ');
+    function addDoc(field, category) {
+        if (!field) return;
+        if (Array.isArray(field)) {
+            field.forEach(d => {
+                if (d) {
+                    docsList.innerHTML += dlCard(d, category);
+                    docCount++;
+                    hasDocs = true;
+                }
+            });
+        } else {
+            docsList.innerHTML += dlCard(field, category);
+            docCount++;
+            hasDocs = true;
         }
-        return dlLink(doc);
     }
 
-    if (p.datos.doc_levantamiento) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Planos/Notas:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_levantamiento)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_oferta) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta/Cotiz.:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_oferta)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_costos) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Cuadro Costos:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_costos)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_oferta_firmada) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Oferta Firmada:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_oferta_firmada)}</span></li>`; hasDocs = true; }
-    if (p.datos.doc_contrato) { docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Contrato:</span> <span style="word-break: break-all;">${renderDocLinks(p.datos.doc_contrato)}</span></li>`; hasDocs = true; }
+    addDoc(p.datos.doc_levantamiento, 'Planos / Notas');
+    addDoc(p.datos.doc_oferta, 'Oferta / Cotización');
+    addDoc(p.datos.doc_costos, 'Cuadro de Costos');
+    addDoc(p.datos.doc_oferta_firmada, 'Oferta Firmada');
+    addDoc(p.datos.doc_contrato, 'Contrato');
 
     if (p.facturas && p.facturas.length > 0) {
         p.facturas.forEach(f => {
             if (f.doc_factura) {
-                docsList.innerHTML += `<li><span style="color:var(--text-secondary)">Fac ${f.numero}:</span> <span style="word-break: break-all;">${renderDocLinks(f.doc_factura)}</span></li>`;
-                hasDocs = true;
+                addDoc(f.doc_factura, `Factura ${f.numero || ''}`);
             }
         });
     }
 
+    const docsBadge = document.getElementById('docs-count-badge');
+    if (docsBadge) {
+        docsBadge.textContent = `${docCount} ${docCount === 1 ? 'doc' : 'docs'}`;
+    }
+
     if (!hasDocs) {
-        docsList.innerHTML = `<li style="color:var(--text-muted); font-size: 0.85rem;">No hay documentos adjuntos.</li>`;
+        docsList.innerHTML = `<li style="color:var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0;">No hay documentos adjuntos.</li>`;
     }
 }
 

@@ -331,6 +331,24 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     throw new ServiceError('permission-denied', 'No se pudo verificar la autorización para acceder al archivo solicitado');
   }
 
+function resolveContentType(fileName, metaContentType) {
+  if (metaContentType && metaContentType !== 'application/octet-stream') {
+    return metaContentType;
+  }
+  const lower = String(fileName || '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.svg')) return 'image/svg+xml';
+  if (lower.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lower.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  if (lower.endsWith('.csv')) return 'text/csv';
+  return metaContentType || 'application/octet-stream';
+}
+
   async function getSecureDownloadUrl({ caller, storagePath, fileName, prospectId, clientId, expiresInSeconds = DEFAULT_EXPIRATION_SECONDS, disposition = 'attachment' }) {
     const cleanPath = validateStoragePath(storagePath);
     await verifyDocumentAccess(caller, cleanPath, { prospectId, clientId });
@@ -352,9 +370,9 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     const safeFileName = sanitizeFileName(fileName || cleanPath.split('/').pop() || 'documento');
     const safeExpiresInSeconds = normalizeExpirationSeconds(expiresInSeconds);
     const contentDisposition = buildContentDisposition(safeFileName, disposition);
+    const effectiveContentType = resolveContentType(safeFileName, meta.contentType);
 
     const size = parseInt(meta.size || 0, 10);
-    const contentType = meta.contentType || 'application/octet-stream';
     const expiresAt = new Date(Date.now() + safeExpiresInSeconds * 1000).toISOString();
 
     // In emulator or mock environment
@@ -366,25 +384,29 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         storagePath: cleanPath,
         fileName: safeFileName,
         size,
-        contentType,
+        contentType: effectiveContentType,
         expiresAt
       };
     }
 
     // In production V4 signed URL
-    const [signedUrl] = await file.getSignedUrl({
+    const signedUrlOptions = {
       version: 'v4',
       action: 'read',
       expires: Date.now() + safeExpiresInSeconds * 1000,
       responseDisposition: contentDisposition
-    });
+    };
+    if (effectiveContentType && effectiveContentType !== 'application/octet-stream') {
+      signedUrlOptions.responseType = effectiveContentType;
+    }
+    const [signedUrl] = await file.getSignedUrl(signedUrlOptions);
 
     return {
       signedUrl,
       storagePath: cleanPath,
       fileName: safeFileName,
       size,
-      contentType,
+      contentType: effectiveContentType,
       expiresAt
     };
   }

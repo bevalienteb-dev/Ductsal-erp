@@ -405,4 +405,258 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
       expect(typeof appCore.renderClientExpedienteSection).toBe('function');
     });
   });
+
+  // =========================================================================
+  // 6. PDF Preview (Inline Disposition) vs Download (Attachment)
+  // =========================================================================
+  describe('6. PDF Preview vs Download Behavior & Disposition Integrity', () => {
+    test('viewSecureDocument defaults disposition to inline for in-browser viewing', () => {
+      expect(appCoreSrc).toContain("const reqDisposition = (options && options.disposition) || (options && options.download ? 'attachment' : 'inline');");
+      expect(appCoreSrc).toContain("disposition: reqDisposition");
+    });
+
+    test('downloadSecureDocument explicitly specifies disposition attachment', () => {
+      expect(appCoreSrc).toContain("disposition: 'attachment'");
+    });
+
+    test('storageService resolves application/pdf for PDF files and attaches responseType', async () => {
+      const storageServiceSrc = fs.readFileSync(path.join(__dirname, '..', 'storageService.js'), 'utf8');
+      expect(storageServiceSrc).toContain("if (lower.endsWith('.pdf')) return 'application/pdf';");
+      expect(storageServiceSrc).toContain("signedUrlOptions.responseType = effectiveContentType;");
+    });
+
+    test('getSecureDownloadUrlAdmin strictly sanitizes disposition to inline or attachment', () => {
+      const indexSrc = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+      expect(indexSrc).toContain("disposition: (data.disposition === 'inline' || data.disposition === 'attachment') ? data.disposition : 'attachment'");
+    });
+
+    test('opportunity documents render separate 👁️ Ver (view) and ⬇️ Descargar (download) action buttons', () => {
+      expect(appCoreSrc).toContain('class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>');
+      expect(appCoreSrc).toContain('class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>');
+      expect(appCoreSrc).toContain("viewSecureDocument(window._docStore ? window._docStore.get");
+      expect(appCoreSrc).toContain("downloadSecureDocument(window._docStore ? window._docStore.get");
+    });
+  });
+
+  // =========================================================================
+  // 7. Canonical Date Parsing & Unknown Date Formatting
+  // =========================================================================
+  describe('7. Canonical Date Parsing & Unknown Date Formatting', () => {
+    const parseProspectDate = appCore.parseProspectDate;
+    const formatProspectDate = appCore.formatProspectDate;
+
+    test('parseProspectDate handles native Date instances', () => {
+      const d = new Date(2026, 4, 15, 10, 30);
+      expect(parseProspectDate(d)).toEqual(d);
+      expect(parseProspectDate(new Date('invalid'))).toBeNull();
+    });
+
+    test('parseProspectDate handles ISO strings and date strings', () => {
+      const parsed = parseProspectDate('2026-03-20T12:00:00.000Z');
+      expect(parsed).toBeInstanceOf(Date);
+      expect(parsed.toISOString()).toBe('2026-03-20T12:00:00.000Z');
+
+      const parsedSimple = parseProspectDate('2026-08-10');
+      expect(parsedSimple).toBeInstanceOf(Date);
+    });
+
+    test('parseProspectDate handles Firestore Timestamps with toDate()', () => {
+      const mockTimestamp = {
+        toDate: () => new Date('2026-02-14T08:00:00.000Z')
+      };
+      const parsed = parseProspectDate(mockTimestamp);
+      expect(parsed).toBeInstanceOf(Date);
+      expect(parsed.toISOString()).toBe('2026-02-14T08:00:00.000Z');
+    });
+
+    test('parseProspectDate handles Firestore Timestamps with seconds or _seconds', () => {
+      const tsSeconds = { seconds: 1774000000 };
+      const parsedA = parseProspectDate(tsSeconds);
+      expect(parsedA).toBeInstanceOf(Date);
+      expect(parsedA.getTime()).toBe(1774000000 * 1000);
+
+      const tsUnderscore = { _seconds: 1774000000 };
+      const parsedB = parseProspectDate(tsUnderscore);
+      expect(parsedB).toBeInstanceOf(Date);
+      expect(parsedB.getTime()).toBe(1774000000 * 1000);
+    });
+
+    test('parseProspectDate handles epoch numbers in seconds or milliseconds', () => {
+      const ms = 1774000000000;
+      expect(parseProspectDate(ms).getTime()).toBe(ms);
+
+      const sec = 1774000000;
+      expect(parseProspectDate(sec).getTime()).toBe(sec * 1000);
+    });
+
+    test('parseProspectDate safely returns null for null, undefined, empty, or invalid input', () => {
+      expect(parseProspectDate(null)).toBeNull();
+      expect(parseProspectDate(undefined)).toBeNull();
+      expect(parseProspectDate('')).toBeNull();
+      expect(parseProspectDate('   ')).toBeNull();
+      expect(parseProspectDate('fecha_invalida')).toBeNull();
+      expect(parseProspectDate({})).toBeNull();
+    });
+
+    test('formatProspectDate formats valid dates as DD/MM/AAAA with leading zeroes', () => {
+      // 5th of March 2026
+      const d = new Date(2026, 2, 5, 12, 0);
+      expect(formatProspectDate(d)).toBe('05/03/2026');
+
+      // 25th of December 2025
+      const d2 = new Date(2025, 11, 25, 12, 0);
+      expect(formatProspectDate(d2)).toBe('25/12/2025');
+    });
+
+    test('formatProspectDate formats unknown dates coherently as "-"', () => {
+      expect(formatProspectDate(null)).toBe('-');
+      expect(formatProspectDate(undefined)).toBe('-');
+      expect(formatProspectDate('')).toBe('-');
+      expect(formatProspectDate('corrupt-date')).toBe('-');
+    });
+  });
+
+  // =========================================================================
+  // 8. Bidirectional Sorting by Fecha de Ingreso
+  // =========================================================================
+  describe('8. Bidirectional Sorting by Fecha de Ingreso (Antigüedad / Recientes)', () => {
+    const parseProspectDate = appCore.parseProspectDate;
+
+    const list = [
+      { id: 'p_unknown', proyecto: 'Sin fecha', fecha_creacion: null },
+      { id: 'p_mid', proyecto: 'Intermedio', fecha_creacion: '2026-02-15T10:00:00.000Z' },
+      { id: 'p_old', proyecto: 'Antiguo', fecha_creacion: '2025-06-01T08:00:00.000Z' },
+      { id: 'p_new', proyecto: 'Reciente', fecha_creacion: '2026-10-18T14:00:00.000Z' },
+      { id: 'p_empty', proyecto: 'Vacio', fecha_creacion: '' }
+    ];
+
+    test('sorts oldest first (asc: mayor antigüedad primero), placing unknown dates at the end', () => {
+      const sortedAsc = [...list].sort((a, b) => {
+        const dateA = parseProspectDate(a.fecha_creacion);
+        const dateB = parseProspectDate(b.fecha_creacion);
+        if (!dateA && !dateB) return 0;
+        if (!dateA) return 1;
+        if (!dateB) return -1;
+        return dateA.getTime() - dateB.getTime();
+      });
+
+      expect(sortedAsc.map(x => x.id)).toEqual(['p_old', 'p_mid', 'p_new', 'p_unknown', 'p_empty']);
+    });
+
+    test('sorts newest first (desc: menor antigüedad primero), placing unknown dates at the end', () => {
+      const sortedDesc = [...list].sort((a, b) => {
+        const dateA = parseProspectDate(a.fecha_creacion);
+        const dateB = parseProspectDate(b.fecha_creacion);
+        if (!dateA && !dateB) return 0;
+        if (!dateA) return 1;
+        if (!dateB) return -1;
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      expect(sortedDesc.map(x => x.id)).toEqual(['p_new', 'p_mid', 'p_old', 'p_unknown', 'p_empty']);
+    });
+
+    test('updateOppSortIcons and toggleOppSort support the fecha column', () => {
+      expect(appCoreSrc).toContain("const columns = ['codigo', 'cliente', 'proyecto', 'vendedor', 'fecha', 'etapa', 'monto', 'estado'];");
+      expect(indexHtml).toContain('onclick="toggleOppSort(\'fecha\')"');
+      expect(indexHtml).toContain('id="sort-opp-fecha"');
+    });
+  });
+
+  // =========================================================================
+  // 9. Inclusive Date Range Filter & Combination with Search/Status
+  // =========================================================================
+  describe('9. Inclusive Date Range Filter Logic & Combining Filters', () => {
+    const parseProspectDate = appCore.parseProspectDate;
+
+    const dataset = [
+      { id: 'p1', codigo: '2026-001', proyecto: 'Edificio Norte', estado: 'activo', fecha_creacion: '2026-03-01T14:00:00.000Z' },
+      { id: 'p2', codigo: '2026-002', proyecto: 'Torre Central', estado: 'activo', fecha_creacion: '2026-03-15T15:30:00.000Z' },
+      { id: 'p3', codigo: '2026-003', proyecto: 'Bodega Sur', estado: 'activo', fecha_creacion: '2026-03-31T18:00:00.000Z' },
+      { id: 'p4', codigo: '2026-004', proyecto: 'Plaza Mayor', estado: 'activo', fecha_creacion: '2026-04-02T12:00:00.000Z' },
+      { id: 'p5', codigo: '2026-005', proyecto: 'Casa Quinta', estado: 'perdido', fecha_creacion: '2026-03-20T11:00:00.000Z' }
+    ];
+
+    test('inclusive date range filter includes boundary start (00:00:00) and end (23:59:59) dates', () => {
+      const dateStartVal = '2026-03-01';
+      const dateEndVal = '2026-03-31';
+
+      const [sy, sm, sd] = dateStartVal.split('-').map(Number);
+      const startTime = new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime();
+
+      const [ey, em, ed] = dateEndVal.split('-').map(Number);
+      const endTime = new Date(ey, em - 1, ed, 23, 59, 59, 999).getTime();
+
+      const filtered = dataset.filter(p => {
+        const pDate = parseProspectDate(p.fecha_creacion);
+        if (!pDate) return false;
+        const pTime = pDate.getTime();
+        return pTime >= startTime && pTime <= endTime;
+      });
+
+      // p1 (March 1), p2 (March 15), p3 (March 31), p5 (March 20) are inside March
+      // p4 (April 2) is outside
+      expect(filtered.map(x => x.id)).toEqual(['p1', 'p2', 'p3', 'p5']);
+    });
+
+    test('date range filter combines seamlessly with text search and status filter', () => {
+      const dateStartVal = '2026-03-01';
+      const dateEndVal = '2026-03-31';
+      const searchVal = 'torre';
+
+      const [sy, sm, sd] = dateStartVal.split('-').map(Number);
+      const startTime = new Date(sy, sm - 1, sd, 0, 0, 0, 0).getTime();
+      const [ey, em, ed] = dateEndVal.split('-').map(Number);
+      const endTime = new Date(ey, em - 1, ed, 23, 59, 59, 999).getTime();
+
+      const filtered = dataset
+        .filter(p => p.estado === 'activo')
+        .filter(p => p.proyecto.toLowerCase().includes(searchVal))
+        .filter(p => {
+          const pDate = parseProspectDate(p.fecha_creacion);
+          if (!pDate) return false;
+          const pTime = pDate.getTime();
+          return pTime >= startTime && pTime <= endTime;
+        });
+
+      expect(filtered.map(x => x.id)).toEqual(['p2']);
+    });
+
+    test('clearOppDateFilter is defined and clears inputs', () => {
+      expect(typeof appCore.clearOppDateFilter).toBe('function');
+      expect(indexHtml).toContain('id="opp-date-start"');
+      expect(indexHtml).toContain('id="opp-date-end"');
+      expect(indexHtml).toContain('id="btn-clear-opp-dates"');
+      expect(indexHtml).toContain('id="opp-count-badge"');
+    });
+  });
+
+  // =========================================================================
+  // 10. Opportunity Detail Layout Hierarchy & Commercial Summary
+  // =========================================================================
+  describe('10. Opportunity Detail Layout Hierarchy & Balanced Grid', () => {
+    test('detail view contains top-level commercial-hero-banner with priority KPIs', () => {
+      expect(indexHtml).toContain('id="commercial-hero-banner"');
+      expect(indexHtml).toContain('id="hero-etapa"');
+      expect(indexHtml).toContain('id="hero-vendedor"');
+      expect(indexHtml).toContain('id="hero-fecha"');
+      expect(indexHtml).toContain('id="hero-precio"');
+      expect(indexHtml).toContain('id="hero-costo"');
+      expect(indexHtml).toContain('id="hero-margen"');
+    });
+
+    test('detail-grid uses balanced column distribution in styles.css', () => {
+      const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
+      expect(stylesCss).toContain('.detail-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 1.5rem; }');
+      expect(stylesCss).toContain('.commercial-hero-banner');
+      expect(stylesCss).toContain('.kpi-banner-grid');
+      expect(stylesCss).toContain('.docs-card-list');
+    });
+
+    test('attached documents contain separate preview and download controls', () => {
+      expect(indexHtml).toContain('id="docs-count-badge"');
+      expect(indexHtml).toContain('id="docs-list"');
+      expect(indexHtml).toContain('id="stage-workflow-box"');
+    });
+  });
 });

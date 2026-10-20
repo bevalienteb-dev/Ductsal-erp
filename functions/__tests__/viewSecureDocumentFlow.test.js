@@ -178,7 +178,8 @@ describe('SEC-03: Storage Document Preview & Download Flow', () => {
         fileName: 'factura_001.pdf',
         dbSuffix: '_prod',
         prospectId: 'P1',
-        clientId: null
+        clientId: null,
+        disposition: 'inline'
       });
 
       // Se intentó fetch
@@ -203,10 +204,11 @@ describe('SEC-03: Storage Document Preview & Download Flow', () => {
       expect(mockConsoleWarns[0].msg).toContain('Fetch directo a Blob no disponible');
     });
 
-    test('si options.download es true, viewSecureDocument descarga el archivo con <a>', async () => {
+    test('si options.download es true, viewSecureDocument descarga el archivo con <a> y solicita disposition attachment', async () => {
       const doc = { storagePath: 'prod_files/prospects/P1/facturas/fac1.pdf', name: 'factura_001.pdf' };
       await executeViewSecureDocument(doc, 'Factura', { download: true, prospectId: 'P1' });
 
+      expect(mockCallablePayload.disposition).toBe('attachment');
       expect(mockElements).toHaveLength(1);
       const a = mockElements[0];
       expect(a.tag).toBe('a');
