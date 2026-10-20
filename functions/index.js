@@ -1523,7 +1523,8 @@ exports.getSecureDownloadUrlAdmin = functions
       fileName: data.fileName,
       prospectId: data.prospectId,
       clientId: data.clientId,
-      expiresInSeconds: data.expiresInSeconds || 900
+      expiresInSeconds: data.expiresInSeconds || 900,
+      disposition: data.disposition || 'attachment'
     });
   } catch (e) {
     throw toHttpsError(e);

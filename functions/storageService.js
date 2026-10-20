@@ -43,14 +43,15 @@ function sanitizeFileName(fileName, fallback = 'documento') {
   return clean || fallback;
 }
 
-function buildContentDisposition(cleanName) {
+function buildContentDisposition(cleanName, disposition = 'attachment') {
   // ASCII fallback for filename="" (RFC 6266): replace non-ASCII with '_' and strip quotes
   const asciiName = cleanName.replace(/["\\]/g, '').replace(/[^\x20-\x7E]/g, '_') || 'documento';
   // UTF-8 encoding for filename*=UTF-8''... preserving spaces (%20), accents, Spanish chars (á, é, í, ó, ú, ñ)
   const utf8Encoded = encodeURIComponent(cleanName)
     .replace(/['()]/g, escape)
     .replace(/\*/g, '%2A');
-  return `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Encoded}`;
+  const type = disposition === 'inline' ? 'inline' : 'attachment';
+  return `${type}; filename="${asciiName}"; filename*=UTF-8''${utf8Encoded}`;
 }
 
 /**
@@ -330,7 +331,7 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     throw new ServiceError('permission-denied', 'No se pudo verificar la autorización para acceder al archivo solicitado');
   }
 
-  async function getSecureDownloadUrl({ caller, storagePath, fileName, prospectId, clientId, expiresInSeconds = DEFAULT_EXPIRATION_SECONDS }) {
+  async function getSecureDownloadUrl({ caller, storagePath, fileName, prospectId, clientId, expiresInSeconds = DEFAULT_EXPIRATION_SECONDS, disposition = 'attachment' }) {
     const cleanPath = validateStoragePath(storagePath);
     await verifyDocumentAccess(caller, cleanPath, { prospectId, clientId });
 
@@ -350,7 +351,7 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
 
     const safeFileName = sanitizeFileName(fileName || cleanPath.split('/').pop() || 'documento');
     const safeExpiresInSeconds = normalizeExpirationSeconds(expiresInSeconds);
-    const contentDisposition = buildContentDisposition(safeFileName);
+    const contentDisposition = buildContentDisposition(safeFileName, disposition);
 
     const size = parseInt(meta.size || 0, 10);
     const contentType = meta.contentType || 'application/octet-stream';

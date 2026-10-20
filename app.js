@@ -1252,8 +1252,6 @@ function openDetail(id) {
     const stageTitleText = document.getElementById('stage-title-text');
 
     const trackerContainer = document.getElementById('stage-tracker');
-    const btnSendFab = document.getElementById('btn-send-fab');
-    if (btnSendFab) btnSendFab.style.display = 'none';
 
     if (p.estado === 'activo') {
         actionContainer.style.display = 'block'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Avance de Etapa"; document.getElementById('btn-advance').style.display = p.etapa === 'cierre' ? 'none' : 'inline-block';

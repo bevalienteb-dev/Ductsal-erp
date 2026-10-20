@@ -42,10 +42,38 @@ header p { color: var(--text-secondary); margin-top: 0.5rem; }
 
 /* Tables */
 table { width: 100%; border-collapse: collapse; }
-th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--panel-border); }
-th { color: var(--text-secondary); font-weight: 600; font-size: 0.9rem; }
+th, td { padding: 0.85rem 1rem; text-align: left; border-bottom: 1px solid var(--panel-border); font-size: 0.88rem; vertical-align: middle; }
+th { color: var(--text-secondary); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.5px; background: rgba(0, 0, 0, 0.15); user-select: none; }
 tr:last-child td { border-bottom: none; }
-tr.cursor-pointer:hover { background: rgba(255,255,255,0.02); cursor: pointer; }
+tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer; }
+.table-container { border-radius: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Filter Pills Group */
+.filter-pills-bar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.filter-pills-group { display: inline-flex; gap: 0.4rem; align-items: center; background: rgba(0, 0, 0, 0.25); padding: 4px; border-radius: 8px; border: 1px solid var(--panel-border); }
+.filter-pill { background: transparent; border: 1px solid transparent; color: var(--text-secondary); padding: 0.45rem 0.9rem; border-radius: 6px; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; }
+.filter-pill:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }
+.filter-pill.active { background: var(--brand-gold); color: var(--brand-blue); font-weight: 600; box-shadow: 0 2px 8px rgba(255, 204, 77, 0.3); }
+.filter-badge { background: rgba(0, 0, 0, 0.2); color: inherit; padding: 2px 7px; border-radius: 10px; font-size: 0.72rem; font-weight: 700; }
+.filter-pill.active .filter-badge { background: rgba(44, 53, 83, 0.25); color: var(--brand-blue); }
+
+/* Table Elements & Progress */
+.cell-ellipsis { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.cell-ellipsis-sm { max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.table-progress-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 90px; }
+.table-progress-bar { width: 100%; height: 7px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; overflow: hidden; }
+.table-progress-fill-cobrado { height: 100%; background: linear-gradient(90deg, #10b981, #059669); transition: width 0.3s ease; }
+.table-progress-fill-facturado { height: 100%; background: linear-gradient(90deg, #3b82f6, #2563eb); transition: width 0.3s ease; }
+.table-btn-group { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.btn-table-action { padding: 0.35rem 0.65rem; font-size: 0.75rem; border-radius: 5px; font-weight: 500; cursor: pointer; transition: all 0.15s ease; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 4px; }
+.btn-table-edit { background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); border-color: rgba(255, 204, 77, 0.3); }
+.btn-table-edit:hover { background: var(--brand-gold); color: var(--brand-blue); }
+.btn-table-delete { background: rgba(239, 68, 68, 0.15); color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
+.btn-table-delete:hover { background: var(--danger); color: white; }
+.table-empty-box { text-align: center; padding: 3rem 1.5rem; color: var(--text-secondary); }
+.table-empty-box .icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.8; }
+.table-empty-box h3 { color: var(--text-primary); font-size: 1.1rem; margin-bottom: 0.4rem; }
+.table-empty-box p { font-size: 0.85rem; color: var(--text-muted); }
 
 /* Forms & Buttons */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;}
@@ -164,3 +192,29 @@ tr.cursor-pointer:hover { background: rgba(255,255,255,0.02); cursor: pointer; }
     /* Adjust Modals */
     .modal-content { width: 95%; margin: 10% auto; padding: 1rem; }
 }
+
+/* Document & Excel Preview Modal */
+#docPreviewModal .modal-content { width: 92vw; max-width: 1100px; height: 88vh; max-height: 900px; display: flex; flex-direction: column; padding: 1.5rem; margin: 4vh auto; }
+.preview-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.85rem; margin-bottom: 0.85rem; gap: 1rem; }
+.preview-title-box { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.preview-title-box h3 { margin: 0; font-size: 1.1rem; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px; }
+.preview-body { flex: 1; overflow: auto; position: relative; display: flex; flex-direction: column; background: rgba(0,0,0,0.25); border-radius: 8px; border: 1px solid var(--panel-border); }
+.excel-sheet-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--panel-border); padding: 8px 12px; background: rgba(0,0,0,0.3); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.excel-sheet-tab { background: rgba(255,255,255,0.06); border: 1px solid var(--panel-border); color: var(--text-secondary); padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 500; white-space: nowrap; transition: all 0.15s ease; }
+.excel-sheet-tab:hover { color: white; background: rgba(255,255,255,0.1); }
+.excel-sheet-tab.active { background: var(--brand-gold); color: var(--brand-blue); font-weight: 700; border-color: var(--brand-gold); }
+.excel-table-container { flex: 1; overflow: auto; width: 100%; position: relative; }
+.excel-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.excel-table th, .excel-table td { border: 1px solid rgba(255,255,255,0.08); padding: 6px 10px; white-space: nowrap; }
+.excel-table th { background: #222942; position: sticky; top: 0; font-weight: 600; color: var(--brand-gold); z-index: 2; }
+.excel-table td:first-child { background: #1c2237; font-weight: 600; color: var(--text-secondary); text-align: center; }
+.excel-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+/* Client Expediente Box */
+.client-expediente-panel { background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+.client-doc-card { display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.6rem 0.85rem; margin-bottom: 0.5rem; transition: all 0.15s ease; gap: 0.5rem; }
+.client-doc-card:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.2); }
+.client-doc-card-info { display: flex; align-items: center; gap: 8px; overflow: hidden; flex: 1; }
+.client-doc-card-label { font-weight: 600; color: var(--text-primary); font-size: 0.85rem; white-space: nowrap; }
+.client-doc-card-name { font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.client-doc-card-actions { display: flex; gap: 5px; align-items: center; }

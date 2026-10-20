@@ -516,10 +516,32 @@ function resolveStoragePath(docRef, envConfig = null) {
     return candidatePath;
 }
 
-const PREVIEWABLE_EXTS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.txt'];
+const PREVIEWABLE_EXTS = [
+    '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.txt',
+    '.xlsx', '.xls'
+];
+
+function isExcelFormat(fileName, contentType) {
+    if (contentType && (
+        contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        contentType === 'application/vnd.ms-excel' ||
+        contentType === 'application/msexcel' ||
+        contentType === 'application/x-msexcel'
+    )) {
+        return true;
+    }
+    const name = String(fileName || '').toLowerCase();
+    return name.endsWith('.xlsx') || name.endsWith('.xls');
+}
 
 function isFormatPreviewable(fileName, contentType) {
-    if (contentType && (contentType.startsWith('image/') || contentType === 'application/pdf' || contentType.startsWith('text/'))) {
+    if (contentType && (
+        contentType.startsWith('image/') ||
+        contentType === 'application/pdf' ||
+        contentType.startsWith('text/') ||
+        contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        contentType === 'application/vnd.ms-excel'
+    )) {
         return true;
     }
     const name = String(fileName || '').toLowerCase();
@@ -554,12 +576,18 @@ async function downloadSecureDocument(docRef, fallbackName = 'Documento', option
 
         const fn = fb.functions().httpsCallable('getSecureDownloadUrlAdmin');
         const dbSuffix = typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : '_prod';
+
+        const reqProspectId = (options.prospectId !== undefined && options.prospectId !== null)
+            ? options.prospectId
+            : (options.clientId ? null : (typeof currentProspectId !== 'undefined' ? currentProspectId : null));
+        const reqClientId = options.clientId || null;
+
         const res = await fn({
             storagePath,
             fileName,
             dbSuffix,
-            prospectId: options.prospectId || (typeof currentProspectId !== 'undefined' ? currentProspectId : null),
-            clientId: options.clientId || null
+            prospectId: reqProspectId,
+            clientId: reqClientId
         });
 
         const data = res && res.data;
@@ -620,14 +648,18 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
         return;
     }
 
-    // Si el formato no es compatible con el visor interactivo (e.g. ZIP, DWG, CAD, Excel), descargar directamente
+    // Si el formato no es compatible con el visor interactivo (e.g. ZIP, DWG, CAD), descargar directamente
     if (!isFormatPreviewable(fileName)) {
         return await downloadSecureDocument(docRef, fallbackName, options);
     }
 
-    // Mitigación popup blocker: abrir ventana en blanco de manera síncrona
+    const hasPreviewModal = typeof document !== 'undefined' && typeof document.getElementById === 'function' && document.getElementById('docPreviewModal');
     let previewTab = null;
-    if (!options || !options.download) {
+
+    if (hasPreviewModal && (!options || options.target !== '_blank')) {
+        openDocPreviewModal(fileName, docRef, options);
+    } else if (!options || !options.download) {
+        // Mitigación popup blocker: abrir ventana en blanco de manera síncrona
         try {
             previewTab = window.open('about:blank', '_blank');
             if (previewTab) {
@@ -660,13 +692,24 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
 
         const fn = fb.functions().httpsCallable('getSecureDownloadUrlAdmin');
         const dbSuffix = typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : '_prod';
-        const res = await fn({
+
+        const reqProspectId = (options.prospectId !== undefined && options.prospectId !== null)
+            ? options.prospectId
+            : (options.clientId ? null : (typeof currentProspectId !== 'undefined' ? currentProspectId : null));
+        const reqClientId = options.clientId || null;
+
+        const payload = {
             storagePath,
             fileName,
             dbSuffix,
-            prospectId: options.prospectId || (typeof currentProspectId !== 'undefined' ? currentProspectId : null),
-            clientId: options.clientId || null
-        });
+            prospectId: reqProspectId,
+            clientId: reqClientId
+        };
+        if (options && options.disposition) {
+            payload.disposition = options.disposition;
+        }
+
+        const res = await fn(payload);
 
         const data = res && res.data;
         if (!data || !data.signedUrl) {
@@ -688,6 +731,12 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
             return;
         }
 
+        // Si tenemos modal de previsualización en el DOM
+        if (hasPreviewModal && (!options || options.target !== '_blank')) {
+            await displayDocumentInModal(data.signedUrl, safeDownloadName, data.contentType, docRef, options);
+            return;
+        }
+
         // Intento de visualización inline mediante Blob si el entorno lo permite (mismo origen o CORS)
         let openedInline = false;
         try {
@@ -699,7 +748,7 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
                     previewTab.location.href = blobUrl;
                     setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
                     openedInline = true;
-                } else {
+                } else if (!hasPreviewModal) {
                     window.open(blobUrl, '_blank');
                     setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
                     openedInline = true;
@@ -713,7 +762,7 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
         if (!openedInline) {
             if (previewTab && !previewTab.closed) {
                 previewTab.location.href = data.signedUrl;
-            } else {
+            } else if (!hasPreviewModal) {
                 window.open(data.signedUrl, '_blank');
             }
         }
@@ -733,7 +782,9 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
             userMessage = 'Error de conexión con el servidor. Verifica tu conexión a internet.';
         }
 
-        if (previewTab && !previewTab.closed) {
+        if (hasPreviewModal && (!options || options.target !== '_blank')) {
+            showDocPreviewError(userMessage, error, docRef, fileName, options);
+        } else if (previewTab && !previewTab.closed) {
             previewTab.document.write(`
                 <div style="padding:2rem; font-family:system-ui, sans-serif; color:#ef4444; background:#1e293b; height:100vh;">
                     <h3>⚠️ Error al abrir el documento</h3>
@@ -747,6 +798,282 @@ async function viewSecureDocument(docRef, fallbackName = 'Documento', options = 
     } finally {
         if (typeof hideLoading === 'function') hideLoading();
     }
+}
+
+function openDocPreviewModal(fileName, docRef, options) {
+    const modal = document.getElementById('docPreviewModal');
+    if (!modal) return;
+    const titleEl = document.getElementById('doc-preview-title');
+    const badgeEl = document.getElementById('doc-preview-badge');
+    const iconEl = document.getElementById('doc-preview-icon');
+    const contentEl = document.getElementById('doc-preview-content');
+    const dlBtn = document.getElementById('btn-doc-preview-download');
+
+    const ext = String(fileName || '').split('.').pop().toUpperCase() || 'DOC';
+    if (titleEl) titleEl.textContent = fileName || 'Documento';
+    if (badgeEl) badgeEl.textContent = ext;
+    if (iconEl) {
+        if (ext === 'XLSX' || ext === 'XLS') iconEl.textContent = '📊';
+        else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG', 'GIF'].includes(ext)) iconEl.textContent = '🖼️';
+        else if (ext === 'PDF') iconEl.textContent = '📄';
+        else iconEl.textContent = '📁';
+    }
+
+    if (dlBtn) {
+        dlBtn.onclick = () => downloadSecureDocument(docRef, fileName, options);
+    }
+
+    if (contentEl) {
+        contentEl.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; min-height:280px; color:var(--text-secondary);">
+                <div style="font-size:2.5rem; margin-bottom:1rem;">⏳</div>
+                <div style="font-size:1.1rem; font-weight:600; color:white;">Cargando documento seguro...</div>
+                <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">${escapeHtmlDoc(fileName)}</div>
+            </div>
+        `;
+    }
+
+    window._activeDocRef = docRef;
+    window._activeDocOptions = options;
+    window._activeDocName = fileName;
+
+    modal.style.display = 'block';
+}
+
+function closeDocPreviewModal() {
+    const modal = document.getElementById('docPreviewModal');
+    if (modal) modal.style.display = 'none';
+    const contentEl = document.getElementById('doc-preview-content');
+    if (contentEl) contentEl.innerHTML = '';
+    window._activeWorkbook = null;
+    window._activeWorkbookName = null;
+    window._activeDocRef = null;
+    window._activeDocOptions = null;
+}
+
+async function displayDocumentInModal(signedUrl, fileName, contentType, docRef, options) {
+    const contentEl = document.getElementById('doc-preview-content');
+    if (!contentEl) return;
+
+    if (isExcelFormat(fileName, contentType)) {
+        await renderExcelPreviewInModal(signedUrl, fileName);
+        return;
+    }
+
+    const lower = String(fileName || '').toLowerCase();
+    const isImage = (contentType && contentType.startsWith('image/')) ||
+        ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'].some(ext => lower.endsWith(ext));
+
+    if (isImage) {
+        contentEl.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:100%; padding:1.5rem; overflow:auto;">
+                <img src="${signedUrl}" alt="${escapeHtmlDoc(fileName)}" style="max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
+            </div>
+        `;
+        return;
+    }
+
+    // PDF or text files
+    contentEl.innerHTML = `
+        <div style="display:flex; flex-direction:column; height:100%; width:100%;">
+            <iframe src="${signedUrl}" style="flex:1; width:100%; height:100%; border:none; background:#ffffff; border-radius:6px;" title="${escapeHtmlDoc(fileName)}"></iframe>
+            <div style="padding:8px 12px; background:rgba(0,0,0,0.4); display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; border-top:1px solid var(--panel-border);">
+                <span style="color:var(--text-muted);">Visualizando visor seguro integrado</span>
+                <a href="${signedUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">↗️ Abrir en pestaña separada</a>
+            </div>
+        </div>
+    `;
+}
+
+function showDocPreviewError(userMessage, error, docRef, fileName, options) {
+    const contentEl = document.getElementById('doc-preview-content');
+    if (!contentEl) return;
+    contentEl.innerHTML = `
+        <div style="padding:3rem 1.5rem; text-align:center; color:var(--text-secondary); margin:auto;">
+            <div style="font-size:3rem; margin-bottom:1rem;">⚠️</div>
+            <h3 style="color:var(--danger); margin-bottom:0.75rem;">No se pudo previsualizar el documento</h3>
+            <p style="max-width:480px; margin:0 auto 1.5rem auto; font-size:0.9rem; color:var(--text-secondary);">
+                ${escapeHtmlDoc(userMessage)}
+            </p>
+            <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:1.5rem;">
+                Detalle: ${escapeHtmlDoc((error && (error.code || error.message)) || 'Error desconocido')}
+            </p>
+            <button type="button" class="btn-primary" onclick="downloadSecureDocument(window._activeDocRef, window._activeDocName || '${escapeHtmlDoc(fileName)}', window._activeDocOptions)">
+                ⬇️ Descargar Archivo Original
+            </button>
+        </div>
+    `;
+}
+
+function loadXlsxLibrary() {
+    return new Promise((resolve, reject) => {
+        if (typeof XLSX !== 'undefined') return resolve(window.XLSX);
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        script.onload = () => resolve(window.XLSX);
+        script.onerror = () => reject(new Error('No se pudo cargar la librería XLSX desde la red.'));
+        document.head.appendChild(script);
+    });
+}
+
+async function renderExcelPreviewInModal(signedUrl, fileName) {
+    const container = document.getElementById('doc-preview-content');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; min-height:280px; color:var(--text-secondary);">
+            <div style="font-size:2.5rem; margin-bottom:1rem;">📊</div>
+            <div style="font-size:1.1rem; font-weight:600; color:white;">Analizando libro de cálculo Excel...</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">${escapeHtmlDoc(fileName)}</div>
+        </div>
+    `;
+
+    try {
+        if (typeof XLSX === 'undefined') {
+            await loadXlsxLibrary();
+        }
+
+        const resp = await fetch(signedUrl);
+        if (!resp.ok) {
+            throw new Error(`Error de lectura en el servidor (HTTP ${resp.status}).`);
+        }
+
+        const buffer = await resp.arrayBuffer();
+        if (!buffer || buffer.byteLength === 0) {
+            throw new Error('El archivo Excel está completamente vacío (0 bytes).');
+        }
+
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+        if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+            throw new Error('El archivo no contiene hojas de cálculo legibles o tiene un formato no compatible.');
+        }
+
+        window._activeWorkbook = workbook;
+        window._activeWorkbookName = fileName;
+
+        let tabsHtml = workbook.SheetNames.map((name, idx) => `
+            <button type="button" class="excel-sheet-tab ${idx === 0 ? 'active' : ''}" onclick="selectExcelSheet(${idx})">
+                📄 ${escapeHtmlDoc(name)}
+            </button>
+        `).join('');
+
+        container.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; width:100%;">
+                <div class="excel-sheet-tabs" id="excel-sheet-tabs">${tabsHtml}</div>
+                <div class="excel-table-container" id="excel-table-display"></div>
+            </div>
+        `;
+
+        renderSheetTable(workbook.SheetNames[0]);
+    } catch (err) {
+        console.error('[Excel Preview] Error al procesar archivo:', err);
+        container.innerHTML = `
+            <div style="padding:3rem 1.5rem; text-align:center; color:var(--text-secondary); margin:auto;">
+                <div style="font-size:3rem; margin-bottom:1rem;">📊</div>
+                <h3 style="color:var(--brand-gold); margin-bottom:0.75rem;">Vista previa de Excel no disponible</h3>
+                <p style="max-width:500px; margin:0 auto 1.5rem auto; font-size:0.9rem; color:var(--text-secondary);">
+                    ${escapeHtmlDoc(err.message || 'No fue posible interpretar el contenido del libro Excel.')}
+                </p>
+                <button type="button" class="btn-primary" onclick="downloadSecureDocument(window._activeDocRef, window._activeDocName || '${escapeHtmlDoc(fileName)}', window._activeDocOptions)">
+                    ⬇️ Descargar Archivo Excel Original
+                </button>
+            </div>
+        `;
+    }
+}
+
+function selectExcelSheet(idx) {
+    if (!window._activeWorkbook || !window._activeWorkbook.SheetNames || !window._activeWorkbook.SheetNames[idx]) return;
+    const tabs = document.querySelectorAll('.excel-sheet-tab');
+    tabs.forEach((t, i) => {
+        if (i === idx) t.classList.add('active');
+        else t.classList.remove('active');
+    });
+    renderSheetTable(window._activeWorkbook.SheetNames[idx]);
+}
+
+function renderSheetTable(sheetNameOrRows, maxRows = 500) {
+    let rows;
+    if (Array.isArray(sheetNameOrRows)) {
+        rows = sheetNameOrRows;
+    } else {
+        const tableDiv = document.getElementById('excel-table-display');
+        const activeWb = (typeof window !== 'undefined' && window._activeWorkbook) ? window._activeWorkbook : null;
+        if (!tableDiv || !activeWb) return '';
+        const sheet = activeWb.Sheets[sheetNameOrRows];
+        if (!sheet) {
+            tableDiv.innerHTML = '<div style="padding:2rem; text-align:center; color:var(--text-muted);">Hoja no encontrada en el libro.</div>';
+            return '<div style="padding:2rem; text-align:center; color:var(--text-muted);">Hoja no encontrada en el libro.</div>';
+        }
+        if (typeof XLSX === 'undefined') return '';
+        rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    }
+
+    if (!rows || rows.length === 0) {
+        const emptyHtml = '<div style="padding:2rem; text-align:center; color:var(--text-muted);">Esta hoja de cálculo está vacía.</div>';
+        const tableDiv = document.getElementById('excel-table-display');
+        if (tableDiv && !Array.isArray(sheetNameOrRows)) tableDiv.innerHTML = emptyHtml;
+        return emptyHtml;
+    }
+
+    const MAX_ROWS = maxRows || 500;
+    const isTruncated = rows.length > MAX_ROWS;
+    const displayRows = rows.slice(0, MAX_ROWS);
+
+    let maxCols = 0;
+    displayRows.forEach(r => { if (Array.isArray(r) && r.length > maxCols) maxCols = r.length; });
+    if (maxCols === 0) {
+        const noDataHtml = '<div style="padding:2rem; text-align:center; color:var(--text-muted);">La hoja no contiene celdas con datos.</div>';
+        const tableDiv = document.getElementById('excel-table-display');
+        if (tableDiv && !Array.isArray(sheetNameOrRows)) tableDiv.innerHTML = noDataHtml;
+        return noDataHtml;
+    }
+
+    let colHeaders = '';
+    for (let c = 0; c < maxCols; c++) {
+        let colLabel = '';
+        let num = c;
+        while (num >= 0) {
+            colLabel = String.fromCharCode(65 + (num % 26)) + colLabel;
+            num = Math.floor(num / 26) - 1;
+        }
+        colHeaders += `<th>${colLabel}</th>`;
+    }
+
+    let rowsHtml = '';
+    displayRows.forEach((row, rIdx) => {
+        let cellsHtml = `<td style="width:40px; text-align:center; color:var(--text-muted); font-size:0.75rem;">${rIdx + 1}</td>`;
+        for (let c = 0; c < maxCols; c++) {
+            const val = (Array.isArray(row) && row[c] !== undefined && row[c] !== null) ? String(row[c]) : '';
+            cellsHtml += `<td>${escapeHtmlDoc(val)}</td>`;
+        }
+        rowsHtml += `<tr>${cellsHtml}</tr>`;
+    });
+
+    const infoBar = isTruncated
+        ? `<div style="padding:6px 12px; background:rgba(255,204,77,0.12); color:var(--brand-gold); font-size:0.75rem; border-bottom:1px solid var(--panel-border);">⚠️ Mostrando las primeras ${MAX_ROWS} filas de ${rows.length}. Descarga el archivo original para ver el libro completo.</div>`
+        : `<div style="padding:6px 12px; color:var(--text-muted); font-size:0.75rem; border-bottom:1px solid var(--panel-border);">Total: ${rows.length} fila${rows.length === 1 ? '' : 's'}, ${maxCols} columna${maxCols === 1 ? '' : 's'}.</div>`;
+
+    const finalHtml = `
+        ${infoBar}
+        <div style="overflow:auto; height:calc(100% - 32px);">
+            <table class="excel-table">
+                <thead>
+                    <tr>
+                        <th style="width:40px; text-align:center; z-index:3;">#</th>
+                        ${colHeaders}
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
+    `;
+
+    const tableDiv = document.getElementById('excel-table-display');
+    if (tableDiv && !Array.isArray(sheetNameOrRows)) {
+        tableDiv.innerHTML = finalHtml;
+    }
+    return finalHtml;
 }
 
 const KNOWN_DOC_LABELS = {
@@ -858,9 +1185,17 @@ if (typeof window !== 'undefined') {
     window.downloadStoredClientDoc = downloadStoredClientDoc;
     window.deleteStoredClientDoc = deleteStoredClientDoc;
     window.isFormatPreviewable = isFormatPreviewable;
+    window.isExcelFormat = isExcelFormat;
     window.escapeHtmlDoc = escapeHtmlDoc;
     window.formatClientDocLabel = formatClientDocLabel;
     window.renderClientDocItem = renderClientDocItem;
+    if (typeof openDocPreviewModal !== 'undefined') window.openDocPreviewModal = openDocPreviewModal;
+    if (typeof closeDocPreviewModal !== 'undefined') window.closeDocPreviewModal = closeDocPreviewModal;
+    if (typeof isProjectFullyPaid !== 'undefined') window.isProjectFullyPaid = isProjectFullyPaid;
+    if (typeof setProjPaymentFilter !== 'undefined') window.setProjPaymentFilter = setProjPaymentFilter;
+    if (typeof getProjPaymentFilter !== 'undefined') window.getProjPaymentFilter = getProjPaymentFilter;
+    if (typeof renderSheetTable !== 'undefined') window.renderSheetTable = renderSheetTable;
+    if (typeof renderClientExpedienteSection !== 'undefined') window.renderClientExpedienteSection = renderClientExpedienteSection;
 }
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -871,9 +1206,17 @@ if (typeof module !== 'undefined' && module.exports) {
         downloadStoredClientDoc,
         deleteStoredClientDoc,
         isFormatPreviewable,
+        isExcelFormat,
         escapeHtmlDoc,
         formatClientDocLabel,
-        renderClientDocItem
+        renderClientDocItem,
+        openDocPreviewModal: typeof openDocPreviewModal !== 'undefined' ? openDocPreviewModal : undefined,
+        closeDocPreviewModal: typeof closeDocPreviewModal !== 'undefined' ? closeDocPreviewModal : undefined,
+        isProjectFullyPaid: typeof isProjectFullyPaid !== 'undefined' ? isProjectFullyPaid : undefined,
+        setProjPaymentFilter: typeof setProjPaymentFilter !== 'undefined' ? setProjPaymentFilter : undefined,
+        getProjPaymentFilter: typeof getProjPaymentFilter !== 'undefined' ? getProjPaymentFilter : undefined,
+        renderSheetTable: typeof renderSheetTable !== 'undefined' ? renderSheetTable : undefined,
+        renderClientExpedienteSection: typeof renderClientExpedienteSection !== 'undefined' ? renderClientExpedienteSection : undefined
     };
 }
 
@@ -1645,6 +1988,34 @@ const getProjectCosto = (p) => {
     return base;
 };
 
+function isProjectFullyPaid(p) {
+    if (!p || typeof p !== 'object') return false;
+    const subtotal = typeof getProjectSubtotal === 'function' ? getProjectSubtotal(p) : (parseFloat(p.precio_cotizado) || 0);
+    if (typeof subtotal !== 'number' || isNaN(subtotal) || subtotal <= 0) return false;
+    let isExport = false;
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof global !== 'undefined' && Array.isArray(global.clients)) ? global.clients : []);
+    if (p.clientId && clientList.length > 0) {
+        const client = clientList.find(c => c.id === p.clientId);
+        if (client) isExport = client.es_exportacion === true || client.es_exportacion === 'true';
+    }
+    const total = isExport ? Math.round(subtotal * 100) / 100 : Math.round(subtotal * 1.13 * 100) / 100;
+    if (total <= 0) return false;
+    if (!Array.isArray(p.facturas) || p.facturas.length === 0) return false;
+    let totalCobrado = 0;
+    p.facturas.forEach(f => {
+        if (Array.isArray(f.pagos)) {
+            f.pagos.forEach(pay => {
+                const m = parseFloat(pay.monto);
+                if (!isNaN(m) && m > 0) totalCobrado += m;
+            });
+        }
+    });
+    if (totalCobrado <= 0) return false;
+    return totalCobrado >= (total - 0.05);
+}
+
 // ========================
 // CODE GENERATOR
 // ========================
@@ -1678,9 +2049,18 @@ function getVisibleClients() {
 }
 
 function renderClientsTable() {
-    const tbody = document.getElementById('clients-table-body'); tbody.innerHTML = '';
+    const tbody = document.getElementById('clients-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const esc = (typeof escapeHtmlDoc === 'function') ? escapeHtmlDoc : (s => String(s || ''));
 
     let filtered = getVisibleClients();
+
+    const countBadge = document.getElementById('clients-count-badge');
+    if (countBadge) {
+        countBadge.textContent = `${filtered.length} cliente${filtered.length === 1 ? '' : 's'}`;
+    }
 
     // Apply Search Filter
     const searchVal = document.getElementById('cli-search') ? document.getElementById('cli-search').value.toLowerCase().trim() : '';
@@ -1732,18 +2112,70 @@ function renderClientsTable() {
         filtered = [...filtered].reverse();
     }
 
-    filtered.forEach(c => {
-        const isNatural = c.tipo === 'natural'; const typeBadge = isNatural ? '<span class="badge bg-neutral">Natural</span>' : '<span class="badge bg-neutral" style="color:var(--brand-gold);">Jurídica</span>';
-        const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.contacto || '-'); const mainName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}` : (c.empresa || '-');
-        const isExport = c.es_exportacion === true || c.es_exportacion === 'true';
-        const exportBadge = isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.2); color:#64B5F6; border:1px solid #2196F3; font-size:0.7rem; margin-left:4px;">✈️ Exportación</span>' : '';
-
-        let btnHTML = `<button class="btn-secondary" onclick="openClientModal('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Editar</button>`;
-        if (currentUser && currentUser.role === 'manager') {
-            btnHTML += `<button class="btn-danger" onclick="deleteClient('${c.id}')" style="padding: 0.25rem 0.5rem; font-size:0.75rem; margin-left:5px;">Eliminar</button>`;
+    if (filtered.length === 0) {
+        if (countBadge) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6">
+                        <div class="table-empty-box">
+                            <div style="font-size:2rem; margin-bottom:0.4rem;">👥</div>
+                            <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">No se encontraron clientes</div>
+                            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
+                                ${searchVal ? 'Prueba con otro término de búsqueda.' : 'Registra un nuevo cliente para comenzar.'}
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = '';
         }
+        return;
+    }
 
-        tbody.innerHTML += `<tr><td>${typeBadge}</td><td><strong>${mainName}</strong>${exportBadge}</td><td>${contactName}</td><td>${c.telefono || '-'}</td><td>${c.correo || '-'}</td><td>${btnHTML}</td></tr>`;
+    filtered.forEach(c => {
+        const isNatural = c.tipo === 'natural';
+        const typeBadge = isNatural
+            ? '<span class="badge" style="background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.12); font-weight:500;">Natural</span>'
+            : '<span class="badge" style="background:rgba(217, 119, 6, 0.15); color:var(--brand-gold); border:1px solid rgba(217, 119, 6, 0.35); font-weight:600;">Jurídica</span>';
+
+        const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}`.trim() : (c.contacto || '-');
+        const mainName = (isNatural ? `${c.nombres || ''} ${c.apellidos || ''}`.trim() : (c.empresa || '-')) || '-';
+        const isExport = c.es_exportacion === true || c.es_exportacion === 'true';
+        const exportBadge = isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
+
+        const phoneStr = c.telefono ? `<span style="font-family:monospace; font-size:0.85rem; color:var(--text-secondary);">${esc(c.telefono)}</span>` : '<span style="color:var(--text-muted);">-</span>';
+        const emailStr = c.correo ? `<a href="mailto:${esc(c.correo)}" class="cell-ellipsis" style="display:inline-block; max-width:210px; color:var(--text-secondary); text-decoration:none;" title="${esc(c.correo)}">${esc(c.correo)}</a>` : '<span style="color:var(--text-muted);">-</span>';
+
+        let actionsHtml = `<div class="table-btn-group">
+            <button type="button" class="btn-table-action btn-table-edit" onclick="openClientModal('${c.id}')" title="Editar datos y ver expediente de ${esc(mainName)}">
+                ✏️ Editar
+            </button>`;
+        if (currentUser && currentUser.role === 'manager') {
+            actionsHtml += `<button type="button" class="btn-table-action btn-table-delete" onclick="deleteClient('${c.id}')" title="Eliminar cliente">
+                🗑️
+            </button>`;
+        }
+        actionsHtml += `</div>`;
+
+        tbody.innerHTML += `
+            <tr>
+                <td style="white-space:nowrap;">${typeBadge}</td>
+                <td>
+                    <div class="cell-ellipsis" style="font-weight:600; color:white; max-width:240px;" title="${esc(mainName)}">
+                        ${esc(mainName)}${exportBadge}
+                    </div>
+                </td>
+                <td>
+                    <div class="cell-ellipsis" style="max-width:200px; color:var(--text-primary);" title="${esc(contactName)}">
+                        ${esc(contactName)}
+                    </div>
+                </td>
+                <td style="white-space:nowrap;">${phoneStr}</td>
+                <td>${emailStr}</td>
+                <td style="text-align:right; white-space:nowrap;">${actionsHtml}</td>
+            </tr>
+        `;
     });
 }
 function toggleClientFields() {
@@ -1751,6 +2183,118 @@ function toggleClientFields() {
     if (type === 'natural') { document.getElementById('fields-natural').style.display = 'block'; document.getElementById('fields-juridica').style.display = 'none'; }
     else if (type === 'juridica') { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'block'; }
     else { document.getElementById('fields-natural').style.display = 'none'; document.getElementById('fields-juridica').style.display = 'none'; }
+}
+
+function renderClientExpedienteSection(c) {
+    const section = document.getElementById('client-expediente-section');
+    const listEl = document.getElementById('client-docs-list');
+    const badgeEl = document.getElementById('client-docs-count-badge');
+    if (!section || !listEl) return;
+
+    if (!c || !c.id || !c.documentos || typeof c.documentos !== 'object') {
+        if (badgeEl) badgeEl.textContent = '0 documentos';
+        listEl.innerHTML = '<div style="text-align:center; padding:0.75rem; color:var(--text-muted); font-size:0.8rem;">Sin documentos registrados en el expediente.</div>';
+        section.style.display = c && c.id ? 'block' : 'none';
+        return;
+    }
+
+    const docItems = [];
+    const allKeys = Object.keys(c.documentos);
+    const PREFERRED_ORDER = [
+        'dui', 'dui_rep',
+        'nit', 'nit_empresa', 'nit_rep',
+        'nrc', 'nrc_empresa',
+        'escritura', 'escritura_constitucion',
+        'mods_escritura', 'mods',
+        'credencial', 'credencial_rep'
+    ];
+    const sortedKeys = [
+        ...PREFERRED_ORDER.filter(k => allKeys.includes(k)),
+        ...allKeys.filter(k => !PREFERRED_ORDER.includes(k)).sort()
+    ];
+
+    sortedKeys.forEach(k => {
+        const val = c.documentos[k];
+        if (!val) return;
+        const lbl = formatClientDocLabel(k);
+        if (Array.isArray(val)) {
+            val.forEach((subVal, idx) => {
+                if (subVal) docItems.push({ docRef: subVal, label: `${lbl} (${idx + 1})`, key: k, index: idx });
+            });
+        } else {
+            docItems.push({ docRef: val, label: lbl, key: k, index: null });
+        }
+    });
+
+    if (badgeEl) badgeEl.textContent = `${docItems.length} documento${docItems.length === 1 ? '' : 's'}`;
+
+    if (docItems.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:0.75rem; color:var(--text-muted); font-size:0.8rem;">Sin documentos registrados en el expediente.</div>';
+        section.style.display = 'block';
+        return;
+    }
+
+    const isManager = currentUser && currentUser.role === 'manager';
+    listEl.innerHTML = docItems.map(item => {
+        let fileName = 'Documento';
+        if (typeof item.docRef === 'object' && item.docRef && item.docRef.name) {
+            fileName = String(item.docRef.name);
+        } else if (typeof item.docRef === 'string') {
+            const parts = item.docRef.split('?')[0].split('/');
+            const last = parts[parts.length - 1];
+            fileName = decodeURIComponent(last) || item.label;
+        } else {
+            fileName = item.label;
+        }
+
+        const storeId = 'cdoc_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+        const store = getDocStore();
+        store.set(storeId, {
+            docRef: item.docRef,
+            fileName: fileName,
+            label: item.label,
+            clientId: c.id,
+            docKey: item.key,
+            itemIndex: item.index
+        });
+
+        const ext = String(fileName).split('.').pop().toUpperCase() || 'DOC';
+        let icon = '📁';
+        if (ext === 'XLSX' || ext === 'XLS') icon = '📊';
+        else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].includes(ext)) icon = '🖼️';
+        else if (ext === 'PDF') icon = '📄';
+
+        const previewable = isFormatPreviewable(fileName);
+        const safeName = escapeHtmlDoc(fileName);
+        const safeLabel = escapeHtmlDoc(item.label);
+
+        let viewBtn = '';
+        if (previewable) {
+            viewBtn = `<button type="button" class="btn-table-action btn-table-edit" onclick="viewStoredClientDoc('${storeId}')" title="Previsualizar documento">👁️ Ver</button>`;
+        }
+        const dlBtn = `<button type="button" class="btn-table-action" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar original" style="background:rgba(255,255,255,0.06); color:var(--text-secondary); border:1px solid rgba(255,255,255,0.12);">⬇️ Descargar</button>`;
+        const delBtn = isManager ? `<button type="button" class="btn-table-action btn-table-delete" onclick="deleteStoredClientDoc('${storeId}')" title="Eliminar documento del expediente">🗑️</button>` : '';
+
+        return `
+            <div class="client-doc-card">
+                <div class="client-doc-info">
+                    <span style="font-size:1.25rem;">${icon}</span>
+                    <div style="min-width:0;">
+                        <div class="client-doc-title">${safeLabel}</div>
+                        <div class="client-doc-meta" title="${safeName}">${safeName}</div>
+                    </div>
+                </div>
+                <div class="client-doc-actions">
+                    <span class="badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:0.65rem; border:1px solid rgba(255,255,255,0.1);">${escapeHtmlDoc(ext)}</span>
+                    ${viewBtn}
+                    ${dlBtn}
+                    ${delBtn}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    section.style.display = 'block';
 }
 
 function openClientModal(clientId = null) {
@@ -1824,10 +2368,12 @@ function openClientModal(clientId = null) {
                     jSts.innerHTML = links.length > 0 ? `<span style="color:var(--success);">Archivos en expediente: ${links.join(' ')}</span>` : '';
                 } else { jSts.innerHTML = ''; }
             }
+            renderClientExpedienteSection(c);
         }
     } else {
         window._activeClientBaseDocs = null;
         document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; document.getElementById('cli-es-exportacion').checked = false; toggleClientFields();
+        renderClientExpedienteSection(null);
     }
     document.getElementById('clientModal').style.display = 'block';
 }
@@ -2115,28 +2661,92 @@ function renderList() {
     });
 }
 
+let projPaymentFilter = 'pendientes';
+
+function getProjPaymentFilter() {
+    return projPaymentFilter;
+}
+
+function setProjPaymentFilter(filterKey) {
+    if (['pendientes', 'pagados', 'todos'].includes(filterKey)) {
+        projPaymentFilter = filterKey;
+        renderProjectsList();
+    }
+}
+
 function renderProjectsList() {
     if (currentUser && currentUser.role === 'vendedor') {
         const tbody = document.getElementById('proj-table-body');
         if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">Acceso no autorizado a este módulo.</td></tr>';
         return;
     }
-    const tbody = document.getElementById('proj-table-body'); tbody.innerHTML = '';
-    const projects = prospects.filter(p => hasEnteredPostclosing(p));
-    if (projects.length === 0) { tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No hay proyectos cerrados / ganados todavía.</td></tr>'; return; }
+    const tbody = document.getElementById('proj-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const allProjects = prospects.filter(p => hasEnteredPostclosing(p));
+
+    const countPendientes = allProjects.filter(p => !isProjectFullyPaid(p)).length;
+    const countPagados = allProjects.filter(p => isProjectFullyPaid(p)).length;
+    const countTodos = allProjects.length;
+
+    const elPendientes = document.getElementById('count-proj-pendientes');
+    if (elPendientes) elPendientes.textContent = countPendientes;
+    const elPagados = document.getElementById('count-proj-pagados');
+    if (elPagados) elPagados.textContent = countPagados;
+    const elTodos = document.getElementById('count-proj-todos');
+    if (elTodos) elTodos.textContent = countTodos;
+
+    ['pendientes', 'pagados', 'todos'].forEach(key => {
+        const btn = document.getElementById(`pill-proj-${key}`);
+        if (btn) {
+            if (key === projPaymentFilter) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+
+    if (allProjects.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9">
+                    <div class="table-empty-box">
+                        <div style="font-size:2rem; margin-bottom:0.4rem;">📊</div>
+                        <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">No hay proyectos cerrados / ganados todavía</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">Las oportunidades ganadas ingresarán automáticamente a este módulo.</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let activeProjects = allProjects;
+    if (projPaymentFilter === 'pendientes') {
+        activeProjects = allProjects.filter(p => !isProjectFullyPaid(p));
+    } else if (projPaymentFilter === 'pagados') {
+        activeProjects = allProjects.filter(p => isProjectFullyPaid(p));
+    }
 
     // Map projects to calculated objects for search and sort
-    let mappedProjects = projects.map(p => {
-        let subtotal = p.precio_cotizado || 0;
-        const client = clients.find(c => c.id === p.clientId);
+    let mappedProjects = activeProjects.map(p => {
+        const subtotal = typeof getProjectSubtotal === 'function' ? getProjectSubtotal(p) : (parseFloat(p.precio_cotizado) || 0);
+        const client = (typeof clients !== 'undefined' && Array.isArray(clients)) ? clients.find(c => c.id === p.clientId) : null;
         const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
-        let total = isExport ? subtotal : subtotal * 1.13;
+        const total = isExport ? Math.round(subtotal * 100) / 100 : Math.round(subtotal * 1.13 * 100) / 100;
+        const fullyPaid = isProjectFullyPaid(p);
 
-        let totalFacturado = 0; let totalCobrado = 0;
-        if (p.facturas) {
+        let totalFacturado = 0;
+        let totalCobrado = 0;
+        if (Array.isArray(p.facturas)) {
             p.facturas.forEach(f => {
-                totalFacturado += f.monto;
-                if (f.pagos) totalCobrado += f.pagos.reduce((a, b) => a + parseFloat(b.monto), 0);
+                const fm = parseFloat(f.monto);
+                if (!isNaN(fm) && fm > 0) totalFacturado += fm;
+                if (Array.isArray(f.pagos)) {
+                    f.pagos.forEach(pay => {
+                        const m = parseFloat(pay.monto);
+                        if (!isNaN(m) && m > 0) totalCobrado += m;
+                    });
+                }
             });
         }
 
@@ -2145,15 +2755,16 @@ function renderProjectsList() {
 
         return {
             original: p,
-            codigo: p.codigo || p.id.substring(p.id.length - 4),
+            codigo: p.codigo || (p.id ? p.id.substring(p.id.length - 4) : '-'),
             cliente: getClientName(p.clientId),
             isExport: isExport,
             proyecto: p.proyecto || '',
-            encargado: p.encargado || '-',
+            encargado: p.encargado || '',
             total: total,
             condicion: p.forma_pago || 'N/A',
             pctFacturado: pctFacturado,
-            pctCobrado: pctCobrado
+            pctCobrado: pctCobrado,
+            isFullyPaid: fullyPaid
         };
     });
 
@@ -2192,28 +2803,82 @@ function renderProjectsList() {
     }
 
     if (mappedProjects.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No se encontraron proyectos.</td></tr>';
+        const filterMsg = projPaymentFilter === 'pagados'
+            ? 'No hay proyectos completamente pagados.'
+            : (projPaymentFilter === 'pendientes' ? 'No hay proyectos pendientes de cobro.' : 'No se encontraron proyectos.');
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9">
+                    <div class="table-empty-box">
+                        <div style="font-size:2rem; margin-bottom:0.4rem;">🔍</div>
+                        <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">${filterMsg}</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
+                            ${searchVal ? 'Prueba cambiando los términos de búsqueda o el filtro de cobro.' : 'Puedes alternar entre pendientes, pagados o todos con los filtros superiores.'}
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        `;
         return;
     }
 
     mappedProjects.forEach(mp => {
         const p = mp.original;
-        const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
+        const tr = document.createElement('tr');
+        tr.classList.add('cursor-pointer');
+        tr.onclick = () => openDetail(p.id);
+
+        const exportBadge = mp.isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
+        const encargadoDisplay = mp.encargado
+            ? `<div class="cell-ellipsis" style="max-width:140px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.encargado)}">${escapeHtmlDoc(mp.encargado)}</div>`
+            : '<span style="color:var(--text-muted); font-style:italic; font-size:0.8rem;">No asignado</span>';
+
+        const cobradoColor = mp.isFullyPaid ? 'var(--success)' : (mp.pctCobrado > 0 ? '#60a5fa' : 'var(--text-muted)');
+        const cobradoBadge = mp.isFullyPaid
+            ? '<span class="badge" style="background:rgba(16, 185, 129, 0.2); color:#10b981; border:1px solid rgba(16, 185, 129, 0.4); font-size:0.65rem; padding:1px 5px; margin-left:4px;">100% Pagado</span>'
+            : '';
+
         tr.innerHTML = `
-            <td><strong>${p.codigo || '-'}</strong></td>
-            <td>${mp.cliente}${mp.isExport ? ' <span style="font-size:0.7rem; color:#64B5F6;">(✈️ Export)</span>' : ''}</td>
-            <td>${mp.proyecto}</td>
-            <td>${mp.encargado}</td>
-            <td>${formatCurrency(mp.total)}</td>
-            <td>${mp.condicion}</td>
-            <td>${mp.pctFacturado.toFixed(0)}%</td>
+            <td style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold);">${escapeHtmlDoc(mp.codigo)}</strong></td>
             <td>
-                <div style="background:rgba(255,255,255,0.1); height:8px; border-radius:4px; width:100px; margin-bottom:4px; overflow:hidden;">
-                    <div style="background:var(--success); height:100%; width:${mp.pctCobrado}%"></div>
+                <div class="cell-ellipsis" style="max-width:200px; font-weight:600; color:white;" title="${escapeHtmlDoc(mp.cliente)}">
+                    ${escapeHtmlDoc(mp.cliente)}${exportBadge}
                 </div>
-                <small>${mp.pctCobrado.toFixed(0)}%</small>
             </td>
-            <td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Gestionar</button></td>
+            <td>
+                <div class="cell-ellipsis" style="max-width:220px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.proyecto)}">
+                    ${escapeHtmlDoc(mp.proyecto || '-')}
+                </div>
+            </td>
+            <td>${encargadoDisplay}</td>
+            <td style="white-space:nowrap; font-weight:700; color:white;">${formatCurrency(mp.total)}</td>
+            <td style="white-space:nowrap;"><span class="badge bg-neutral" style="font-size:0.75rem;">${escapeHtmlDoc(mp.condicion)}</span></td>
+            <td style="min-width:110px;">
+                <div class="table-progress-wrap">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:2px; font-size:0.75rem;">
+                        <span style="font-weight:600; color:white;">${mp.pctFacturado.toFixed(0)}%</span>
+                    </div>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill-facturado" style="width:${Math.min(100, mp.pctFacturado)}%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td style="min-width:130px;">
+                <div class="table-progress-wrap">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; font-size:0.75rem;">
+                        <span style="font-weight:600; color:${cobradoColor};">${mp.pctCobrado.toFixed(0)}%</span>
+                        ${cobradoBadge}
+                    </div>
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill-cobrado" style="width:${Math.min(100, mp.pctCobrado)}%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td style="text-align:right; white-space:nowrap;">
+                <button type="button" class="btn-table-action btn-table-edit" style="width:100%; justify-content:center;">
+                    Gestionar ➔
+                </button>
+            </td>
         `;
         tbody.appendChild(tr);
     });
@@ -2541,8 +3206,6 @@ function openDetail(id) {
     const stageTitleText = document.getElementById('stage-title-text');
 
     const trackerContainer = document.getElementById('stage-tracker');
-    const btnSendFab = document.getElementById('btn-send-fab');
-    if (btnSendFab) btnSendFab.style.display = 'none';
 
     if (p.estado === 'activo') {
         actionContainer.style.display = 'block'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Avance de Etapa"; document.getElementById('btn-advance').style.display = p.etapa === 'cierre' ? 'none' : 'inline-block';
@@ -2559,9 +3222,6 @@ function openDetail(id) {
         }
     } else if (p.estado === 'ganado' || (hasEnteredPostclosing(p) && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor'))) {
         actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; renderFinancials(p);
-        if (btnSendFab && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
-            btnSendFab.style.display = 'inline-block';
-        }
     } else { actionContainer.style.display = 'none'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Línea de Tiempo"; }
 
     let timeInStage = 0;

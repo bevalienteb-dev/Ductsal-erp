@@ -31,7 +31,7 @@ const resolveStoragePath = new Function('STORAGE_PREFIX', `
 `)(env.STORAGE_PREFIX);
 
 const isFormatPreviewable = new Function(`
-  const PREVIEWABLE_EXTS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.txt'];
+  const PREVIEWABLE_EXTS = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.txt', '.xlsx', '.xls'];
   ${isFormatPreviewableSrc}
   return isFormatPreviewable;
 `)();
@@ -172,11 +172,13 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
   // Requisito 3: Archivo pequeño compatible ofrece descarga y previsualización
   // --------------------------------------------------------------------------
   describe('3. Archivos pequeños compatibles ofrecen descarga y previsualización', () => {
-    test('PDF y PNG son reconocidos como previewables', () => {
+    test('PDF, imágenes, texto y hojas Excel son reconocidos como previewables', () => {
       expect(isFormatPreviewable('factura_01.pdf', 'application/pdf')).toBe(true);
       expect(isFormatPreviewable('comprobante.png', 'image/png')).toBe(true);
       expect(isFormatPreviewable('foto.jpeg')).toBe(true);
       expect(isFormatPreviewable('notas.txt')).toBe(true);
+      expect(isFormatPreviewable('presupuesto.xlsx')).toBe(true);
+      expect(isFormatPreviewable('cotizacion.xls')).toBe(true);
     });
 
     test('UI ofrece ambas acciones para documentos compatibles', () => {
@@ -196,7 +198,7 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
       expect(isFormatPreviewable('detalles_ducto.dxf')).toBe(false);
       expect(isFormatPreviewable('paquete.zip')).toBe(false);
       expect(isFormatPreviewable('archivo.rar')).toBe(false);
-      expect(isFormatPreviewable('presupuesto.xlsx')).toBe(false);
+      expect(isFormatPreviewable('documento.docx')).toBe(false);
     });
 
     test('viewSecureDocument redirige automáticamente a descarga para formatos no previewables', () => {

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css?v=3">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
@@ -134,12 +135,25 @@
                 <header class="header-flex">
                     <div>
                         <h1>Proyectos y Control de Cobros</h1>
-                        <p>Gestión operativa y financiera de ventas cerradas.</p>
+                        <p>Gestión operativa y financiera de proyectos y liquidación de cobros.</p>
                     </div>
                 </header>
 
-                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
-                    <input type="text" id="proj-search" placeholder="🔍 Buscar proyecto por código, cliente, proyecto, encargado, monto, condición o %..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderProjectsList()">
+                <div class="filter-pills-bar">
+                    <div class="filter-pills-group" id="proj-filter-pills">
+                        <button type="button" id="filter-proj-pendientes" class="filter-pill active" onclick="setProjPaymentFilter('pendientes')">
+                            ⏳ Pendientes de Cobro <span class="filter-badge" id="count-proj-pendientes">0</span>
+                        </button>
+                        <button type="button" id="filter-proj-pagados" class="filter-pill" onclick="setProjPaymentFilter('pagados')">
+                            ✅ Completamente Pagados <span class="filter-badge" id="count-proj-pagados">0</span>
+                        </button>
+                        <button type="button" id="filter-proj-todos" class="filter-pill" onclick="setProjPaymentFilter('todos')">
+                            📋 Todos <span class="filter-badge" id="count-proj-todos">0</span>
+                        </button>
+                    </div>
+                    <div style="flex: 1; min-width: 260px; max-width: 480px;">
+                        <input type="text" id="proj-search" placeholder="🔍 Buscar proyecto por código, cliente, encargado, condición o monto..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderProjectsList()">
+                    </div>
                 </div>
 
                 <div class="table-container glass-panel">
@@ -154,7 +168,7 @@
                                 <th onclick="toggleProjSort('condicion')" style="cursor: pointer;">Condición <span id="sort-proj-condicion" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleProjSort('pctFacturado')" style="cursor: pointer;">% Facturado <span id="sort-proj-pctFacturado" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleProjSort('pctCobrado')" style="cursor: pointer;">% Cobrado <span id="sort-proj-pctCobrado" style="color: var(--text-muted);">↕</span></th>
-                                <th>Acción</th>
+                                <th style="text-align: right;">Acción</th>
                             </tr>
                         </thead>
                         <tbody id="proj-table-body">
@@ -168,26 +182,29 @@
             <section id="clients-view" class="view-section">
                 <header class="header-flex">
                     <div>
-                        <h1>Directorio de Clientes</h1>
-                        <p>Gestión de información de empresas y contactos.</p>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <h1 style="margin: 0;">Directorio de Clientes</h1>
+                            <span id="clients-count-badge" class="badge bg-neutral" style="font-size:0.8rem; font-weight:600;">0 clientes</span>
+                        </div>
+                        <p>Gestión operativa de información de empresas, contactos y expedientes digitales.</p>
                     </div>
                     <button class="btn-primary" id="btn-new-client-view" onclick="openClientModal()">+ Agregar Cliente</button>
                 </header>
 
-                <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
-                    <input type="text" id="cli-search" placeholder="🔍 Buscar cliente por tipo, nombre/razón social, contacto principal, teléfono o correo..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderClientsTable()">
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="cli-search" placeholder="🔍 Buscar cliente por tipo, nombre / razón social, contacto principal, teléfono o correo..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderClientsTable()">
                 </div>
 
                 <div class="table-container glass-panel">
                     <table id="clientsTable">
                         <thead>
                             <tr style="user-select: none;">
-                                <th onclick="toggleCliSort('tipo')" style="cursor: pointer;">Tipo <span id="sort-cli-tipo" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('tipo')" style="cursor: pointer; width: 110px;">Tipo <span id="sort-cli-tipo" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('nombre')" style="cursor: pointer;">Nombre / Razón Social <span id="sort-cli-nombre" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('contacto')" style="cursor: pointer;">Contacto Principal <span id="sort-cli-contacto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('telefono')" style="cursor: pointer;">Teléfono <span id="sort-cli-telefono" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('correo')" style="cursor: pointer;">Correo <span id="sort-cli-correo" style="color: var(--text-muted);">↕</span></th>
-                                <th id="client-action-header">Acción</th>
+                                <th id="client-action-header" style="text-align: right; width: 140px;">Acción</th>
                             </tr>
                         </thead>
                         <tbody id="clients-table-body">
@@ -383,7 +400,6 @@
                         <p id="detail-proyecto">Proyecto <span id="detail-codigo" class="badge bg-neutral ml-2"></span></p>
                     </div>
                     <div style="display:flex; gap:0.5rem; align-items:center;">
-                        <button class="btn-primary" id="btn-send-fab" onclick="showSendFabForm()" style="display:none; background-color: var(--brand-gold); color: black; padding: 4px 8px; font-size:0.8rem;">🛠️ Enviar a Fabricación</button>
                         <div class="status-badges" id="detail-badges">
                             <!-- Badges -->
                         </div>
@@ -513,8 +529,6 @@
                     </div>
                 </div>
             </section>
-
-            <!-- Fabricación View (Kanban / List) -->
 
         </main>
     </div>
@@ -647,11 +661,47 @@
                     <div class="form-group"><label>Correo Electrónico</label><input type="email" id="cli-correo"></div>
                     <div class="form-group full-width"><label>Correo para Facturación (Opcional)</label><input type="email" id="cli-correo-fact"></div>
                 </div>
+
+                <!-- Expediente Digital del Cliente -->
+                <div id="client-expediente-section" class="client-expediente-panel" style="display:none; margin-top: 1rem; margin-bottom: 1rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.65rem;">
+                        <h4 style="color:var(--brand-gold); font-size: 0.92rem; margin:0; display:flex; align-items:center; gap:6px;">
+                            📁 Expediente Digital del Cliente
+                        </h4>
+                        <span id="client-docs-count-badge" class="badge bg-neutral" style="font-size:0.72rem;">0 documentos</span>
+                    </div>
+                    <div id="client-docs-list" style="display:flex; flex-direction:column; gap:0.4rem; max-height: 200px; overflow-y:auto; padding-right: 4px;">
+                        <!-- Filled dynamically by JS -->
+                    </div>
+                </div>
+
                 <div class="form-group full-width" style="margin-top:-10px;">
                     <small style="color:var(--text-muted);">* Campos obligatorios según el tipo de persona seleccionada, además de un medio de contacto.</small>
                 </div>
                 <button type="submit" class="btn-primary mt-2" style="width:100%">Guardar Cliente</button>
             </form>
+        </div>
+    </div>
+
+    <!-- Document & Excel Preview Modal -->
+    <div id="docPreviewModal" class="modal" style="z-index: 150;">
+        <div class="modal-content glass-panel" style="width: 92vw; max-width: 1100px; height: 88vh; max-height: 900px; display: flex; flex-direction: column; padding: 1.25rem;">
+            <div class="preview-header">
+                <div class="preview-title-box">
+                    <span id="doc-preview-icon" style="font-size:1.4rem;">📄</span>
+                    <h3 id="doc-preview-title">Documento</h3>
+                    <span id="doc-preview-badge" class="badge bg-neutral" style="font-size:0.75rem;">ARCHIVO</span>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="btn-doc-preview-download" class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;">
+                        ⬇️ Descargar Original
+                    </button>
+                    <span class="close" onclick="closeDocPreviewModal()" style="position:static; font-size:24px; line-height:1; cursor:pointer;" title="Cerrar">&times;</span>
+                </div>
+            </div>
+            <div class="preview-body" id="doc-preview-content">
+                <!-- Filled dynamically by JS -->
+            </div>
         </div>
     </div>
 
