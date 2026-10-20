@@ -828,32 +828,12 @@ function openClientModal(clientId = null) {
                 document.getElementById('nat-nombres').value = c.nombres || ''; document.getElementById('nat-apellidos').value = c.apellidos || '';
                 document.getElementById('nat-dui').value = c.dui || ''; document.getElementById('nat-nit').value = c.nit || '';
                 document.getElementById('nat-profesion').value = c.profesion || ''; document.getElementById('nat-domicilio').value = c.domicilio || '';
-                const sts = document.getElementById('nat-dui-status');
-                if (c.documentos && c.documentos.dui) {
-                    const docUrl = typeof c.documentos.dui === 'string' ? c.documentos.dui : c.documentos.dui.url;
-                    let delBtn = (currentUser && currentUser.role === 'manager') ? ` <button type="button" class="btn-danger" style="padding:1px 6px; font-size:0.7rem; margin-left:6px;" onclick="deleteClientDocument('${c.id}', 'dui')">🗑️ Eliminar</button>` : '';
-                    sts.innerHTML = `<span style="color:var(--success);">✔️ DUI en expediente: <a href="${docUrl}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">Ver DUI</a>${delBtn}</span>`;
-                } else { sts.innerHTML = ''; }
             }
             else {
                 document.getElementById('jur-empresa').value = c.empresa || ''; document.getElementById('jur-contacto').value = c.contacto || ''; document.getElementById('jur-nit').value = c.nit || ''; document.getElementById('jur-nrc').value = c.nrc || '';
                 document.getElementById('jur-rep-legal').value = c.rep_legal || ''; document.getElementById('jur-profesion-rep').value = c.profesion_rep || ''; document.getElementById('jur-domicilio-rep').value = c.domicilio_rep || '';
                 document.getElementById('jur-dui-rep').value = c.dui_rep || ''; document.getElementById('jur-nit-rep').value = c.nit_rep || '';
                 document.getElementById('jur-gran-contribuyente').checked = c.is_gran_contribuyente === true;
-                const jSts = document.getElementById('jur-docs-status');
-                if (c.documentos && Object.keys(c.documentos).length > 0) {
-                    let links = [];
-                    const keysMap = { escritura: 'Escritura', mods_escritura: 'Mods. Escritura', credencial: 'Credencial', nit: 'NIT', nrc: 'NRC', dui: 'DUI Rep.' };
-                    const isManager = currentUser && currentUser.role === 'manager';
-                    for (let k in keysMap) {
-                        if (c.documentos[k]) {
-                            const url = typeof c.documentos[k] === 'string' ? c.documentos[k] : c.documentos[k].url;
-                            let delBtn = isManager ? ` <button type="button" class="btn-danger" style="padding:1px 5px; font-size:0.65rem; margin-left:2px; margin-right:8px;" onclick="deleteClientDocument('${c.id}', '${k}')">🗑️</button>` : '';
-                            links.push(`<span style="display:inline-block; margin-right:6px;"><a href="${url}" target="_blank" style="color:var(--brand-gold); text-decoration:underline;">[${keysMap[k]}]</a>${delBtn}</span>`);
-                        }
-                    }
-                    jSts.innerHTML = links.length > 0 ? `<span style="color:var(--success);">Archivos en expediente: ${links.join(' ')}</span>` : '';
-                } else { jSts.innerHTML = ''; }
             }
         }
     } else { document.getElementById('client-modal-title').textContent = 'Registrar Cliente'; document.getElementById('client-tipo').value = ''; document.getElementById('jur-gran-contribuyente').checked = false; document.getElementById('cli-es-exportacion').checked = false; toggleClientFields(); }

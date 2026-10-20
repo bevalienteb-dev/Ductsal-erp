@@ -387,5 +387,22 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
       expect(formatClientDocLabel('mods_escritura')).toBe('Mods. Escritura');
       expect(formatClientDocLabel('mods')).toBe('Modificaciones');
     });
+
+    test('legacy "Archivos en expediente" block is completely removed while new dossier interface is preserved', () => {
+      // Old elements and text must not exist
+      expect(indexHtml).not.toContain('id="jur-docs-status"');
+      expect(indexHtml).not.toContain('id="nat-dui-status"');
+      expect(appCoreSrc).not.toContain('jur-docs-status');
+      expect(appCoreSrc).not.toContain('nat-dui-status');
+      expect(appCoreSrc).not.toContain('Archivos en expediente');
+
+      // New digital dossier interface must exist and be preserved
+      expect(indexHtml).toContain('id="client-expediente-section"');
+      expect(indexHtml).toContain('id="client-docs-list"');
+      expect(indexHtml).toContain('id="client-docs-count-badge"');
+      expect(indexHtml).toContain('Expediente Digital del Cliente');
+      expect(appCoreSrc).toContain('function renderClientExpedienteSection');
+      expect(typeof appCore.renderClientExpedienteSection).toBe('function');
+    });
   });
 });
