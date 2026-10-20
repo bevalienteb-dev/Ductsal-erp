@@ -1409,4 +1409,286 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       ).rejects.toMatchObject({ code: 'failed-precondition' });
     });
   });
+
+  describe('SEC-04 / SEC-06: Bloqueo absoluto de reasignación postcierre y preservación de vendedorId', () => {
+    beforeEach(async () => {
+      await db.seed('clients_prod/C_CLOSE', {
+        id: 'C_CLOSE',
+        tipo: 'juridica',
+        empresa: 'Corporativo Cierre S.A. de C.V.',
+        contacto: 'Lic. Roberto Gómez',
+        telefono: '2222-3333',
+        correo: 'info@cierre.com',
+        correo_fact: 'facturacion@cierre.com',
+        nit: '0614-010190-101-1',
+        nrc: '123456-7',
+        createdBy: USERS.mgr.id,
+        visibleTo: [USERS.mgr.id, USERS.v1.id, USERS.v2.id, USERS.ges.id],
+        closingVendors: [],
+        documentos: {
+          dui: { name: 'dui.pdf', storagePath: 'prod_files/clients/C_CLOSE/identificacion/dui.pdf' },
+          escritura: { name: 'escritura.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/escritura.pdf' },
+          credencial: { name: 'credencial.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/credencial.pdf' },
+          nit: { name: 'nit.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/nit.pdf' },
+          nrc: { name: 'nrc.pdf', storagePath: 'prod_files/clients/C_CLOSE/legal/nrc.pdf' }
+        }
+      });
+    });
+
+    test('1. Un gerente puede reasignar un prospecto abierto cuando está autorizado', async () => {
+      await db.seed('prospects_prod/P_OPEN_REASSIGN', {
+        id: 'P_OPEN_REASSIGN',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cotizacion',
+        estado: 'activo',
+        logs: [],
+        facturas: []
+      });
+      const res = await commSvc.reassign({
+        caller: caller('mgr'),
+        prospectId: 'P_OPEN_REASSIGN',
+        vendedorId: USERS.v2.id
+      });
+      expect(res.status).toBe('reassigned');
+      expect(res.vendedorId).toBe(USERS.v2.id);
+      const updated = db.data('prospects_prod/P_OPEN_REASSIGN');
+      expect(updated.vendedorId).toBe(USERS.v2.id);
+      expect(updated.createdBy).toBe(USERS.v1.id); // inmutable
+    });
+
+    test('2. Un vendedor o gestor no puede reasignar un prospecto si su rol no lo permite', async () => {
+      await db.seed('prospects_prod/P_OPEN_UNAUTH', {
+        id: 'P_OPEN_UNAUTH',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'prospecto',
+        estado: 'activo',
+        logs: [],
+        facturas: []
+      });
+      await expect(
+        commSvc.reassign({ caller: caller('v1'), prospectId: 'P_OPEN_UNAUTH', vendedorId: USERS.v2.id })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+      await expect(
+        commSvc.reassign({ caller: caller('ges'), prospectId: 'P_OPEN_UNAUTH', vendedorId: USERS.v2.id })
+      ).rejects.toMatchObject({ code: 'permission-denied' });
+      expect(db.data('prospects_prod/P_OPEN_UNAUTH').vendedorId).toBe(USERS.v1.id);
+    });
+
+    test('3 & 4. Un gerente NO puede reasignar un prospecto cerrado; llamada directa al backend es rechazada con failed-precondition', async () => {
+      await db.seed('prospects_prod/P_CLOSED_MGR', {
+        id: 'P_CLOSED_MGR',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'ganado',
+        postcierre_habilitado: true,
+        fecha_cierre: '2026-03-01T10:00:00.000Z',
+        fecha_postcierre: '2026-03-01T10:00:00.000Z',
+        logs: [],
+        facturas: []
+      });
+
+      // Direct backend call by manager is rejected
+      await expect(
+        commSvc.reassign({
+          caller: caller('mgr'),
+          prospectId: 'P_CLOSED_MGR',
+          vendedorId: USERS.v2.id
+        })
+      ).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('No se puede reasignar una oportunidad que ya completó el cierre comercial')
+      });
+
+      // vendedorId remains untouched
+      expect(db.data('prospects_prod/P_CLOSED_MGR').vendedorId).toBe(USERS.v1.id);
+    });
+
+    test('5. La reasignación rechazada no modifica datos ni confiere/retira permisos indebidamente al vendedor anterior o nuevo', async () => {
+      await db.seed('clients_prod/C_CLOSING_STABLE', {
+        id: 'C_CLOSING_STABLE',
+        tipo: 'empresa',
+        empresa: 'Corporación Estable',
+        createdBy: USERS.mgr.id,
+        visibleTo: [USERS.v1.id],
+        closingVendors: [USERS.v1.id]
+      });
+
+      await db.seed('prospects_prod/P_CLOSED_AUDIT_STABLE', {
+        id: 'P_CLOSED_AUDIT_STABLE',
+        clientId: 'C_CLOSING_STABLE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'ganado',
+        postcierre_habilitado: true,
+        fecha_cierre: '2026-03-02T10:00:00.000Z',
+        logs: [{ text: 'Cierre completado', date: '2026-03-02' }]
+      });
+
+      const auditBefore = await db.list('commercialAudit_prod');
+      const auditCountBefore = auditBefore.length;
+
+      await expect(
+        commSvc.reassign({
+          caller: caller('mgr'),
+          prospectId: 'P_CLOSED_AUDIT_STABLE',
+          vendedorId: USERS.v2.id
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+      // Document untouched
+      const pAfter = db.data('prospects_prod/P_CLOSED_AUDIT_STABLE');
+      expect(pAfter.vendedorId).toBe(USERS.v1.id);
+      expect(pAfter.logs).toHaveLength(1);
+
+      // Client permissions untouched (V1 keeps closingVendors & visibleTo; V2 does NOT gain them)
+      const cAfter = db.data('clients_prod/C_CLOSING_STABLE');
+      expect(cAfter.closingVendors).toEqual([USERS.v1.id]);
+      expect(cAfter.visibleTo).toEqual([USERS.v1.id]);
+
+      // No audit event written for rejected operation
+      const auditAfter = await db.list('commercialAudit_prod');
+      expect(auditAfter.length).toBe(auditCountBefore);
+    });
+
+    test('6. Transición simultánea al cierre y reasignación: si cierre se procesa, reasignación es rechazada y vendedorId se conserva', async () => {
+      await db.seed('prospects_prod/P_RACE', {
+        id: 'P_RACE',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 5000,
+        costo_venta: 2500,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'of.pdf', storagePath: 'prod_files/prospects/P_RACE/cotizaciones/of.pdf' }],
+          doc_costos: [{ name: 'co.pdf', storagePath: 'prod_files/prospects/P_RACE/cotizaciones/co.pdf' }],
+          autorizado_sin_contrato: true,
+          autorizado_por: 'Gerente'
+        },
+        logs: [],
+        facturas: []
+      });
+
+      // Close the prospect first
+      await wfSvc.advanceStage({
+        caller: caller('mgr'),
+        prospectId: 'P_RACE',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'FAC-RACE',
+          doc_firmado: { name: 'f.pdf', storagePath: 'prod_files/prospects/P_RACE/proyectos/f.pdf' },
+          doc_comprobante: { name: 'c.pdf', storagePath: 'prod_files/prospects/P_RACE/facturas/c.pdf' }
+        }
+      });
+
+      // Subsequent or concurrent reassignment fails
+      await expect(
+        commSvc.reassign({
+          caller: caller('mgr'),
+          prospectId: 'P_RACE',
+          vendedorId: USERS.v2.id
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+
+      // vendedorId accurately reflects the original closer (V1), NOT overwritten by manager or target
+      const pFinal = db.data('prospects_prod/P_RACE');
+      expect(pFinal.vendedorId).toBe(USERS.v1.id);
+      expect(pFinal.postcierre_habilitado).toBe(true);
+    });
+
+    test('7. vendedorId se conserva al cerrar tanto si el responsable es vendedor como si es gestor (gerente no lo sobrescribe)', async () => {
+      // Gestor as assigned vendedorId on complete client C_CLOSE
+      await db.seed('prospects_prod/P_GES_CLOSE', {
+        id: 'P_GES_CLOSE',
+        clientId: 'C_CLOSE',
+        createdBy: USERS.ges.id,
+        vendedorId: USERS.ges.id,
+        vendedorName: 'Gestora Beta',
+        vendedorRole: 'gestor',
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 3000,
+        costo_venta: 1500,
+        etapa: 'negociacion',
+        estado: 'activo',
+        datos: {
+          doc_oferta: [{ name: 'of.pdf', storagePath: 'prod_files/prospects/P_GES_CLOSE/cotizaciones/of.pdf' }],
+          doc_costos: [{ name: 'co.pdf', storagePath: 'prod_files/prospects/P_GES_CLOSE/cotizaciones/co.pdf' }],
+          autorizado_sin_contrato: true,
+          autorizado_por: 'Gerente'
+        },
+        logs: [],
+        facturas: []
+      });
+
+      // Manager executes the administrative closing action
+      const res = await wfSvc.advanceStage({
+        caller: caller('mgr'),
+        prospectId: 'P_GES_CLOSE',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'FAC-GES-1',
+          doc_firmado: { name: 'firmado.pdf', storagePath: 'prod_files/prospects/P_GES_CLOSE/proyectos/firmado.pdf' },
+          doc_comprobante: { name: 'ccf.pdf', storagePath: 'prod_files/prospects/P_GES_CLOSE/facturas/ccf.pdf' }
+        }
+      });
+
+      expect(res.status).toBe('advanced');
+      const pAfter = db.data('prospects_prod/P_GES_CLOSE');
+      expect(pAfter.vendedorId).toBe(USERS.ges.id); // Preserved as Gestor, NOT overwritten by Manager (mgr)
+      expect(pAfter.postcierre_habilitado).toBe(true);
+
+      const clientAfter = db.data('clients_prod/C_CLOSE');
+      expect(clientAfter.closingVendors).toContain(USERS.ges.id);
+    });
+
+    test('8. Proyecto cerrado conserva acceso legítimo de postcierre aun si cambia posteriormente de estado administrativo (perdido/cancelado)', async () => {
+      const closedLost = {
+        id: 'P_CLOSED_THEN_LOST',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'perdido',
+        motivo_perdida: 'Cancelado por cliente postcierre',
+        postcierre_habilitado: true,
+        fecha_cierre: '2026-03-05T00:00:00.000Z',
+        fecha_postcierre: '2026-03-05T00:00:00.000Z',
+        facturas: []
+      };
+
+      // Gestor retains access because postcierre_habilitado is true, regardless of estado: 'perdido'
+      expect(commSvc.hasEnteredPostclosing(closedLost)).toBe(true);
+      expect(commSvc.kit.canAccessProspect(caller('ges'), closedLost)).toBe(true);
+      expect(commSvc.kit.canAccessProspect(caller('mgr'), closedLost)).toBe(true);
+    });
+
+    test('9. Cierre comercial válido concede postcierre sin exigir comprobante CCF repetido para la autorización', async () => {
+      // Document completed closure with postcierre_habilitado, no facturas yet
+      const projectWithoutInvoices = {
+        id: 'P_POST_NO_INV',
+        clientId: 'C1',
+        createdBy: USERS.v1.id,
+        vendedorId: USERS.v1.id,
+        etapa: 'cierre',
+        estado: 'ganado',
+        postcierre_habilitado: true,
+        fecha_postcierre: '2026-03-06T00:00:00.000Z',
+        facturas: [] // zero facturas
+      };
+
+      expect(commSvc.hasEnteredPostclosing(projectWithoutInvoices)).toBe(true);
+      expect(commSvc.kit.canAccessProspect(caller('ges'), projectWithoutInvoices)).toBe(true);
+    });
+  });
 });

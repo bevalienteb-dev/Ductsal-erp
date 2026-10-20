@@ -378,6 +378,18 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
         await svc.reassign({ caller: caller('MGR'), prospectId: 'P1', vendedorId: P.HIST.id });
         expect((await prospect('P1')).vendedorId).toBe(P.HIST.id);
       });
+
+      test('reassignment of a closed or postclosing opportunity is strictly forbidden, even for manager', async () => {
+        await env.seed('prospects_prod/P_CLOSED', {
+          id: 'P_CLOSED', codigo: '202601099', clientId: 'C1',
+          createdBy: P.V1.id, vendedorId: P.V1.id, vendedorName: 'Vendedor Uno', vendedorRole: 'vendedor',
+          fecha_creacion: '2026-01-01T00:00:00.000Z', etapa: 'cierre', estado: 'ganado',
+          postcierre_habilitado: true, fecha_cierre: '2026-01-05T00:00:00.000Z',
+          datos: {}, logs: [AUTO_OLD], facturas: []
+        });
+        await rejects(svc.reassign({ caller: caller('MGR'), prospectId: 'P_CLOSED', vendedorId: P.V2.id }), 'failed-precondition');
+        expect((await prospect('P_CLOSED')).vendedorId).toBe(P.V1.id);
+      });
     });
 
     // ------------------------------------------------------------------------------------------------

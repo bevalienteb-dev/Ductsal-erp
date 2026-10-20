@@ -92,6 +92,10 @@ function getProspectVendorInfo(p) {
 function reassignVendor(prospectId) {
     const p = prospects.find(x => x.id === prospectId);
     if (!p) return;
+    const isClosed = (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : (p && (p.postcierre_habilitado === true || p.etapa === 'cierre')));
+    if (isClosed) {
+        return alert("No se puede reasignar una oportunidad que ya completó el cierre comercial.");
+    }
     if (!currentUser || currentUser.role !== 'manager') {
         return alert("Solo los Gerentes pueden reasignar oportunidades.");
     }
@@ -2978,7 +2982,7 @@ function renderInfo(p) {
 
     const vendor = getProspectVendorInfo(p);
     let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
-    if (currentUser && currentUser.role === 'manager') {
+    if (currentUser && currentUser.role === 'manager' && !hasEnteredPostclosing(p) && p.etapa !== 'cierre') {
         vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
     }
     vendorLinkHTML += `</li>`;

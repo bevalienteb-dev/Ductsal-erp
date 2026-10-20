@@ -382,17 +382,18 @@ Implementado y verificado el modelo estricto de tres perfiles para resolver defi
 - **Preservación de `vendedorId` en el cierre:**
   - Al ejecutar `advanceStage('cierre')` (o `closeSale`), el sistema **conserva intacto el `vendedorId` del responsable comercial efectivo**, sea este un vendedor o un gestor asignado.
   - La intervención administrativa del gerente (por ejemplo, autorizando sin contrato o completando el paso administrativo) **no sobrescribe `vendedorId`** con el ID del gerente.
-- **Efecto de una reasignación postcierre y política comercial:**
-  - Si un gerente ejecuta `reassignProspectAdmin` sobre un proyecto que ya se encuentra en etapa `cierre` o estado `ganado`, `vendedorId` es actualizado al nuevo vendedor asignado.
-  - En consecuencia, en caso de reasignación postcierre, el campo `vendedorId` del prospecto **deja de identificar al closer original** y pasa a identificar al nuevo responsable operativo.
-  - El vendedor anterior es retirado de `clients.closingVendors` si no conserva otras oportunidades en cierre con dicho cliente.
-  - Para propósitos de liquidación de comisiones o auditoría del closer original, la gerencia debe remitirse al evento canónico `closeSale` en `commercialAudit_*` / `audit_logs_*` o al registro automático en `logs`, donde consta el responsable exacto al momento del cierre. No se añade ningún campo adicional ni módulo de comisiones al CRM sin necesidad demostrada.
-- **Recálculo transaccional de visibilidad en clientes:**
-  - Al reasignar, el nuevo vendedor (`target.cid`) se agrega a `clients.visibleTo` (y a `clients.closingVendors` si la oportunidad está en etapa `cierre`).
+- **Bloqueo absoluto de reasignación después del cierre:**
+  - Una oportunidad que ya completó el cierre comercial y migró a «Proyectos y Cobros» (`postcierre_habilitado === true`, `etapa === 'cierre'` o criterios históricos equivalentes) **no se puede reasignar bajo ninguna circunstancia**.
+  - Esta prohibición es **absoluta e incluye al gerente**: ser gerente no constituye una excepción.
+  - La verificación se ejecuta transaccionalmente en el backend (`commercialService.reassign`); cualquier intento es rechazado con `failed-precondition` (`"No se puede reasignar una oportunidad que ya completó el cierre comercial"`).
+  - En la interfaz de usuario (`app_core.js`), la opción `[Reasignar]` se oculta automáticamente para expedientes cerrados o en postcierre, y la función `reassignVendor` bloquea defensivamente la ejecución en el cliente.
+  - Una vez cerrado el expediente, `vendedorId` queda congelado de forma inmutable, preservando de manera definitiva al responsable comercial efectivo que realizó el cierre.
+  - No se añaden campos redundantes como `closedBy` ni módulos de comisiones al CRM, ya que `vendedorId` garantiza la trazabilidad fiel y definitiva del closer.
+- **Recálculo transaccional de visibilidad en clientes (solo en oportunidades abiertas):**
+  - Al reasignar un prospecto abierto, el nuevo vendedor (`target.cid`) se agrega a `clients.visibleTo`.
   - El vendedor anterior (`oldVendor`) se remueve de `clients.visibleTo` **si y solo si** no es el creador del cliente (`oldVendor !== client.createdBy`) y no conserva ninguna otra oportunidad activa o no eliminada vinculada a dicho cliente.
-  - El vendedor anterior se remueve de `clients.closingVendors` si no conserva ninguna otra oportunidad en etapa `cierre`.
   - El cálculo se ejecuta atómicamente dentro de la transacción de reasignación.
-- **Historial y auditoría:** Cada reasignación registra en el historial del expediente quién autorizó la reasignación, el responsable anterior, el nuevo y la fecha (`logs`). Adicionalmente, escribe en `commercialAudit_*` un evento con `action: 'reassignProspect'` registrando `from`, `to`, `authorizedBy` y fecha del servidor.
+- **Historial y auditoría:** Cada reasignación previa al cierre registra en el historial del expediente quién autorizó la reasignación, el responsable anterior, el nuevo y la fecha (`logs`). Adicionalmente, escribe en `commercialAudit_*` un evento con `action: 'reassignProspect'` registrando `from`, `to`, `authorizedBy` y fecha del servidor.
 
 #### 3. Acceso persistente a «Proyectos y cobros» (Postcierre)
 

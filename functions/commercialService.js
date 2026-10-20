@@ -293,6 +293,9 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
       const p = snap.data() || {};
       requireNotDeleted(p);
+      if (hasEnteredPostclosing(p) || p.etapa === 'cierre') {
+        throw new ServiceError('failed-precondition', 'No se puede reasignar una oportunidad que ya completó el cierre comercial');
+      }
       const target = await readAssignee(tx, vendedorId);
       if (p.vendedorId === target.cid) return { status: 'unchanged', vendedorId: target.cid }; // retry of an applied request
 
