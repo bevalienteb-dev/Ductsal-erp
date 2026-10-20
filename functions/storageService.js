@@ -248,7 +248,7 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         throw new ServiceError('not-found', 'La oportunidad fue eliminada');
       }
       if (caller.role === 'gestor') {
-        if (p.createdBy === caller.cid || hasEnteredPostclosing(p)) {
+        if (p.vendedorId === caller.cid || p.createdBy === caller.cid || hasEnteredPostclosing(p)) {
           return true;
         }
         throw new ServiceError('permission-denied', 'No tienes acceso a los documentos de esta oportunidad');

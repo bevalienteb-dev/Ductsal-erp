@@ -363,12 +363,12 @@ Implementado y verificado el modelo estricto de tres perfiles para resolver defi
 
 | Operación | Gerente (`manager`) | Gestor (`gestor`) | Vendedor (`vendedor`) | Justificación / Mecanismo de seguridad |
 |---|---|---|---|---|
-| **Consultar oportunidades (Leads ordinarios)** | Todas | Solo los que ingresó originalmente (`createdBy == me`) | Solo asignados (`vendedorId == me`) o propios | Aislamiento horizontal estricto en Firestore Rules (`allow list/get`) y `canAccessProspect`. |
+| **Consultar oportunidades (Leads ordinarios)** | Todas | Propios (`createdBy == me`) o asignados (`vendedorId == me`) | Solo asignados (`vendedorId == me`) o propios sin asignar | Aislamiento horizontal estricto en Firestore Rules (`allow list/get`), `canAccessProspect`, `storageService` y `storage.rules`. Gestores NO tienen acceso a leads abiertos de otros vendedores. |
 | **Consultar «Proyectos y cobros» (Postcierre)** | Todos | Proyectos que entraron válidamente a postcierre (`hasEnteredPostclosing`) | **PROHIBIDO** | Vendedores denegados en UI (menú, rutas, vistas), Firestore rules y funciones backend. |
 | **Crear oportunidad** | Sí (puede asignar a cualquier vendedor) | Sí (puede asignar a vendedor o gestionar él mismo) | Sí (solo a su propio nombre) | Asignación a terceros en creación requiere rol privilegiado (`manager`/`gestor`). |
-| **Avanzar etapa (prospecto→levantamiento→cotización→negociación→cierre)** | Sí | Solo en sus propios leads | Solo en leads asignados a su cargo | Vendedores no pueden modificar oportunidades ajenas; gestores no pueden alterar leads de vendedores. |
+| **Avanzar etapa (prospecto→levantamiento→cotización→negociación→cierre)** | Sí | Solo en sus propios leads (`createdBy == me` o `vendedorId == me`) | Solo en leads asignados a su cargo (`vendedorId == me` o creador sin vendedor) | Vendedores no pueden modificar oportunidades ajenas; gestores no pueden alterar leads abiertos ajenos. |
 | **Reasignar oportunidad (`reassign`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida identidad en vivo con `requireManager(caller, 'reasignar oportunidades')`. |
-| **Editar precio base (`editBasePrice`)** | Sí (proyectos activos antes del cierre) | Sí (solo en leads creados por él) | **Prohibido** | Política comercial: los vendedores no pueden alterar precios base fuera del flujo de cotización. |
+| **Editar precio base (`editBasePrice`)** | Sí (proyectos activos antes del cierre) | Sí (solo en leads creados o asignados a él) | **Prohibido** | Política comercial: los vendedores no pueden alterar precios base fuera del flujo de cotización. |
 | **Operaciones postcierre (facturas, pagos, órdenes de cambio)** | Sí | Sí (en expedientes con postcierre habilitado) | **Prohibido** | `POLICY` restringe a `['manager', 'gestor']`. Verificación en backend de `hasEnteredPostclosing`. |
 | **Reactivar proyectos perdidos (`reactivateLostProspect`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida con `requireManager`. |
 | **Eliminar oportunidad lógicamente (`deleteProspect`)** | **Exclusivo (solo manager)** | **Prohibido** | **Prohibido** | Backend valida con `requireManager`. |
@@ -379,6 +379,14 @@ Implementado y verificado el modelo estricto de tres perfiles para resolver defi
 - **Atribución de comisiones inmutable:** `createdBy` representa al creador original del lead y **permanece estrictamente inmutable** a lo largo de todo el ciclo de vida del expediente. Ninguna operación comercial ni reasignación puede alterar `createdBy`.
 - **Responsable operativo actual:** `vendedorId` representa al responsable comercial operativo actual de la venta.
 - **Autoridad de reasignación:** Solo un gerente verificado en vivo puede reasignar un lead (`reassignProspectAdmin`). Gestores y vendedores que intenten reasignar son rechazados con `permission-denied`.
+- **Preservación de `vendedorId` en el cierre:**
+  - Al ejecutar `advanceStage('cierre')` (o `closeSale`), el sistema **conserva intacto el `vendedorId` del responsable comercial efectivo**, sea este un vendedor o un gestor asignado.
+  - La intervención administrativa del gerente (por ejemplo, autorizando sin contrato o completando el paso administrativo) **no sobrescribe `vendedorId`** con el ID del gerente.
+- **Efecto de una reasignación postcierre y política comercial:**
+  - Si un gerente ejecuta `reassignProspectAdmin` sobre un proyecto que ya se encuentra en etapa `cierre` o estado `ganado`, `vendedorId` es actualizado al nuevo vendedor asignado.
+  - En consecuencia, en caso de reasignación postcierre, el campo `vendedorId` del prospecto **deja de identificar al closer original** y pasa a identificar al nuevo responsable operativo.
+  - El vendedor anterior es retirado de `clients.closingVendors` si no conserva otras oportunidades en cierre con dicho cliente.
+  - Para propósitos de liquidación de comisiones o auditoría del closer original, la gerencia debe remitirse al evento canónico `closeSale` en `commercialAudit_*` / `audit_logs_*` o al registro automático en `logs`, donde consta el responsable exacto al momento del cierre. No se añade ningún campo adicional ni módulo de comisiones al CRM sin necesidad demostrada.
 - **Recálculo transaccional de visibilidad en clientes:**
   - Al reasignar, el nuevo vendedor (`target.cid`) se agrega a `clients.visibleTo` (y a `clients.closingVendors` si la oportunidad está en etapa `cierre`).
   - El vendedor anterior (`oldVendor`) se remueve de `clients.visibleTo` **si y solo si** no es el creador del cliente (`oldVendor !== client.createdBy`) y no conserva ninguna otra oportunidad activa o no eliminada vinculada a dicho cliente.
@@ -406,9 +414,25 @@ Implementado y verificado el modelo estricto de tres perfiles para resolver defi
       || (Array.isArray(p.facturas) && p.facturas.length > 0);
   }
   ```
-- **Persistencia ante cambios de estado posteriores:**
-  Una vez que un proyecto tiene habilitado el postcierre, el gestor conserva acceso a «Proyectos y cobros» para consultar el expediente y registrar pagos o ajustes, **incluso si el proyecto pasa posteriormente a estado `perdido` o es cancelado**.
-- **No dependencia de `estado: 'ganado'` en cliente:** El acceso no depende de una bandera mutable enviada por el navegador, sino de la verificación server-side de `hasEnteredPostclosing(p)`.
+#### 3.1 Evaluación técnica de criterios históricos de postcierre y expedientes que requieren revisión manual
+
+Para determinar la legitimidad del acceso a postcierre en expedientes creados antes de la introducción de `postcierre_habilitado`, se evaluó la evidencia probatoria de cada criterio:
+
+1. **`postcierre_habilitado == true` (Confianza: 100% — Máxima):**
+   - Es asignado exclusivamente por Cloud Functions al verificar de forma transaccional el comprobante de anticipo (CCF), el DUI y la documentación legal o la excepción gerencial autorizada.
+   - Es permanente e irreversible: se conserva aunque el proyecto sea marcado como perdido o cancelado.
+2. **`facturas` (`facturas.length > 0`) (Confianza: 100% — Evidencia Contable/Fiscal):**
+   - La existencia de facturas emitidas y registradas constituye prueba documental y fiscal de que el proyecto superó la barrera de cierre y está en fase de cobros.
+3. **`stage_timestamps.cierre` (Confianza: Alta / Requiere verificación en datos legados):**
+   - Registra el momento en que el workflow operativo avanzó a la etapa `cierre`. En versiones operativas recientes garantiza la validación de CCF; en versiones muy antiguas de la interfaz pudo registrarse por transiciones directas.
+4. **`fecha_cierre` (Confianza: Media / Requiere verificación en datos legados):**
+   - Campo histórico de fecha de cierre. Aunque correlaciona estrechamente con ventas cerradas, por sí solo no acredita fehacientemente la existencia de un CCF de anticipo validado.
+5. **Criterios descartados (`estado == 'ganado'`):**
+   - Fue completamente eliminado de `hasEnteredPostclosing` y de las reglas de seguridad, ya que un prospecto podía encontrarse en estado `ganado` sin haber culminado el proceso administrativo de cierre ni emitido facturación.
+6. **Expedientes históricos que requieren revisión manual por Gerencia:**
+   - Todo documento de `prospects_prod` que tenga `fecha_cierre` o `stage_timestamps.cierre` pero tenga `facturas` vacías (`facturas: []`) y carezca de `datos.doc_comprobante` o `datos.doc_contrato`.
+   - Estos expedientes deben ser revisados manualmente por la gerencia para confirmar si efectivamente fueron ejecutados y facturados fuera del sistema, o si corresponden a cotizaciones no concretadas.
+   - **Regla estricta:** No se ejecutarán scripts de migración ni backfills en la base de datos de producción; la información histórica permanece intacta.
 
 #### 4. Procedimiento de migración histórica para `postcierre_habilitado` (Solo Documentación — No ejecutar en producción)
 

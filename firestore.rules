@@ -111,7 +111,7 @@ service cloud.firestore {
       allow create: if (isManager() || isGestor() || isVendedor())
         && request.resource.data.id == prospectId
         && request.resource.data.createdBy == me()
-        && (isManager() || request.resource.data.get('vendedorId', '') == me())
+        && (isPrivileged() || request.resource.data.get('vendedorId', '') == me())
         && (isManager() || flag(request.resource.data, 'autorizado_sin_contrato') == null)
         && exists(/databases/$(database)/documents/clients_prod/$(request.resource.data.clientId));
       // SEC-04: Direct updates bypass server validation, audit logs, and closingVendors tracking.

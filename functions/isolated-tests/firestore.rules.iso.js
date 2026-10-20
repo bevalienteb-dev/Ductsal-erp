@@ -145,7 +145,9 @@ describe('D. prospects (opportunities)', () => {
   allow('V2 list createdBy==me', () => fsApi.query('prospects_prod', ['createdBy', 'EQUAL', V2], T.v2));
   allow('V2 list vendedorId==me', () => fsApi.query('prospects_prod', ['vendedorId', 'EQUAL', V2], T.v2));
   deny('V2 list vendedorId==V1', () => fsApi.query('prospects_prod', ['vendedorId', 'EQUAL', V1], T.v2));
-  allow('gestor lists all prospects', () => fsApi.query('prospects_prod', null, T.ges));
+  deny('gestor unfiltered prospect list (SEC-04: gestor cannot query all leads unfiltered)', () => fsApi.query('prospects_prod', null, T.ges));
+  allow('gestor list createdBy==me', () => fsApi.query('prospects_prod', ['createdBy', 'EQUAL', GES], T.ges));
+  allow('gestor list vendedorId==me', () => fsApi.query('prospects_prod', ['vendedorId', 'EQUAL', GES], T.ges));
   allow('manager lists all prospects', () => fsApi.query('prospects_prod', null, T.mgr));
 
   // SEC-04: Direct updates to prospects_prod are completely forbidden by rules
@@ -162,11 +164,11 @@ describe('D. prospects (opportunities)', () => {
   deny('gestor changes createdBy', () => fsApi.set('prospects_prod', 'P1', { id: 'P1', createdBy: GES, vendedorId: V3, clientId: 'C1', datos: { autorizado_sin_contrato: true, autorizado_por: 'G' } }, T.ges));
   deny('inactive user updates a prospect directly', () => fsApi.set('prospects_prod', 'P1', { id: 'P1', createdBy: V1, vendedorId: V1, clientId: 'C1', datos: {} }, T.v4inactive));
 
-  // Verify that an opportunity assigned via server SDK can be read by the assignee
-  test('assigned opportunity can be read by assignee (V3) and creator (V1)', async () => {
+  // Verify that an opportunity assigned via server SDK can be read by the assignee and is denied to reassigned creator (H-01 remediation)
+  test('assigned opportunity can be read by assignee (V3) and is denied to reassigned creator (V1) (H-01)', async () => {
     await fsApi.seed('prospects_prod', 'P_ASSIGNED', { id: 'P_ASSIGNED', createdBy: V1, vendedorId: V3, clientId: 'C1', estado: 'prospecto', datos: {} });
     expect((await fsApi.get('prospects_prod', 'P_ASSIGNED', T.v3)).status).toBe(200);
-    expect((await fsApi.get('prospects_prod', 'P_ASSIGNED', T.v1)).status).toBe(200);
+    expect((await fsApi.get('prospects_prod', 'P_ASSIGNED', T.v1)).status).toBe(403);
   });
 
   // Catalogue: ANY existing client can be chosen, even one the vendedor cannot read. Choosing never touches the client.
