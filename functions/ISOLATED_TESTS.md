@@ -23,6 +23,8 @@ Suites (`isolated-tests/*.iso.js`):
 | `commercialFlow.e2e.iso.js` | flujo comercial completo con cuentas Auth y claims reales por HTTP: callables + auditoría + reglas; precio base (roles/estado), solicitud y resolución de venta sin contrato (identidades, estados, concurrencia), eliminación lógica | Auth + Functions + Firestore |
 | `userAdmin.e2e.iso.js` | `updateUserAdmin` / `toggleUserStatusAdmin` por HTTP con claims reales: roles, autoprivilegio, último gerente, bloqueo global, idempotencia, auditoría | Auth + Functions + Firestore |
 | `jointValidation.iso.js` | validación **conjunta CRM + fabricación** (solo diagnóstico, sin cambiar reglas): reproducción de las escrituras directas de ambos módulos, matriz de permisos 44 operaciones × 10 sesiones contra las reglas candidatas, rutas de Storage reales vs. previstas, escenario integrado, códigos/concurrencia y aislamiento de tabletas. Las pruebas "KNOWN GAP" afirman el comportamiento defectuoso actual. Informe: [JOINT_VALIDATION.md](JOINT_VALIDATION.md). Con `JOINT_MATRIX_OUT=<ruta>` exporta la matriz medida en JSON | Auth + Functions + Firestore + Storage |
+| `storageTokenRevocation.iso.js` | revocación de tokens de descarga de Storage (delete_token), retención de metadatos personalizados y rollback (SEC-08) | Emulador Storage (REST) |
+| `sec10HorizontalIsolation.iso.js` | aislamiento horizontal E2E de documentos (SEC-10): vendedores, gestor, reasignación, perfiles inactivos y no-emisión de URLs firmadas | Auth + Firestore + Storage + Functions |
 
 Los tokens sin firmar solo los aceptan los emuladores. No se usa ninguna credencial ni dato de producción.
 

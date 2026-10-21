@@ -573,4 +573,161 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
       expect(errorMap('functions/unauthenticated', '')).toContain('Sesión expirada');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Requisito 13: Validación exhaustiva de aislamiento horizontal y no emisión de URLs firmadas (SEC-10)
+  // --------------------------------------------------------------------------
+  describe('13. Validación de aislamiento horizontal y prevención de emisión de URLs firmadas (SEC-10)', () => {
+    test('vendedor B no puede descargar documento jerárquico de cliente de vendedor A y no se emite URL firmada', async () => {
+      const clientDocPath = 'prod_files/clients/CLI_A/legal/escritura.pdf';
+      mockFiles.set(clientDocPath, { size: 12000, contentType: 'application/pdf' });
+
+      await db.collection('clients_prod').doc('CLI_A').set({
+        id: 'CLI_A',
+        createdBy: 'V_A',
+        visibleTo: ['V_A'],
+        tipo: 'juridica'
+      });
+
+      let getSignedUrlCalled = false;
+      const originalFileFn = mockBucket.file.bind(mockBucket);
+      mockBucket.file = function(p) {
+        const f = originalFileFn(p);
+        const origGetSigned = f.getSignedUrl.bind(f);
+        f.getSignedUrl = async function(...args) {
+          getSignedUrlCalled = true;
+          return origGetSigned(...args);
+        };
+        return f;
+      };
+
+      const callerB = { uid: 'uid-vendedor-b', role: 'vendedor', cid: 'V_B' };
+
+      await expect(storageService.getSecureDownloadUrl({
+        caller: callerB,
+        storagePath: clientDocPath
+      })).rejects.toThrow('No tienes permiso para acceder a los documentos de este cliente');
+
+      // Certeza técnica: getSignedUrl jamás se invocó y ninguna URL fue generada
+      expect(getSignedUrlCalled).toBe(false);
+    });
+
+    test('vendedor no puede acceder a archivos técnicos de planta (fabricacion_archivos) y no se emite URL firmada', async () => {
+      const plantDocPath = 'prod_files/fabricacion_archivos/PLANT_001/corte_cnc.dxf';
+      mockFiles.set(plantDocPath, { size: 8500, contentType: 'application/octet-stream' });
+
+      let getSignedUrlCalled = false;
+      const originalFileFn = mockBucket.file.bind(mockBucket);
+      mockBucket.file = function(p) {
+        const f = originalFileFn(p);
+        const origGetSigned = f.getSignedUrl.bind(f);
+        f.getSignedUrl = async function(...args) {
+          getSignedUrlCalled = true;
+          return origGetSigned(...args);
+        };
+        return f;
+      };
+
+      const callerVendedor = { uid: 'uid-vendedor-a', role: 'vendedor', cid: 'V_A' };
+
+      await expect(storageService.getSecureDownloadUrl({
+        caller: callerVendedor,
+        storagePath: plantDocPath
+      })).rejects.toThrow('Solo personal de planta autorizado puede acceder a estos archivos');
+
+      expect(getSignedUrlCalled).toBe(false);
+    });
+
+    test('personal de planta no puede acceder a documentos comerciales (prospects) y no se emite URL firmada', async () => {
+      const commDocPath = 'prod_files/prospects/P_COMM/proyectos/oferta.pdf';
+      mockFiles.set(commDocPath, { size: 4500, contentType: 'application/pdf' });
+
+      await db.collection('prospects_prod').doc('P_COMM').set({
+        id: 'P_COMM',
+        createdBy: 'V_A',
+        vendedorId: 'V_A'
+      });
+
+      let getSignedUrlCalled = false;
+      const originalFileFn = mockBucket.file.bind(mockBucket);
+      mockBucket.file = function(p) {
+        const f = originalFileFn(p);
+        const origGetSigned = f.getSignedUrl.bind(f);
+        f.getSignedUrl = async function(...args) {
+          getSignedUrlCalled = true;
+          return origGetSigned(...args);
+        };
+        return f;
+      };
+
+      const callerPlant = { uid: 'uid-operario', role: 'operario', cid: 'OP_1' };
+
+      await expect(storageService.getSecureDownloadUrl({
+        caller: callerPlant,
+        storagePath: commDocPath
+      })).rejects.toThrow('Personal de planta no tiene acceso a documentos comerciales');
+
+      expect(getSignedUrlCalled).toBe(false);
+    });
+
+    test('vendedor asignado en oportunidad cerrada retiene acceso de descarga legítimo', async () => {
+      const closedDocPath = 'prod_files/prospects/P_CLOSED/facturas/factura_final.pdf';
+      mockFiles.set(closedDocPath, { size: 5500, contentType: 'application/pdf' });
+
+      await db.collection('prospects_prod').doc('P_CLOSED').set({
+        id: 'P_CLOSED',
+        createdBy: 'V_A',
+        vendedorId: 'V_A',
+        estado: 'ganado',
+        fecha_cierre: '2026-02-15T00:00:00.000Z',
+        postcierre_habilitado: true
+      });
+
+      const callerVendedor = { uid: 'uid-vendedor-a', role: 'vendedor', cid: 'V_A' };
+
+      const res = await storageService.getSecureDownloadUrl({
+        caller: callerVendedor,
+        storagePath: closedDocPath
+      });
+
+      expect(res.signedUrl).toBeDefined();
+      expect(res.storagePath).toBe(closedDocPath);
+    });
+
+    test('vendedor anterior tras reasignación pierde acceso a oportunidad cerrada y no se emite URL firmada', async () => {
+      const closedDocPath = 'prod_files/prospects/P_REASSIGNED_CLOSED/facturas/factura_final.pdf';
+      mockFiles.set(closedDocPath, { size: 5500, contentType: 'application/pdf' });
+
+      await db.collection('prospects_prod').doc('P_REASSIGNED_CLOSED').set({
+        id: 'P_REASSIGNED_CLOSED',
+        createdBy: 'V_OLD',
+        vendedorId: 'V_NEW',
+        estado: 'ganado',
+        fecha_cierre: '2026-02-15T00:00:00.000Z',
+        postcierre_habilitado: true
+      });
+
+      let getSignedUrlCalled = false;
+      const originalFileFn = mockBucket.file.bind(mockBucket);
+      mockBucket.file = function(p) {
+        const f = originalFileFn(p);
+        const origGetSigned = f.getSignedUrl.bind(f);
+        f.getSignedUrl = async function(...args) {
+          getSignedUrlCalled = true;
+          return origGetSigned(...args);
+        };
+        return f;
+      };
+
+      const callerOld = { uid: 'uid-vendedor-old', role: 'vendedor', cid: 'V_OLD' };
+
+      await expect(storageService.getSecureDownloadUrl({
+        caller: callerOld,
+        storagePath: closedDocPath
+      })).rejects.toThrow('No tienes acceso a los documentos de esta oportunidad');
+
+      expect(getSignedUrlCalled).toBe(false);
+    });
+  });
 });
+
