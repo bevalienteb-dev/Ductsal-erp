@@ -241,142 +241,370 @@
 
             <!-- Dashboard View (Manager) -->
             <section id="dashboard-view" class="view-section">
-                <header class="header-flex">
-                    <div>
-                        <h1>Dashboard Ejecutivo</h1>
-                        <p>Inteligencia de negocio y métricas financieras.</p>
-                    </div>
-                    <div class="dashboard-filters">
-                        <select id="dash-time-filter" onchange="renderDashboard()">
-                            <!-- Dynamically populated by JS -->
-                        </select>
-                    </div>
-                </header>
-
-                <!-- Top KPIs (Row 1) -->
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
-                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--success); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Ventas Ganadas Totales</div>
-                        <div class="value" id="metric-ganadas" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: white;">$0</div>
-                        <div style="font-size: 0.85rem; color: var(--success); display: flex; justify-content: space-between; align-items: center;">
-                            <span>Margen: <strong id="metric-margen">$0</strong></span>
-                            <span id="metric-margen-pct" style="font-weight:bold; background: rgba(16, 185, 129, 0.2); padding: 2px 6px; border-radius: 4px;">0%</span>
+                <!-- A. Executive Header & Controls -->
+                <div class="dash-header-bar glass-panel mb-3">
+                    <div class="dash-title-group">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <h1 style="font-size: 1.4rem; font-weight: 700; margin: 0; color: white;">Centro de Mando Comercial</h1>
+                            <span id="dash-active-period-badge" class="badge" style="background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); border: 1px solid rgba(255, 204, 77, 0.3); font-size: 0.8rem;">Histórico Completo</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-secondary);">
+                            <span>Inteligencia de ventas, rentabilidad contractual y control de inventario comercial</span>
+                            <span style="opacity: 0.4;">|</span>
+                            <span id="dash-last-updated" title="Sincronización en vivo con base de datos">Actualizado: En vivo</span>
                         </div>
                     </div>
 
-                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--brand-gold); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Pipeline Ponderado</div>
-                        <div class="value" id="metric-pipeline-ponderado" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: white;">$0</div>
-                        <div style="font-size: 0.85rem; color: var(--brand-gold); display: flex; justify-content: space-between; align-items: center;">
-                            <span>Margen Proy.: <strong id="metric-pipeline-margen">$0</strong></span>
-                            <span id="metric-pipeline-margen-pct" style="font-weight:bold; background: rgba(255, 204, 77, 0.2); padding: 2px 6px; border-radius: 4px;">0%</span>
+                    <div class="dash-filters-group">
+                        <label for="dash-time-filter" style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 2px;">Período Contable / Flujo</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="dash-time-filter" onchange="renderDashboard()" style="min-width: 220px; font-weight: 500;">
+                                <!-- Dynamically populated by JS: Histórico, YTD y Meses -->
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- B. SECCIÓN 1: RESULTADOS DE GESTIÓN (FLUJO DEL PERÍODO) -->
+                <div class="dash-section-divider">
+                    <div class="dash-section-title">
+                        <span class="dash-section-icon">📈</span>
+                        <span style="font-weight: 700; color: white; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px;">Resultados de Gestión (Flujo)</span>
+                        <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; font-size: 0.72rem; border: 1px solid rgba(59, 130, 246, 0.3);">Sujeto al filtro de período</span>
+                    </div>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Métricas consolidadas de operaciones concluidas o ingresadas dentro del período</span>
+                </div>
+
+                <div class="metrics-grid-5">
+                    <!-- 1. Ventas Ganadas -->
+                    <div class="metric-card glass-panel kpi-card-v2" style="border-top: 3px solid var(--success);">
+                        <div class="kpi-header">
+                            <span class="kpi-label" title="Subtotal comercial consolidado neto antes de IVA, incluyendo aumentos y disminuciones aprobadas">Ventas Ganadas</span>
+                            <span class="kpi-badge-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--success);">✓</span>
+                        </div>
+                        <div class="kpi-value-lg" id="metric-ganadas" style="color: white;">$0</div>
+                        <div class="kpi-footer">
+                            <span id="sub-metric-ganadas" style="color: var(--text-secondary); font-size: 0.8rem;">0 operaciones ganadas</span>
                         </div>
                     </div>
 
-                    <div class="metric-card glass-panel" style="border-top: 4px solid var(--danger); padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Ventas Perdidas</div>
-                        <div class="value" id="metric-perdidas" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: var(--danger);">$0</div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted);">Impacto negativo en el cierre global</div>
+                    <!-- 2. Margen Comercial y % -->
+                    <div class="metric-card glass-panel kpi-card-v2" style="border-top: 3px solid var(--success);">
+                        <div class="kpi-header">
+                            <span class="kpi-label" title="Margen bruto conocido (Ventas con costo conocido - Costo conocido). El % se calcula sobre ventas con costo registrado">Margen Comercial</span>
+                            <span id="metric-margen-pct" class="kpi-pct-pill">0%</span>
+                        </div>
+                        <div class="kpi-value-lg" id="metric-margen" style="color: var(--success);">$0</div>
+                        <div class="kpi-footer">
+                            <span id="sub-metric-margen" style="color: var(--text-secondary); font-size: 0.8rem;">Margen bruto conocido</span>
+                            <span id="metric-cost-warning" style="display: none; color: var(--brand-gold); font-size: 0.75rem; font-weight: 600;">⚠️ Costos incompletos</span>
+                        </div>
                     </div>
 
-                    <div class="metric-card glass-panel" style="border-top: 4px solid #8b5cf6; padding: 1.2rem; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">CxC Global (Saldo Pend.)</div>
-                        <div class="value" id="metric-total-cxc" style="font-size: 2.2rem; font-weight: 700; margin: 0.5rem 0; color: #8b5cf6;">$0</div>
+                    <!-- 3. Tasa de Cierre Real -->
+                    <div class="metric-card glass-panel kpi-card-v2" style="border-top: 3px solid #38bdf8;">
+                        <div class="kpi-header">
+                            <span class="kpi-label" title="Tasa de Cierre Real = Ganadas / (Ganadas + Perdidas). No penaliza por oportunidades activas en proceso">Tasa de Cierre</span>
+                            <span class="kpi-badge-icon" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">🎯</span>
+                        </div>
+                        <div class="kpi-value-lg" id="metric-win-rate" style="color: #38bdf8;">0%</div>
+                        <div class="kpi-footer">
+                            <span id="sub-metric-win-rate" style="color: var(--text-secondary); font-size: 0.8rem;">0 ganadas de 0 concluidas</span>
+                        </div>
+                    </div>
+
+                    <!-- 4. Altas del Período -->
+                    <div class="metric-card glass-panel kpi-card-v2" style="border-top: 3px solid #a855f7;">
+                        <div class="kpi-header">
+                            <span class="kpi-label" title="Nuevas oportunidades creadas en el sistema durante el período seleccionado">Nuevas Oportunidades</span>
+                            <span class="kpi-badge-icon" style="background: rgba(168, 85, 247, 0.15); color: #a855f7;">✨</span>
+                        </div>
+                        <div class="kpi-value-lg" id="metric-altas-count" style="color: white;">0</div>
+                        <div class="kpi-footer">
+                            <span id="sub-metric-altas" style="color: var(--text-secondary); font-size: 0.8rem;">Cotizado: $0</span>
+                        </div>
+                    </div>
+
+                    <!-- 5. Ventas Perdidas -->
+                    <div class="metric-card glass-panel kpi-card-v2" style="border-top: 3px solid var(--danger);">
+                        <div class="kpi-header">
+                            <span class="kpi-label" title="Total cotizado de operaciones descartadas o perdidas con fecha demostrable en el período">Ventas Perdidas</span>
+                            <span class="kpi-badge-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">✕</span>
+                        </div>
+                        <div class="kpi-value-lg" id="metric-perdidas" style="color: var(--danger);">$0</div>
+                        <div class="kpi-footer">
+                            <span id="sub-metric-perdidas" style="color: var(--text-secondary); font-size: 0.8rem;">0 operaciones perdidas</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráfica Prioritaria 1: Evolución Mensual de Ventas y Margen Comercial Bruto -->
+                <div class="chart-card glass-panel dash-monthly-chart-card mt-3">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
-                            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 4px;">
-                                <div style="color:var(--text-secondary)">Facturado: <strong id="metric-total-facturado" style="color:white">$0</strong></div>
-                                <div style="color:var(--text-secondary)">Cobrado: <strong id="metric-total-cobrado" style="color:var(--success)">$0</strong></div>
+                            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+                                <h3 style="margin: 0; font-size: 1.05rem; color: white;">Evolución Mensual: Ventas y Margen Bruto</h3>
+                                <span id="dash-monthly-coverage-badge" class="badge" style="display: none; background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); font-size: 0.72rem; border: 1px solid rgba(255, 204, 77, 0.3);">Cobertura costos: 100%</span>
                             </div>
-                            <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow:hidden;">
-                                <div id="cxc-bar-cobrado" style="height: 100%; background: var(--success); width: 0%;"></div>
+                            <span style="font-size: 0.75rem; color: var(--text-secondary);">Histórico mensual de ventas cerradas (barras), margen bruto conocido (barras) y rentabilidad % (línea)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="dash-monthly-summary" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;"></span>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Flujo Mensual</span>
+                        </div>
+                    </div>
+                    <div id="monthly-chart-container" style="flex-grow: 1; position: relative;">
+                        <div id="monthly-canvas-container" style="position: relative; width: 100%; height: 280px; min-width: 0;">
+                            <canvas id="monthlyEvolutionChart"></canvas>
+                        </div>
+                        <div id="monthly-evolution-empty" class="dash-empty-state-box" style="display: none;">
+                            <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">📈</div>
+                            <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Cierres en el Período</div>
+                            <div style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">
+                                No se registran operaciones comerciales ganadas con fecha de cierre demostrable para el intervalo seleccionado.
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Main Layout (Row 2) -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
-                    
-                    <!-- Left: Funnel -->
+                <!-- C. SECCIÓN 2: INVENTARIO COMERCIAL ACTUAL (STOCK VIVO) -->
+                <div class="dash-section-divider mt-4">
+                    <div class="dash-section-title">
+                        <span class="dash-section-icon">📦</span>
+                        <span style="font-weight: 700; color: white; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px;">Inventario Comercial Actual (Stock Vivo)</span>
+                        <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: var(--brand-gold); font-size: 0.72rem; border: 1px solid rgba(245, 158, 11, 0.3);">Independiente del filtro temporal: refleja hoy</span>
+                    </div>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Pipeline vivo, cuentas por cobrar vigentes y alertas operativas del equipo comercial</span>
+                </div>
+
+                <div class="stock-overview-grid">
+                    <!-- Stock Card 1: Pipeline Nominal vs Ponderado -->
+                    <div class="glass-panel stock-card" style="border-left: 4px solid var(--brand-gold);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div>
+                                <span class="kpi-label" title="Valor del pipeline ponderado por probabilidad comercial de cierre">Pipeline Ponderado</span>
+                                <div class="kpi-value-lg" id="metric-pipeline-ponderado" style="color: white; margin-top: 2px;">$0</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="kpi-label" title="Suma total de importes de todas las oportunidades activas sin ponderar">Pipeline Nominal</span>
+                                <div style="font-size: 1.15rem; font-weight: 700; color: var(--brand-gold); margin-top: 2px;" id="metric-pipeline-nominal">$0</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 0.5rem; border-top: 1px solid var(--panel-border); font-size: 0.8rem;">
+                            <span style="color: var(--text-secondary);">Margen Proy.: <strong id="metric-pipeline-margen" style="color:white;">$0</strong> (<span id="metric-pipeline-margen-pct" style="color:var(--brand-gold); font-weight:bold;">0%</span>)</span>
+                            <span id="metric-pipeline-unweighted-badge" class="badge" style="display:none; background: rgba(239, 68, 68, 0.15); color: var(--danger); font-size: 0.72rem;">Sin prob.</span>
+                        </div>
+                    </div>
+
+                    <!-- Stock Card 2: Cuentas por Cobrar (CxC Global) -->
+                    <div class="glass-panel stock-card" style="border-left: 4px solid #8b5cf6;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div>
+                                <span class="kpi-label" title="Saldo pendiente de cobro sobre facturas emitidas a clientes (incluye 13% IVA)">CxC Saldo Pendiente</span>
+                                <div class="kpi-value-lg" id="metric-total-cxc" style="color: #a78bfa; margin-top: 2px;">$0</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="kpi-label" title="Total efectivamente cobrado sobre las facturas emitidas">Total Cobrado</span>
+                                <div style="font-size: 1.15rem; font-weight: 700; color: var(--success); margin-top: 2px;" id="metric-total-cobrado">$0</div>
+                            </div>
+                        </div>
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 4px; display: flex; justify-content: space-between;">
+                            <span>Facturado Total: <strong id="metric-total-facturado" style="color: white;">$0</strong></span>
+                            <span id="cxc-pct-badge" style="color: var(--text-muted);">0% cobrado</span>
+                        </div>
+                        <div class="progress-bar-container" style="height: 6px;">
+                            <div id="cxc-bar-cobrado" class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Stock Card 3: Resumen Operativo de Oportunidades y Alertas -->
+                    <div class="glass-panel stock-card" style="border-left: 4px solid var(--danger);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div>
+                                <span class="kpi-label" title="Oportunidades activas con días en etapa superiores al umbral máximo operativo">Alertas de Estancamiento</span>
+                                <div class="kpi-value-lg" id="metric-alertas-count" style="color: var(--danger); margin-top: 2px;">0</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="kpi-label" title="Total de oportunidades vivas en el embudo comercial hoy">Oportunidades Activas</span>
+                                <div style="font-size: 1.15rem; font-weight: 700; color: white; margin-top: 2px;" id="metric-activas-total-count">0</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 0.5rem; border-top: 1px solid var(--panel-border); font-size: 0.8rem;">
+                            <span id="sub-metric-alertas-status" style="color: var(--text-secondary);">Evaluando tiempos operativos...</span>
+                            <a href="#dashActiveTimesTable" style="color: var(--brand-gold); text-decoration: none; font-size: 0.75rem; font-weight: 600;">Ver lista ↓</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- D. SECCIÓN 3: EMBUDO ACTIVO Y ANÁLISIS DE CANAL -->
+                <div class="dash-funnel-channel-grid">
+                    <!-- Left: Funnel de Ventas Activas -->
                     <div class="chart-card glass-panel" style="display: flex; flex-direction: column;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem;">
-                            <h3 style="margin: 0; font-size: 1.1rem;">Embudo de Ventas Activas</h3>
-                            <span style="font-size: 0.8rem; color: var(--text-secondary);">Cantidad y Monto Total</span>
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem; flex-wrap: wrap; gap: 0.5rem;">
+                            <div>
+                                <h3 style="margin: 0; font-size: 1.05rem; color: white;">Embudo de Ventas Activas</h3>
+                                <span style="font-size: 0.75rem; color: var(--text-secondary);">Inventario vivo hoy por etapa del proceso comercial</span>
+                            </div>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Stock vivo</span>
                         </div>
-                        <div style="flex-grow: 1; min-height: 350px; position: relative;" id="css-funnel-container">
-                            <!-- CSS Funnel injected here -->
+                        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: center; width: 100%; min-width: 0;" id="css-funnel-container">
+                            <!-- Funnel CSS -->
                         </div>
                     </div>
 
-                    <!-- Right: Efectividad por Canal -->
+                    <!-- Right: Efectividad y Volumen por Canal -->
                     <div class="chart-card glass-panel" style="display: flex; flex-direction: column;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem;">
-                            <h3 style="margin: 0; font-size: 1.1rem;">Efectividad y Volumen por Canal</h3>
-                            <span style="font-size: 0.8rem; color: var(--text-secondary);">Ops. por Estado</span>
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem; flex-wrap: wrap; gap: 0.5rem;">
+                            <div>
+                                <h3 style="margin: 0; font-size: 1.05rem; color: white;">Rendimiento por Canal de Origen</h3>
+                                <span style="font-size: 0.75rem; color: var(--text-secondary);">Volumen gestionado (barras) vs Tasa de Cierre real (línea)</span>
+                            </div>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Volumen & Éxito</span>
                         </div>
-                        <div style="flex-grow: 1; min-height: 350px; position: relative;">
-                            <canvas id="conversionChart"></canvas>
+                        <div id="conversion-chart-container" style="flex-grow: 1; position: relative; width: 100%; min-width: 0;">
+                            <div id="conversion-canvas-container" style="position: relative; width: 100%; height: 280px; min-width: 0;">
+                                <canvas id="conversionChart"></canvas>
+                            </div>
                         </div>
-                    </div>
-
-                </div>
-
-                <!-- KPI and Loss Chart (Row 2.5) -->
-                <div style="display: grid; grid-template-columns: 3fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
-                    <!-- KPI Times -->
-                    <div class="glass-panel" style="padding: 1.2rem;">
-                        <h3 style="margin: 0 0 1rem 0; font-size: 0.9rem; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.5px;">Tiempos Promedio en Etapa</h3>
-                        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;" id="kpi-times-grid">
-                            <!-- Populated by JS -->
-                        </div>
-                    </div>
-
-                    <!-- Motivos Pies -->
-                    <div class="chart-card glass-panel" style="padding: 1rem;">
-                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Motivos de Pérdida</h3>
-                        <div style="height: 180px; position: relative;"><canvas id="lossChart"></canvas></div>
                     </div>
                 </div>
 
-                <!-- Secondary Charts Grid (Row 3) -->
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
-                    <div class="chart-card glass-panel" style="padding: 1rem;">
-                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Pipeline - Producto</h3>
-                        <div style="height: 200px; position: relative;"><canvas id="oppProductChart"></canvas></div>
+                <!-- Tercera Visualización: Rendimiento Comercial por Vendedor y Gestor -->
+                <div class="chart-card glass-panel mt-3" style="display: flex; flex-direction: column; padding: 1.25rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+                                <h3 style="margin: 0; font-size: 1.05rem; color: white;">Rendimiento Comercial por Vendedor y Gestor</h3>
+                                <span id="dash-seller-coverage-badge" class="badge" style="display: none; background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); font-size: 0.72rem; border: 1px solid rgba(255, 204, 77, 0.3);"></span>
+                            </div>
+                            <span style="font-size: 0.75rem; color: var(--text-secondary);">Comparativa de resultados del período (ventas y margen bruto) vs cartera activa asignada (stock nominal) con carteras independientes</span>
+                        </div>
+                        <span class="badge bg-neutral" style="font-size: 0.72rem;">Carteras Independientes</span>
                     </div>
-                    <div class="chart-card glass-panel" style="padding: 1rem;">
-                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Pipeline - Proyecto</h3>
-                        <div style="height: 200px; position: relative;"><canvas id="oppProjectChart"></canvas></div>
-                    </div>
-                    <div class="chart-card glass-panel" style="padding: 1rem;">
-                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Cierres - Producto</h3>
-                        <div style="height: 200px; position: relative;"><canvas id="productChart"></canvas></div>
-                    </div>
-                    <div class="chart-card glass-panel" style="padding: 1rem;">
-                        <h3 style="font-size:0.8rem; text-align:center; margin: 0 0 10px 0; color: var(--text-secondary); text-transform: uppercase;">Cierres - Proyecto</h3>
-                        <div style="height: 200px; position: relative;"><canvas id="projectChart"></canvas></div>
+                    <div id="seller-chart-container" style="flex-grow: 1; position: relative;">
+                        <div id="seller-canvas-container" style="position: relative; width: 100%; height: 260px; min-width: 0;">
+                            <canvas id="sellerChart"></canvas>
+                        </div>
+                        <div id="seller-empty-container" class="dash-empty-state-box" style="display: none;">
+                            <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">👥</div>
+                            <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Actividad Comercial Asignada</div>
+                            <div style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">
+                                No se registran cierres ni carteras comerciales asignadas a vendedores en el período seleccionado.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="table-container glass-panel">
-                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem;">
-                        <h3 style="margin: 0;">Oportunidades Activas - Tiempos en Etapa</h3>
-                        <span class="badge bg-neutral" style="color:var(--text-secondary); font-size:0.75rem;">Alertas de estancamiento</span>
+                <!-- E. SECCIÓN 4: MEZCLA DE NEGOCIO, MOTIVOS DE PÉRDIDA Y TIEMPOS DE ETAPA -->
+                <!-- 1. Tiempos Promedio en Etapa (Fila completa con cuadrícula balanceada) -->
+                <div class="glass-panel" style="padding: 1.25rem; margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 0.5px;">Tiempos Promedio en Etapa (Histórico Concluido)</h3>
+                            <span style="font-size: 0.75rem; color: var(--text-secondary);">Días promedio de transiciones de etapa concluidas con marcas de tiempo verificables</span>
+                        </div>
+                        <span class="badge bg-neutral" style="font-size: 0.72rem;">Transiciones Reales</span>
                     </div>
-                    <table id="dashActiveTimesTable">
-                        <thead>
-                            <tr>
-                                <th>Código</th>
-                                <th>Cliente</th>
-                                <th>Proyecto</th>
-                                <th>Etapa Actual</th>
-                                <th>Días Estancado</th>
-                            </tr>
-                        </thead>
-                        <tbody id="dash-active-times-body">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
+                    <div class="dash-stage-times-grid" id="kpi-times-grid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- 2. Gráficos de Composición y Motivos de Pérdida -->
+                <div class="dash-charts-grid-mix">
+                    <!-- Left: Composición de Ventas y Pipeline (Cuadrícula 2x2) -->
+                    <div class="glass-panel" style="padding: 1.25rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem;">
+                            <div>
+                                <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 0.5px;">Composición de Ventas y Pipeline</h3>
+                                <span style="font-size: 0.75rem; color: var(--text-secondary);">Distribución por tipo de producto y modalidad de proyecto</span>
+                            </div>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Cierres vs Stock</span>
+                        </div>
+                        <div class="dash-composition-grid">
+                            <div class="dash-chart-subcard">
+                                <h4 class="dash-chart-subtitle">Cierres — Producto</h4>
+                                <div class="dash-chart-canvas-box"><canvas id="productChart"></canvas></div>
+                            </div>
+                            <div class="dash-chart-subcard">
+                                <h4 class="dash-chart-subtitle">Cierres — Proyecto</h4>
+                                <div class="dash-chart-canvas-box"><canvas id="projectChart"></canvas></div>
+                            </div>
+                            <div class="dash-chart-subcard">
+                                <h4 class="dash-chart-subtitle">Pipeline — Producto</h4>
+                                <div class="dash-chart-canvas-box"><canvas id="oppProductChart"></canvas></div>
+                            </div>
+                            <div class="dash-chart-subcard">
+                                <h4 class="dash-chart-subtitle">Pipeline — Proyecto</h4>
+                                <div class="dash-chart-canvas-box"><canvas id="oppProjectChart"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Motivos de Pérdida con Estado Vacío Integrado -->
+                    <div class="chart-card glass-panel" style="display: flex; flex-direction: column; padding: 1.25rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.6rem;">
+                            <div>
+                                <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 0.5px;">Motivos de Pérdida</h3>
+                                <span style="font-size: 0.75rem; color: var(--text-secondary);">Análisis de causas de descarte en el período</span>
+                            </div>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Flujo Período</span>
+                        </div>
+                        <div id="loss-chart-container" style="flex-grow: 1; display: flex; flex-direction: column; justify-content: center; position: relative;">
+                            <div id="loss-canvas-container" style="position: relative; width: 100%; height: 260px; min-width: 0;">
+                                <canvas id="lossChart"></canvas>
+                            </div>
+                            <div id="loss-empty-container" class="dash-empty-state-box" style="display: none;">
+                                <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">🛡️</div>
+                                <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Oportunidades Perdidas</div>
+                                <div style="font-size: 0.8rem; color: var(--text-secondary); max-width: 280px; line-height: 1.4;">
+                                    No se registraron descartes ni pérdidas comerciales en el período seleccionado.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- F. SECCIÓN 5: LISTA DE OPORTUNIDADES ACCIONABLES (ALERTAS DE ESTANCAMIENTO) -->
+                <div class="chart-card glass-panel mt-4 dash-stagnant-card" style="margin-bottom: 2rem; padding: 1.25rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 1.05rem; color: white;">🚨 Oportunidades Estancadas en el Inventario Actual</h3>
+                            <p style="margin: 4px 0 0 0; font-size: 0.78rem; color: var(--text-secondary);">Oportunidades activas abiertas que exceden los límites máximos permitidos en su etapa actual</p>
+                        </div>
+                        <span id="dash-stagnant-counter-badge" class="badge" style="background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); font-size: 0.8rem;">0 críticas</span>
+                    </div>
+
+                    <!-- Estado vacío autónomo: 100% centrado y responsivo, sin dependencia de la tabla de datos -->
+                    <div id="dash-stagnant-empty-box" class="dash-empty-state-box" style="display: none;">
+                        <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">🎉</div>
+                        <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Oportunidades Estancadas</div>
+                        <div style="color: var(--text-secondary); font-size: 0.82rem; max-width: 340px; line-height: 1.4; text-align: center;">
+                            Todas las oportunidades del inventario actual se encuentran dentro de los tiempos límite establecidos.
+                        </div>
+                    </div>
+
+                    <!-- Contenedor scrollable autónomo: solo se activa cuando existen oportunidades críticas -->
+                    <div id="dash-stagnant-table-wrapper" class="dash-table-scroll-container" style="display: none;">
+                        <div class="dash-mobile-scroll-hint">↔ Desliza horizontalmente para ver todas las columnas</div>
+                        <table id="dashActiveTimesTable">
+                            <thead>
+                                <tr>
+                                    <th style="width: 90px;">Código</th>
+                                    <th>Proyecto / Obra</th>
+                                    <th>Cliente</th>
+                                    <th>Responsable</th>
+                                    <th>Etapa Actual</th>
+                                    <th style="text-align: right;">Importe</th>
+                                    <th style="text-align: center;">Días en Etapa</th>
+                                    <th style="text-align: right; width: 120px;">Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dash-active-times-body">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
@@ -886,6 +1114,7 @@
     <script src="crm_auth.js?v=3"></script>
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_commercial.js?v=2"></script>
-    <script src="app_core.js?v=20"></script>
+    <script src="crm_dashboard_calc.js?v=2"></script>
+    <script src="app_core.js?v=24"></script>
 </body>
 </html>

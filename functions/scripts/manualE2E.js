@@ -36,7 +36,7 @@ async function check() {
   out('Emulators / project');
   try { await H.assertEmulatorsUp(); ok('Auth 9099, Firestore 8080 and Functions 5001 answer on 127.0.0.1 for ' + H.PROJECT); } catch (e) { bad(e.message); }
   const mgr = (await H.listAuthUsers()).find(u => u.uid === H.SEED.uid);
-  if (mgr && mgr.email === H.SEED.email && mgr.claims.manager === true) ok('manager exists in Auth (uid ' + H.SEED.uid + ', claim manager=true)'); else bad('seeded manager missing in Auth');
+  if (mgr && mgr.email === H.SEED.email && mgr.claims.manager === true && mgr.claims.role === 'manager' && mgr.claims.cid === H.SEED.profileId) ok('manager exists in Auth (uid ' + H.SEED.uid + ', claims: role=manager, manager=true, cid=' + H.SEED.profileId + ')'); else bad('seeded manager missing or incomplete claims in Auth');
   const p = await H.getDoc(USERS, H.SEED.profileId);
   if (p && p.data.authUid === H.SEED.uid && p.data.role === 'manager' && p.data.activo === true && !Object.keys(p.data).some(k => /pass/i.test(k))) ok('manager profile exists in users_local/' + H.SEED.profileId + ' (linked by authUid, active, no password field)');
   else bad('manager profile missing or inconsistent in users_local');

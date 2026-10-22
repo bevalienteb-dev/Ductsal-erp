@@ -243,3 +243,569 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
     .date-filter-box { flex-wrap: wrap; }
     .filter-pills-group { flex-wrap: wrap; }
 }
+
+/* ==========================================================================
+   DASHBOARD VISUAL REDESIGN (FASE 2) - CRM EXECUTIVE COMMAND CENTER
+   ========================================================================== */
+.dash-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    gap: 1.5rem;
+}
+.dash-title-group {
+    display: flex;
+    flex-direction: column;
+}
+.dash-filters-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+.dash-section-divider {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 1.5rem 0 1rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dash-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.dash-section-icon {
+    font-size: 1.1rem;
+}
+.metrics-grid-5 {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.stock-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+.kpi-card-v2 {
+    padding: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 125px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.kpi-card-v2:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+}
+.kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.kpi-label {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+.kpi-badge-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+.kpi-value-lg {
+    font-size: 1.85rem;
+    font-weight: 700;
+    margin: 0.35rem 0;
+    letter-spacing: -0.5px;
+}
+.kpi-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+}
+.kpi-pct-pill {
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+}
+.stock-card {
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+@media (max-width: 1280px) {
+    .metrics-grid-5 {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 1024px) {
+    .dash-header-bar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .dash-filters-group {
+        align-items: flex-start;
+        width: 100%;
+    }
+    .dash-filters-group select {
+        width: 100%;
+    }
+    .metrics-grid-5 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .stock-overview-grid {
+        grid-template-columns: 1fr;
+    }
+    .dash-section-divider {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+}
+
+@media (max-width: 640px) {
+    .metrics-grid-5 {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Dashboard FASE 2 & 3: Enhanced Responsive Grids and Stage/Chart Cards */
+.dash-funnel-channel-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 1.5fr;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+    width: 100%;
+    min-width: 0;
+}
+
+.dash-funnel-channel-grid > .chart-card {
+    min-width: 0;
+    width: 100%;
+    overflow: hidden;
+    min-height: 380px;
+}
+
+#conversion-chart-container {
+    width: 100%;
+    min-width: 0;
+    position: relative;
+    flex-grow: 1;
+}
+
+#conversion-canvas-container {
+    position: relative;
+    width: 100%;
+    height: 280px;
+    min-width: 0;
+}
+
+/* Dashboard Funnel Responsive Styles */
+.dash-funnel-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    padding-top: 0.5rem;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.dash-funnel-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 8px;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.dash-funnel-label {
+    flex: 0 0 95px;
+    max-width: 95px;
+    text-align: right;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    line-height: 1.2;
+    word-break: break-word;
+    box-sizing: border-box;
+}
+
+.dash-funnel-label-sub {
+    font-weight: normal;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    display: block;
+}
+
+.dash-funnel-bar-container {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+.dash-funnel-bar {
+    max-width: 100%;
+    min-width: 0;
+    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 0.82rem;
+    font-weight: bold;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: width 0.3s ease;
+    text-align: center;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.dash-funnel-val {
+    font-size: 0.8rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+.dash-funnel-subval {
+    font-size: 0.68rem;
+    font-weight: normal;
+    opacity: 0.92;
+    line-height: 1.15;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+.dash-funnel-note {
+    margin-top: 10px;
+    padding: 8px 6px 0 6px;
+    border-top: 1px solid var(--panel-border);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.35;
+    word-break: normal;
+    overflow-wrap: break-word;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.dash-stage-times-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.dash-stage-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 0.75rem 0.6rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-width: 0;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+.dash-stage-card.over-limit {
+    border-color: rgba(239, 68, 68, 0.45);
+    background: rgba(239, 68, 68, 0.05);
+}
+.dash-stage-name {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-align: center;
+    word-break: break-word;
+}
+.dash-stage-val {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 2px 0;
+    letter-spacing: -0.3px;
+}
+.dash-stage-val.val-danger {
+    color: var(--danger);
+}
+.dash-stage-sub {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+.dash-charts-grid-mix {
+    display: grid;
+    grid-template-columns: 1.45fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.dash-composition-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    width: 100%;
+}
+
+.dash-chart-subcard {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+}
+
+.dash-chart-subtitle {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+    text-align: center;
+}
+
+.dash-chart-canvas-box {
+    position: relative;
+    width: 100%;
+    height: 160px;
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.dash-empty-state-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 2.5rem 1.25rem;
+    min-height: 180px;
+    width: 100%;
+}
+
+.dash-monthly-chart-card {
+    padding: 1.25rem;
+}
+
+#monthly-canvas-container,
+#seller-canvas-container {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+}
+
+.dash-stagnant-card {
+    width: 100%;
+    min-width: 0;
+}
+
+.dash-table-scroll-container {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 8px;
+    margin-top: 0.5rem;
+}
+
+.dash-mobile-scroll-hint {
+    display: none;
+    font-size: 0.72rem;
+    color: var(--brand-gold);
+    background: rgba(255, 204, 77, 0.08);
+    border: 1px solid rgba(255, 204, 77, 0.2);
+    padding: 5px 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+#dashActiveTimesTable {
+    width: 100%;
+    min-width: 680px;
+    border-collapse: collapse;
+}
+
+#dashActiveTimesTable th,
+#dashActiveTimesTable td {
+    padding: 0.75rem 0.85rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
+
+#dashActiveTimesTable td:nth-child(2),
+#dashActiveTimesTable td:nth-child(3) {
+    white-space: normal;
+    min-width: 130px;
+    max-width: 200px;
+}
+
+@media (max-width: 1180px) {
+    .dash-stage-times-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 1024px) {
+    .dash-funnel-channel-grid {
+        grid-template-columns: 1fr;
+    }
+    .dash-charts-grid-mix {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .dash-mobile-scroll-hint {
+        display: block;
+    }
+}
+
+@media (max-width: 640px) {
+    .glass-panel {
+        padding: 1rem;
+    }
+    .main-content {
+        padding: 0.75rem;
+        padding-bottom: 85px;
+    }
+    .kpi-card-v2 {
+        padding: 0.9rem;
+    }
+    .kpi-value-lg {
+        font-size: 1.55rem;
+    }
+    .dash-header-bar {
+        padding: 1rem;
+    }
+    .dash-monthly-chart-card {
+        padding: 1rem;
+    }
+    #monthly-canvas-container {
+        height: 240px !important;
+    }
+    .dash-stage-times-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .dash-composition-grid {
+        grid-template-columns: 1fr;
+    }
+    .dash-funnel-channel-grid {
+        gap: 1rem;
+    }
+    .dash-funnel-channel-grid > .chart-card {
+        min-height: auto;
+    }
+    #conversion-canvas-container {
+        height: 250px !important;
+    }
+}
+
+@media (max-width: 430px) {
+    .glass-panel {
+        padding: 0.85rem;
+    }
+    .main-content {
+        padding: 0.5rem;
+        padding-bottom: 85px;
+    }
+    .kpi-value-lg {
+        font-size: 1.4rem;
+    }
+    .kpi-label {
+        font-size: 0.68rem;
+    }
+    .dash-stage-times-grid {
+        grid-template-columns: 1fr;
+    }
+    .dash-header-bar h1 {
+        font-size: 1.15rem !important;
+    }
+    #conversion-canvas-container {
+        height: 240px !important;
+    }
+    .dash-funnel-row {
+        gap: 6px;
+        margin-bottom: 6px;
+    }
+    .dash-funnel-label {
+        flex: 0 0 78px;
+        max-width: 78px;
+        font-size: 0.68rem;
+    }
+    .dash-funnel-label-sub {
+        font-size: 0.62rem;
+    }
+    .dash-funnel-bar {
+        padding: 5px 6px;
+    }
+    .dash-funnel-val {
+        font-size: 0.74rem;
+    }
+    .dash-funnel-subval {
+        font-size: 0.62rem;
+    }
+    .dash-funnel-note {
+        font-size: 0.68rem;
+        padding-top: 6px;
+    }
+}
+
+@media (max-width: 360px) {
+    .dash-funnel-label {
+        flex: 0 0 70px;
+        max-width: 70px;
+        font-size: 0.64rem;
+    }
+    .dash-funnel-bar {
+        padding: 4px 4px;
+    }
+    .dash-funnel-val {
+        font-size: 0.7rem;
+    }
+    .dash-funnel-subval {
+        font-size: 0.58rem;
+    }
+}

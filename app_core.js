@@ -1372,7 +1372,7 @@ let lastViewedSection = 'list-view';
 
 let settings = { visitantes: [], encargados: [], gmaps_api_key: "", factory_address: "" };
 
-let chartFunnel = null; let chartProduct = null; let chartProject = null; let chartOrigin = null; let chartLoss = null; let chartOppProduct = null; let chartOppProject = null;
+let chartFunnel = null; let chartProduct = null; let chartProject = null; let chartOrigin = null; let chartLoss = null; let chartOppProduct = null; let chartOppProject = null; let chartMonthly = null; let chartSeller = null;
 
 let loadedCollections = 0;
 
@@ -4570,13 +4570,13 @@ async function processLose() {
 }
 
 // ========================
-// DASHBOARD
+// DASHBOARD (CrmDashboardCalc)
 // ========================
 
 function populateTimeFilter() {
     const select = document.getElementById('dash-time-filter');
-    const currentVal = select ? select.value : 'all';
     if (!select) return;
+    const currentVal = select.value;
 
     select.innerHTML = '<option value="all">Histórico Completo</option>';
 
@@ -4584,330 +4584,1061 @@ function populateTimeFilter() {
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
 
-    select.innerHTML += `<option value="year_${currentYear}">YTD (Año en curso)</option>`;
+    // Descubrir años disponibles en el dataset para consulta multianual
+    const availableYears = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.getAvailableYears(prospects, currentYear)
+        : [currentYear];
 
-    for (let i = 0; i <= currentMonth; i++) {
-        select.innerHTML += `<option value="${currentYear}-${i}">${MESES[i]} ${currentYear}</option>`;
-    }
+    availableYears.forEach(year => {
+        const isCurrent = (year === currentYear);
+        const ytdLabel = isCurrent ? `YTD ${year} (Año en curso)` : `Año ${year} Completo`;
+        select.innerHTML += `<option value="year_${year}">${ytdLabel}</option>`;
+
+        const maxMonth = isCurrent ? currentMonth : 11;
+        for (let i = maxMonth; i >= 0; i--) {
+            select.innerHTML += `<option value="${year}-${i}">${MESES[i]} ${year}</option>`;
+        }
+    });
 
     if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
         select.value = currentVal;
     } else {
-        select.value = 'all';
+        const ytdOpt = Array.from(select.options).find(o => o.value === `year_${currentYear}`);
+        select.value = ytdOpt ? `year_${currentYear}` : 'all';
     }
 }
+
 function getFilteredProspects() {
-    const filter = document.getElementById('dash-time-filter').value || 'all';
-    return prospects.filter(p => {
-        if (filter === 'all') return true;
-        let refDateStr = p.estado === 'ganado' ? (p.fecha_cierre || p.fecha_creacion) : (p.estado === 'perdido' ? (p.fecha_perdida || p.fecha_creacion) : p.fecha_creacion);
-        if (!refDateStr) return false;
-        let d = new Date(refDateStr); let y = d.getFullYear(); let m = d.getMonth();
-        if (filter.startsWith('year_')) return y === parseInt(filter.split('_')[1]);
-        if (filter.includes('-')) { const [fy, fm] = filter.split('-'); return y === parseInt(fy) && m === parseInt(fm); }
-        return true;
-    });
+    const select = document.getElementById('dash-time-filter');
+    const filter = (select && select.value) || 'all';
+
+    if (typeof CrmDashboardCalc !== 'undefined') {
+        return CrmDashboardCalc.filterProspects(prospects, filter);
+    }
+
+    const stockActivo = prospects.filter(p => p && p.estado === 'activo' && p.eliminado !== true);
+    const flujoGanadas = prospects.filter(p => p && p.estado === 'ganado' && p.eliminado !== true);
+    const flujoPerdidas = prospects.filter(p => p && p.estado === 'perdido' && p.eliminado !== true);
+    return {
+        filter,
+        isHistorical: filter === 'all',
+        flujoGanadas,
+        flujoPerdidas,
+        flujoAltas: prospects.filter(p => p && p.eliminado !== true),
+        stockActivo,
+        closedInPeriod: [...flujoGanadas, ...flujoPerdidas]
+    };
 }
+
 function renderDashboard() {
-    const filtered = getFilteredProspects(); let ganadoPrecio = 0, ganadoCosto = 0, perdidoPrecio = 0, pipePrecio = 0, pipeCosto = 0;
-    let globalFacturado = 0, globalCobrado = 0;
+    const filterRes = getFilteredProspects();
+    const select = document.getElementById('dash-time-filter');
+    const filterVal = (select && select.value) || 'all';
 
-    filtered.forEach(p => {
-        // Margins always based on Subtotal (precio_cotizado) to exclude IVA
-        if (p.estado === 'ganado') {
-            ganadoPrecio += (p.precio_cotizado || 0); ganadoCosto += (p.costo_venta || 0);
-            if (p.facturas) {
-                p.facturas.forEach(f => {
-                    globalFacturado += f.monto;
-                    if (f.pagos) globalCobrado += f.pagos.reduce((a, b) => a + parseFloat(b.monto), 0);
-                });
-            }
+    // 0. ACTUALIZAR CABECERA: Período activo y timestamp de sincronización
+    const periodBadge = document.getElementById('dash-active-period-badge');
+    if (periodBadge && select) {
+        const activeOption = select.options[select.selectedIndex];
+        periodBadge.textContent = activeOption ? activeOption.text : 'Histórico Completo';
+    }
+    const lastUpdatedElem = document.getElementById('dash-last-updated');
+    if (lastUpdatedElem) {
+        lastUpdatedElem.textContent = `Actualizado: ${new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    // 1. VENTAS GANADAS Y MARGEN (Flujo del período seleccionado con órdenes de cambio)
+    const wonMetrics = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateWonMetrics(filterRes.flujoGanadas)
+        : { totalPrecio: 0, totalCosto: 0, margen: 0, margenPct: 0, countTotal: 0, countWithCost: 0, countWithoutCost: 0, isCostComplete: true };
+
+    const metricGanadas = document.getElementById('metric-ganadas');
+    if (metricGanadas) metricGanadas.textContent = formatCurrency(wonMetrics.totalPrecio);
+
+    const subGanadas = document.getElementById('sub-metric-ganadas');
+    if (subGanadas) {
+        subGanadas.textContent = `${wonMetrics.countTotal} operaciones ganadas`;
+    }
+
+    const metricMargen = document.getElementById('metric-margen');
+    if (metricMargen) metricMargen.textContent = formatCurrency(wonMetrics.margen);
+
+    const subMargen = document.getElementById('sub-metric-margen');
+    if (subMargen) {
+        if (!wonMetrics.isCostComplete && wonMetrics.countWithoutCost > 0) {
+            const cov = wonMetrics.coberturaPct !== undefined && wonMetrics.coberturaPct !== null
+                ? wonMetrics.coberturaPct.toFixed(1)
+                : ((wonMetrics.precioWithCost / (wonMetrics.totalPrecio || 1)) * 100).toFixed(1);
+            subMargen.textContent = `Margen bruto conocido (${cov}% cob.)`;
+            subMargen.title = `Margen calculado sobre ${formatCurrency(wonMetrics.precioWithCost)} en ventas con costo conocido de un total de ${formatCurrency(wonMetrics.totalPrecio)} (${cov}% de cobertura)`;
+        } else {
+            subMargen.textContent = 'Margen bruto conocido';
+            subMargen.title = 'Margen comercial consolidado con 100% de costos registrados';
         }
-        else if (p.estado === 'perdido') { perdidoPrecio += (p.precio_cotizado || 0); }
-        else if (p.estado === 'activo' && p.precio_cotizado && p.probabilidad) {
-            let prPct = p.probabilidad / 100; pipePrecio += (p.precio_cotizado * prPct);
-            if (p.costo_venta) pipeCosto += (p.costo_venta * prPct);
+    }
+
+    const margenPctElem = document.getElementById('metric-margen-pct');
+    if (margenPctElem) {
+        if (wonMetrics.margenPct !== null) {
+            margenPctElem.textContent = wonMetrics.margenPct.toFixed(1) + '%';
+            margenPctElem.style.background = 'rgba(16, 185, 129, 0.2)';
+            margenPctElem.style.color = 'var(--success)';
+            margenPctElem.title = wonMetrics.isCostComplete
+                ? 'Margen comercial consolidado con órdenes de cambio'
+                : `Margen calculado sobre ${wonMetrics.countWithCost}/${wonMetrics.countTotal} operaciones con costo registrado (${wonMetrics.coberturaPct !== undefined ? wonMetrics.coberturaPct.toFixed(1) : ''}% cobertura)`;
+        } else {
+            margenPctElem.textContent = 'N/D';
+            margenPctElem.style.background = 'rgba(160, 170, 191, 0.2)';
+            margenPctElem.style.color = 'var(--text-secondary)';
+            margenPctElem.title = 'Sin costos de venta registrados en las operaciones ganadas';
         }
-    });
+    }
 
-    let margenGanado = ganadoPrecio - ganadoCosto; let margenGanadoPct = ganadoPrecio > 0 ? (margenGanado / ganadoPrecio) * 100 : 0;
-    let margenPipe = pipePrecio - pipeCosto; let margenPipePct = pipePrecio > 0 ? (margenPipe / pipePrecio) * 100 : 0;
+    const costWarning = document.getElementById('metric-cost-warning');
+    if (costWarning) {
+        if (!wonMetrics.isCostComplete && wonMetrics.countWithoutCost > 0) {
+            costWarning.style.display = 'inline';
+            costWarning.textContent = `⚠️ ${wonMetrics.countWithoutCost} sin costo`;
+            costWarning.title = `${wonMetrics.countWithoutCost} proyecto(s) ganado(s) (${formatCurrency(wonMetrics.totalPrecio - wonMetrics.precioWithCost)}) no tienen costo registrado y quedan excluidos del margen comercial`;
+        } else {
+            costWarning.style.display = 'none';
+        }
+    }
 
-    document.getElementById('metric-ganadas').textContent = formatCurrency(ganadoPrecio);
-    document.getElementById('metric-perdidas').textContent = formatCurrency(perdidoPrecio);
-    document.getElementById('metric-margen').textContent = formatCurrency(margenGanado);
-    document.getElementById('metric-margen-pct').textContent = margenGanadoPct.toFixed(1) + '%';
-    document.getElementById('metric-pipeline-ponderado').textContent = formatCurrency(pipePrecio);
-    document.getElementById('metric-pipeline-margen').textContent = formatCurrency(margenPipe);
-    document.getElementById('metric-pipeline-margen-pct').textContent = margenPipePct.toFixed(1) + '%';
+    // 2. TASA DE CIERRE REAL (Ganadas / [Ganadas + Perdidas])
+    const countGanadas = filterRes.flujoGanadas ? filterRes.flujoGanadas.length : 0;
+    const countPerdidas = filterRes.flujoPerdidas ? filterRes.flujoPerdidas.length : 0;
+    const countConcluidas = countGanadas + countPerdidas;
+    const winRate = countConcluidas > 0 ? (countGanadas / countConcluidas) * 100 : null;
 
-    document.getElementById('metric-total-facturado').textContent = formatCurrency(globalFacturado);
-    document.getElementById('metric-total-cobrado').textContent = formatCurrency(globalCobrado);
-    document.getElementById('metric-total-cxc').textContent = formatCurrency(globalFacturado - globalCobrado);
+    const metricWinRate = document.getElementById('metric-win-rate');
+    if (metricWinRate) {
+        metricWinRate.textContent = winRate !== null ? `${winRate.toFixed(1)}%` : 'N/D';
+    }
 
-    let pctCobrado = globalFacturado > 0 ? (globalCobrado / globalFacturado) * 100 : 0;
+    const subWinRate = document.getElementById('sub-metric-win-rate');
+    if (subWinRate) {
+        subWinRate.textContent = countConcluidas > 0
+            ? `${countGanadas} ganadas de ${countConcluidas} cerradas`
+            : 'Sin operaciones cerradas en el período';
+    }
 
-    document.getElementById('cxc-bar-cobrado').style.width = pctCobrado + '%';
+    // 3. ALTAS DEL PERÍODO (Nuevas oportunidades)
+    const altas = filterRes.flujoAltas || [];
+    const totalAltasCotizado = altas.reduce((acc, p) => acc + (typeof CrmDashboardCalc !== 'undefined' ? CrmDashboardCalc.getProjectSubtotal(p) : (Number(p.precio_cotizado) || 0)), 0);
 
-    renderCharts(filtered); renderDashboardKpiTimes(filtered); renderDashboardActiveTimes(filtered);
+    const metricAltasCount = document.getElementById('metric-altas-count');
+    if (metricAltasCount) metricAltasCount.textContent = altas.length;
 
+    const subAltas = document.getElementById('sub-metric-altas');
+    if (subAltas) subAltas.textContent = `Cotizado: ${formatCurrency(totalAltasCotizado)}`;
+
+    // 4. VENTAS PERDIDAS (Flujo del período seleccionado)
+    const lostMetrics = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateLostMetrics(filterRes.flujoPerdidas)
+        : { totalPrecio: 0, count: 0 };
+
+    const metricPerdidas = document.getElementById('metric-perdidas');
+    if (metricPerdidas) metricPerdidas.textContent = formatCurrency(lostMetrics.totalPrecio);
+
+    const subPerdidas = document.getElementById('sub-metric-perdidas');
+    if (subPerdidas) {
+        subPerdidas.textContent = filterVal === 'all'
+            ? `${lostMetrics.count} operaciones perdidas en histórico total`
+            : `${lostMetrics.count} operaciones perdidas en el período seleccionado`;
+    }
+
+    // 5. PIPELINE PONDERADO & NOMINAL (STOCK VIVO - Todas las oportunidades activas hoy)
+    const activeMetrics = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateActivePipelineMetrics(filterRes.stockActivo)
+        : { totalPonderado: 0, totalNominal: 0, montoSinProbabilidad: 0, countSinProbabilidad: 0, margenPonderado: 0, margenPonderadoPct: 0, countPonderadas: 0, countSinPonderar: 0 };
+
+    const metricPipePond = document.getElementById('metric-pipeline-ponderado');
+    if (metricPipePond) {
+        metricPipePond.textContent = formatCurrency(activeMetrics.totalPonderado);
+        metricPipePond.title = activeMetrics.countSinPonderar > 0
+            ? `Nominal total: ${formatCurrency(activeMetrics.totalNominal)} | Ponderado: ${formatCurrency(activeMetrics.totalPonderado)} | Sin ponderar: ${formatCurrency(activeMetrics.montoSinPonderar || 0)} (${activeMetrics.countSinPonderar} ops sin precio o probabilidad)`
+            : `Nominal total: ${formatCurrency(activeMetrics.totalNominal)} (100% ponderado)`;
+    }
+
+    const metricPipeNominal = document.getElementById('metric-pipeline-nominal');
+    if (metricPipeNominal) metricPipeNominal.textContent = formatCurrency(activeMetrics.totalNominal);
+
+    const metricPipeMargen = document.getElementById('metric-pipeline-margen');
+    if (metricPipeMargen) metricPipeMargen.textContent = formatCurrency(activeMetrics.margenPonderado);
+
+    const pipeMargenPctElem = document.getElementById('metric-pipeline-margen-pct');
+    if (pipeMargenPctElem) {
+        pipeMargenPctElem.textContent = activeMetrics.margenPonderadoPct.toFixed(1) + '%';
+    }
+
+    const unweightedBadge = document.getElementById('metric-pipeline-unweighted-badge');
+    if (unweightedBadge) {
+        if (activeMetrics.countSinProbabilidad > 0) {
+            unweightedBadge.style.display = 'inline-block';
+            unweightedBadge.textContent = `⚠️ ${activeMetrics.countSinProbabilidad} sin prob. (${formatCurrency(activeMetrics.montoSinProbabilidad)})`;
+            unweightedBadge.title = `${activeMetrics.countSinProbabilidad} oportunidades activas no tienen probabilidad válida y no están sumadas al ponderado.`;
+        } else {
+            unweightedBadge.style.display = 'none';
+        }
+    }
+
+    // 6. CXC GLOBAL (Proyectos facturados)
+    const cxcUniverse = filterVal === 'all' ? prospects : filterRes.flujoGanadas;
+    const cxcMetrics = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateCxCMetrics(cxcUniverse)
+        : { totalFacturado: 0, totalCobrado: 0, totalCxC: 0, pctCobrado: 0 };
+
+    const metricFacturado = document.getElementById('metric-total-facturado');
+    if (metricFacturado) metricFacturado.textContent = formatCurrency(cxcMetrics.totalFacturado);
+
+    const metricCobrado = document.getElementById('metric-total-cobrado');
+    if (metricCobrado) metricCobrado.textContent = formatCurrency(cxcMetrics.totalCobrado);
+
+    const metricTotalCxc = document.getElementById('metric-total-cxc');
+    if (metricTotalCxc) {
+        metricTotalCxc.textContent = formatCurrency(cxcMetrics.totalCxC);
+        if (cxcMetrics.hasInvalidRecords) {
+            metricTotalCxc.title = `Atención: ${cxcMetrics.invalidFacturasCount} facturas o ${cxcMetrics.invalidPagosCount} abonos con datos incompletos excluidos del cálculo.`;
+        }
+    }
+
+    const cxcPctBadge = document.getElementById('cxc-pct-badge');
+    if (cxcPctBadge) {
+        cxcPctBadge.textContent = `${cxcMetrics.pctCobrado.toFixed(1)}% cobrado`;
+    }
+
+    const cxcBar = document.getElementById('cxc-bar-cobrado');
+    if (cxcBar) cxcBar.style.width = cxcMetrics.pctCobrado + '%';
+
+    // 7. ALERTAS Y RESUMEN OPERATIVO DEL STOCK
+    const wipStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateActiveWipTimes(filterRes.stockActivo, KPI_LIMITS, new Date())
+        : { allItems: [], overLimitItems: [], totalActive: 0, totalOverLimit: 0 };
+
+    const metricAlertasCount = document.getElementById('metric-alertas-count');
+    if (metricAlertasCount) metricAlertasCount.textContent = wipStats.totalOverLimit;
+
+    const metricActivasTotal = document.getElementById('metric-activas-total-count');
+    if (metricActivasTotal) metricActivasTotal.textContent = wipStats.totalActive;
+
+    const dashStagnantBadge = document.getElementById('dash-stagnant-counter-badge');
+    if (dashStagnantBadge) {
+        dashStagnantBadge.textContent = `${wipStats.totalOverLimit} críticas`;
+        dashStagnantBadge.style.background = wipStats.totalOverLimit > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+        dashStagnantBadge.style.color = wipStats.totalOverLimit > 0 ? 'var(--danger)' : 'var(--success)';
+        dashStagnantBadge.style.borderColor = wipStats.totalOverLimit > 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)';
+    }
+
+    const subAlertasStatus = document.getElementById('sub-metric-alertas-status');
+    if (subAlertasStatus) {
+        subAlertasStatus.textContent = wipStats.totalOverLimit > 0
+            ? `${wipStats.totalOverLimit} oportunidades requieren atención comercial`
+            : 'Embudo al día sin estancamientos';
+    }
+
+    // 8. RENDERIZADO DE GRÁFICOS Y TABLAS (Flujo vs Stock)
+    renderCharts(filterRes);
+    renderDashboardKpiTimes(filterRes);
+    renderDashboardActiveTimes(filterRes.stockActivo);
+
+    // 9. AUDITORÍA (Solo manager, suscripción controlada)
     if (currentUser && currentUser.role === 'manager') {
         fetchAuditLogs();
     }
 }
 
 function fetchAuditLogs() {
-    document.getElementById('audit-panel').style.display = 'block';
+    const panel = document.getElementById('audit-panel');
+    if (panel) panel.style.display = 'block';
     const container = document.getElementById('audit-logs-container');
+    if (!container) return;
+
+    // Si ya existe una suscripción activa a auditoría, no recrear el listener
+    if (window.auditUnsubscribe) return;
+
     container.innerHTML = '<em>Cargando auditoría...</em>';
 
-    if (window.auditUnsubscribe) window.auditUnsubscribe();
-
-    window.auditUnsubscribe = db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
-        container.innerHTML = '';
-        if (snap.empty) {
-            container.innerHTML = '<span style="color:var(--text-muted)">No hay alertas recientes de eliminación.</span>';
-            return;
-        }
-        snap.forEach(doc => {
-            const data = doc.data();
-            container.innerHTML += `
-                <div style="background: rgba(239, 68, 68, 0.1); border-left: 2px solid var(--danger); padding: 8px;">
-                    <strong>${formatDate(data.fecha)}</strong> - <strong>${data.usuario}</strong> eliminó <strong>${data.item}</strong> 
-                    (${data.detalle}) en el proyecto <span style="color:var(--brand-gold)">${data.proyectoNombre}</span>.
-                </div>
-            `;
-        });
-    });
-}
-
-function renderDashboardKpiTimes(filtered) {
-    const grid = document.getElementById('kpi-times-grid'); grid.innerHTML = '';
-
-    STAGES.forEach((stage, idx) => {
-        let totalDays = 0; let count = 0;
-        const nextStage = STAGES[idx + 1];
-
-        filtered.forEach(p => {
-            const ts = p.stage_timestamps || {};
-            if (ts[stage]) {
-                let start = new Date(ts[stage]);
-                let end = new Date();
-
-                // If they moved past this stage, calculate the exact time spent in it
-                if (nextStage && ts[nextStage]) {
-                    end = new Date(ts[nextStage]);
-                }
-                // If they won/lost while in this stage
-                else if (p.estado === 'ganado' && p.fecha_cierre) {
-                    end = new Date(p.fecha_cierre);
-                }
-                else if (p.estado === 'perdido' && p.fecha_perdida) {
-                    end = new Date(p.fecha_perdida);
-                }
-
-                let diff = Math.floor((end - start) / (1000 * 60 * 60 * 24));
-                if (diff < 0) diff = 0;
-
-                totalDays += diff;
-                count++;
+    try {
+        window.auditUnsubscribe = db.collection(`audit_logs${DB_SUFFIX}`).orderBy('timestamp', 'desc').limit(20).onSnapshot(snap => {
+            container.innerHTML = '';
+            if (snap.empty) {
+                container.innerHTML = '<span style="color:var(--text-muted)">No hay alertas recientes de eliminación.</span>';
+                return;
             }
+            let html = '';
+            snap.forEach(doc => {
+                const data = doc.data();
+                html += `
+                    <div style="background: rgba(239, 68, 68, 0.1); border-left: 2px solid var(--danger); padding: 8px;">
+                        <strong>${formatDate(data.fecha)}</strong> - <strong>${escapeHtmlDoc(data.usuario)}</strong> eliminó <strong>${escapeHtmlDoc(data.item)}</strong>
+                        (${escapeHtmlDoc(data.detalle)}) en el proyecto <span style="color:var(--brand-gold)">${escapeHtmlDoc(data.proyectoNombre)}</span>.
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }, err => {
+            console.warn('[CRM] Error en listener de auditoría:', err && err.message);
         });
-
-        let avg = count > 0 ? (totalDays / count).toFixed(1) : 0;
-        let limit = KPI_LIMITS[stage];
-        let isOverLimit = avg > limit;
-
-        grid.innerHTML += `
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid ${isOverLimit ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.08)'}; padding: 0.5rem; border-radius: 6px; text-align: center;">
-                <div style="text-transform: capitalize; font-size: 0.65rem; color: var(--text-secondary); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${stage}">${stage}</div>
-                <div style="font-size: 1.1rem; font-weight: bold; color: ${isOverLimit ? 'var(--danger)' : 'var(--text-primary)'};">${avg} <span style="font-size:0.6rem; font-weight:normal; color:var(--text-secondary)">d</span></div>
-            </div>
-        `;
-    });
+    } catch (e) {
+        console.warn('[CRM] Excepción en fetchAuditLogs:', e && e.message);
+    }
 }
 
-function renderDashboardActiveTimes(filtered) {
-    const tbody = document.getElementById('dash-active-times-body'); tbody.innerHTML = '';
-    let active = filtered.filter(p => p.estado === 'activo');
+function renderDashboardKpiTimes(filterRes) {
+    const grid = document.getElementById('kpi-times-grid');
+    if (!grid) return;
 
-    // Filter to ONLY those exceeding their limit
-    active = active.filter(p => {
-        const ts = p.stage_timestamps || {};
-        const days = getDaysDifference(ts[p.etapa] || p.fecha_creacion);
-        return days > KPI_LIMITS[p.etapa];
-    });
+    const universe = (filterRes && filterRes.closedInPeriod && filterRes.closedInPeriod.length > 0)
+        ? [...filterRes.closedInPeriod, ...(filterRes.stockActivo || [])]
+        : prospects;
 
-    if (active.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 1rem; color: var(--text-muted);">No hay oportunidades excedidas de tiempo.</td></tr>'; return; }
+    const transitionStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateStageTransitionTimes(universe, STAGES, KPI_LIMITS)
+        : {};
 
-    active.sort((a, b) => {
-        const tsA = a.stage_timestamps || {};
-        const tsB = b.stage_timestamps || {};
-        return getDaysDifference(tsB[b.etapa] || b.fecha_creacion) - getDaysDifference(tsA[a.etapa] || a.fecha_creacion);
-    });
-
-    active.forEach(p => {
-        const ts = p.stage_timestamps || {};
-        const days = getDaysDifference(ts[p.etapa] || p.fecha_creacion);
-        const limit = KPI_LIMITS[p.etapa];
-
-        let daysColor = '';
-        let alertIcon = '';
-
-        if (days > limit) {
-            daysColor = 'color: var(--danger); font-weight: bold; background: rgba(239, 68, 68, 0.1); padding: 0.2rem 0.5rem; border-radius: 4px;';
-            alertIcon = '⚠️ ';
-        } else if (days >= limit - 2) {
-            daysColor = 'color: var(--brand-gold);';
-        }
-
-        tbody.innerHTML += `<tr><td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td>${getClientName(p.clientId)}</td><td>${p.proyecto}</td><td style="text-transform: capitalize;">${p.etapa}</td><td><span style="${daysColor}">${alertIcon}${days} días</span> <small style="color:var(--text-muted); margin-left:4px;">(Max ${limit})</small></td></tr>`;
-    });
-}
-
-function renderCharts(filtered) {
-    Chart.defaults.color = '#a0aabf'; const gold = '#ffcc4d', blue = '#3b476e', success = '#10b981', danger = '#ef4444', accent1 = '#8b5cf6', accent2 = '#f97316';
-    const active = filtered.filter(p => p.estado === 'activo');
-
-    Chart.defaults.plugins.tooltip.callbacks.label = function (context) {
-        let label = context.label || '';
-        if (label) label += ': ';
-        if (context.parsed !== null) {
-            let total = context.dataset.data.reduce((a, b) => a + b, 0);
-            let pct = total > 0 ? ((context.parsed * 100) / total).toFixed(1) + '%' : '0%';
-            label += context.parsed + ' (' + pct + ')';
-        }
-        return label;
+    const STAGE_LABELS = {
+        prospecto: 'Prospecto',
+        levantamiento: 'Levantamiento',
+        cotizacion: 'Cotización',
+        negociacion: 'Negociación',
+        cierre: 'Cierre'
     };
 
-    const funnelStages = STAGES;
-    let funnelHTML = '';
-    const colors = [blue, gold, success, '#f59e0b', danger];
+    let html = '';
 
-    // Find the maximum count to make bars proportional
-    let counts = funnelStages.map(s => active.filter(p => p.etapa === s).length);
-    let maxCount = Math.max(...counts);
-    if (maxCount === 0) maxCount = 1; // Prevent division by zero
+    STAGES.forEach(stage => {
+        const stat = transitionStats[stage] || { avgDays: 0, countCompleted: 0, isOverLimit: false, hasData: false };
+        const isOverLimit = stat.isOverLimit;
+        const stageName = STAGE_LABELS[stage] || stage;
+        const avgDisplay = stat.hasData
+            ? `${stat.avgDays} <span style="font-size:0.75rem; font-weight:normal; color:var(--text-secondary)">d</span>`
+            : '-';
+        const countSubtitle = stat.hasData
+            ? `${stat.countCompleted} transic.`
+            : 'Sin datos';
 
-    funnelStages.forEach((s, i) => {
-        let count = counts[i];
-        let amount = active.filter(p => p.etapa === s).reduce((acc, p) => acc + (p.precio_cotizado || 0), 0);
-
-        let currentWidth = Math.max((count / maxCount) * 100, 15); // Minimum 15% width so it's always visible
-        let c = colors[i % colors.length];
-
-        funnelHTML += `
-            <div style="display:flex; width: 100%; align-items:center; margin-bottom: 6px;">
-                <div style="width:25%; text-align:right; padding-right:15px; font-size:0.8rem; font-weight:bold; color:var(--text-secondary); text-transform:uppercase; line-height:1.2;">
-                    ${s}<br><span style="font-weight:normal; font-size:0.7rem;">${count} Op.</span>
-                </div>
-                <div style="width:75%; display:flex; justify-content:center;">
-                    <div style="
-                        width: ${currentWidth}%;
-                        background-color: ${c};
-                        padding: 10px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        color: white;
-                        font-size: 0.9rem;
-                        font-weight: bold;
-                        border-radius: 2px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                        transition: width 0.3s ease;
-                    ">
-                        ${amount > 0 ? formatCurrency(amount) : '-'}
-                    </div>
-                </div>
+        html += `
+            <div class="dash-stage-card ${isOverLimit ? 'over-limit' : ''}">
+                <div class="dash-stage-name" title="${stageName}">${stageName}</div>
+                <div class="dash-stage-val ${isOverLimit ? 'val-danger' : ''}">${avgDisplay}</div>
+                <div class="dash-stage-sub">${countSubtitle}</div>
             </div>
         `;
     });
 
-    const funnelContainer = document.getElementById('css-funnel-container');
-    if (funnelContainer) {
-        funnelContainer.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; width:100%; padding-top:20px;">${funnelHTML}</div>`;
+    grid.innerHTML = html;
+}
+
+function renderDashboardActiveTimes(activeList) {
+    const tableWrapper = document.getElementById('dash-stagnant-table-wrapper');
+    const emptyBox = document.getElementById('dash-stagnant-empty-box');
+    const tbody = document.getElementById('dash-active-times-body');
+    const counterBadge = document.getElementById('dash-stagnant-counter-badge');
+
+    const activeOps = Array.isArray(activeList)
+        ? activeList
+        : (prospects ? prospects.filter(p => p && p.estado === 'activo' && p.eliminado !== true) : []);
+
+    const wipStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateActiveWipTimes(activeOps, KPI_LIMITS, new Date())
+        : { allItems: [], overLimitItems: [], totalActive: 0, totalOverLimit: 0 };
+
+    const overLimit = wipStats.overLimitItems;
+
+    if (counterBadge) {
+        if (overLimit.length === 0) {
+            counterBadge.textContent = '0 críticas';
+            counterBadge.style.color = '#10b981';
+            counterBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+            counterBadge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+        } else {
+            counterBadge.textContent = `${overLimit.length} crítica${overLimit.length > 1 ? 's' : ''}`;
+            counterBadge.style.color = 'var(--danger)';
+            counterBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+            counterBadge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+        }
     }
-    const won = filtered.filter(p => p.estado === 'ganado');
-    const sumMonto = (arr) => arr.reduce((acc, p) => acc + (parseFloat(p.precio_cotizado) || 0), 0);
 
-    const prodW = [sumMonto(won.filter(p => p.tipo_producto === 'Chute')), sumMonto(won.filter(p => p.tipo_producto === 'Ducto'))];
-    const prodWColors = [gold, blue];
-    const prodWNo = sumMonto(won.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
-    if (prodWNo > 0) { prodW.push(prodWNo); prodWColors.push('#6b7280'); }
-    if (chartProduct) chartProduct.destroy(); chartProduct = new Chart(document.getElementById('productChart').getContext('2d'), { type: 'pie', data: { labels: prodWNo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodW, backgroundColor: prodWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+    if (overLimit.length === 0) {
+        if (tableWrapper) tableWrapper.style.display = 'none';
+        if (emptyBox) emptyBox.style.display = 'flex';
+        if (tbody) tbody.innerHTML = '';
+        return;
+    }
 
-    const projW = [sumMonto(won.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumMonto(won.filter(p => p.tipo_proyecto === 'Fabricación'))];
-    const projWColors = [success, '#a0aabf'];
-    const projWNo = sumMonto(won.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
-    if (projWNo > 0) { projW.push(projWNo); projWColors.push('#6b7280'); }
-    if (chartProject) chartProject.destroy(); chartProject = new Chart(document.getElementById('projectChart').getContext('2d'), { type: 'pie', data: { labels: projWNo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projW, backgroundColor: projWColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+    if (emptyBox) emptyBox.style.display = 'none';
+    if (tableWrapper) tableWrapper.style.display = 'block';
 
-    const prodA = [sumMonto(active.filter(p => p.tipo_producto === 'Chute')), sumMonto(active.filter(p => p.tipo_producto === 'Ducto'))];
-    const prodANo = sumMonto(active.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
-    const prodAColors = [gold, blue];
-    if (prodANo > 0) { prodA.push(prodANo); prodAColors.push('#6b7280'); }
-    if (chartOppProduct) chartOppProduct.destroy(); chartOppProduct = new Chart(document.getElementById('oppProductChart').getContext('2d'), { type: 'pie', data: { labels: prodANo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodA, backgroundColor: prodAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+    if (!tbody) return;
 
-    const projA = [sumMonto(active.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumMonto(active.filter(p => p.tipo_proyecto === 'Fabricación'))];
-    const projANo = sumMonto(active.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
-    const projAColors = [accent1, accent2];
-    if (projANo > 0) { projA.push(projANo); projAColors.push('#6b7280'); }
-    if (chartOppProject) chartOppProject.destroy(); chartOppProject = new Chart(document.getElementById('oppProjectChart').getContext('2d'), { type: 'pie', data: { labels: projANo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projA, backgroundColor: projAColors, borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: function (ctx) { return ' ' + formatCurrency(ctx.raw); } } } } } });
+    let rowsHtml = '';
+    overLimit.forEach(item => {
+        const clientName = typeof getClientName === 'function' ? getClientName(item.clientId) : (item.clientId || '-');
+        const badgeEtapaClass = item.etapa === 'cierre' ? 'ganado' : 'activo';
 
-    // Efectividad por Canal (Stacked Volume Bar Chart)
-    let originStats = {};
-    filtered.forEach(p => {
-        let repName = p.origen || 'Desconocido';
-        if (!originStats[repName]) originStats[repName] = { ganado: 0, activo: 0, perdido: 0, total: 0 };
-        originStats[repName][p.estado]++;
-        originStats[repName].total++;
+        rowsHtml += `
+            <tr class="cursor-pointer" onclick="openDetail('${item.id}')">
+                <td><strong style="color: var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
+                <td><strong style="color: white;">${escapeHtmlDoc(item.proyecto)}</strong></td>
+                <td>${escapeHtmlDoc(clientName)}</td>
+                <td><span style="color: var(--text-secondary); font-size: 0.85rem;">${escapeHtmlDoc(item.vendedor || '-')}</span></td>
+                <td><span class="badge ${badgeEtapaClass}" style="text-transform: capitalize;">${escapeHtmlDoc(item.etapa)}</span></td>
+                <td style="text-align: right; font-weight: 600; color: white;">${formatCurrency(item.monto || 0)}</td>
+                <td style="text-align: center;">
+                    <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); font-weight: 700;">⚠️ ${item.days} d</span>
+                    <small style="color: var(--text-muted); margin-left: 4px;">(Máx ${item.limit}d)</small>
+                </td>
+                <td style="text-align: right;" onclick="event.stopPropagation()">
+                    <button class="btn-table-action btn-table-edit" onclick="openDetail('${item.id}')" title="Ver expediente y avanzar etapa">👁️ Gestionar</button>
+                </td>
+            </tr>
+        `;
     });
 
-    const repNames = Object.keys(originStats);
+    tbody.innerHTML = rowsHtml;
+}
+
+function renderCharts(filterRes) {
+    Chart.defaults.color = '#a0aabf';
+    const gold = '#ffcc4d', blue = '#3b476e', success = '#10b981', danger = '#ef4444', accent1 = '#8b5cf6', accent2 = '#f97316', cyan = '#38bdf8';
+
+    // 0. GRÁFICA PRIORITARIA 1: EVOLUCIÓN MENSUAL DE VENTAS Y MARGEN BRUTO
+    const wonForMonthly = filterRes && filterRes.flujoGanadas ? filterRes.flujoGanadas : [];
+    const monthlyStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateMonthlyEvolution(wonForMonthly, filterRes)
+        : { months: [], totalVentas: 0, totalCostos: 0, totalMargen: 0, totalCountGanadas: 0 };
+
+    const monthlyCanvasBox = document.getElementById('monthly-canvas-container');
+    const monthlyEmptyBox = document.getElementById('monthly-evolution-empty');
+    const monthlyCoverageBadge = document.getElementById('dash-monthly-coverage-badge');
+    const monthlySummary = document.getElementById('dash-monthly-summary');
+
+    if (chartMonthly) { chartMonthly.destroy(); chartMonthly = null; }
+    const monthlyCanvas = document.getElementById('monthlyEvolutionChart');
+    if (monthlyCanvas && typeof Chart.getChart === 'function') {
+        const existingMonthly = Chart.getChart(monthlyCanvas);
+        if (existingMonthly) existingMonthly.destroy();
+    }
+
+    const hasMonthlyData = monthlyStats.totalCountGanadas > 0;
+    if (!hasMonthlyData) {
+        if (monthlyCanvasBox) monthlyCanvasBox.style.display = 'none';
+        if (monthlyEmptyBox) monthlyEmptyBox.style.display = 'flex';
+        if (monthlyCoverageBadge) monthlyCoverageBadge.style.display = 'none';
+        if (monthlySummary) monthlySummary.textContent = '';
+    } else {
+        if (monthlyEmptyBox) monthlyEmptyBox.style.display = 'none';
+        if (monthlyCanvasBox) monthlyCanvasBox.style.display = 'block';
+
+        const totalPrecioConCosto = monthlyStats.months.reduce((acc, m) => acc + (m.precioConCosto || 0), 0);
+        const totalVentasAll = monthlyStats.totalVentas || 0;
+        const globalCoveragePct = totalVentasAll > 0 ? parseFloat(((totalPrecioConCosto / totalVentasAll) * 100).toFixed(1)) : 100;
+        const countSinCostoTotal = monthlyStats.months.reduce((acc, m) => acc + (m.countSinCosto || 0), 0);
+
+        if (monthlyCoverageBadge) {
+            if (countSinCostoTotal > 0 && globalCoveragePct < 100) {
+                monthlyCoverageBadge.style.display = 'inline-block';
+                monthlyCoverageBadge.textContent = `⚠️ Cobertura costos: ${globalCoveragePct}%`;
+                monthlyCoverageBadge.title = `${countSinCostoTotal} operaciones cerradas sin costo de venta registrado en el período`;
+            } else {
+                monthlyCoverageBadge.style.display = 'none';
+            }
+        }
+
+        if (monthlySummary) {
+            monthlySummary.textContent = `Ventas: ${formatCurrency(monthlyStats.totalVentas)} | Margen: ${formatCurrency(monthlyStats.totalMargen)}`;
+        }
+
+        if (monthlyCanvas) {
+            const labels = monthlyStats.months.map(m => m.label);
+            const dataVentas = monthlyStats.months.map(m => m.ventas);
+            const dataMargen = monthlyStats.months.map(m => m.margen);
+            const dataMargenPct = monthlyStats.months.map(m => m.margenPct);
+
+            chartMonthly = new Chart(monthlyCanvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: 'Ventas Ganadas ($)',
+                            data: dataVentas,
+                            backgroundColor: '#ffcc4d',
+                            borderRadius: 3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'bar',
+                            label: 'Margen Bruto ($)',
+                            data: dataMargen,
+                            backgroundColor: '#10b981',
+                            borderRadius: 3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'line',
+                            label: '% Margen',
+                            data: dataMargenPct,
+                            borderColor: '#38bdf8',
+                            backgroundColor: '#38bdf8',
+                            borderWidth: 2,
+                            pointRadius: 3,
+                            yAxisID: 'yPct',
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            display: true,
+                            ticks: { font: { size: 10 }, color: '#a0aabf' },
+                            grid: { display: false }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: v => formatCurrency(v),
+                                font: { size: 10 },
+                                color: '#a0aabf'
+                            },
+                            title: { display: true, text: 'Importe ($)', font: { size: 10 }, color: '#a0aabf' },
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                        },
+                        yPct: {
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { display: false },
+                            ticks: {
+                                callback: v => v + '%',
+                                font: { size: 10 },
+                                color: '#a0aabf'
+                            },
+                            title: { display: true, text: '% Margen', font: { size: 10 }, color: '#a0aabf' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#a0aabf' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                afterTitle: function(context) {
+                                    const idx = context[0].dataIndex;
+                                    const m = monthlyStats.months[idx];
+                                    if (!m) return '';
+                                    if (!m.hasData) return 'Sin operaciones en este mes';
+                                    let sub = `${m.countGanadas} op. ganadas`;
+                                    if (m.countSinCosto > 0) {
+                                        sub += ` · Cobertura costos: ${m.coberturaPct}% (${m.countSinCosto} sin costo)`;
+                                    }
+                                    return sub;
+                                },
+                                label: function(ctx) {
+                                    if (ctx.dataset.yAxisID === 'yPct') {
+                                        return ctx.raw !== null ? `% Margen: ${ctx.raw}%` : '% Margen: Costo no disponible';
+                                    }
+                                    return `${ctx.dataset.label}: ${formatCurrency(ctx.raw || 0)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // STOCK VIVO PARA EMBUDO Y PIPELINE
+    const active = filterRes && filterRes.stockActivo
+        ? filterRes.stockActivo
+        : (prospects ? prospects.filter(p => p && p.estado === 'activo' && p.eliminado !== true) : []);
+
+    // 1. EMBUDO DE VENTAS ACTIVAS (Stock vivo por etapa)
+    const funnelContainer = document.getElementById('css-funnel-container');
+    if (funnelContainer) {
+        if (active.length === 0) {
+            funnelContainer.innerHTML = `
+                <div class="dash-empty-state-box">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.85;">📦</div>
+                    <div style="font-weight: 600; color: white; font-size: 0.95rem;">Pipeline sin Oportunidades Activas</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary); max-width: 260px;">No hay oportunidades abiertas en el inventario actual.</div>
+                </div>
+            `;
+        } else {
+            const stageDist = typeof CrmDashboardCalc !== 'undefined'
+                ? CrmDashboardCalc.calculatePipelineStageDistribution(active, STAGES, KPI_LIMITS)
+                : { stages: [], totalNominal: 0, totalPonderado: 0, totalOps: 0 };
+
+            const maxCount = Math.max(...stageDist.stages.map(s => s.count), 1);
+            const colors = [blue, gold, success, '#f59e0b', danger];
+
+            let funnelHTML = '';
+            stageDist.stages.forEach((st, i) => {
+                const currentWidth = st.count > 0 ? Math.max((st.count / maxCount) * 100, 24) : 18;
+                const c = colors[i % colors.length];
+                const nominalStr = st.count > 0 ? formatCurrency(st.montoNominal) : '-';
+                const ponderadoStr = st.count > 0 && st.montoPonderado > 0 ? `Pond: ${formatCurrency(st.montoPonderado)}` : '';
+                const sinProbNotice = st.countSinProb > 0 ? ` <span title="${st.countSinProb} oportunidad(es) sin probabilidad asignada" style="color:var(--brand-gold); font-size:0.75rem;">(⚠️${st.countSinProb})</span>` : '';
+
+                funnelHTML += `
+                    <div class="dash-funnel-row">
+                        <div class="dash-funnel-label">
+                            ${st.stage}<span class="dash-funnel-label-sub">${st.count} Op.${sinProbNotice}</span>
+                        </div>
+                        <div class="dash-funnel-bar-container">
+                            <div class="dash-funnel-bar" style="width: ${currentWidth}%; background-color: ${c};">
+                                <span class="dash-funnel-val">${nominalStr}</span>
+                                ${ponderadoStr ? `<span class="dash-funnel-subval">${ponderadoStr}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            funnelHTML += `
+                <div class="dash-funnel-note">
+                    * Stock actual por etapa. No representa conversión secuencial de cohortes. Tasa de Cierre Real: Ganadas / (Ganadas + Perdidas).
+                </div>
+            `;
+
+            funnelContainer.innerHTML = `<div class="dash-funnel-wrapper">${funnelHTML}</div>`;
+        }
+    }
+
+    // 2. EFECTIVIDAD Y VOLUMEN POR CANAL (Volumen apilado + Tasa de Cierre)
+    const channelUniverse = (filterRes && filterRes.isHistorical)
+        ? prospects
+        : [...(filterRes.flujoGanadas || []), ...(filterRes.flujoPerdidas || []), ...(filterRes.stockActivo || [])];
+
+    const channelStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateChannelConversion(channelUniverse)
+        : { summary: [], channels: [] };
+
+    const repNames = channelStats.channels;
     const dataGanado = [];
     const dataActivo = [];
     const dataPerdido = [];
+    const dataWinRate = [];
 
     repNames.forEach(name => {
-        const stats = originStats[name];
-        dataGanado.push(stats.ganado);
-        dataActivo.push(stats.activo);
-        dataPerdido.push(stats.perdido);
+        const item = channelStats.summary.find(s => s.channel === name);
+        if (item) {
+            dataGanado.push(item.ganado);
+            dataActivo.push(item.activo);
+            dataPerdido.push(item.perdido);
+            dataWinRate.push(item.winRate !== null ? parseFloat(item.winRate.toFixed(1)) : null);
+        }
     });
 
-    if (chartOrigin) chartOrigin.destroy();
-    chartOrigin = new Chart(document.getElementById('conversionChart').getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: repNames,
-            datasets: [
-                { label: 'Ganado', data: dataGanado, backgroundColor: success },
-                { label: 'En Proceso', data: dataActivo, backgroundColor: gold },
-                { label: 'Perdido', data: dataPerdido, backgroundColor: danger }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: 'x',
-            scales: {
-                x: { stacked: true, display: true, ticks: { font: { size: 10 } } },
-                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+    if (chartOrigin) { chartOrigin.destroy(); chartOrigin = null; }
+    const convCanvas = document.getElementById('conversionChart');
+    if (convCanvas) {
+        if (typeof Chart.getChart === 'function') {
+            const existing = Chart.getChart(convCanvas);
+            if (existing) existing.destroy();
+        }
+        const isMobileScreen = typeof window !== 'undefined' && window.innerWidth <= 640;
+        chartOrigin = new Chart(convCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: repNames,
+                datasets: [
+                    { type: 'bar', label: 'Ganado', data: dataGanado, backgroundColor: success, stack: 'ops', borderRadius: 2 },
+                    { type: 'bar', label: 'En Proceso', data: dataActivo, backgroundColor: gold, stack: 'ops', borderRadius: 2 },
+                    { type: 'bar', label: 'Perdido', data: dataPerdido, backgroundColor: danger, stack: 'ops', borderRadius: 2 },
+                    {
+                        type: 'line',
+                        label: 'Tasa Cierre (%)',
+                        data: dataWinRate,
+                        borderColor: cyan,
+                        backgroundColor: cyan,
+                        borderWidth: 2,
+                        pointRadius: isMobileScreen ? 3 : 4,
+                        pointHoverRadius: 5,
+                        yAxisID: 'yRate',
+                        fill: false
+                    }
+                ]
             },
-            plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } },
-                tooltip: {
-                    callbacks: {
-                        label: function (context) {
-                            return context.dataset.label + ': ' + context.raw + ' Ops';
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: {
+                    padding: {
+                        left: isMobileScreen ? 2 : 6,
+                        right: isMobileScreen ? 2 : 6,
+                        top: 6,
+                        bottom: 2
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            font: { size: isMobileScreen ? 9 : 10 },
+                            color: '#a0aabf',
+                            maxRotation: 0,
+                            autoSkip: false
+                        },
+                        grid: { display: false }
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1,
+                            font: { size: isMobileScreen ? 9 : 10 },
+                            color: '#a0aabf',
+                            padding: isMobileScreen ? 3 : 6
+                        },
+                        title: {
+                            display: true,
+                            text: isMobileScreen ? 'Ops' : 'Volumen Ops',
+                            font: { size: isMobileScreen ? 9 : 10 },
+                            color: '#a0aabf'
+                        },
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                    },
+                    yRate: {
+                        position: 'right',
+                        min: 0,
+                        max: 100,
+                        grid: { display: false },
+                        ticks: {
+                            callback: v => v + '%',
+                            font: { size: isMobileScreen ? 9 : 10 },
+                            color: '#a0aabf',
+                            padding: isMobileScreen ? 3 : 6
+                        },
+                        title: {
+                            display: true,
+                            text: isMobileScreen ? '% Cierre' : 'Tasa de Cierre',
+                            font: { size: isMobileScreen ? 9 : 10 },
+                            color: '#a0aabf'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            boxWidth: isMobileScreen ? 8 : 10,
+                            font: { size: isMobileScreen ? 8.5 : 9.5 },
+                            padding: isMobileScreen ? 6 : 10,
+                            color: '#a0aabf'
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function (context) {
+                                if (context.dataset.yAxisID === 'yRate') {
+                                    return context.raw !== null ? `Tasa de Cierre: ${context.raw}% (Ganadas/Concluidas)` : 'Tasa: Sin cierres concluidos';
+                                }
+                                return `${context.dataset.label}: ${context.raw} Ops`;
+                            }
                         }
                     }
                 }
             }
-        }
-    });
+        });
+    }
 
-    const lost = filtered.filter(p => p.estado === 'perdido'); if (chartLoss) chartLoss.destroy(); chartLoss = new Chart(document.getElementById('lossChart').getContext('2d'), { type: 'pie', data: { labels: MOTIVOS_PERDIDA, datasets: [{ data: MOTIVOS_PERDIDA.map(m => lost.filter(p => p.motivo_perdida === m).length), backgroundColor: [danger, '#f59e0b', accent2, accent1, '#6b7280'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } } } } });
+    // 3. RENDIMIENTO COMPARATIVO POR VENDEDOR (Horizontal bar chart)
+    const wonSellers = filterRes && filterRes.flujoGanadas ? filterRes.flujoGanadas : [];
+    const lostSellers = filterRes && filterRes.flujoPerdidas ? filterRes.flujoPerdidas : [];
+    const activeSellersList = filterRes && filterRes.stockActivo ? filterRes.stockActivo : [];
+
+    const sellerStats = typeof CrmDashboardCalc !== 'undefined'
+        ? CrmDashboardCalc.calculateSellerPerformance(wonSellers, lostSellers, activeSellersList, typeof users !== 'undefined' ? users : [])
+        : { sellers: [], totalSellers: 0 };
+
+    const sellerCanvasBox = document.getElementById('seller-canvas-container');
+    const sellerEmptyBox = document.getElementById('seller-empty-container');
+    const sellerCoverageBadge = document.getElementById('dash-seller-coverage-badge');
+
+    if (chartSeller) { chartSeller.destroy(); chartSeller = null; }
+    const sellerCanvas = document.getElementById('sellerChart');
+    if (sellerCanvas && typeof Chart.getChart === 'function') {
+        const existingSeller = Chart.getChart(sellerCanvas);
+        if (existingSeller) existingSeller.destroy();
+    }
+
+    const sellers = sellerStats.sellers || [];
+    const hasSellerActivity = sellers.some(s => s.ventasGanadas > 0 || s.countPerdidas > 0 || s.pipelineNominal > 0 || s.countActivas > 0);
+
+    if (!hasSellerActivity || sellers.length === 0) {
+        if (sellerCanvasBox) sellerCanvasBox.style.display = 'none';
+        if (sellerEmptyBox) sellerEmptyBox.style.display = 'flex';
+        if (sellerCoverageBadge) sellerCoverageBadge.style.display = 'none';
+    } else {
+        if (sellerEmptyBox) sellerEmptyBox.style.display = 'none';
+        if (sellerCanvasBox) sellerCanvasBox.style.display = 'block';
+
+        const sellersWithIncompleteCosts = sellers.filter(s => s.ventasGanadas > 0 && s.coberturaPct < 100);
+        if (sellerCoverageBadge) {
+            if (sellersWithIncompleteCosts.length > 0) {
+                sellerCoverageBadge.style.display = 'inline-block';
+                sellerCoverageBadge.textContent = '⚠️ Costos parciales en vendedores';
+                sellerCoverageBadge.title = 'Algunos vendedores tienen ventas ganadas sin costo de venta registrado';
+            } else {
+                sellerCoverageBadge.style.display = 'none';
+            }
+        }
+
+        if (sellerCanvas) {
+            const requiredHeight = Math.max(260, sellers.length * 48);
+            sellerCanvasBox.style.height = `${requiredHeight}px`;
+
+            chartSeller = new Chart(sellerCanvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: sellers.map(s => s.nombreConRol || (s.role === 'gestor' ? `${s.nombre} (Gestor)` : `${s.nombre} (Vendedor)`)),
+                    datasets: [
+                        {
+                            label: 'Ventas Ganadas ($)',
+                            data: sellers.map(s => s.ventasGanadas),
+                            backgroundColor: '#ffcc4d',
+                            borderRadius: 3
+                        },
+                        {
+                            label: 'Margen Bruto ($)',
+                            data: sellers.map(s => s.margen),
+                            backgroundColor: '#10b981',
+                            borderRadius: 3
+                        },
+                        {
+                            label: 'Cartera Activa ($)',
+                            data: sellers.map(s => s.pipelineNominal),
+                            backgroundColor: '#38bdf8',
+                            borderRadius: 3
+                        }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: v => formatCurrency(v),
+                                font: { size: 10 },
+                                color: '#a0aabf'
+                            },
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                        },
+                        y: {
+                            ticks: {
+                                font: { size: 11, weight: '500' },
+                                color: '#ffffff'
+                            },
+                            grid: { display: false }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#a0aabf' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function(items) {
+                                    if (!items || !items.length) return '';
+                                    const idx = items[0].dataIndex;
+                                    const s = sellers[idx];
+                                    if (!s) return '';
+                                    const roleBadge = s.role === 'gestor' ? 'Gestor de Ventas' : (s.role === 'vendedor' ? 'Vendedor' : 'Sin Asignar');
+                                    return `${s.nombre} [${roleBadge}]`;
+                                },
+                                afterTitle: function(context) {
+                                    const idx = context[0].dataIndex;
+                                    const s = sellers[idx];
+                                    if (!s) return '';
+                                    return `Tasa Cierre: ${s.winRateFormatted} | Cobertura Costo: ${s.coberturaPct}%`;
+                                },
+                                label: function(ctx) {
+                                    const idx = ctx.dataIndex;
+                                    const s = sellers[idx];
+                                    const dsLabel = ctx.dataset.label;
+                                    const val = formatCurrency(ctx.raw || 0);
+                                    if (dsLabel.includes('Ventas')) {
+                                        return `${dsLabel}: ${val} (${s.countGanadas} ganadas)`;
+                                    }
+                                    if (dsLabel.includes('Margen')) {
+                                        const mPct = s.margenPct !== null ? `${s.margenPct}%` : 'Incompleto';
+                                        return `${dsLabel}: ${val} (Margen: ${mPct})`;
+                                    }
+                                    if (dsLabel.includes('Cartera')) {
+                                        const pond = formatCurrency(s.pipelinePonderado || 0);
+                                        return `${dsLabel}: ${val} (Ponderado: ${pond}, ${s.countActivas} activas)`;
+                                    }
+                                    return `${dsLabel}: ${val}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+
+    // 3. MOTIVOS DE PÉRDIDA (Flujo de pérdidas del período)
+    const lostOps = filterRes && filterRes.flujoPerdidas ? filterRes.flujoPerdidas : [];
+    const hasLostData = Array.isArray(lostOps) && lostOps.length > 0;
+    const lossCanvasBox = document.getElementById('loss-canvas-container');
+    const lossEmptyBox = document.getElementById('loss-empty-container');
+
+    if (chartLoss) { chartLoss.destroy(); chartLoss = null; }
+    const lossCanvas = document.getElementById('lossChart');
+    if (lossCanvas && typeof Chart.getChart === 'function') {
+        const existingLoss = Chart.getChart(lossCanvas);
+        if (existingLoss) existingLoss.destroy();
+    }
+
+    if (!hasLostData) {
+        if (lossCanvasBox) lossCanvasBox.style.display = 'none';
+        if (lossEmptyBox) lossEmptyBox.style.display = 'flex';
+    } else {
+        if (lossEmptyBox) lossEmptyBox.style.display = 'none';
+        if (lossCanvasBox) lossCanvasBox.style.display = 'block';
+        if (lossCanvas) {
+            chartLoss = new Chart(lossCanvas.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: MOTIVOS_PERDIDA,
+                    datasets: [{
+                        data: MOTIVOS_PERDIDA.map(m => lostOps.filter(p => p.motivo_perdida === m).length),
+                        backgroundColor: [danger, '#f59e0b', accent2, accent1, '#6b7280'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { boxWidth: 10, font: { size: 10 }, padding: 8, color: '#a0aabf' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = total > 0 ? Math.round((ctx.raw / total) * 100) : 0;
+                                    return ` ${ctx.label}: ${ctx.raw} (${pct}%)`;
+                                }
+                            }
+                        }
+                    },
+                    cutout: '55%'
+                }
+            });
+        }
+    }
+
+    // 4. GRÁFICOS DE COMPOSICIÓN (Ventas y Pipeline)
+    const won = filterRes && filterRes.flujoGanadas ? filterRes.flujoGanadas : [];
+    const sumSubtotal = (arr) => arr.reduce((acc, p) => acc + (typeof CrmDashboardCalc !== 'undefined' ? CrmDashboardCalc.getProjectSubtotal(p) : (Number(p.precio_cotizado) || 0)), 0);
+
+    const compositionOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: { boxWidth: 10, font: { size: 10 }, padding: 6, color: '#a0aabf' }
+            },
+            tooltip: {
+                callbacks: {
+                    label: ctx => ' ' + formatCurrency(ctx.raw)
+                }
+            }
+        },
+        cutout: '58%'
+    };
+
+    // A. CIERRES - PRODUCTO
+    const prodW = [sumSubtotal(won.filter(p => p.tipo_producto === 'Chute')), sumSubtotal(won.filter(p => p.tipo_producto === 'Ducto'))];
+    const prodWColors = [gold, blue];
+    const prodWNo = sumSubtotal(won.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
+    if (prodWNo > 0) { prodW.push(prodWNo); prodWColors.push('#6b7280'); }
+    if (chartProduct) { chartProduct.destroy(); chartProduct = null; }
+    const prodCanvas = document.getElementById('productChart');
+    if (prodCanvas) {
+        if (typeof Chart.getChart === 'function') {
+            const existing = Chart.getChart(prodCanvas);
+            if (existing) existing.destroy();
+        }
+        chartProduct = new Chart(prodCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: prodWNo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodW, backgroundColor: prodWColors, borderWidth: 0 }] },
+            options: compositionOptions
+        });
+    }
+
+    // B. CIERRES - PROYECTO
+    const projW = [sumSubtotal(won.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumSubtotal(won.filter(p => p.tipo_proyecto === 'Fabricación'))];
+    const projWColors = [success, '#a0aabf'];
+    const projWNo = sumSubtotal(won.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
+    if (projWNo > 0) { projW.push(projWNo); projWColors.push('#6b7280'); }
+    if (chartProject) { chartProject.destroy(); chartProject = null; }
+    const projCanvas = document.getElementById('projectChart');
+    if (projCanvas) {
+        if (typeof Chart.getChart === 'function') {
+            const existing = Chart.getChart(projCanvas);
+            if (existing) existing.destroy();
+        }
+        chartProject = new Chart(projCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: projWNo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projW, backgroundColor: projWColors, borderWidth: 0 }] },
+            options: compositionOptions
+        });
+    }
+
+    // C. PIPELINE - PRODUCTO
+    const prodA = [sumSubtotal(active.filter(p => p.tipo_producto === 'Chute')), sumSubtotal(active.filter(p => p.tipo_producto === 'Ducto'))];
+    const prodANo = sumSubtotal(active.filter(p => p.tipo_producto !== 'Chute' && p.tipo_producto !== 'Ducto'));
+    const prodAColors = [gold, blue];
+    if (prodANo > 0) { prodA.push(prodANo); prodAColors.push('#6b7280'); }
+    if (chartOppProduct) { chartOppProduct.destroy(); chartOppProduct = null; }
+    const oppProdCanvas = document.getElementById('oppProductChart');
+    if (oppProdCanvas) {
+        if (typeof Chart.getChart === 'function') {
+            const existing = Chart.getChart(oppProdCanvas);
+            if (existing) existing.destroy();
+        }
+        chartOppProduct = new Chart(oppProdCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: prodANo > 0 ? ['Chute', 'Ducto', 'Sin Asignar'] : ['Chute', 'Ducto'], datasets: [{ data: prodA, backgroundColor: prodAColors, borderWidth: 0 }] },
+            options: compositionOptions
+        });
+    }
+
+    // D. PIPELINE - PROYECTO
+    const projA = [sumSubtotal(active.filter(p => p.tipo_proyecto === 'Fabricación e instalación')), sumSubtotal(active.filter(p => p.tipo_proyecto === 'Fabricación'))];
+    const projANo = sumSubtotal(active.filter(p => p.tipo_proyecto !== 'Fabricación e instalación' && p.tipo_proyecto !== 'Fabricación'));
+    const projAColors = [accent1, accent2];
+    if (projANo > 0) { projA.push(projANo); projAColors.push('#6b7280'); }
+    if (chartOppProject) { chartOppProject.destroy(); chartOppProject = null; }
+    const oppProjCanvas = document.getElementById('oppProjectChart');
+    if (oppProjCanvas) {
+        if (typeof Chart.getChart === 'function') {
+            const existing = Chart.getChart(oppProjCanvas);
+            if (existing) existing.destroy();
+        }
+        chartOppProject = new Chart(oppProjCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: projANo > 0 ? ['Fab e Inst.', 'Fab.', 'Sin Asignar'] : ['Fab e Inst.', 'Fab.'], datasets: [{ data: projA, backgroundColor: projAColors, borderWidth: 0 }] },
+            options: compositionOptions
+        });
+    }
 }
 
 function generarContrato(prospectId) {

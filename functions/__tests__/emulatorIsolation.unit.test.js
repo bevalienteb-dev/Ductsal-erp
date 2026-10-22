@@ -107,11 +107,11 @@ describe('seedTestManager (logic, fake Admin SDK)', () => {
     'users_prod/1690000000002': { id: '1690000000002', nombre: 'Prod', email: 'prod@x.com', password: 'p', role: 'gestor', activo: true }
   };
 
-  test('creates the Auth account with ONLY { manager: true } and a password-free profile with a separate commercial id', async () => {
+  test('creates the Auth account with { role: "manager", manager: true, cid } and a password-free profile with a separate commercial id', async () => {
     state.docs = JSON.parse(JSON.stringify(historical));
     const r = await seedTestManager(admin, { password: 'test-only-pass' });
     expect(r).toMatchObject({ uid: SEED.authUid, profileId: SEED.profileId, createdAuth: true, createdProfile: true });
-    expect(state.authUsers[SEED.email].claims).toEqual({ manager: true });
+    expect(state.authUsers[SEED.email].claims).toEqual({ role: 'manager', manager: true, cid: SEED.profileId });
     const profile = state.docs[`users_local/${SEED.profileId}`];
     expect(profile).toEqual({ id: SEED.profileId, authUid: SEED.authUid, authProvider: 'firebase', nombre: SEED.nombre, email: SEED.email, role: 'manager', activo: true });
     expect(profile.id).not.toBe(profile.authUid);

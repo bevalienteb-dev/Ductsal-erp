@@ -50,8 +50,8 @@ async function seedTestManager(admin, { password } = {}) {
     await auth.createUser({ uid: SEED.authUid, email: SEED.email, password, displayName: SEED.nombre });
     result.createdAuth = true;
   }
-  // Idempotent: always leaves exactly this claim, only on this account.
-  await auth.setCustomUserClaims(SEED.authUid, { manager: true });
+  // Idempotent: always leaves exactly these claims, only on this account.
+  await auth.setCustomUserClaims(SEED.authUid, { role: 'manager', manager: true, cid: SEED.profileId });
 
   // ---- Profile (never overwrites; verifies ownership if it already exists) ----
   try {
