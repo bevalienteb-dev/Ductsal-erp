@@ -40,9 +40,9 @@ pie title Estado de Hallazgos tras Fase 4B
 
 | ID | Criticidad | Área | Estado Actual | Descripción Resumida |
 | :--- | :--- | :--- | :---: | :--- |
-| **SEC-01** | **CRÍTICA** | Firestore / UI | ✅ **RESUELTO LOCAL** | Consultas `onSnapshot` adaptadas por rol con `.where()`; uso de `userDirectory_prod`; 0 índices compuestos. |
+| **SEC-01** | **CRÍTICA** | Firestore / UI | ✅ **CERRADO Y VERIFICADO EN PRODUCCIÓN** | Consultas adaptadas por rol; purga productiva de contraseñas ejecutada sobre los 5 documentos de `users_prod` (0 contraseñas remanentes). |
 | **SEC-02** | **CRÍTICA** | Fabricación | 🔴 **PENDIENTE (Fuera de alcance)** | Tablets de taller en `fabricacion-dev` sin Firebase Auth; requieren `plantLogin`. |
-| **SEC-03** | **CRÍTICA** | Autenticación | ✅ **RESUELTO LOCAL** | Autenticación histórica cerrada; login forzado vía Firebase Auth; eliminación de bypass de contraseñas y localStorage; purga segura. |
+| **SEC-03** | **CRÍTICA** | Autenticación | ✅ **CERRADO Y VERIFICADO EN PRODUCCIÓN** | 4 identidades comerciales activas migradas a Firebase Auth, UIDs y custom claims verificados al 100% en producción. |
 | **SEC-04** | **ALTA** | Firestore Rules | ✅ **RESUELTO LOCAL** | `prospects_prod.allow update/delete: if false;`. Flujo 100% forzado vía Cloud Functions auditadas. |
 | **SEC-05** | **ALTA** | Storage / Datos | 🟡 **PENDIENTE (Arquitectural)** | Tokens de descarga históricos en Firestore; requiere plan de transición a URLs firmadas. |
 | **SEC-06** | **ALTA** | Firestore Rules | ✅ **RESUELTO LOCAL** | `clients_prod.allow delete: if false;`. Borrado forzado exclusivamente vía `deleteClientAdmin`. |
@@ -69,7 +69,13 @@ pie title Estado de Hallazgos tras Fase 4B
   5. **Directorio Seguro:** Se creó el trigger Cloud Function `syncUserDirectory${suffix}` en `functions/index.js` (onWrite sobre `users/{userId}`) que mantiene sincronizado `userDirectory` sin exponer credenciales ni tokens.
   6. **Visibilidad Comercial Preservada:** Los vendedores mantienen acceso al catálogo completo de clientes existentes al crear prospectos a través del callable `searchClientsCatalog` (`CrmClients.searchCatalog`), sin exponer la lista global en el snapshot continuo.
   7. **Análisis de Índices Compuestos:** **0 índices compuestos requeridos**. Todas las consultas usan igualdad simple (`==`) o pertenencia en array (`array-contains`), las cuales están indexadas automáticamente por Firestore. El descarte de `eliminado === true` se ejecuta en memoria JavaScript, eliminando dependencias de índices compuestos en producción.
-- **Validación:** Comprobado al 100% en `crmEnv.unit.test.js`, `firestore.rules.iso.js`, `jointInventory.unit.test.js` y `app_core.js`.
+- **Validación Local y en Emuladores:** Comprobado al 100% en `crmEnv.unit.test.js`, `firestore.rules.iso.js`, `jointInventory.unit.test.js` y `app_core.js`.
+- **Verificación y Cierre en Producción (`ductsal-erp`):**
+  - **Fecha de Ejecución:** 2026-10-21 (2026-10-22T00:45:21Z).
+  - **Herramienta Ejecutada:** `executeSec01Purge.js` y `inventoryUsersProd.js`.
+  - **Alcance Autorizado y Auditado:** Exactamente los 5 documentos existentes en `users_prod` (4 identidades activas y 1 inactiva).
+  - **Resultado de la Purga:** 0 contraseñas en texto plano remanentes (`totalWithPassword === 0`).
+  - **Integridad de Datos:** Conservación al 100% de `authUid`, `role`, `activo`, `email` y `nombre`. Cero afectación a perfiles de manufactura (0 perfiles de planta residen en `users_prod`).
 
 ---
 
@@ -122,7 +128,17 @@ pie title Estado de Hallazgos tras Fase 4B
   - `functions/__tests__/historicalLinking.unit.test.js`: **21/21 PASS** (escenarios de vinculación, inactivos, rol no comercial, cid no encontrado, email inválido, duplicados, rollback transaccional, purga propia, purga por gerente, cuenta deshabilitada).
   - `functions/isolated-tests/historicalLinking.iso.js`: **6/6 Fases PASS** en emuladores aislados (Auth 9399, Firestore 8190, Functions 5101, validando llamada HTTP a `listUsersAdmin` por gerentes con respuesta 200 y omisión de contraseñas, y 403 para no gerentes).
   - `functions/__tests__/crmAuth.uiFlow.test.js`: **31/31 PASS** (verificación de flujo de UI, guardado sin contraseñas y transiciones de estado).
-- **Riesgo Residual:** La ejecución de `linkHistoricalUserAdmin` sobre las 4 cuentas comerciales reales debe llevarse a cabo en la ventana de corte previo al despliegue, sin intervenir la base de datos de producción durante este cierre local.
+- **Verificación y Cierre en Producción (`ductsal-erp`):**
+  - **Fecha de Certificación:** 2026-10-21 (2026-10-22T00:45:21Z).
+  - **Herramienta Ejecutada:** `inventoryUsersProd.js --allow-authorized-production-run --check-auth`.
+  - **Identidades Verificadas:** 4 cuentas comerciales activas (`1776895495203`, `1776904494660`, `1776904514932`, `1788471603604`).
+  - **Resultados de Auditoría:**
+    - 4/4 cuentas existen en Firebase Authentication (`authExists: true`).
+    - 4/4 UIDs coinciden exactamente entre Auth y el campo `authUid` de `users_prod` (`uidMatches: true`).
+    - 4/4 cuentas tienen Custom Claims estrictamente conformes (`claimsMatch: true`): gerentes con `manager: true`, gestora con `role: gestor`, vendedor con `role: vendedor`.
+    - 4/4 cuentas habilitadas (`disabled: false`) y con actividad de acceso confirmada (`lastSignInTimePresent: true`).
+  - **Cuenta Comercial Inactiva (`1784221928346`):** Confirmada sin cuenta en Firebase Auth (`authUidPresent: false`) y con `activo: false`.
+  - **Estado:** 🟢 **CERRADO Y VERIFICADO EN PRODUCCIÓN**.
 
 ---
 
@@ -596,7 +612,8 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 
 | Control | Área | Estado Actual | Motivo / Próxima Acción |
 | :--- | :--- | :---: | :--- |
-| **SEC-01** | Limpieza de contraseñas legacy | 🟡 **PENDIENTE** | Las contraseñas en texto plano no se leen por la UI (se utiliza exclusivamente `userDirectory_prod`), pero la purga de campos `password` en los documentos históricos de `users_prod` requiere la ejecución programada de `purgeHistoricalPasswordAdmin` sin alterar datos operativos. |
+| **SEC-01** | Limpieza de contraseñas legacy | ✅ **CERRADO Y VERIFICADO** | Purga ejecutada sobre los 5 documentos en `users_prod` (4 cuentas comerciales activas y 1 inactiva). 0 contraseñas en texto plano remanentes comprobado por auditoría post-purga (2026-10-21). |
+| **SEC-03** | Autenticación y claims comerciales | ✅ **CERRADO Y VERIFICADO** | 4 cuentas comerciales activas migradas a Firebase Auth, UIDs coincidentes al 100% con `users_prod`, custom claims conformes y sesiones validadas (2026-10-21). |
 | **SEC-02** | Migración de identidades (Taller) | 🔴 **PENDIENTE** | Las tablets de taller en `fabricacion-dev` no utilizan Firebase Auth. Su despliegue con las reglas actuales rompería la operación de la planta. Requiere la integración autorizada de `plantLogin` antes de migrar sus sesiones. |
 | **SEC-08** | Rotación / revocación de tokens históricos de Storage | ✅ **CERRADO Y VERIFICADO** | Revocación ejecutada exitosamente en producción sobre 807 objetos (2026-10-20T22:27:05Z), URLs antiguas bloqueadas con HTTP 403, archivos binarios 100% intactos, acceso legítimo verificado en ERP publicado y runbook/suite completamente versionados. |
 | **SEC-09** | Revisión administrativa de proyectos ambiguos | 🟡 **PENDIENTE** | Expedientes antiguos que solo posean `estado: 'ganado'` sin marcas fehacientes de cierre no reciben acceso a postcierre; la Gerencia General debe revisar manualmente su estatus administrativo fuera del sistema. |
@@ -645,3 +662,35 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 1. **Firma Criptográfica GCS V4:** Firebase Emulator Suite genera URLs de descarga locales (`STORAGE_EMULATOR_HOST`) y no evalúa la firma RSA HMAC-SHA256 contra Cloud IAM. La funcionalidad del firmante productivo con la Service Account `crm-downloads-sa` fue demostrada previamente en la prueba positiva en vivo.
 2. **Aislamiento Horizontal:** El aislamiento entre dos vendedores y entre vendedor y gestor queda demostrado mediante identidades sintéticas y datos completamente aislados en la suite de integración automatizada en emuladores.
 3. **Diferenciación Estricta:** La evidencia automatizada y la evidencia de producción se mantienen separadas y explícitamente delimitadas en este informe.
+
+---
+
+### 13.7 SEC-01 y SEC-03: Cierre Técnico y Verificación en Producción
+
+- **Fecha de Auditoría y Cierre:** 2026-10-21 (Ejecución registrada: `2026-10-22T00:45:21.373Z`)
+- **Entorno Verificado:** Proyecto Firebase `ductsal-erp` (Colección `users_prod`, Firebase Authentication, `commercialAudit_prod`)
+- **Herramientas de Certificación:** `inventoryUsersProd.js` y `executeSec01Purge.js`
+- **Estado General:** 🟢 **CERRADO Y VERIFICADO EN PRODUCCIÓN**
+
+#### Resumen de Evidencias Verificadas en Producción:
+
+1. **SEC-03 — Consolidación de Identidades Comerciales en Firebase Authentication:**
+   - **4/4 Identidades Comerciales Activas Verificadas:**
+     - `1776895495203` (Benjamin Valiente, `bvaliente@grupogama.com`): UID `r0d8fVjH8nOBI0PikjQPBraF5aB2` coincide 100% con `authUid` en Firestore. Claims `{ role: 'manager', manager: true, cid: '1776895495203' }` conformes. Cuenta habilitada y con actividad de inicio de sesión confirmada (`lastSignInTimePresent: true`).
+     - `1776904494660` (Denys González, `dgonzalez@ductsal.com`): UID `zYkmUkIpFeYYH2M1Z4rYxzDOPRJ3` coincide 100%. Claims `{ role: 'manager', manager: true, cid: '1776904494660' }` conformes. Cuenta habilitada con login registrado.
+     - `1776904514932` (Alejandra Ayala, `aayala@ductsal.com`): UID `PkMqu1kywySNXqSr8OBEtgldT723` coincide 100%. Claims `{ role: 'gestor', cid: '1776904514932' }` conformes. Cuenta habilitada con login registrado.
+     - `1788471603604` (Roberto Flores, `rflores@ductsal.com`): UID `miVugIMlpbRuD0lBPd16cwnhADJ3` coincide 100%. Claims `{ role: 'vendedor', cid: '1788471603604' }` conformes. Cuenta habilitada con login registrado.
+   - **Cuenta Inactiva (`1784221928346` - Gustavo Velásquez):** Confirmado sin cuenta en Firebase Auth (`authUidPresent: false`), manteniendo estrictamente `activo: false`.
+
+2. **SEC-01 — Purga Definitiva de Contraseñas Históricas en `users_prod`:**
+   - **Preflight de Inventario Inicial:** 5 documentos auditados; 5 contenían el campo `password`. 0 perfiles de manufactura en `users_prod`. 0 cuentas desconocidas.
+   - **Ejecución Transaccional Controlada:**
+     - Purga individual atómica sobre los 4 usuarios activos (`status=purged`, `hasPassword=false`, `authUid` preservado).
+     - Purga administrativa sobre el perfil inactivo `1784221928346` (`status=purged`, `activo=false`, `hasPassword=false`).
+     - Registro de auditoría emitido en `commercialAudit_prod` para cada operación.
+   - **Auditoría Posterior Inmediata (`inventoryUsersProd.js`):**
+     - Total documentos en `users_prod`: **5**.
+     - Documentos con campo `password`: **0**.
+     - Documentos sin campo `password`: **5** (100% purgados).
+     - Cero contraseñas en texto plano remanentes en el motor de base de datos de producción.
+     - Cero afectación a roles o terminales de planta (SEC-02).
