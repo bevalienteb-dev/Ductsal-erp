@@ -23,10 +23,23 @@ Suites (`isolated-tests/*.iso.js`):
 | `commercialFlow.e2e.iso.js` | flujo comercial completo con cuentas Auth y claims reales por HTTP: callables + auditoría + reglas; precio base (roles/estado), solicitud y resolución de venta sin contrato (identidades, estados, concurrencia), eliminación lógica | Auth + Functions + Firestore |
 | `userAdmin.e2e.iso.js` | `updateUserAdmin` / `toggleUserStatusAdmin` por HTTP con claims reales: roles, autoprivilegio, último gerente, bloqueo global, idempotencia, auditoría | Auth + Functions + Firestore |
 | `jointValidation.iso.js` | validación **conjunta CRM + fabricación** (solo diagnóstico, sin cambiar reglas): reproducción de las escrituras directas de ambos módulos, matriz de permisos 44 operaciones × 10 sesiones contra las reglas candidatas, rutas de Storage reales vs. previstas, escenario integrado, códigos/concurrencia y aislamiento de tabletas. Las pruebas "KNOWN GAP" afirman el comportamiento defectuoso actual. Informe: [JOINT_VALIDATION.md](JOINT_VALIDATION.md). Con `JOINT_MATRIX_OUT=<ruta>` exporta la matriz medida en JSON | Auth + Functions + Firestore + Storage |
-| `storageTokenRevocation.iso.js` | revocación de tokens de descarga de Storage (delete_token), retención de metadatos personalizados y rollback (SEC-08) | Emulador Storage (REST) |
-| `sec10HorizontalIsolation.iso.js` | aislamiento horizontal E2E de documentos (SEC-10): vendedores, gestor, reasignación, perfiles inactivos y no-emisión de URLs firmadas | Auth + Firestore + Storage + Functions |
+| `storageTokenRevocation.iso.js` | Revocación de tokens de descarga de Storage (`delete_token`), fallo de revocación por `null`, concatenación por `PATCH`, retención de metadatos personalizados, desacoplamiento de descarga autenticada y rollback (SEC-08) — 9 pruebas | Emulador Storage (REST) |
+| `sec10HorizontalIsolation.iso.js` | Aislamiento horizontal E2E de documentos (SEC-10): vendedores, gestor, reasignación, perfiles inactivos y no-emisión de URLs firmadas — 12 pruebas | Auth + Firestore + Storage + Functions |
 
-Los tokens sin firmar solo los aceptan los emuladores. No se usa ninguna credencial ni dato de producción.
+### Ejecución Específica de Suites Aisladas
+
+Para ejecutar individualmente las suites de almacenamiento y autorización:
+
+```bash
+# Suite SEC-08: Ciclo de vida y revocación de downloadTokens en Storage (9 pruebas)
+cd functions && npx jest isolated-tests/storageTokenRevocation.iso.js -c jest.isolated.config.js --runInBand
+
+# Suite SEC-10: Aislamiento horizontal de documentos comerciales (12 pruebas)
+cd functions && npx jest isolated-tests/sec10HorizontalIsolation.iso.js -c jest.isolated.config.js --runInBand
+```
+
+> [!NOTE]
+> Ambas suites operan exclusivamente sobre la suite de emuladores locales (`demo-ductsal-isolated`). Ninguna prueba de emulador realiza peticiones, mutaciones ni consultas sobre el proyecto Firebase productivo (`ductsal-erp`). Los tokens sin firmar del emulador solo son admitidos en el entorno local.
 
 ## Estado de ejecución (2026-10-16)
 

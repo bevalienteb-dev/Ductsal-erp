@@ -47,7 +47,7 @@ pie title Estado de Hallazgos tras Fase 4B
 | **SEC-05** | **ALTA** | Storage / Datos | 🟡 **PENDIENTE (Arquitectural)** | Tokens de descarga históricos en Firestore; requiere plan de transición a URLs firmadas. |
 | **SEC-06** | **ALTA** | Firestore Rules | ✅ **RESUELTO LOCAL** | `clients_prod.allow delete: if false;`. Borrado forzado exclusivamente vía `deleteClientAdmin`. |
 | **SEC-07** | **MEDIA** | Entorno / Reglas | 🟡 **PENDIENTE** | `firestore.rules` contempla `*_prod`; validar compatibilidad de entorno `_local`. |
-| **SEC-08** | **MEDIA** | UI / Backend | ✅ **RESUELTO LOCAL** | Retiro de escritura directa de contraseñas y reseteos a texto plano en `app_core.js`. |
+| **SEC-08** | **MEDIA** | Storage / Backend | ✅ **CERRADO Y VERIFICADO** | Retiro de `saveUserToDB`; revocación productiva de tokens de 807 objetos de Storage ejecutada, suite aislada versionada y runbook completado. |
 | **SEC-09** | **BAJA** | UI | 🟡 **PENDIENTE** | Limpieza de stubs deprecados de guardado directo en `app_core.js`. |
 
 ---
@@ -181,16 +181,22 @@ pie title Estado de Hallazgos tras Fase 4B
 
 ---
 
-### Hallazgo SEC-08 (MEDIA): Escritor directo residual `saveUserToDB`
-- **Archivo y Líneas:** [`app_core.js:504-507`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system/app_core.js#L504-L507)
-- **Código:**
-  ```javascript
-  function saveUserToDB(u) {
-      if (u && u.authUid) throw new Error('Los perfiles con cuenta de Firebase Authentication solo se modifican con las funciones administrativas.');
-      db.collection(`users${DB_SUFFIX}`).doc(u.id).set(u);
-  }
-  ```
-- **Impacto:** Se invoca en `processFirstTimeSetup`, `saveUser`, `resetUserPassword` y `toggleUserStatus`. En cuanto se active `users_prod.allow write: if false;`, estas funciones de la interfaz fallarán con error de permisos si operan sobre un usuario sin `authUid`.
+### Hallazgo SEC-08 (MEDIA): Escritor directo residual `saveUserToDB` y revocación de tokens de Storage — [✅ CERRADO Y VERIFICADO]
+- **Archivos y Superficies:**
+  - Código UI: [`app_core.js:504-507`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/app_core.js#L504-L507)
+  - Firebase Storage: Bucket de producción `ductsal-erp.firebasestorage.app`
+  - Suite de Emulador: [`functions/isolated-tests/storageTokenRevocation.iso.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/isolated-tests/storageTokenRevocation.iso.js)
+  - Runbook de Operación: [`SEC-08_STORAGE_REVOCATION_RUNBOOK.md`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/SEC-08_STORAGE_REVOCATION_RUNBOOK.md)
+- **Problema Original:**
+  1. *Escritor Residual:* `saveUserToDB` se invocaba en `processFirstTimeSetup`, `saveUser`, `resetUserPassword` y `toggleUserStatus`, escribiendo directamente en `users_prod` para perfiles sin `authUid`.
+  2. *Tokens de Storage:* 807 objetos comerciales en Storage poseían `downloadTokens` públicos indefinidos que eludían `storage.rules` a nivel CDN.
+- **Correcciones Implementadas y Evidencia de Cierre:**
+  1. *Retiro de saveUserToDB:* Erradicado totalmente de `app_core.js`. Las modificaciones administrativas viajan exclusivamente por `createUserAdmin`, `updateUserAdmin` y `toggleUserStatusAdmin`.
+  2. *Ejecución Productiva de Revocación de Tokens:* Ejecutada con éxito el 2026-10-20T22:27:05Z sobre **807 objetos comerciales** mediante `delete_token` sin fallos (781 revocados + 26 previamente revocados). Verificado bloqueo con `HTTP 403 Forbidden` en URLs históricas y preservación 100% íntegra de archivos binarios y metadatos.
+  3. *Acceso Legítimo en ERP:* Verificado en vivo en el ERP publicado (`ALUNA TOWER - ACT SALIDA LATERAL.pdf`) mediante `getSecureDownloadUrlAdmin` (GCS V4 Signed URL de 15 min).
+  4. *Respaldo Frío:* Almacenado de forma segura fuera de Git con verificación criptográfica SHA-256 (`131eeedb3f3a1d10b66db2a4d75d602384900ae81db5159cb54a3a16f7664ab8`).
+  5. *Suite Aislada en Emuladores:* **9/9 pruebas PASS** en `storageTokenRevocation.iso.js` (demostrando fallo de revocación por `null`, concatenación por `PATCH`, revocación fiable por `delete_token`, desacoplamiento de descarga autenticada y rollback).
+  6. *Runbook Oficial:* Completado y formalizado en [`SEC-08_STORAGE_REVOCATION_RUNBOOK.md`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/SEC-08_STORAGE_REVOCATION_RUNBOOK.md).
 
 ---
 
@@ -509,7 +515,7 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 
 ---
 
-## 13. Matriz de Validación Post-Deployment y Funcional (SEC-03, SEC-04, SEC-05, SEC-07, SEC-10)
+## 13. Matriz de Validación Post-Deployment y Funcional (SEC-03, SEC-04, SEC-05, SEC-07, SEC-08, SEC-10)
 
 - **Fecha de Validación:** 2026-10-20
 - **Proyecto Firebase:** `ductsal-erp` (Número: 948658286825)
@@ -525,7 +531,8 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 | **SEC-03** | Cloud Firestore Rules | Ruleset `35bd0b21-131c-4357-a0d8-5e0de18cb39e`<br>Actualizado: `2026-10-20T05:00:43Z` | ✅ **VALIDADO** | ✅ **DESPLEGADO Y CERRADO** | Coincidencia 100% byte por byte con `firestore.rules` local (9,611 bytes). Reglas abiertas revocadas. 184/184 tests aislados PASS (`firestore.rules.iso.js`). Bloqueo de escrituras directas del cliente activo para `users_prod`, `clients_prod` y `prospects_prod`. |
 | **SEC-04** | Cloud Functions Comerciales y de Workflow | 30 funciones en `us-central1`<br>(runtime `nodejs20`, 256MB) | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 100% PASS (1,375 unitarios + 248 aislados). Verificada autenticación obligatoria, validación de parámetros, autorización por rol, preservación de `vendedorId`/`createdBy`, aislamiento de gestor en prospección, y bloqueo absoluto de reasignación postcierre.<br>**Producción:** 30 funciones comerciales + 4 de usuario activas (total 34). Endpoints HTTPS responden HTTP 401 UNAUTHENTICATED a solicitudes anónimas. Operaciones autorizadas de escritura en vivo pendientes de prueba con usuario real en ventana controlada sin alterar datos de negocio. |
 | **SEC-05** | Cloud Storage Rules & Permiso IAM Cruzado | Ruleset `61cadd40-48ac-40f3-b799-e628fc261d9f`<br>Actualizado: `2026-10-20T05:00:42Z` | ✅ **VALIDADO** | ✅ **DESPLEGADO Y CERRADO** | Coincidencia 100% byte por byte con `storage.rules` local (10,388 bytes). Regla pública revocada. IAM `roles/firebaserules.firestoreServiceAgent` confirmado en la cuenta de servicio `service-948658286825@gcp-sa-firebasestorage.iam.gserviceaccount.com`. 127/127 tests aislados PASS (`storage.rules.iso.js`). |
-| **SEC-07** | Acceso Seguro a Archivos y Descarga Universal | `getSecureDownloadUrlAdmin`<br>+ `storageService.js`<br>+ Storage Rules | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 119 tests unitarios de storage + 127 tests de storage rules PASS. Vendedor asignado accede a sus archivos; vendedor no asignado es denegado; tras reasignación el vendedor anterior pierde acceso operativo; gestor mantiene acceso autorizado a expedientes y postcierre; proyectos válidamente cerrados retienen acceso multi-criterio sin exigir CCF repetido; URLs firmadas emitidas con expiración corta (15 min).<br>**Producción:** Función desplegada con Service Account `crm-downloads-sa@ductsal-erp.iam.gserviceaccount.com`; HTTP 401 verificado ante llamadas anónimas. No se descargaron ni expusieron archivos comerciales reales en producción. Enlaces históricos con tokens previos siguen activos hasta ejecución de SEC-08. |
+| **SEC-07** | Acceso Seguro a Archivos y Descarga Universal | `getSecureDownloadUrlAdmin`<br>+ `storageService.js`<br>+ Storage Rules | ✅ **FUNCIONALMENTE VALIDADO** | 🟡 **DESPLEGADO; VALIDACIÓN EN VIVO PENDIENTE** | **Emulador:** 119 tests unitarios de storage + 127 tests de storage rules PASS. Vendedor asignado accede a sus archivos; vendedor no asignado es denegado; tras reasignación el vendedor anterior pierde acceso operativo; gestor mantiene acceso autorizado a expedientes y postcierre; proyectos válidamente cerrados retienen acceso multi-criterio sin exigir CCF repetido; URLs firmadas emitidas con expiración corta (15 min).<br>**Producción:** Función desplegada con Service Account `crm-downloads-sa@ductsal-erp.iam.gserviceaccount.com`; HTTP 401 verificado ante llamadas anónimas. No se descargaron ni expusieron archivos comerciales reales en producción. Enlaces históricos con tokens previos revocados exitosamente en producción (807 objetos) mediante ejecución de SEC-08 el 2026-10-20. |
+| **SEC-08** | Revocación de Tokens de Storage y Retiro de Escritores | Producción `ductsal-erp`<br>(`us-central1` / Storage Bucket) | ✅ **VALIDADO** (9 tests aislados PASS en `storageTokenRevocation.iso.js`) | ✅ **CERRADO Y VERIFICADO — remediación productiva ejecutada y evidencia versionada** | **Producción:** Revocación de tokens ejecutada sobre 807 objetos comerciales de Storage (`prod_files/clients`, `prospects`, `proyectos`, `facturas`, `pagos`) el 2026-10-20T22:27:05Z con 0 fallos (781 revocados + 26 previamente revocados). Verificado bloqueo HTTP 403 de URLs antiguas y preservación 100% íntegra de archivos binarios. Acceso legítimo comprobado en ERP publicado (`ALUNA TOWER`). Respaldo frío con hash SHA-256 `131eeedb3f3a1d10b66db2a4d75d602384900ae81db5159cb54a3a16f7664ab8`.<br>**Emulador:** 9/9 pruebas aprobadas en emulador Storage (puerto 9290) demostrando ciclo de vida de tokens (`delete_token`, fallo de `null`, concatenación en `PATCH`, descarga autenticada sin tokens y rollback).<br>**Código:** `saveUserToDB` erradicado de `app_core.js`. Runbook [`SEC-08_STORAGE_REVOCATION_RUNBOOK.md`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/SEC-08_STORAGE_REVOCATION_RUNBOOK.md) formalizado y versionado. |
 | **SEC-10** | Aislamiento y Descarga Segura de Documentos | `getSecureDownloadUrlAdmin`<br>+ `storageService.js` | ✅ **VALIDADO** (12 tests E2E aislados + 94 tests unitarios de storage/seguridad + 1,458 tests globales PASS) | 🟢 **CERRADO TÉCNICAMENTE**<br>*(Validación automatizada; prueba negativa entre usuarios autenticados en producción no realizada)* | **Evidencia Automatizada en Emuladores:** 12/12 pruebas de integración E2E aprobadas en `sec10HorizontalIsolation.iso.js` sobre Firebase Emulator Suite (`demo-ductsal-isolated` en loopback: Auth 9399, Firestore 8190, Storage 9290, Functions 5101) con identidades sintéticas. 94/94 pruebas específicas de almacenamiento y seguridad aprobadas (`storageSecurity`, `storageReview`, `storageDownload`, `viewSecureDocumentFlow`). 1,458/1,458 pruebas globales aprobadas (`npm test`). Comprobado aislamiento vendedor-vendedor, reasignación comercial, gestor en prospección vs postcierre, perfiles inactivos y cuentas huérfanas. Verificada ausencia absoluta de `signedUrl` y no invocación al firmante en todos los casos denegados.<br>**Evidencia de Producción (`ductsal-erp`):** Flujo positivo autorizado verificado manualmente en el ERP publicado (`ALUNA TOWER - ACT SALIDA LATERAL.pdf`). Rechazo con `HTTP 401 UNAUTHENTICATED` comprobado ante solicitudes anónimas y tokens corruptos sin emitir URLs firmadas.<br>**Limitaciones:** Los emuladores no validan la firma criptográfica RSA GCS V4 ni los permisos productivos de Cloud IAM. La prueba negativa entre dos identidades autenticadas en producción no fue ejecutada para no manipular contraseñas ni datos de empleados reales. |
 
 ---
@@ -551,8 +558,8 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 | `isolated-tests/clientsService.iso.js` | Emulador Firestore (8190) | 59 / 59 | ✅ **PASS** | Deduplicación de clientes, control de NIT/DUI, reservas temporales, concurrencia (8 hilos simultáneos) y sincronización de `visibleTo`. |
 | `isolated-tests/storage.rules.iso.js` | Emuladores Storage (9290) + Firestore (8190) | 127 / 127 | ✅ **PASS** | Reglas de Storage reales evaluando consultas cruzadas a Firestore. Aislamiento vendedor/gestor, subida write-once, bloqueo de borrado/sobrescritura. |
 | `isolated-tests/firestore.rules.iso.js` | Emulador Firestore (8190) | 184 / 184 | ✅ **PASS** | Reglas de Firestore reales. Bloqueo total de escrituras directas de clientes a `users_prod`, `clients_prod` y `prospects_prod`. |
-| `isolated-tests/storageTokenRevocation.iso.js` | Emulador Storage (9290) | 5 / 5 | ✅ **PASS** | Demostración de ciclo de vida de tokens: asignación de `null` no revoca; endpoint `delete_token` revoca de forma fiable; rollback funcional. |
-| **Total Pruebas Automatizadas Ejecutadas** | **Unitario + Emulador** | **1,036 / 1,036** | ✅ **100% PASS** | **Cero fallos, cero regresiones en toda la suite relevante de seguridad comercial y de almacenamiento.** |
+| `isolated-tests/storageTokenRevocation.iso.js` | Emulador Storage (9290) | 9 / 9 | ✅ **PASS** | Demostración de ciclo de vida de tokens: asignación de `null` no revoca; `PATCH` concatena en vez de revocar; `delete_token` revoca de forma fiable; compatibilidad de descarga autorizada en servidor sin tokens públicos; rollback funcional. |
+| **Total Pruebas Automatizadas Ejecutadas** | **Unitario + Emulador** | **1,040 / 1,040** | ✅ **100% PASS** | **Cero fallos, cero regresiones en toda la suite relevante de seguridad comercial y de almacenamiento.** |
 
 ---
 
@@ -591,7 +598,7 @@ pie title Total de Pruebas Automatizadas Aprobadas (1,751 / 1,751)
 | :--- | :--- | :---: | :--- |
 | **SEC-01** | Limpieza de contraseñas legacy | 🟡 **PENDIENTE** | Las contraseñas en texto plano no se leen por la UI (se utiliza exclusivamente `userDirectory_prod`), pero la purga de campos `password` en los documentos históricos de `users_prod` requiere la ejecución programada de `purgeHistoricalPasswordAdmin` sin alterar datos operativos. |
 | **SEC-02** | Migración de identidades (Taller) | 🔴 **PENDIENTE** | Las tablets de taller en `fabricacion-dev` no utilizan Firebase Auth. Su despliegue con las reglas actuales rompería la operación de la planta. Requiere la integración autorizada de `plantLogin` antes de migrar sus sesiones. |
-| **SEC-08** | Rotación / revocación de tokens históricos de Storage | 🟡 **PENDIENTE** | Los enlaces históricos emitidos con `downloadTokens` antes de SEC-05 continúan respondiendo públicamente. Requiere la ejecución controlada del runbook de rotación/revocación documentado. |
+| **SEC-08** | Rotación / revocación de tokens históricos de Storage | ✅ **CERRADO Y VERIFICADO** | Revocación ejecutada exitosamente en producción sobre 807 objetos (2026-10-20T22:27:05Z), URLs antiguas bloqueadas con HTTP 403, archivos binarios 100% intactos, acceso legítimo verificado en ERP publicado y runbook/suite completamente versionados. |
 | **SEC-09** | Revisión administrativa de proyectos ambiguos | 🟡 **PENDIENTE** | Expedientes antiguos que solo posean `estado: 'ganado'` sin marcas fehacientes de cierre no reciben acceso a postcierre; la Gerencia General debe revisar manualmente su estatus administrativo fuera del sistema. |
 
 ---

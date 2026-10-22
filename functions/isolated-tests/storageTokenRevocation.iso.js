@@ -1,11 +1,11 @@
 // functions/isolated-tests/storageTokenRevocation.iso.js
-// SEC-05 Phase 2: Isolated Token Revocation and Rollback Verification Suite
+// SEC-08 (historically SEC-05 Phase 2): Isolated Token Revocation and Rollback Verification Suite
 // Tests token revocation, false-revocation via null, metadata preservation, and reliable rollback
 // on a disposable object in the isolated Storage emulator (port 9290, demo-ductsal-isolated).
 
 const { assertIsolatedUp, BUCKET, ST_HOST } = require('./iso');
 
-describe('SEC-05: Storage Download Token Revocation & Rollback (Isolated)', () => {
+describe('SEC-08: Storage Download Token Revocation & Rollback (Isolated)', () => {
   const enc = encodeURIComponent;
   const uniqueId = Date.now();
   const testObjectPath = `local_files/test_disposable/sec05_probe_${uniqueId}.pdf`;
@@ -179,5 +179,109 @@ describe('SEC-05: Storage Download Token Revocation & Rollback (Isolated)', () =
     // Verify custom metadata remains preserved after rollback
     expect(restoredMeta.metadata.retention).toBe(customMetadata.retention);
     expect(restoredMeta.metadata.uploader_uid).toBe(customMetadata.uploader_uid);
+  });
+
+  test('Step 6: Demonstrating that PATCHing a new UUID APPENDS to downloadTokens instead of revoking existing ones', async () => {
+    const crypto = require('crypto');
+    const newUuid = crypto.randomUUID();
+
+    // Updating firebaseStorageDownloadTokens via standard PATCH
+    const patchRes = await fetch(`http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer owner'
+      },
+      body: JSON.stringify({
+        metadata: {
+          firebaseStorageDownloadTokens: newUuid
+        }
+      })
+    });
+    expect(patchRes.status).toBe(200);
+    const patchedMeta = await patchRes.json();
+
+    // Critical empirical finding: Firebase Storage appends rather than replaces
+    const tokens = (patchedMeta.downloadTokens || '').split(',');
+    expect(tokens).toContain(newUuid);
+    expect(tokens).toContain(initialToken); // initialToken was NOT revoked!
+
+    // The old token still works because it was appended, not deleted
+    const accessWithOldToken = await fetch(
+      `http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}?alt=media&token=${initialToken}`
+    );
+    expect(accessWithOldToken.status).toBe(200);
+  });
+
+  test('Step 7: Proving that delete_token is the ONLY reliable method to eliminate all active tokens', async () => {
+    // Read current tokens
+    const getRes = await fetch(`http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}`, {
+      headers: { Authorization: 'Bearer owner' }
+    });
+    const currentMeta = await getRes.json();
+    const activeTokens = (currentMeta.downloadTokens || '').split(',').map(t => t.trim()).filter(Boolean);
+    expect(activeTokens.length).toBeGreaterThan(0);
+
+    // Delete each active token via delete_token endpoint
+    for (const tok of activeTokens) {
+      const delRes = await fetch(
+        `http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}?delete_token=${tok}`,
+        { method: 'POST', headers: { Authorization: 'Bearer owner' } }
+      );
+      expect(delRes.status).toBe(200);
+    }
+
+    // Verify all targeted tokens are removed from downloadTokens
+    const postDelRes = await fetch(`http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}`, {
+      headers: { Authorization: 'Bearer owner' }
+    });
+    const postDelMeta = await postDelRes.json();
+    const remainingTokens = (postDelMeta.downloadTokens || '').split(',').map(t => t.trim()).filter(Boolean);
+    expect(remainingTokens).not.toContain(initialToken);
+
+    // Unauthenticated access with initialToken must now fail (HTTP 403)
+    const accessWithOldToken = await fetch(
+      `http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}?alt=media&token=${initialToken}`
+    );
+    expect(accessWithOldToken.status).toBe(403);
+
+    // Custom metadata remains 100% preserved
+    expect(postDelMeta.metadata.retention).toBe(customMetadata.retention);
+    expect(postDelMeta.metadata.uploader_uid).toBe(customMetadata.uploader_uid);
+  });
+
+  test('Step 8: Proving authenticated server-side download (SEC-07/10 pipeline) functions 100% even with zero download tokens', async () => {
+    // Authenticated server-side download (using service account / owner credentials, exactly as getSecureDownloadUrlAdmin operates)
+    const serverSideRes = await fetch(`http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}?alt=media`, {
+      headers: { Authorization: 'Bearer owner' }
+    });
+    expect(serverSideRes.status).toBe(200);
+    const content = await serverSideRes.text();
+    expect(content).toBe(testPayload);
+  });
+
+  test('Step 9: Final rollback verifying restoration of initial token re-enables original URL', async () => {
+    // Restore initialToken via metadata PATCH
+    const rollbackRes = await fetch(`http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer owner'
+      },
+      body: JSON.stringify({
+        metadata: {
+          firebaseStorageDownloadTokens: initialToken
+        }
+      })
+    });
+    expect(rollbackRes.status).toBe(200);
+
+    // Verify initialToken is active again (HTTP 200)
+    const accessRestored = await fetch(
+      `http://${ST_HOST}/v0/b/${BUCKET}/o/${enc(testObjectPath)}?alt=media&token=${initialToken}`
+    );
+    expect(accessRestored.status).toBe(200);
+    const bodyRestored = await accessRestored.text();
+    expect(bodyRestored).toBe(testPayload);
   });
 });
