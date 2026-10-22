@@ -809,3 +809,60 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
         font-size: 0.58rem;
     }
 }
+
+/* ==========================================================================
+   SELLER PERFORMANCE FILTER (SOLO ACTIVOS / HISTÓRICO COMPLETO)
+   ========================================================================== */
+.dash-seller-switch.filter-pills-group {
+    padding: 2px 4px;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+}
+.dash-seller-switch .filter-pill {
+    padding: 0.28rem 0.65rem;
+    font-size: 0.74rem;
+    font-weight: 500;
+    border-radius: 4px;
+    line-height: 1.2;
+}
+.dash-seller-switch .filter-pill.active {
+    background: var(--brand-gold);
+    color: var(--brand-blue);
+    font-weight: 700;
+    box-shadow: 0 1px 4px rgba(255, 204, 77, 0.25);
+}
+.dash-seller-inactive-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.85rem;
+    margin-bottom: 0.75rem;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: #bae6fd;
+    line-height: 1.4;
+}
+.dash-seller-inactive-notice .notice-icon {
+    font-size: 0.95rem;
+    flex-shrink: 0;
+}
+@media (max-width: 640px) {
+    .dash-seller-switch.filter-pills-group {
+        width: 100%;
+        justify-content: stretch;
+    }
+    .dash-seller-switch .filter-pill {
+        flex: 1;
+        justify-content: center;
+        text-align: center;
+        padding: 0.32rem 0.5rem;
+        font-size: 0.72rem;
+    }
+    .dash-seller-inactive-notice {
+        font-size: 0.72rem;
+        padding: 0.45rem 0.65rem;
+    }
+}

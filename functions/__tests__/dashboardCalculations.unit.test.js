@@ -1497,4 +1497,357 @@ describe('CrmDashboardCalc: Auditoría y Validación de Cálculos del Dashboard'
     const totalIndividualPipeline = Object.values(perf.allSellersMap).reduce((acc, s) => acc + s.pipelineNominal, 0);
     expect(totalIndividualPipeline).toBe(95000); // 15k + 25k + 35k + 20k
   });
+
+  // ==========================================================================
+  // 13. Filtro de Vendedores y Gestores: Solo Activos vs Histórico Completo
+  // ==========================================================================
+  describe('13. Filtro de Vendedores y Gestores: Solo Activos vs Histórico Completo', () => {
+    const fs = require('fs');
+    const path = require('path');
+
+    // Fixture representativo del directorio de usuarios
+    const userDirectory = [
+      { id: '1776904494660', nombre: 'Denys González', email: 'dgonzalez@ductsal.com', role: 'vendedor', activo: true },
+      { id: '1776904514932', nombre: 'Alejandra Ayala', email: 'aayala@ductsal.com', role: 'gestor', activo: true },
+      { id: '1788471603604', nombre: 'Roberto Flores', email: 'rflores@ductsal.com', role: 'vendedor', activo: true },
+      { id: '1784221928346', nombre: 'Gustavo Velásquez', email: 'gvelasquez@ductsal.com', role: 'vendedor', activo: false },
+      { id: '1789999999999', nombre: 'Carlos Inactivo Gestor', email: 'cinactivo@ductsal.com', role: 'gestor', activo: false },
+      { id: '1776895495203', nombre: 'Benjamín Valiente', email: 'bvaliente@grupogama.com', role: 'manager', activo: true },
+      { id: '1790000000001', nombre: 'Vendedor Activo Sin Actividad', email: 'sinact@ductsal.com', role: 'vendedor', activo: true }
+    ];
+
+    test('1. Un vendedor activo con ventas aparece en ambas vistas', () => {
+      const wonList = [
+        { id: 'OPP-ACT-1', vendedorId: '1776904494660', estado: 'ganado', precio_cotizado: 25000, costo_venta: 15000 }
+      ];
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      expect(perfActive.sellers.some(s => s.sellerId === '1776904494660')).toBe(true);
+      expect(perfAll.sellers.some(s => s.sellerId === '1776904494660')).toBe(true);
+
+      const sellerActive = perfActive.sellers.find(s => s.sellerId === '1776904494660');
+      expect(sellerActive.nombre).toBe('Denys González');
+      expect(sellerActive.isInactive).toBe(false);
+      expect(sellerActive.ventasGanadas).toBe(25000);
+      expect(sellerActive.nombreConRol).toBe('Denys González (Vendedor)');
+    });
+
+    test('2. Un vendedor inactivo con ventas históricas desaparece de «Solo activos» y aparece en «Histórico completo»', () => {
+      const wonList = [
+        { id: 'OPP-INACT-1', vendedorId: '1784221928346', estado: 'ganado', precio_cotizado: 45000, costo_venta: 27000 }
+      ];
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      // En 'active_only' queda excluido de la lista de visualización
+      expect(perfActive.sellers.some(s => s.sellerId === '1784221928346')).toBe(false);
+      expect(perfActive.totalSellers).toBe(0);
+      // Sus métricas quedan contabilizadas en excludedInactiveMetrics para aviso contextual
+      expect(perfActive.excludedInactiveMetrics.countSellers).toBe(1);
+      expect(perfActive.excludedInactiveMetrics.ventasGanadas).toBe(45000);
+      expect(perfActive.excludedInactiveMetrics.costoGanadas).toBe(27000);
+      expect(perfActive.excludedInactiveMetrics.margen).toBe(18000);
+
+      // En 'all' aparece con etiqueta clara de Inactivo
+      expect(perfAll.sellers.some(s => s.sellerId === '1784221928346')).toBe(true);
+      const sellerInactive = perfAll.sellers.find(s => s.sellerId === '1784221928346');
+      expect(sellerInactive.nombre).toBe('Gustavo Velásquez');
+      expect(sellerInactive.isInactive).toBe(true);
+      expect(sellerInactive.nombreConRol).toBe('Gustavo Velásquez (Vendedor - Inactivo)');
+      expect(sellerInactive.ventasGanadas).toBe(45000);
+    });
+
+    test('3. El mismo comportamiento se cumple para los gestores activos e inactivos', () => {
+      const wonList = [
+        { id: 'OPP-GES-ACT', gestorId: '1776904514932', estado: 'ganado', precio_cotizado: 30000, costo_venta: 18000 },
+        { id: 'OPP-GES-INACT', gestorId: '1789999999999', estado: 'ganado', precio_cotizado: 20000, costo_venta: 12000 }
+      ];
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      // Gestora activa (Alejandra) aparece en ambas vistas
+      expect(perfActive.sellers.some(s => s.sellerId === '1776904514932')).toBe(true);
+      expect(perfAll.sellers.some(s => s.sellerId === '1776904514932')).toBe(true);
+      const gestoraActiva = perfActive.sellers.find(s => s.sellerId === '1776904514932');
+      expect(gestoraActiva.nombreConRol).toBe('Alejandra Ayala (Gestor)');
+      expect(gestoraActiva.isInactive).toBe(false);
+
+      // Gestor inactivo (Carlos) desaparece de 'active_only' y aparece en 'all'
+      expect(perfActive.sellers.some(s => s.sellerId === '1789999999999')).toBe(false);
+      expect(perfAll.sellers.some(s => s.sellerId === '1789999999999')).toBe(true);
+      const gestorInactivo = perfAll.sellers.find(s => s.sellerId === '1789999999999');
+      expect(gestorInactivo.nombre).toBe('Carlos Inactivo Gestor');
+      expect(gestorInactivo.isInactive).toBe(true);
+      expect(gestorInactivo.nombreConRol).toBe('Carlos Inactivo Gestor (Gestor - Inactivo)');
+      expect(gestorInactivo.ventasGanadas).toBe(20000);
+    });
+
+    test('4. El estado actual se aplica igual al consultar Mes, YTD y períodos históricos sin inferencia temporal retroactiva', () => {
+      // Oportunidad con fecha histórica (ej. 2024 cuando el colaborador trabajaba activamente)
+      const historicalOpp = {
+        id: 'OPP-HIST-2024',
+        vendedorId: '1784221928346', // Gustavo (actualmente activo: false)
+        estado: 'ganado',
+        precio_cotizado: 60000,
+        costo_venta: 36000,
+        fecha_cierre: '2024-05-15'
+      };
+
+      // Oportunidad YTD / Mes actual para vendedor activo
+      const currentOpp = {
+        id: 'OPP-CURR-2026',
+        vendedorId: '1776904494660', // Denys (activo: true)
+        estado: 'ganado',
+        precio_cotizado: 50000,
+        costo_venta: 30000,
+        fecha_cierre: '2026-10-10'
+      };
+
+      // Consulta en período histórico: el filtro evalúa el estado ACTUAL del usuario en userDirectory
+      const perfHistoricalActive = CrmDashboardCalc.calculateSellerPerformance([historicalOpp], [], [], userDirectory, { filterMode: 'active_only' });
+      const perfHistoricalAll = CrmDashboardCalc.calculateSellerPerformance([historicalOpp], [], [], userDirectory, { filterMode: 'all' });
+
+      // En 'active_only' el usuario inactivo NO aparece, incluso en consulta de período 2024
+      expect(perfHistoricalActive.sellers.some(s => s.sellerId === '1784221928346')).toBe(false);
+      // En 'all' sí aparece con su atribución histórica completa
+      expect(perfHistoricalAll.sellers.some(s => s.sellerId === '1784221928346')).toBe(true);
+
+      // Consulta YTD con vendedor activo
+      const perfYtdActive = CrmDashboardCalc.calculateSellerPerformance([currentOpp], [], [], userDirectory, { filterMode: 'active_only' });
+      expect(perfYtdActive.sellers.some(s => s.sellerId === '1776904494660')).toBe(true);
+    });
+
+    test('5. Los nombres canónicos de usuarios inactivos se resuelven correctamente desde el directorio', () => {
+      const wonList = [
+        { id: 'OPP-RESOLVE-1', vendedorId: '1784221928346', estado: 'ganado', precio_cotizado: 15000, costo_venta: 9000 }
+      ];
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+      const gustavo = perfAll.sellers.find(s => s.sellerId === '1784221928346');
+
+      expect(gustavo).toBeDefined();
+      expect(gustavo.nombre).toBe('Gustavo Velásquez'); // Nombre canónico recuperado
+      expect(gustavo.nombre).not.toContain('1784221928346'); // No cae en fallback crudo
+      expect(gustavo.nombreConRol).toBe('Gustavo Velásquez (Vendedor - Inactivo)');
+    });
+
+    test('6. Una oportunidad abierta asignada a un comercial inactivo permanece en el pipeline consolidado y se muestra en histórico completo', () => {
+      const activeList = [
+        { id: 'OPP-OPEN-INACT', vendedorId: '1784221928346', estado: 'activo', precio_cotizado: 35000, probabilidad: 75 }
+      ];
+
+      // KPI corporativo del pipeline
+      const stockConsolidated = CrmDashboardCalc.calculateActivePipelineMetrics(activeList);
+      expect(stockConsolidated.totalNominal).toBe(35000);
+      expect(stockConsolidated.totalPonderado).toBe(26250); // 75% de 35000
+
+      // En 'active_only': no aparece en gráfica individual pero se captura en métricas excluidas
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance([], [], activeList, userDirectory, { filterMode: 'active_only' });
+      expect(perfActive.sellers.length).toBe(0);
+      expect(perfActive.excludedInactiveMetrics.pipelineNominal).toBe(35000);
+      expect(perfActive.excludedInactiveMetrics.pipelinePonderado).toBe(26250);
+      expect(perfActive.excludedInactiveMetrics.countActivas).toBe(1);
+
+      // En 'all': aparece atribuida a Gustavo Velásquez con etiqueta Inactivo
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance([], [], activeList, userDirectory, { filterMode: 'all' });
+      expect(perfAll.sellers.length).toBe(1);
+      const gustavo = perfAll.sellers[0];
+      expect(gustavo.nombre).toBe('Gustavo Velásquez');
+      expect(gustavo.pipelineNominal).toBe(35000);
+      expect(gustavo.pipelinePonderado).toBe(26250);
+      expect(gustavo.countActivas).toBe(1);
+    });
+
+    test('7. Las oportunidades sin responsable identificable continúan atribuyéndose a «Sin Asignar»', () => {
+      const wonList = [
+        { id: 'OPP-UNASSIGNED-1', vendedorId: null, gestorId: undefined, estado: 'ganado', precio_cotizado: 18000, costo_venta: 10000 }
+      ];
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      const unassignedActive = perfActive.sellers.find(s => s.sellerId === 'sin_asignar');
+      const unassignedAll = perfAll.sellers.find(s => s.sellerId === 'sin_asignar');
+
+      expect(unassignedActive).toBeDefined();
+      expect(unassignedActive.nombre).toBe('Sin Asignar');
+      expect(unassignedActive.role).toBe('sin_asignar');
+      expect(unassignedActive.ventasGanadas).toBe(18000);
+
+      expect(unassignedAll).toBeDefined();
+      expect(unassignedAll.nombre).toBe('Sin Asignar');
+      expect(unassignedAll.ventasGanadas).toBe(18000);
+    });
+
+    test('8. La atribución entre vendedores y gestores sigue siendo independiente (carteras separadas)', () => {
+      const wonList = [
+        // Oportunidad asignada a Vendedor (creada por gestora pero no usurpa)
+        {
+          id: 'OPP-VEN-1',
+          vendedorId: '1776904494660', // Denys
+          createdBy: '1776904514932',   // Alejandra
+          estado: 'ganado',
+          precio_cotizado: 30000,
+          costo_venta: 18000
+        },
+        // Oportunidad asignada a Gestora (creada por vendedor pero no usurpa)
+        {
+          id: 'OPP-GES-1',
+          gestorId: '1776904514932',    // Alejandra
+          createdBy: '1776904494660',   // Denys
+          estado: 'ganado',
+          precio_cotizado: 20000,
+          costo_venta: 12000
+        },
+        // Oportunidad creada por Gerente sin responsable asignado
+        {
+          id: 'OPP-MGR-1',
+          createdBy: '1776895495203',   // Benjamín (gerente)
+          estado: 'ganado',
+          precio_cotizado: 10000,
+          costo_venta: 6000
+        }
+      ];
+      const perf = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+
+      const denys = perf.sellers.find(s => s.sellerId === '1776904494660');
+      const alejandra = perf.sellers.find(s => s.sellerId === '1776904514932');
+      const benjamin = perf.sellers.find(s => s.sellerId === '1776895495203');
+      const sinAsignar = perf.sellers.find(s => s.sellerId === 'sin_asignar');
+
+      // Denys solo recibe OPP-VEN-1 ($30,000)
+      expect(denys).toBeDefined();
+      expect(denys.role).toBe('vendedor');
+      expect(denys.ventasGanadas).toBe(30000);
+      expect(denys.countGanadas).toBe(1);
+
+      // Alejandra solo recibe OPP-GES-1 ($20,000)
+      expect(alejandra).toBeDefined();
+      expect(alejandra.role).toBe('gestor');
+      expect(alejandra.ventasGanadas).toBe(20000);
+      expect(alejandra.countGanadas).toBe(1);
+
+      // Benjamín (createdBy) no recibe atribución comercial
+      expect(benjamin).toBeUndefined();
+
+      // OPP-MGR-1 se atribuye a Sin Asignar
+      expect(sinAsignar).toBeDefined();
+      expect(sinAsignar.ventasGanadas).toBe(10000);
+    });
+
+    test('9. Cambiar entre ambas vistas no altera ningún KPI consolidado de la empresa', () => {
+      const wonList = [
+        { id: 'W1', vendedorId: '1776904494660', estado: 'ganado', precio_cotizado: 40000, costo_venta: 25000 },
+        { id: 'W2', vendedorId: '1784221928346', estado: 'ganado', precio_cotizado: 30000, costo_venta: 18000 }
+      ];
+      const lostList = [
+        { id: 'L1', vendedorId: '1784221928346', estado: 'perdido', precio_cotizado: 10000 }
+      ];
+      const activeList = [
+        { id: 'A1', vendedorId: '1788471603604', estado: 'activo', precio_cotizado: 20000, probabilidad: 50 }
+      ];
+
+      // KPIs consolidados corporativos
+      const wonConsolidatedBefore = CrmDashboardCalc.calculateWonMetrics(wonList);
+      const stockConsolidatedBefore = CrmDashboardCalc.calculateActivePipelineMetrics(activeList);
+      const lossConsolidatedBefore = CrmDashboardCalc.calculateLostMetrics(lostList);
+
+      // Ejecutar modo 'active_only'
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, lostList, activeList, userDirectory, { filterMode: 'active_only' });
+      // Ejecutar modo 'all'
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, lostList, activeList, userDirectory, { filterMode: 'all' });
+
+      // Recalcular KPIs corporativos
+      const wonConsolidatedAfter = CrmDashboardCalc.calculateWonMetrics(wonList);
+      const stockConsolidatedAfter = CrmDashboardCalc.calculateActivePipelineMetrics(activeList);
+      const lossConsolidatedAfter = CrmDashboardCalc.calculateLostMetrics(lostList);
+
+      expect(wonConsolidatedAfter).toEqual(wonConsolidatedBefore);
+      expect(stockConsolidatedAfter).toEqual(stockConsolidatedBefore);
+      expect(lossConsolidatedAfter).toEqual(lossConsolidatedBefore);
+
+      expect(wonConsolidatedAfter.totalPrecio).toBe(70000);
+      expect(wonConsolidatedAfter.margen).toBe(27000); // 70k - 43k
+      expect(stockConsolidatedAfter.totalNominal).toBe(20000);
+      expect(lossConsolidatedAfter.totalPrecio).toBe(10000);
+      expect(lossConsolidatedAfter.count).toBe(1);
+    });
+
+    test('10. En «Histórico completo», la suma de las ventas ganadas individuales cuadra exactamente con el consolidado del mismo período, sin duplicaciones', () => {
+      const wonList = [
+        { id: 'W-V-ACT', vendedorId: '1776904494660', estado: 'ganado', precio_cotizado: 40000, costo_venta: 24000 },
+        { id: 'W-V-INACT', vendedorId: '1784221928346', estado: 'ganado', precio_cotizado: 30000, costo_venta: 18000 },
+        { id: 'W-UNASSIGNED', vendedorId: null, estado: 'ganado', precio_cotizado: 10000, costo_venta: 6000 }
+      ];
+
+      const wonCompany = CrmDashboardCalc.calculateWonMetrics(wonList);
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      const sumVentas = perfAll.sellers.reduce((acc, s) => acc + s.ventasGanadas, 0);
+      const sumCostos = perfAll.sellers.reduce((acc, s) => acc + s.costoGanadas, 0);
+      const sumMargen = perfAll.sellers.reduce((acc, s) => acc + s.margen, 0);
+      const sumCount = perfAll.sellers.reduce((acc, s) => acc + s.countGanadas, 0);
+
+      expect(sumVentas).toBe(wonCompany.totalPrecio); // 80,000
+      expect(sumCostos).toBe(wonCompany.totalCosto); // 48,000
+      expect(sumMargen).toBe(wonCompany.margen); // 32,000
+      expect(sumCount).toBe(wonCompany.countTotal); // 3
+      expect(wonCompany.totalPrecio).toBe(80000);
+    });
+
+    test('11. Los usuarios sin actividad comercial relevante no generan entradas innecesarias', () => {
+      // Directorio incluye al usuario '1790000000001' (Vendedor Activo Sin Actividad)
+      const wonList = [
+        { id: 'W-1', vendedorId: '1776904494660', estado: 'ganado', precio_cotizado: 20000, costo_venta: 12000 }
+      ];
+      const perfActive = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'active_only' });
+      const perfAll = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, { filterMode: 'all' });
+
+      expect(perfActive.sellers.some(s => s.sellerId === '1790000000001')).toBe(false);
+      expect(perfAll.sellers.some(s => s.sellerId === '1790000000001')).toBe(false);
+    });
+
+    test('12. La selección predeterminada es «Solo activos»', () => {
+      const wonList = [
+        { id: 'W-ACT', vendedorId: '1776904494660', estado: 'ganado', precio_cotizado: 20000, costo_venta: 12000 },
+        { id: 'W-INACT', vendedorId: '1784221928346', estado: 'ganado', precio_cotizado: 15000, costo_venta: 9000 }
+      ];
+
+      // Llamada sin opciones: debe tomar por defecto 'active_only'
+      const perfDefault = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory);
+      expect(perfDefault.filterMode).toBe('active_only');
+      expect(perfDefault.sellers.some(s => s.sellerId === '1784221928346')).toBe(false);
+      expect(perfDefault.sellers.some(s => s.sellerId === '1776904494660')).toBe(true);
+
+      // Llamada con objeto vacío: también 'active_only'
+      const perfEmptyObj = CrmDashboardCalc.calculateSellerPerformance(wonList, [], [], userDirectory, {});
+      expect(perfEmptyObj.filterMode).toBe('active_only');
+    });
+
+    test('13. Los botones y elementos UI reflejan la opción seleccionada y cuentan con soporte responsive', () => {
+      const htmlPath = path.resolve(__dirname, '../../index.html');
+      const cssPath = path.resolve(__dirname, '../../styles.css');
+      const html = fs.readFileSync(htmlPath, 'utf8');
+      const css = fs.readFileSync(cssPath, 'utf8');
+
+      // Comprobar elementos requeridos en index.html
+      expect(html).toContain('id="btn-seller-filter-active"');
+      expect(html).toContain('id="btn-seller-filter-all"');
+      expect(html).toContain('id="dash-seller-inactive-notice"');
+      expect(html).toContain('id="dash-seller-inactive-notice-text"');
+      expect(html).toContain('id="seller-empty-text"');
+
+      // Comprobar estado inicial predeterminado: Solo Activos tiene clase 'active'
+      expect(html).toMatch(/id="btn-seller-filter-active"[^>]*class="[^"]*active[^"]*"/);
+      expect(html).not.toMatch(/id="btn-seller-filter-all"[^>]*class="[^"]*active[^"]*"/);
+
+      // Comprobar handlers de alternancia
+      expect(html).toContain("onclick=\"setSellerFilterMode('active_only')\"");
+      expect(html).toContain("onclick=\"setSellerFilterMode('all')\"");
+
+      // Comprobar reglas CSS para el selector y aviso
+      expect(css).toContain('.dash-seller-switch');
+      expect(css).toContain('.dash-seller-inactive-notice');
+      expect(css).toContain('@media (max-width: 640px)');
+    });
+  });
 });

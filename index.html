@@ -479,8 +479,21 @@
                             </div>
                             <span style="font-size: 0.75rem; color: var(--text-secondary);">Comparativa de resultados del período (ventas y margen bruto) vs cartera activa asignada (stock nominal) con carteras independientes</span>
                         </div>
-                        <span class="badge bg-neutral" style="font-size: 0.72rem;">Carteras Independientes</span>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                            <div class="dash-seller-switch filter-pills-group" role="group" aria-label="Filtro de Comerciales">
+                                <button type="button" id="btn-seller-filter-active" class="filter-pill active" onclick="setSellerFilterMode('active_only')">Solo Activos</button>
+                                <button type="button" id="btn-seller-filter-all" class="filter-pill" onclick="setSellerFilterMode('all')">Histórico Completo</button>
+                            </div>
+                            <span class="badge bg-neutral" style="font-size: 0.72rem;">Carteras Independientes</span>
+                        </div>
                     </div>
+
+                    <!-- Nota discreta contextual cuando en 'Solo Activos' hay ventas de excolaboradores en el consolidado -->
+                    <div id="dash-seller-inactive-notice" class="dash-seller-inactive-notice" style="display: none;">
+                        <span class="notice-icon">ℹ️</span>
+                        <span id="dash-seller-inactive-notice-text"></span>
+                    </div>
+
                     <div id="seller-chart-container" style="flex-grow: 1; position: relative;">
                         <div id="seller-canvas-container" style="position: relative; width: 100%; height: 260px; min-width: 0;">
                             <canvas id="sellerChart"></canvas>
@@ -488,7 +501,7 @@
                         <div id="seller-empty-container" class="dash-empty-state-box" style="display: none;">
                             <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">👥</div>
                             <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Actividad Comercial Asignada</div>
-                            <div style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">
+                            <div id="seller-empty-text" style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">
                                 No se registran cierres ni carteras comerciales asignadas a vendedores en el período seleccionado.
                             </div>
                         </div>

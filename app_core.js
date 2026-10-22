@@ -1322,6 +1322,8 @@ if (typeof window !== 'undefined') {
     if (typeof updateOppSortIcons !== 'undefined') window.updateOppSortIcons = updateOppSortIcons;
     if (typeof setOppStatusFilter !== 'undefined') window.setOppStatusFilter = setOppStatusFilter;
     if (typeof getOppStatusFilter !== 'undefined') window.getOppStatusFilter = getOppStatusFilter;
+    if (typeof setSellerFilterMode !== 'undefined') window.setSellerFilterMode = setSellerFilterMode;
+    if (typeof getSellerFilterMode !== 'undefined') window.getSellerFilterMode = getSellerFilterMode;
     if (typeof renderList !== 'undefined') window.renderList = renderList;
 }
 if (typeof module !== 'undefined' && module.exports) {
@@ -1344,6 +1346,8 @@ if (typeof module !== 'undefined' && module.exports) {
         getProjPaymentFilter: typeof getProjPaymentFilter !== 'undefined' ? getProjPaymentFilter : undefined,
         setOppStatusFilter: typeof setOppStatusFilter !== 'undefined' ? setOppStatusFilter : undefined,
         getOppStatusFilter: typeof getOppStatusFilter !== 'undefined' ? getOppStatusFilter : undefined,
+        setSellerFilterMode: typeof setSellerFilterMode !== 'undefined' ? setSellerFilterMode : undefined,
+        getSellerFilterMode: typeof getSellerFilterMode !== 'undefined' ? getSellerFilterMode : undefined,
         renderList: typeof renderList !== 'undefined' ? renderList : undefined,
         renderSheetTable: typeof renderSheetTable !== 'undefined' ? renderSheetTable : undefined,
         renderClientExpedienteSection: typeof renderClientExpedienteSection !== 'undefined' ? renderClientExpedienteSection : undefined,
@@ -4630,6 +4634,42 @@ function getFilteredProspects() {
     };
 }
 
+let currentSellerFilterMode = 'active_only';
+
+function setSellerFilterMode(mode) {
+    if (mode === 'active_only' || mode === 'all') {
+        currentSellerFilterMode = mode;
+        updateSellerFilterButtons();
+        if (typeof renderDashboard === 'function') {
+            renderDashboard();
+        }
+    }
+}
+
+function getSellerFilterMode() {
+    return currentSellerFilterMode;
+}
+
+function updateSellerFilterButtons() {
+    if (typeof document === 'undefined') return;
+    const btnActive = document.getElementById('btn-seller-filter-active');
+    const btnAll = document.getElementById('btn-seller-filter-all');
+    if (btnActive) {
+        if (currentSellerFilterMode === 'active_only') {
+            btnActive.classList.add('active');
+        } else {
+            btnActive.classList.remove('active');
+        }
+    }
+    if (btnAll) {
+        if (currentSellerFilterMode === 'all') {
+            btnAll.classList.add('active');
+        } else {
+            btnAll.classList.remove('active');
+        }
+    }
+}
+
 function renderDashboard() {
     const filterRes = getFilteredProspects();
     const select = document.getElementById('dash-time-filter');
@@ -5353,13 +5393,43 @@ function renderCharts(filterRes) {
     const lostSellers = filterRes && filterRes.flujoPerdidas ? filterRes.flujoPerdidas : [];
     const activeSellersList = filterRes && filterRes.stockActivo ? filterRes.stockActivo : [];
 
+    updateSellerFilterButtons();
+
     const sellerStats = typeof CrmDashboardCalc !== 'undefined'
-        ? CrmDashboardCalc.calculateSellerPerformance(wonSellers, lostSellers, activeSellersList, typeof users !== 'undefined' ? users : [])
-        : { sellers: [], totalSellers: 0 };
+        ? CrmDashboardCalc.calculateSellerPerformance(wonSellers, lostSellers, activeSellersList, typeof users !== 'undefined' ? users : [], { filterMode: currentSellerFilterMode })
+        : { sellers: [], totalSellers: 0, excludedInactiveMetrics: {} };
 
     const sellerCanvasBox = document.getElementById('seller-canvas-container');
     const sellerEmptyBox = document.getElementById('seller-empty-container');
+    const sellerEmptyText = document.getElementById('seller-empty-text');
     const sellerCoverageBadge = document.getElementById('dash-seller-coverage-badge');
+    const sellerInactiveNotice = document.getElementById('dash-seller-inactive-notice');
+    const sellerInactiveNoticeText = document.getElementById('dash-seller-inactive-notice-text');
+
+    // Manejo de la nota contextual sobre comerciales inactivos
+    if (sellerInactiveNotice && sellerInactiveNoticeText) {
+        const excl = sellerStats.excludedInactiveMetrics;
+        if (currentSellerFilterMode === 'active_only' && excl && (excl.ventasGanadas > 0 || excl.pipelineNominal > 0 || excl.countPerdidas > 0)) {
+            const parts = [];
+            if (excl.ventasGanadas > 0) {
+                parts.push(`${formatCurrency(excl.ventasGanadas)} en ventas ganadas`);
+            }
+            if (excl.pipelineNominal > 0) {
+                parts.push(`${formatCurrency(excl.pipelineNominal)} en cartera activa`);
+            }
+            let noticeMsg = 'El consolidado corporativo incluye ';
+            if (parts.length > 0) {
+                noticeMsg += parts.join(' y ') + ' de colaboradores inactivos no listados en esta vista. Seleccione «Histórico Completo» para ver el desglose individual.';
+            } else {
+                noticeMsg += 'operaciones de colaboradores inactivos que no figuran en esta vista. Seleccione «Histórico Completo» para ver el desglose individual.';
+            }
+            sellerInactiveNoticeText.textContent = noticeMsg;
+            sellerInactiveNotice.style.display = 'flex';
+        } else {
+            sellerInactiveNotice.style.display = 'none';
+            sellerInactiveNoticeText.textContent = '';
+        }
+    }
 
     if (chartSeller) { chartSeller.destroy(); chartSeller = null; }
     const sellerCanvas = document.getElementById('sellerChart');
@@ -5375,6 +5445,13 @@ function renderCharts(filterRes) {
         if (sellerCanvasBox) sellerCanvasBox.style.display = 'none';
         if (sellerEmptyBox) sellerEmptyBox.style.display = 'flex';
         if (sellerCoverageBadge) sellerCoverageBadge.style.display = 'none';
+        if (sellerEmptyText) {
+            if (currentSellerFilterMode === 'active_only' && sellerStats.excludedInactiveMetrics && sellerStats.excludedInactiveMetrics.countSellers > 0) {
+                sellerEmptyText.textContent = 'No se registran cierres ni carteras de colaboradores activos en el período seleccionado. Cambie a «Histórico Completo» para consultar registros de excolaboradores.';
+            } else {
+                sellerEmptyText.textContent = 'No se registran cierres ni carteras comerciales asignadas a vendedores en el período seleccionado.';
+            }
+        }
     } else {
         if (sellerEmptyBox) sellerEmptyBox.style.display = 'none';
         if (sellerCanvasBox) sellerCanvasBox.style.display = 'block';
@@ -5453,7 +5530,9 @@ function renderCharts(filterRes) {
                                     const idx = items[0].dataIndex;
                                     const s = sellers[idx];
                                     if (!s) return '';
-                                    const roleBadge = s.role === 'gestor' ? 'Gestor de Ventas' : (s.role === 'vendedor' ? 'Vendedor' : 'Sin Asignar');
+                                    const roleBadge = s.isInactive
+                                        ? (s.role === 'gestor' ? 'Gestor de Ventas - Inactivo' : (s.role === 'vendedor' ? 'Vendedor - Inactivo' : 'Sin Asignar'))
+                                        : (s.role === 'gestor' ? 'Gestor de Ventas' : (s.role === 'vendedor' ? 'Vendedor' : 'Sin Asignar'));
                                     return `${s.nombre} [${roleBadge}]`;
                                 },
                                 afterTitle: function(context) {

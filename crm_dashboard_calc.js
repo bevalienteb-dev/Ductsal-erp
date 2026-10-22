@@ -816,43 +816,66 @@
      * Ningún gestor recibe operaciones asignadas a un vendedor, y ningún vendedor recibe operaciones de un gestor.
      * Los resultados individuales se consolidan sin duplicados conciliando con el total de la empresa.
      * No asume 100% de margen e informa la cobertura de costos por vendedor/gestor.
+     *
+     * Opciones de Filtrado (options):
+     * - filterMode: 'active_only' (predeterminado) | 'all'
+     *   - 'active_only': Incluye exclusivamente comerciales cuyo estado actual sea activo (activo === true).
+     *   - 'all' (Histórico completo): Incluye comerciales activos e inactivos con actividad relevante.
      */
-    function calculateSellerPerformance(wonList, lostList, activeList, userDirectory = []) {
+    function calculateSellerPerformance(wonList, lostList, activeList, userDirectory = [], options = {}) {
+        let filterMode = 'active_only';
+        if (typeof options === 'string') {
+            filterMode = options === 'all' ? 'all' : 'active_only';
+        } else if (options && typeof options === 'object') {
+            if (options.filterMode === 'all' || options.includeInactive === true) {
+                filterMode = 'all';
+            } else {
+                filterMode = 'active_only';
+            }
+        }
+
         const usersById = {};
         const usersByEmail = {};
         const usersByName = {};
         const sellersMap = {};
 
-        // 1. Indexar directorio de usuarios
+        // 1. Indexar directorio de usuarios (activos e inactivos)
+        // Permite recuperar el nombre y rol canónico de todos los usuarios comerciales, incluso inactivos.
         (userDirectory || []).forEach(u => {
-            if (!u || u.activo === false) return;
+            if (!u) return;
             const uId = String(u.id);
             const role = String(u.role || '').toLowerCase().trim();
             const email = String(u.email || '').toLowerCase().trim();
             const nombre = String(u.nombre || '').trim();
             const normName = nombre.toLowerCase();
+            const isActivo = u.activo !== false;
 
             const userObj = {
                 id: uId,
-                nombre: nombre || `Usuario ${uId}`,
+                nombre: nombre || (role === 'gestor' ? `Gestor ${uId}` : `Usuario ${uId}`),
                 email: email,
                 role: role,
-                activo: u.activo !== false
+                activo: isActivo
             };
 
             usersById[uId] = userObj;
             if (email) usersByEmail[email] = userObj;
             if (normName) usersByName[normName] = userObj;
 
-            // Pre-registrar en sellersMap perfiles comerciales activos (vendedor o gestor)
+            // Pre-registrar en sellersMap perfiles comerciales (vendedor o gestor)
             if (role === 'vendedor' || role === 'gestor') {
                 const roleLabel = role === 'gestor' ? 'Gestor' : 'Vendedor';
+                const nombreConRol = isActivo
+                    ? `${userObj.nombre} (${roleLabel})`
+                    : `${userObj.nombre} (${roleLabel} - Inactivo)`;
+
                 sellersMap[uId] = {
                     sellerId: uId,
                     nombre: userObj.nombre,
-                    nombreConRol: `${userObj.nombre} (${roleLabel})`,
+                    nombreConRol: nombreConRol,
                     role: role,
                     roleLabel: roleLabel,
+                    isInactive: !isActivo,
                     ventasGanadas: 0,
                     costoGanadas: 0,
                     precioConCosto: 0,
@@ -872,18 +895,29 @@
             }
         });
 
-        function ensureSellerEntry(id, nombre, role) {
+        function ensureSellerEntry(id, nombre, role, isInactive = false) {
             const key = String(id);
             if (!sellersMap[key]) {
-                const roleLabel = role === 'gestor' ? 'Gestor' : (role === 'vendedor' ? 'Vendedor' : 'Sin Asignar');
-                const displayName = nombre || (role === 'gestor' ? `Gestor ${key}` : (role === 'vendedor' ? `Vendedor ${key}` : 'Sin Asignar'));
-                const nombreConRol = role === 'sin_asignar' ? displayName : `${displayName} (${roleLabel})`;
+                const baseRole = role || 'vendedor';
+                const roleLabel = baseRole === 'gestor' ? 'Gestor' : (baseRole === 'vendedor' ? 'Vendedor' : 'Sin Asignar');
+                const displayName = nombre || (baseRole === 'gestor' ? `Gestor ${key}` : (baseRole === 'vendedor' ? `Vendedor ${key}` : 'Sin Asignar'));
+
+                let nombreConRol;
+                if (baseRole === 'sin_asignar') {
+                    nombreConRol = displayName;
+                } else if (isInactive) {
+                    nombreConRol = `${displayName} (${roleLabel} - Inactivo)`;
+                } else {
+                    nombreConRol = `${displayName} (${roleLabel})`;
+                }
+
                 sellersMap[key] = {
                     sellerId: key,
                     nombre: displayName,
                     nombreConRol: nombreConRol,
-                    role: role || 'vendedor',
+                    role: baseRole,
                     roleLabel: roleLabel,
+                    isInactive: !!isInactive,
                     ventasGanadas: 0,
                     costoGanadas: 0,
                     precioConCosto: 0,
@@ -913,7 +947,7 @@
          * En caso de perfiles ambiguos, administrativos o no comerciales, no se infiere y va a 'Sin Asignar'.
          */
         function resolveSeller(p) {
-            if (!p || typeof p !== 'object') return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar');
+            if (!p || typeof p !== 'object') return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar', false);
 
             // 1. Asignación explícita por ID (vendedorId o gestorId)
             let explicitId = null;
@@ -927,26 +961,26 @@
                 if (usersById[explicitId]) {
                     const u = usersById[explicitId];
                     if (u.role === 'vendedor' || u.role === 'gestor') {
-                        return ensureSellerEntry(u.id, u.nombre, u.role);
+                        return ensureSellerEntry(u.id, u.nombre, u.role, !u.activo);
                     }
                     if (p.vendedorRole === 'vendedor' || p.vendedorRole === 'gestor') {
-                        return ensureSellerEntry(explicitId, p.vendedorName || u.nombre, p.vendedorRole);
+                        return ensureSellerEntry(explicitId, p.vendedorName || u.nombre, p.vendedorRole, !u.activo);
                     }
                     // Usuario en usersById pero es manager/admin y no tiene rol comercial: Sin Asignar
-                    return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar');
+                    return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar', false);
                 }
 
                 if (usersByEmail[explicitId.toLowerCase()]) {
                     const u = usersByEmail[explicitId.toLowerCase()];
                     if (u.role === 'vendedor' || u.role === 'gestor') {
-                        return ensureSellerEntry(u.id, u.nombre, u.role);
+                        return ensureSellerEntry(u.id, u.nombre, u.role, !u.activo);
                     }
                 }
 
                 // ID no está en directorio local de usuarios: usar rol y nombre explícitos de la oportunidad
                 const role = (p.vendedorRole || p.gestorRole || (String(explicitId).toLowerCase().includes('ges') ? 'gestor' : 'vendedor')).toLowerCase();
                 const name = p.vendedorName || p.vendedor || (role === 'gestor' ? `Gestor ${explicitId}` : `Vendedor ${explicitId}`);
-                return ensureSellerEntry(explicitId, name, role === 'gestor' ? 'gestor' : 'vendedor');
+                return ensureSellerEntry(explicitId, name, role === 'gestor' ? 'gestor' : 'vendedor', false);
             }
 
             // 2. Asignación por nombre (vendedor / vendedorName / gestor)
@@ -956,11 +990,11 @@
                 if (usersByName[normName]) {
                     const u = usersByName[normName];
                     if (u.role === 'vendedor' || u.role === 'gestor') {
-                        return ensureSellerEntry(u.id, u.nombre, u.role);
+                        return ensureSellerEntry(u.id, u.nombre, u.role, !u.activo);
                     }
                 }
                 const role = p.vendedorRole || (normName.includes('gestor') ? 'gestor' : 'vendedor');
-                return ensureSellerEntry(nameCandidate.trim(), nameCandidate.trim(), role);
+                return ensureSellerEntry(nameCandidate.trim(), nameCandidate.trim(), role, false);
             }
 
             // 3. Creador original (createdBy) solo si no hay vendedor asignado y el creador es gestor o vendedor
@@ -969,19 +1003,19 @@
                 if (usersById[cId]) {
                     const u = usersById[cId];
                     if (u.role === 'vendedor' || u.role === 'gestor') {
-                        return ensureSellerEntry(u.id, u.nombre, u.role);
+                        return ensureSellerEntry(u.id, u.nombre, u.role, !u.activo);
                     }
                     // Si el creador es manager/admin: no inferir, va a 'Sin Asignar'
-                    return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar');
+                    return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar', false);
                 }
                 if (p.createdByRole === 'vendedor' || p.createdByRole === 'gestor') {
                     const name = p.createdByName || p.creado_por || (p.createdByRole === 'gestor' ? `Gestor ${cId}` : `Vendedor ${cId}`);
-                    return ensureSellerEntry(cId, name, p.createdByRole);
+                    return ensureSellerEntry(cId, name, p.createdByRole, false);
                 }
             }
 
             // 4. Perfil ambiguo o no asignado
-            return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar');
+            return ensureSellerEntry('sin_asignar', 'Sin Asignar', 'sin_asignar', false);
         }
 
         // Acumular ventas ganadas
@@ -1048,23 +1082,60 @@
             return s;
         });
 
-        const activeSellers = sellersList.filter(s =>
+        // Métricas de comerciales inactivos que quedan excluidos en la vista 'active_only'
+        const excludedInactiveMetrics = {
+            countSellers: 0,
+            ventasGanadas: 0,
+            costoGanadas: 0,
+            precioConCosto: 0,
+            margen: 0,
+            pipelineNominal: 0,
+            pipelinePonderado: 0,
+            countGanadas: 0,
+            countPerdidas: 0,
+            countActivas: 0
+        };
+
+        sellersList.forEach(s => {
+            if (s.isInactive) {
+                const hasAct = s.ventasGanadas > 0 || s.countPerdidas > 0 || s.pipelineNominal > 0 || s.countActivas > 0;
+                if (hasAct) {
+                    excludedInactiveMetrics.countSellers++;
+                    excludedInactiveMetrics.ventasGanadas += s.ventasGanadas;
+                    excludedInactiveMetrics.costoGanadas += s.costoGanadas;
+                    excludedInactiveMetrics.precioConCosto += s.precioConCosto;
+                    excludedInactiveMetrics.margen += s.margen;
+                    excludedInactiveMetrics.pipelineNominal += s.pipelineNominal;
+                    excludedInactiveMetrics.pipelinePonderado += s.pipelinePonderado;
+                    excludedInactiveMetrics.countGanadas += s.countGanadas;
+                    excludedInactiveMetrics.countPerdidas += s.countPerdidas;
+                    excludedInactiveMetrics.countActivas += s.countActivas;
+                }
+            }
+        });
+
+        // Filtrar comerciales con actividad relevante
+        const withActivity = sellersList.filter(s =>
             s.ventasGanadas > 0 || s.countPerdidas > 0 || s.pipelineNominal > 0 || s.countActivas > 0
         );
 
-        const filteredSellers = (activeSellers.length > 0 ? activeSellers : sellersList).filter(s => {
-            if (s.sellerId === 'sin_asignar') {
-                return (s.ventasGanadas > 0 || s.countPerdidas > 0 || s.pipelineNominal > 0 || s.countActivas > 0);
-            }
-            return true;
-        });
+        let filteredSellers = [];
+        if (filterMode === 'all') {
+            filteredSellers = withActivity;
+        } else {
+            // 'active_only': Solo comerciales activos (isInactive !== true)
+            // 'sin_asignar' se incluye solo si tiene actividad comercial
+            filteredSellers = withActivity.filter(s => !s.isInactive);
+        }
 
         filteredSellers.sort((a, b) => b.ventasGanadas - a.ventasGanadas || b.pipelineNominal - a.pipelineNominal);
 
         return {
             sellers: filteredSellers,
             totalSellers: filteredSellers.length,
-            allSellersMap: sellersMap
+            allSellersMap: sellersMap,
+            filterMode: filterMode,
+            excludedInactiveMetrics: excludedInactiveMetrics
         };
     }
 
