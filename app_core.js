@@ -1392,6 +1392,7 @@ function reRenderApp() {
             const p = prospects.find(x => x.id === currentProspectId);
             if (p) {
                 renderTracker(p); renderInfo(p); renderLogs(p);
+                renderFollowUpSummary(p);
                 if (p.estado === 'ganado') renderFinancials(p);
             }
         }
@@ -1742,7 +1743,11 @@ function showView(viewId) {
     document.getElementById(viewId).classList.add('active');
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
-    if (viewId === 'list-view') { document.getElementById('nav-list').classList.add('active'); renderList(); }
+    if (viewId === 'list-view') {
+        document.getElementById('nav-list').classList.add('active');
+        renderList();
+        if (typeof switchListMode === 'function') switchListMode(currentListMode);
+    }
     if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
     if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
     if (viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
@@ -2101,9 +2106,21 @@ async function toggleUserStatus(id) {
 const formatCurrency = (val) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val || 0);
 const formatDate = (date) => {
     if (!date) return '-';
-    let d = new Date(date);
-    if (isNaN(d)) return '-';
-    return d.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+    if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+        const [y, m, d] = date.trim().split('-').map(Number);
+        return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+    }
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleString('es-SV', {
+        timeZone: 'America/El_Salvador',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
 };
 const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));
 
@@ -2664,6 +2681,544 @@ function setOppStatusFilter(filterKey) {
         renderList();
     }
 }
+
+// ==========================================================================
+// CONTROL DIARIO DE SEGUIMIENTO COMERCIAL Y AGENDA DEL VENDEDOR (FASE 1)
+// ==========================================================================
+let currentListMode = 'agenda'; // 'agenda' | 'pipeline'
+let currentAgendaFilter = 'todas';
+
+function switchListMode(mode) {
+    if (mode === 'agenda' || mode === 'pipeline') {
+        currentListMode = mode;
+        const agendaContainer = document.getElementById('agenda-view-container');
+        const pipelineContainer = document.getElementById('pipeline-view-container');
+        const tabAgenda = document.getElementById('tab-agenda-mode');
+        const tabPipeline = document.getElementById('tab-pipeline-mode');
+
+        if (mode === 'agenda') {
+            if (agendaContainer) agendaContainer.style.display = 'block';
+            if (pipelineContainer) pipelineContainer.style.display = 'none';
+            if (tabAgenda) tabAgenda.className = 'btn-primary';
+            if (tabPipeline) tabPipeline.className = 'btn-secondary';
+            renderDailyAgenda();
+        } else {
+            if (agendaContainer) agendaContainer.style.display = 'none';
+            if (pipelineContainer) pipelineContainer.style.display = 'block';
+            if (tabAgenda) tabAgenda.className = 'btn-secondary';
+            if (tabPipeline) tabPipeline.className = 'btn-primary';
+            renderList();
+        }
+    }
+}
+
+function setAgendaFilter(filterKey) {
+    currentAgendaFilter = filterKey;
+    renderDailyAgenda();
+}
+
+function renderDailyAgenda() {
+    if (typeof CrmFollowUpCalc === 'undefined') return;
+
+    const tbody = document.getElementById('agenda-table-body');
+    const emptyState = document.getElementById('agenda-empty-state');
+    const tableWrapper = document.getElementById('agenda-table-wrapper');
+    const counterBadge = document.getElementById('agenda-badge-counter');
+    const sellerWrap = document.getElementById('agenda-seller-filter-wrap');
+    const sellerSelect = document.getElementById('agenda-seller-select');
+    const escaladasPill = document.getElementById('filter-agenda-escaladas');
+
+    const isManagerOrGestor = currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor');
+
+    // Manejar selector de comercial y botón de escaladas para Manager / Gestor
+    if (sellerWrap) {
+        sellerWrap.style.display = isManagerOrGestor ? 'flex' : 'none';
+        if (isManagerOrGestor && sellerSelect && sellerSelect.options.length <= 1) {
+            const activeUsers = users.filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
+            activeUsers.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = `${u.nombre || u.id} (${u.role})`;
+                sellerSelect.appendChild(opt);
+            });
+        }
+    }
+
+    if (escaladasPill) {
+        escaladasPill.style.display = isManagerOrGestor ? 'inline-flex' : 'none';
+    }
+
+    // Filtrar universo de oportunidades por comercial si se seleccionó en el dropdown
+    let targetUniverse = prospects;
+    if (isManagerOrGestor && sellerSelect && sellerSelect.value !== 'all') {
+        const selId = sellerSelect.value;
+        targetUniverse = prospects.filter(p => p && (p.vendedorId === selId || p.createdBy === selId));
+    }
+
+    const agendaData = CrmFollowUpCalc.generateAgenda(targetUniverse, currentUser, currentAgendaFilter);
+
+    // Actualizar contadores en píldoras
+    const counts = agendaData.counts;
+    const elTodas = document.getElementById('count-agenda-todas');
+    if (elTodas) elTodas.textContent = counts.total;
+    const elVencidas = document.getElementById('count-agenda-vencidas');
+    if (elVencidas) elVencidas.textContent = counts.vencidas;
+    const elHoy = document.getElementById('count-agenda-hoy');
+    if (elHoy) elHoy.textContent = counts.hoy;
+    const elProximas = document.getElementById('count-agenda-proximas');
+    if (elProximas) elProximas.textContent = counts.proximas;
+    const elPendientes = document.getElementById('count-agenda-pendientes');
+    if (elPendientes) elPendientes.textContent = counts.pendientes_decision;
+    const elEscaladas = document.getElementById('count-agenda-escaladas');
+    if (elEscaladas) elEscaladas.textContent = counts.escaladas_gerencia;
+
+    // Badge superior (vencidas + hoy + pendientes)
+    const urgentesCount = counts.vencidas + counts.hoy + counts.pendientes_decision;
+    if (counterBadge) {
+        counterBadge.textContent = urgentesCount;
+        counterBadge.style.display = urgentesCount > 0 ? 'inline-block' : 'none';
+    }
+
+    // Actualizar clases activas en píldoras
+    ['todas', 'vencidas', 'hoy', 'proximas', 'pendientes_decision', 'escaladas_gerencia'].forEach(key => {
+        const pillId = key === 'pendientes_decision' ? 'filter-agenda-pendientes' : (key === 'escaladas_gerencia' ? 'filter-agenda-escaladas' : `filter-agenda-${key}`);
+        const btn = document.getElementById(pillId);
+        if (btn) {
+            if (key === currentAgendaFilter) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (agendaData.items.length === 0) {
+        if (emptyState) emptyState.style.display = 'block';
+        if (tableWrapper) tableWrapper.style.display = 'none';
+        return;
+    }
+
+    if (emptyState) emptyState.style.display = 'none';
+    if (tableWrapper) tableWrapper.style.display = 'block';
+
+    agendaData.items.forEach(item => {
+        const p = item.prospect;
+        const c = item.classification;
+        const tr = document.createElement('tr');
+        tr.classList.add('cursor-pointer');
+        tr.onclick = () => openDetail(item.id);
+
+        let rowClass = '';
+        let badgeHtml = '';
+
+        if (c.isEscaladoGerencia) {
+            rowClass = 'agenda-row-vencida';
+            badgeHtml = `<span class="badge badge-urgency-escalada">🚨 Escalada Gerencia</span>`;
+        } else if (c.status === 'vencida') {
+            rowClass = 'agenda-row-vencida';
+            badgeHtml = `<span class="badge badge-urgency-vencida">🚨 Vencida (${c.dias_retraso}d)</span>`;
+        } else if (c.status === 'hoy') {
+            rowClass = 'agenda-row-hoy';
+            badgeHtml = `<span class="badge badge-urgency-hoy">📌 Para Hoy</span>`;
+        } else if (c.status === 'proxima') {
+            rowClass = 'agenda-row-proxima';
+            badgeHtml = `<span class="badge badge-urgency-proxima">⏳ Próxima</span>`;
+        } else if (c.status === 'pendiente_decision') {
+            rowClass = 'agenda-row-decision';
+            badgeHtml = `<span class="badge badge-urgency-decision">⚠️ Decisión (${c.intentos_fallidos} int.)</span>`;
+        } else {
+            badgeHtml = `<span class="badge bg-neutral">📋 Sin Seguimiento</span>`;
+        }
+
+        if (rowClass) tr.classList.add(rowClass);
+
+        // Última gestión
+        let ultGestionHtml = '<span style="color:var(--text-muted); font-size:0.8rem;">Sin contactos previos</span>';
+        if (c.ultimo_contacto && c.ultimo_contacto.fecha) {
+            const dateStr = formatDate(c.ultimo_contacto.fecha);
+            const canalLbl = CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[c.ultimo_contacto.canal] || c.ultimo_contacto.canal;
+            const resLbl = CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[c.ultimo_contacto.resultado] || c.ultimo_contacto.resultado;
+            ultGestionHtml = `
+                <div style="font-size:0.82rem;"><strong>${escapeHtmlDoc(canalLbl)}</strong> (${dateStr})</div>
+                <div style="font-size:0.75rem; color:var(--text-secondary); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtmlDoc(resLbl)}">${escapeHtmlDoc(resLbl)}</div>
+            `;
+        }
+
+        // Próxima acción / motivo
+        let proxAccionHtml = '';
+        if (c.proxima_accion && c.proxima_accion.fecha) {
+            let satBadge = '';
+            const workCal = (typeof CrmWorkCalendar !== 'undefined' ? CrmWorkCalendar : (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null));
+            if (workCal && workCal.isHalfDay(c.proxima_accion.fecha)) {
+                satBadge = ' <span style="font-size:0.7rem; color:var(--brand-gold); background:rgba(255,204,77,0.15); padding:1px 4px; border-radius:3px;" title="Sábado: Media jornada 8:00 a 12:00">Sáb 8-12h</span>';
+            }
+            proxAccionHtml = `
+                <div style="font-size:0.82rem; font-weight:600; color:white;">📅 ${c.proxima_accion.fecha}${satBadge}</div>
+                <div style="font-size:0.75rem; color:var(--text-secondary); max-width:220px;" title="${escapeHtmlDoc(c.proxima_accion.descripcion || c.motivo_agenda)}">${escapeHtmlDoc(c.proxima_accion.descripcion || c.motivo_agenda)}</div>
+            `;
+        } else {
+            proxAccionHtml = `<div style="font-size:0.78rem; color:var(--warning); line-height:1.3;">${escapeHtmlDoc(c.motivo_agenda)}</div>`;
+        }
+
+        const clientName = getClientName(item.clientId);
+
+        tr.innerHTML = `
+            <td>${badgeHtml}</td>
+            <td><strong style="color:var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
+            <td>
+                <div style="font-weight:600; color:white;">${escapeHtmlDoc(item.proyecto)}</div>
+                <div style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtmlDoc(clientName)}</div>
+            </td>
+            <td><span class="badge" style="text-transform:capitalize;">${escapeHtmlDoc(item.etapa)}</span></td>
+            <td><span style="font-size:0.85rem; color:var(--text-secondary);">${escapeHtmlDoc(item.vendedorName)}</span></td>
+            <td>${ultGestionHtml}</td>
+            <td>${proxAccionHtml}</td>
+            <td style="text-align:right;" onclick="event.stopPropagation()">
+                <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn-success" style="padding:4px 8px; font-size:0.75rem;" onclick="openRecordFollowUpModal('${item.id}')" title="Registrar contacto comercial">📞 Gestionar</button>
+                    <button class="btn-secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="openDetail('${item.id}')" title="Ver expediente">👁️</button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function openRecordFollowUpModal(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    currentProspectId = prospectId;
+    const idInput = document.getElementById('followup-prospect-id');
+    if (idInput) idInput.value = prospectId;
+
+    const subEl = document.getElementById('followup-modal-subtitle');
+    if (subEl) {
+        subEl.textContent = `Proyecto: ${p.proyecto || '-'} (${p.codigo || p.id.slice(-4)}) | Cliente: ${getClientName(p.clientId)}`;
+    }
+
+    const clasif = typeof CrmFollowUpCalc !== 'undefined' ? CrmFollowUpCalc.classifyFollowUp(p, new Date()) : { intentos_fallidos: 0, llamada_obligatoria: false };
+    const intentos = clasif.intentos_fallidos || 0;
+
+    // Alerta contextual
+    const alertBox = document.getElementById('followup-cadence-alert-box');
+    if (alertBox) {
+        if (intentos >= 5 || clasif.isEscaladoGerencia) {
+            alertBox.style.display = 'block';
+            alertBox.style.background = 'rgba(239, 68, 68, 0.2)';
+            alertBox.style.border = '1px solid var(--danger)';
+            alertBox.style.color = '#fca5a5';
+            alertBox.innerHTML = `<strong>🚨 Oportunidad Escalada a Gerencia:</strong> Esta oportunidad acumula ${intentos} intentos sin respuesta del cliente. La continuidad debe ser revisada por la gerencia.`;
+        } else if (intentos >= 3 || clasif.isDecisionVendedor) {
+            alertBox.style.display = 'block';
+            alertBox.style.background = 'rgba(245, 158, 11, 0.2)';
+            alertBox.style.border = '1px solid var(--warning)';
+            alertBox.style.color = '#fde68a';
+            alertBox.innerHTML = `<strong>⚠️ Decisión Comercial Requerida:</strong> Acumula 3 intentos sin respuesta. Debes justificar la continuidad para programar un siguiente contacto.`;
+        } else if (clasif.llamada_obligatoria) {
+            alertBox.style.display = 'block';
+            alertBox.style.background = 'rgba(59, 130, 246, 0.2)';
+            alertBox.style.border = '1px solid #3b82f6';
+            alertBox.style.color = '#bfdbfe';
+            alertBox.innerHTML = `<strong>📞 Llamada Obligatoria:</strong> Al no haber respuesta en el primer intento, la cadencia comercial establece que el segundo contacto debe realizarse por llamada telefónica.`;
+        } else {
+            alertBox.style.display = 'none';
+        }
+    }
+
+    // Canal y resultado iniciales
+    const canalEl = document.getElementById('followup-canal');
+    const resultadoEl = document.getElementById('followup-resultado');
+    if (canalEl) {
+        canalEl.value = clasif.llamada_obligatoria ? 'llamada' : 'llamada';
+    }
+    if (resultadoEl) {
+        resultadoEl.value = 'respondio_evaluando';
+    }
+
+    // Detalle limpio
+    const detalleEl = document.getElementById('followup-detalle');
+    if (detalleEl) detalleEl.value = '';
+
+    // Fecha de entrega de cotización (si no existe y está en cotizacion/negociacion)
+    const fechaEntregaBox = document.getElementById('followup-fecha-entrega-box');
+    const fechaEntregaInput = document.getElementById('followup-fecha-entrega-oferta');
+    const cadencia = (p.seguimiento && p.seguimiento.cadencia) || {};
+    if (fechaEntregaBox) {
+        const etapa = p.etapa || 'prospecto';
+        if ((etapa === 'cotizacion' || etapa === 'negociacion') && !cadencia.fecha_entrega_oferta) {
+            fechaEntregaBox.style.display = 'block';
+            if (fechaEntregaInput) fechaEntregaInput.value = '';
+        } else {
+            fechaEntregaBox.style.display = 'none';
+        }
+    }
+
+    // Sección de justificación tras 3 intentos
+    const decisionBox = document.getElementById('followup-decision-box');
+    const justifInput = document.getElementById('followup-justificacion');
+    if (decisionBox) {
+        decisionBox.style.display = intentos >= 3 ? 'block' : 'none';
+        if (justifInput) justifInput.value = cadencia.justificacion_continuidad || '';
+    }
+
+    // Cuadro explicativo de cliente no continúa (oculto por defecto)
+    const noContinuaBox = document.getElementById('followup-no-continua-box');
+    if (noContinuaBox) noContinuaBox.style.display = 'none';
+
+    // Próxima acción sugerida
+    updateSuggestedFollowUpDate();
+
+    // Mostrar modal
+    const modal = document.getElementById('followUpModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function updateSuggestedFollowUpDate() {
+    if (typeof CrmFollowUpCalc === 'undefined') return;
+    const resultadoEl = document.getElementById('followup-resultado');
+    const proxFechaEl = document.getElementById('followup-prox-fecha');
+    const sugerenciaEl = document.getElementById('followup-prox-sugerencia');
+    if (!resultadoEl || !proxFechaEl) return;
+
+    const res = resultadoEl.value;
+    const p = prospects.find(x => x.id === currentProspectId);
+    const intentos = (p && p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.intentos_fallidos) || 0;
+
+    const canalEl = document.getElementById('followup-canal');
+    const canal = canalEl ? canalEl.value : 'llamada';
+    const isInternal = canal === 'interno';
+
+    const suggested = CrmFollowUpCalc.suggestNextContactDate(new Date(), res, intentos, { channel: canal, isInternal });
+    if (suggested) {
+        const ymd = CrmFollowUpCalc.formatDateYMD(suggested);
+        proxFechaEl.value = ymd;
+    } else {
+        if (res === 'no_continua') {
+            proxFechaEl.value = '';
+        }
+    }
+
+    if (sugerenciaEl) {
+        if (res === 'solicito_tiempo') {
+            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +15 días calendario acordados';
+        } else if (res === 'sin_respuesta') {
+            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +2 días hábiles (salta fines de semana y asuetos)';
+        } else if (res === 'solicito_cambios') {
+            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +5 días hábiles para cotizar cambios';
+        } else if (res === 'no_continua') {
+            sugerenciaEl.textContent = '💡 Cliente no continúa: No se programa seguimiento automático (la oportunidad no se marca como perdida).';
+        } else if (res === 'nota_interna') {
+            sugerenciaEl.textContent = '💡 Nota interna: No altera la cadencia comercial con el cliente.';
+        } else {
+            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +2 días hábiles';
+        }
+
+        if (suggested) {
+            const ymd = CrmFollowUpCalc.formatDateYMD(suggested);
+            const workCal = (typeof CrmWorkCalendar !== 'undefined' ? CrmWorkCalendar : (typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null));
+            if (isInternal && workCal && workCal.isHalfDay(ymd)) {
+                sugerenciaEl.textContent += ' [Programado para sábado: Media jornada interna 8:00 - 12:00]';
+            }
+        }
+    }
+}
+
+function handleFollowUpCanalChange() {
+    const canalEl = document.getElementById('followup-canal');
+    const resultadoEl = document.getElementById('followup-resultado');
+    if (!canalEl || !resultadoEl) return;
+
+    if (canalEl.value === 'interno') {
+        let optInterna = Array.from(resultadoEl.options).find(o => o.value === 'nota_interna');
+        if (optInterna) optInterna.style.display = 'block';
+        resultadoEl.value = 'nota_interna';
+    } else {
+        if (resultadoEl.value === 'nota_interna') {
+            resultadoEl.value = 'respondio_evaluando';
+        }
+    }
+    updateSuggestedFollowUpDate();
+}
+
+function handleFollowUpResultadoChange() {
+    const resultadoEl = document.getElementById('followup-resultado');
+    const decisionBox = document.getElementById('followup-decision-box');
+    const noContinuaBox = document.getElementById('followup-no-continua-box');
+    const p = prospects.find(x => x.id === currentProspectId);
+    const intentos = (p && p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.intentos_fallidos) || 0;
+
+    if (decisionBox) {
+        decisionBox.style.display = (resultadoEl.value === 'sin_respuesta' && intentos >= 3) ? 'block' : 'none';
+    }
+    if (noContinuaBox) {
+        noContinuaBox.style.display = (resultadoEl.value === 'no_continua') ? 'block' : 'none';
+    }
+    updateSuggestedFollowUpDate();
+}
+
+async function processSaveFollowUp(event) {
+    if (event) event.preventDefault();
+    const prospectId = document.getElementById('followup-prospect-id').value;
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const canal = document.getElementById('followup-canal').value;
+    const resultado = document.getElementById('followup-resultado').value;
+    const detalle = document.getElementById('followup-detalle').value.trim();
+
+    if (!detalle) {
+        return alert('Por favor describe el detalle de la gestión.');
+    }
+
+    const proxFecha = document.getElementById('followup-prox-fecha').value;
+    const proxTipo = document.getElementById('followup-prox-tipo').value;
+    const proxDesc = document.getElementById('followup-prox-desc').value.trim();
+
+    const fechaEntregaInput = document.getElementById('followup-fecha-entrega-oferta');
+    const fechaEntregaOferta = fechaEntregaInput && fechaEntregaInput.value ? fechaEntregaInput.value : undefined;
+
+    const justifInput = document.getElementById('followup-justificacion');
+    const justificacionContinuidad = justifInput ? justifInput.value.trim() : '';
+
+    const payload = {
+        canal,
+        resultado,
+        detalle,
+        proxima_accion: proxFecha ? { fecha: proxFecha, tipo: proxTipo, descripcion: proxDesc } : undefined,
+        fecha_entrega_oferta: fechaEntregaOferta,
+        justificacion_continuidad: justificacionContinuidad || undefined
+    };
+
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
+
+    const btn = document.getElementById('btn-save-followup');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await CrmCommercial.recordFollowUp(fb, { prospectId, followUp: payload, dbSuffix: DB_SUFFIX });
+        if (res && res.seguimiento) {
+            p.seguimiento = res.seguimiento;
+            if (!Array.isArray(p.logs)) p.logs = [];
+            const canalLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[canal]) || canal;
+            const resLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[resultado]) || resultado;
+            const logText = `[GESTIÓN COMERCIAL] ${canalLbl} -> ${resLbl}. Detalle: ${detalle}`;
+            p.logs.push({ text: `(${currentUser ? currentUser.nombre : 'Comercial'}) ${logText}`, date: new Date().toISOString(), auto: false });
+        }
+
+        closeModal('followUpModal');
+        renderDailyAgenda();
+        renderList();
+
+        if (currentProspectId === prospectId) {
+            renderFollowUpSummary(p);
+            renderLogs(p);
+        }
+    } catch (err) {
+        alert(CrmCommercial.errorMessage(err));
+        console.error(err);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function renderFollowUpSummary(p) {
+    const badgeEl = document.getElementById('detail-followup-badge');
+    const summaryEl = document.getElementById('detail-followup-summary');
+    if (!summaryEl) return;
+
+    if (!p) {
+        summaryEl.innerHTML = '';
+        return;
+    }
+
+    const clasif = typeof CrmFollowUpCalc !== 'undefined' ? CrmFollowUpCalc.classifyFollowUp(p, new Date()) : null;
+
+    if (badgeEl) {
+        if (!clasif || clasif.status === 'inactivo') {
+            badgeEl.className = 'badge bg-neutral';
+            badgeEl.textContent = (p.estado || 'Activo').toUpperCase();
+        } else if (clasif.isEscaladoGerencia) {
+            badgeEl.className = 'badge badge-urgency-escalada';
+            badgeEl.textContent = '🚨 Escalada a Gerencia';
+        } else if (clasif.status === 'vencida') {
+            badgeEl.className = 'badge badge-urgency-vencida';
+            badgeEl.textContent = `🚨 Vencida (${clasif.dias_retraso}d)`;
+        } else if (clasif.status === 'hoy') {
+            badgeEl.className = 'badge badge-urgency-hoy';
+            badgeEl.textContent = '📌 Para Hoy';
+        } else if (clasif.status === 'proxima') {
+            badgeEl.className = 'badge badge-urgency-proxima';
+            badgeEl.textContent = '⏳ Próxima';
+        } else if (clasif.status === 'pendiente_decision') {
+            badgeEl.className = 'badge badge-urgency-decision';
+            badgeEl.textContent = '⚠️ Decisión';
+        } else {
+            badgeEl.className = 'badge bg-neutral';
+            badgeEl.textContent = '📋 Al día';
+        }
+    }
+
+    const seg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+    const cad = (seg.cadencia && typeof seg.cadencia === 'object') ? seg.cadencia : {};
+    const ult = (seg.ultimo_contacto && typeof seg.ultimo_contacto === 'object') ? seg.ultimo_contacto : null;
+    const prox = (seg.proxima_accion && typeof seg.proxima_accion === 'object') ? seg.proxima_accion : null;
+    const hist = Array.isArray(seg.historial_gestiones) ? seg.historial_gestiones : [];
+
+    const intentos = Number(cad.intentos_fallidos) || 0;
+
+    let ultHtml = '<span style="color:var(--text-muted)">Sin contactos previos registrados</span>';
+    if (ult && ult.fecha) {
+        const canalLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[ult.canal]) || ult.canal;
+        const resLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[ult.resultado]) || ult.resultado;
+        ultHtml = `<strong>${escapeHtmlDoc(canalLbl)}</strong> (${formatDate(ult.fecha)})<br><span style="color:var(--text-secondary)">${escapeHtmlDoc(resLbl)}</span>`;
+    }
+
+    let proxHtml = '<span style="color:var(--text-muted)">Sin próxima acción</span>';
+    if (prox && prox.fecha) {
+        proxHtml = `<strong style="color:white;">📅 ${prox.fecha}</strong> ${prox.descripcion ? `— ${escapeHtmlDoc(prox.descripcion)}` : ''}`;
+    }
+
+    // Historial de gestiones estructuradas
+    let histHtml = '';
+    if (hist.length > 0) {
+        histHtml = `<div style="margin-top:10px; border-top:1px solid var(--panel-border); padding-top:8px;">
+            <div style="font-size:0.78rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">Historial de Gestiones (${hist.length}):</div>`;
+        const reversed = hist.slice().reverse().slice(0, 5); // últimas 5
+        reversed.forEach(g => {
+            const cLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[g.canal]) || g.canal;
+            const rLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[g.resultado]) || g.resultado;
+            histHtml += `
+                <div class="followup-history-item ${!g.es_contacto_valido ? 'no-contact' : ''}">
+                    <div><strong>${formatDate(g.fecha)}</strong> — <strong>${escapeHtmlDoc(cLbl)}</strong> por ${escapeHtmlDoc(g.usuarioNombre || 'Comercial')}</div>
+                    <div style="color:var(--brand-gold);">${escapeHtmlDoc(rLbl)}</div>
+                    ${g.detalle ? `<div style="color:var(--text-secondary); margin-top:2px;">${escapeHtmlDoc(g.detalle)}</div>` : ''}
+                </div>
+            `;
+        });
+        histHtml += `</div>`;
+    }
+
+    summaryEl.innerHTML = `
+        <div style="display:grid; grid-template-columns:1fr; gap:6px; margin-bottom:8px;">
+            <div><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Último Contacto:</span> <div>${ultHtml}</div></div>
+            <div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Próxima Acción:</span> <div>${proxHtml}</div></div>
+            <div style="margin-top:4px;">
+                <span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Cadencia:</span>
+                <span class="badge ${intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral'}" style="font-size:0.75rem;">
+                    ${intentos} de 5 intentos fallidos
+                </span>
+                ${cad.alerta_gerencial ? '<span class="badge badge-urgency-escalada" style="margin-left:4px;">Alerta Gerencial Activa</span>' : ''}
+            </div>
+            ${cad.justificacion_continuidad ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;"><strong>Justificación:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}</div>` : ''}
+        </div>
+        ${histHtml}
+    `;
+}
+
 
 function renderList() {
     let filtered = prospects;
@@ -3428,6 +3983,7 @@ function openDetail(id) {
     }
     document.getElementById('detail-time-in-stage').textContent = `Tiempo en etapa: ${timeInStage} días`;
     renderTracker(p); renderInfo(p); renderLogs(p);
+    renderFollowUpSummary(p);
 }
 
 function renderFinancials(p) {

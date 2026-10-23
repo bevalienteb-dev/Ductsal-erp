@@ -282,6 +282,184 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
     });
   }
 
+  // ---------- daily follow-up management ----------
+  const FOLLOWUP_CHANNELS = ['llamada', 'correo', 'whatsapp', 'reunion', 'interno'];
+  const FOLLOWUP_RESULTS = ['respondio_evaluando', 'solicito_tiempo', 'solicito_cambios', 'sin_respuesta', 'no_continua', 'nota_interna'];
+  const FOLLOWUP_RESULT_LABELS = {
+    respondio_evaluando: 'Cliente respondió y continúa evaluando',
+    solicito_tiempo: 'Cliente solicitó más tiempo',
+    solicito_cambios: 'Cliente solicitó cambios o nueva cotización',
+    sin_respuesta: 'Se intentó contactar y no hubo respuesta',
+    no_continua: 'Cliente confirmó que no desea continuar',
+    nota_interna: 'Nota interna sin contacto con el cliente'
+  };
+  const FOLLOWUP_CHANNEL_LABELS = {
+    llamada: 'Llamada',
+    correo: 'Correo',
+    whatsapp: 'WhatsApp',
+    reunion: 'Reunión',
+    interno: 'Nota Interna'
+  };
+
+  async function recordFollowUp({ caller, prospectId, data, opId }) {
+    reqDocId(prospectId, 'prospectId');
+    reqOpId(opId);
+    data = asObject(data, 'Datos del seguimiento');
+
+    const canal = reqString(data.canal, 'El canal de seguimiento', 50);
+    if (!FOLLOWUP_CHANNELS.includes(canal)) throw bad('Canal de seguimiento inválido');
+
+    const resultado = reqString(data.resultado, 'El resultado del contacto', 50);
+    if (!FOLLOWUP_RESULTS.includes(resultado)) throw bad('Resultado de seguimiento inválido');
+
+    const detalle = reqString(data.detalle, 'El detalle de la gestión', 2000);
+
+    const proximaAccionInput = data.proxima_accion && typeof data.proxima_accion === 'object' ? data.proxima_accion : null;
+    let proximaAccion = null;
+    if (proximaAccionInput && proximaAccionInput.fecha) {
+      proximaAccion = {
+        fecha: reqString(proximaAccionInput.fecha, 'La fecha de próxima acción', 50),
+        tipo: typeof proximaAccionInput.tipo === 'string' ? proximaAccionInput.tipo.trim() : 'llamada',
+        descripcion: typeof proximaAccionInput.descripcion === 'string' ? proximaAccionInput.descripcion.trim().slice(0, 500) : ''
+      };
+    }
+
+    const justificacionContinuidad = typeof data.justificacion_continuidad === 'string' ? data.justificacion_continuidad.trim() : '';
+    const fechaEntregaOferta = typeof data.fecha_entrega_oferta === 'string' ? data.fecha_entrega_oferta.trim() : null;
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+      requireProspectAccess(caller, p);
+
+      if (p.estado !== 'activo') {
+        throw new ServiceError('failed-precondition', 'Solo se pueden registrar seguimientos en oportunidades activas');
+      }
+
+      const seguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+      const historial = Array.isArray(seguimiento.historial_gestiones) ? seguimiento.historial_gestiones : [];
+
+      // Idempotency: retry with same opId
+      const prior = historial.find(g => g && g.opId === opId);
+      if (prior) {
+        return { status: 'recorded', replay: true, seguimiento: p.seguimiento };
+      }
+
+      const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
+      const prevAttempts = Number(curCadence.intentos_fallidos) || 0;
+
+      const esContactoValido = canal !== 'interno' && resultado !== 'nota_interna';
+
+      // Rule check: 2nd attempt MUST be by phone call if previous attempt was unanswered
+      if (esContactoValido && resultado === 'sin_respuesta' && prevAttempts === 1 && canal !== 'llamada') {
+        throw new ServiceError('failed-precondition', 'El segundo intento de contacto debe realizarse mediante llamada telefónica obligatoria');
+      }
+
+      // Rule check: after 3 failed attempts, continuing requires justification
+      if (esContactoValido && resultado === 'sin_respuesta' && prevAttempts >= 3) {
+        if (!justificacionContinuidad || justificacionContinuidad.length < 5) {
+          throw new ServiceError('failed-precondition', 'Tras 3 intentos fallidos es obligatorio registrar la justificación de continuidad comercial');
+        }
+      }
+
+      let newAttempts = prevAttempts;
+      let estadoCadencia = curCadence.estado_cadencia || 'normal';
+      let alertaGerencial = curCadence.alerta_gerencial === true;
+      let fechaEscalacion = curCadence.fecha_escalacion || null;
+
+      const at = iso();
+
+      if (esContactoValido) {
+        if (resultado === 'sin_respuesta') {
+          newAttempts = prevAttempts + 1;
+          if (newAttempts >= 5) {
+            alertaGerencial = true;
+            estadoCadencia = 'escalado_gerencia';
+            if (!fechaEscalacion) fechaEscalacion = at;
+          } else if (newAttempts >= 3) {
+            estadoCadencia = 'requiere_decision_vendedor';
+          } else {
+            estadoCadencia = 'normal';
+          }
+        } else {
+          // Client responded (evaluando, pidio tiempo, cambios, no continua): resets unanswered attempts
+          newAttempts = 0;
+          alertaGerencial = false;
+          estadoCadencia = 'normal';
+        }
+      }
+
+      const gestionEntry = {
+        id: `gest_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role,
+        canal,
+        resultado,
+        detalle,
+        es_contacto_valido: esContactoValido,
+        intento_numero: esContactoValido && resultado === 'sin_respuesta' ? newAttempts : 0,
+        proxima_accion: proximaAccion,
+        opId
+      };
+
+      const nextHistorial = historial.concat([gestionEntry]);
+
+      const nextCadencia = {
+        ...curCadence,
+        intentos_fallidos: newAttempts,
+        estado_cadencia: estadoCadencia,
+        alerta_gerencial: alertaGerencial,
+        fecha_escalacion: fechaEscalacion,
+        fecha_entrega_oferta: fechaEntregaOferta || curCadence.fecha_entrega_oferta || null
+      };
+      if (justificacionContinuidad) {
+        nextCadencia.justificacion_continuidad = justificacionContinuidad;
+      }
+
+      const nextSeguimiento = {
+        ...seguimiento,
+        ultimo_contacto: esContactoValido ? {
+          fecha: at,
+          canal,
+          resultado,
+          detalle,
+          usuarioId: caller.cid,
+          usuarioNombre: caller.name || 'Comercial'
+        } : (seguimiento.ultimo_contacto || null),
+        proxima_accion: (resultado === 'no_continua' && (!proximaAccion || !proximaAccion.fecha)) ? null : (proximaAccion || seguimiento.proxima_accion || null),
+        cadencia: nextCadencia,
+        historial_gestiones: nextHistorial
+      };
+
+      // Also append a formatted note in logs for classic timeline visibility
+      const canalLbl = FOLLOWUP_CHANNEL_LABELS[canal] || canal;
+      const resLbl = FOLLOWUP_RESULT_LABELS[resultado] || resultado;
+      const proxText = proximaAccion && proximaAccion.fecha ? ` | Próx: ${proximaAccion.fecha}${proximaAccion.descripcion ? ' (' + proximaAccion.descripcion + ')' : ''}` : '';
+      const logText = `[GESTIÓN COMERCIAL] ${canalLbl} -> ${resLbl}${proxText}. Detalle: ${detalle}`;
+      const nextLogs = logsOf(p).concat([logEntry(caller, logText, { auto: false, opId })]);
+
+      tx.update(ref, {
+        seguimiento: nextSeguimiento,
+        logs: nextLogs
+      });
+
+      tx.create(auditRef(), auditEntry(caller, 'recordFollowUp', 'prospect', prospectId, {
+        canal,
+        resultado,
+        intentos_fallidos: newAttempts,
+        alerta_gerencial: alertaGerencial,
+        estado_cadencia: estadoCadencia,
+        es_contacto_valido: esContactoValido
+      }));
+
+      return { status: 'recorded', seguimiento: nextSeguimiento };
+    });
+  }
+
   // ---------- reassignment ----------
   async function reassign({ caller, prospectId, vendedorId }) {
     await requireManager(caller, 'reasignar oportunidades');
@@ -597,7 +775,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   }
 
   const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, hasEnteredPostclosing, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names };
-  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
+  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
 }
 
 module.exports = { createCommercialService, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };

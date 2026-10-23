@@ -82,6 +82,11 @@
         return call(fb, 'deleteProspectLogAdmin', { prospectId, date, text, dbSuffix });
     }
 
+    function recordFollowUp(fb, { prospectId, followUp, dbSuffix }) {
+        const key = ['recordFollowUp', dbSuffix, prospectId, stableStringify(followUp)].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('recordProspectFollowUpAdmin')({ prospectId, followUp, opId, dbSuffix }));
+    }
+
     function reassign(fb, { prospectId, vendedorId, dbSuffix }) {
         return call(fb, 'reassignProspectAdmin', { prospectId, vendedorId, dbSuffix });
     }
@@ -203,6 +208,7 @@
         createProspect,
         addLog,
         deleteLog,
+        recordFollowUp,
         reassign,
         setNoContractAuthorization,
         requestNoContractAuthorization,

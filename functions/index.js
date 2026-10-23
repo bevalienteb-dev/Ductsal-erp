@@ -1374,6 +1374,10 @@ exports.addProspectLogAdmin = functions.https.onCall((data, context) => runComme
 exports.deleteProspectLogAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
   (service, caller, d) => service.deleteLog({ caller, prospectId: d.prospectId, date: d.date, text: d.text })));
 
+/** { prospectId, followUp, opId, dbSuffix? } -> { status: 'recorded', seguimiento } */
+exports.recordProspectFollowUpAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
+  (service, caller, d) => service.recordFollowUp({ caller, prospectId: d.prospectId, data: d.followUp, opId: d.opId })));
+
 /** { prospectId, vendedorId, dbSuffix? } -> { status: 'reassigned' | 'unchanged' } (manager / gestor) */
 exports.reassignProspectAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
   (service, caller, d) => service.reassign({ caller, prospectId: d.prospectId, vendedorId: d.vendedorId })));

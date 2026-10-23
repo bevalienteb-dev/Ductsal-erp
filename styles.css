@@ -866,3 +866,76 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
         padding: 0.45rem 0.65rem;
     }
 }
+
+/* ==========================================================================
+   Control Diario de Seguimiento Comercial y Agenda del Vendedor (Fase 1)
+   ========================================================================== */
+.list-mode-toggle-bar button {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.badge-urgency-vencida {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    font-weight: 700;
+}
+.badge-urgency-hoy {
+    background: rgba(255, 204, 77, 0.2);
+    color: var(--brand-gold);
+    border: 1px solid rgba(255, 204, 77, 0.4);
+    font-weight: 700;
+}
+.badge-urgency-proxima {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    font-weight: 600;
+}
+.badge-urgency-decision {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    font-weight: 700;
+}
+.badge-urgency-escalada {
+    background: rgba(220, 38, 38, 0.3);
+    color: #fca5a5;
+    border: 1px solid rgba(220, 38, 38, 0.6);
+    font-weight: 800;
+    animation: pulseSlow 2s infinite ease-in-out;
+}
+@keyframes pulseSlow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.agenda-row-vencida {
+    border-left: 3px solid var(--danger) !important;
+    background: rgba(239, 68, 68, 0.04);
+}
+.agenda-row-hoy {
+    border-left: 3px solid var(--brand-gold) !important;
+    background: rgba(255, 204, 77, 0.04);
+}
+.agenda-row-proxima {
+    border-left: 3px solid #3b82f6 !important;
+}
+.agenda-row-decision {
+    border-left: 3px solid #a855f7 !important;
+    background: rgba(168, 85, 247, 0.05);
+}
+
+.followup-history-item {
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 2px solid var(--brand-gold);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+.followup-history-item.no-contact {
+    border-left-color: var(--text-muted);
+    opacity: 0.85;
+}

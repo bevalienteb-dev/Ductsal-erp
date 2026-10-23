@@ -105,53 +105,135 @@
                     <button class="btn-primary" onclick="openNewModal()">+ Nuevo Prospecto</button>
                 </header>
 
-                <div class="filter-pills-bar mb-3">
-                    <div class="filter-pills-group" id="opp-status-pills">
-                        <button type="button" id="filter-opp-activas" class="filter-pill active" onclick="setOppStatusFilter('activas')">
-                            ⚡ En Proceso / Activas <span class="filter-badge" id="count-opp-activas">0</span>
+                <!-- Selector de Modo: Agenda Diaria vs Cartera Completa -->
+                <div class="list-mode-toggle-bar mb-3" style="display: flex; gap: 0.5rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem; flex-wrap: wrap; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <button type="button" id="tab-agenda-mode" class="btn-primary" style="padding: 0.5rem 1.1rem; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;" onclick="switchListMode('agenda')">
+                            <span>📅 Agenda Diaria de Seguimiento</span>
+                            <span id="agenda-badge-counter" class="badge" style="background: rgba(239, 68, 68, 0.25); color: #ff6b6b; border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.75rem;">0</span>
                         </button>
-                        <button type="button" id="filter-opp-perdidas" class="filter-pill" onclick="setOppStatusFilter('perdidas')">
-                            ❌ Perdidas <span class="filter-badge" id="count-opp-perdidas">0</span>
-                        </button>
-                        <button type="button" id="filter-opp-todas" class="filter-pill" onclick="setOppStatusFilter('todas')">
-                            📋 Todas <span class="filter-badge" id="count-opp-todas">0</span>
+                        <button type="button" id="tab-pipeline-mode" class="btn-secondary" style="padding: 0.5rem 1.1rem; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;" onclick="switchListMode('pipeline')">
+                            <span>💼 Cartera Completa / Pipeline</span>
                         </button>
                     </div>
                 </div>
 
-                <div class="opp-filters-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;">
-                    <div style="flex: 1; min-width: 280px;">
-                        <input type="text" id="opp-search" placeholder="🔍 Buscar por código, cliente, proyecto, monto, etapa, estado o fecha..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                <!-- CONTENEDOR 1: AGENDA DIARIA DE SEGUIMIENTO -->
+                <div id="agenda-view-container" style="display: block;">
+                    <!-- Filtros de la Agenda -->
+                    <div class="filter-pills-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: center;">
+                        <div class="filter-pills-group" id="agenda-status-pills">
+                            <button type="button" id="filter-agenda-todas" class="filter-pill active" onclick="setAgendaFilter('todas')">
+                                📋 Todas en Agenda <span class="filter-badge" id="count-agenda-todas">0</span>
+                            </button>
+                            <button type="button" id="filter-agenda-vencidas" class="filter-pill" onclick="setAgendaFilter('vencidas')">
+                                🚨 Vencidas <span class="filter-badge" id="count-agenda-vencidas">0</span>
+                            </button>
+                            <button type="button" id="filter-agenda-hoy" class="filter-pill" onclick="setAgendaFilter('hoy')">
+                                📌 Para Hoy <span class="filter-badge" id="count-agenda-hoy">0</span>
+                            </button>
+                            <button type="button" id="filter-agenda-proximas" class="filter-pill" onclick="setAgendaFilter('proximas')">
+                                ⏳ Próximas <span class="filter-badge" id="count-agenda-proximas">0</span>
+                            </button>
+                            <button type="button" id="filter-agenda-pendientes" class="filter-pill" onclick="setAgendaFilter('pendientes_decision')">
+                                ⚠️ Pendientes de Decisión <span class="filter-badge" id="count-agenda-pendientes">0</span>
+                            </button>
+                            <button type="button" id="filter-agenda-escaladas" class="filter-pill" style="display: none;" onclick="setAgendaFilter('escaladas_gerencia')">
+                                🚨 Escaladas Gerencia <span class="filter-badge" id="count-agenda-escaladas">0</span>
+                            </button>
+                        </div>
+
+                        <!-- Selector de comercial para Gerente / Gestor -->
+                        <div id="agenda-seller-filter-wrap" style="display: none; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">👤 Comercial:</span>
+                            <select id="agenda-seller-select" class="form-control" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem;" onchange="renderDailyAgenda()">
+                                <option value="all">Todos los comerciales</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="date-filter-box" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.35rem 0.75rem; border: 1px solid var(--panel-border); border-radius: 6px;">
-                        <span style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">📅 Ingreso:</span>
-                        <input type="date" id="opp-date-start" title="Fecha inicial de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
-                        <span style="color: var(--text-muted); font-size: 0.8rem;">a</span>
-                        <input type="date" id="opp-date-end" title="Fecha final de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
-                        <button type="button" id="btn-clear-opp-dates" class="btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; display: none;" onclick="clearOppDateFilter()" title="Limpiar filtro de fechas">✕ Limpiar</button>
+
+                    <!-- Lista / Tabla de la Agenda -->
+                    <div class="table-container glass-panel">
+                        <div id="agenda-empty-state" class="dash-empty-state-box" style="display: none; padding: 3rem 1.5rem; text-align: center;">
+                            <div style="font-size: 2.5rem; margin-bottom: 0.5rem; opacity: 0.85;">🎉</div>
+                            <div style="font-weight: 600; color: white; font-size: 1.1rem; margin-bottom: 0.35rem;" id="agenda-empty-title">¡Todo al día!</div>
+                            <div style="color: var(--text-secondary); font-size: 0.85rem; max-width: 380px; margin: auto; line-height: 1.4;" id="agenda-empty-desc">
+                                No tienes oportunidades pendientes en esta categoría de seguimiento.
+                            </div>
+                        </div>
+
+                        <div id="agenda-table-wrapper" style="overflow-x: auto;">
+                            <table id="agendaTable">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 140px;">Prioridad</th>
+                                        <th style="width: 90px;">Código</th>
+                                        <th>Cliente y Proyecto</th>
+                                        <th>Etapa</th>
+                                        <th>Responsable</th>
+                                        <th>Última Gestión</th>
+                                        <th>Próxima Acción / Motivo</th>
+                                        <th style="text-align: right; width: 170px;">Acción Rápida</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="agenda-table-body">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div id="opp-count-badge" class="badge bg-neutral" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
                 </div>
 
-                <div class="table-container glass-panel">
-                    <table id="opportunitiesTable">
-                        <thead>
-                            <tr style="user-select: none;">
-                                <th onclick="toggleOppSort('codigo')" style="cursor: pointer;">Código <span id="sort-opp-codigo" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-opp-cliente" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-opp-proyecto" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('vendedor')" style="cursor: pointer;">Vendedor / Asesor <span id="sort-opp-vendedor" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('fecha')" style="cursor: pointer;">Fecha de Ingreso <span id="sort-opp-fecha" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('etapa')" style="cursor: pointer;">Etapa Actual <span id="sort-opp-etapa" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('monto')" style="cursor: pointer;">Precio Cotizado <span id="sort-opp-monto" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleOppSort('estado')" style="cursor: pointer;">Estado <span id="sort-opp-estado" style="color: var(--text-muted);">↕</span></th>
-                                <th>Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody id="opp-table-body">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
+                <!-- CONTENEDOR 2: CARTERA COMPLETA (PIPELINE TRADICIONAL) -->
+                <div id="pipeline-view-container" style="display: none;">
+                    <div class="filter-pills-bar mb-3">
+                        <div class="filter-pills-group" id="opp-status-pills">
+                            <button type="button" id="filter-opp-activas" class="filter-pill active" onclick="setOppStatusFilter('activas')">
+                                ⚡ En Proceso / Activas <span class="filter-badge" id="count-opp-activas">0</span>
+                            </button>
+                            <button type="button" id="filter-opp-perdidas" class="filter-pill" onclick="setOppStatusFilter('perdidas')">
+                                ❌ Perdidas <span class="filter-badge" id="count-opp-perdidas">0</span>
+                            </button>
+                            <button type="button" id="filter-opp-todas" class="filter-pill" onclick="setOppStatusFilter('todas')">
+                                📋 Todas <span class="filter-badge" id="count-opp-todas">0</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="opp-filters-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;">
+                        <div style="flex: 1; min-width: 280px;">
+                            <input type="text" id="opp-search" placeholder="🔍 Buscar por código, cliente, proyecto, monto, etapa, estado o fecha..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                        </div>
+                        <div class="date-filter-box" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.35rem 0.75rem; border: 1px solid var(--panel-border); border-radius: 6px;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">📅 Ingreso:</span>
+                            <input type="date" id="opp-date-start" title="Fecha inicial de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">a</span>
+                            <input type="date" id="opp-date-end" title="Fecha final de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
+                            <button type="button" id="btn-clear-opp-dates" class="btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; display: none;" onclick="clearOppDateFilter()" title="Limpiar filtro de fechas">✕ Limpiar</button>
+                        </div>
+                        <div id="opp-count-badge" class="badge bg-neutral" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
+                    </div>
+
+                    <div class="table-container glass-panel">
+                        <table id="opportunitiesTable">
+                            <thead>
+                                <tr style="user-select: none;">
+                                    <th onclick="toggleOppSort('codigo')" style="cursor: pointer;">Código <span id="sort-opp-codigo" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-opp-cliente" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-opp-proyecto" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('vendedor')" style="cursor: pointer;">Vendedor / Asesor <span id="sort-opp-vendedor" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('fecha')" style="cursor: pointer;">Fecha de Ingreso <span id="sort-opp-fecha" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('etapa')" style="cursor: pointer;">Etapa Actual <span id="sort-opp-etapa" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('monto')" style="cursor: pointer;">Precio Cotizado <span id="sort-opp-monto" style="color: var(--text-muted);">↕</span></th>
+                                    <th onclick="toggleOppSort('estado')" style="cursor: pointer;">Estado <span id="sort-opp-estado" style="color: var(--text-muted);">↕</span></th>
+                                    <th>Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="opp-table-body">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
@@ -826,6 +908,22 @@
                             </ul>
                         </div>
 
+                        <!-- Control de Seguimiento Comercial -->
+                        <div class="followup-control-box mt-4" style="background: rgba(0,0,0,0.18); padding: 1rem; border-radius: 8px; border: 1px solid var(--panel-border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">
+                                <h3 style="margin: 0; font-size: 1rem; color: white;">📞 Seguimiento Comercial</h3>
+                                <span id="detail-followup-badge" class="badge bg-neutral" style="font-size: 0.75rem;">Sin estado</span>
+                            </div>
+
+                            <div id="detail-followup-summary" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+                                <!-- Populated by JS -->
+                            </div>
+
+                            <button type="button" class="btn-primary" style="width: 100%; font-size: 0.85rem; padding: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="openRecordFollowUpModal(currentProspectId)">
+                                <span>📞 Registrar Gestión de Contacto</span>
+                            </button>
+                        </div>
+
                         <!-- Notas Operativas -->
                         <div class="operational-logs-box mt-4">
                             <h3 style="margin: 0 0 0.75rem 0; font-size: 1rem; color: white; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">Notas Operativas</h3>
@@ -1112,6 +1210,106 @@
         </div>
     </div>
 
+    <!-- Follow-Up Management Modal -->
+    <div id="followUpModal" class="modal" style="display:none; z-index: 1050;">
+        <div class="modal-content glass-panel" style="max-width: 620px; width: 95%;">
+            <span class="close" onclick="closeModal('followUpModal')">&times;</span>
+            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">Registrar Gestión de Seguimiento</h2>
+            <p id="followup-modal-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">Proyecto: -</p>
+
+            <form id="followUpForm" onsubmit="processSaveFollowUp(event)">
+                <input type="hidden" id="followup-prospect-id">
+
+                <!-- Banner contextual de cadencia / alertas -->
+                <div id="followup-cadence-alert-box" style="display: none; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem;"></div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Canal Utilizado *</label>
+                        <select id="followup-canal" required onchange="handleFollowUpCanalChange()">
+                            <option value="llamada">📞 Llamada Telefónica</option>
+                            <option value="whatsapp">💬 WhatsApp Corporativo</option>
+                            <option value="correo">✉️ Correo Electrónico</option>
+                            <option value="reunion">🤝 Reunión Presencial</option>
+                            <option value="interno">📝 Nota Interna (Sin contacto)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Resultado del Contacto *</label>
+                        <select id="followup-resultado" required onchange="handleFollowUpResultadoChange()">
+                            <option value="respondio_evaluando">Cliente respondió y continúa evaluando</option>
+                            <option value="solicito_tiempo">Cliente solicitó más tiempo</option>
+                            <option value="solicito_cambios">Cliente solicitó cambios o nueva cotización</option>
+                            <option value="sin_respuesta">Se intentó contactar y no hubo respuesta</option>
+                            <option value="no_continua">Cliente confirmó que no desea continuar</option>
+                            <option value="nota_interna" style="display: none;">Nota interna sin contacto con el cliente</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label>Detalle de la Gestión *</label>
+                        <textarea id="followup-detalle" required rows="3" placeholder="Describe lo conversado con el cliente o la situación actual del trato..." style="resize: vertical;"></textarea>
+                    </div>
+
+                    <!-- Campo de fecha de entrega de oferta si aplica -->
+                    <div class="form-group full-width" id="followup-fecha-entrega-box" style="display: none; background: rgba(255,204,77,0.08); padding: 0.75rem; border-radius: 6px; border: 1px dashed rgba(255,204,77,0.3);">
+                        <label style="color: var(--brand-gold);">📅 Fecha de Entrega Efectiva de la Oferta</label>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Indica cuándo se entregó la cotización al cliente para computar la cadencia oficial:</span>
+                        <input type="date" id="followup-fecha-entrega-oferta" style="max-width: 200px;">
+                    </div>
+
+                    <!-- Sección de Decisión tras 3 intentos -->
+                    <div class="form-group full-width" id="followup-decision-box" style="display: none; background: rgba(239,68,68,0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(239,68,68,0.3);">
+                        <label style="color: var(--danger); font-weight: 700;">⚠️ Decisión Comercial (3+ Intentos sin respuesta)</label>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Esta oportunidad acumula 3 intentos fallidos consecutivos. Debes justificar la continuidad comercial para poder programar un nuevo intento:</p>
+                        <label style="font-size: 0.8rem;">Justificación de Continuidad *</label>
+                        <input type="text" id="followup-justificacion" placeholder="Motivo comercial para continuar el seguimiento (ej. cliente en vacaciones)...">
+                    </div>
+
+                    <!-- Aclaración semántica de "No continúa" -->
+                    <div class="form-group full-width" id="followup-no-continua-box" style="display: none; background: rgba(59, 130, 246, 0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.3);">
+                        <label style="color: #60a5fa; font-weight: 700;">ℹ️ Registro de negativa del cliente (No continúa)</label>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0.25rem 0 0.5rem 0;">
+                            Al registrar que el cliente no desea continuar, <strong>se desprogramará la próxima acción</strong> y la oportunidad saldrá de la agenda diaria de seguimiento.
+                        </p>
+                        <div style="font-size: 0.8rem; color: #93c5fd; background: rgba(0,0,0,0.25); padding: 0.5rem; border-radius: 4px; line-height: 1.4;">
+                            ⚠️ <strong>Importante:</strong> Esta acción <strong>NO marca la oportunidad como perdida</strong> en el pipeline ni en las estadísticas comerciales. La oportunidad permanecerá abierta y activa en su etapa actual. Para formalizar el cierre comercial como pérdida definitiva, utiliza el botón <strong>"Marcar como Perdido"</strong> en la ficha del proyecto especificando el motivo reglamentario.
+                        </div>
+                    </div>
+
+                    <!-- Próxima acción -->
+                    <div class="form-group" id="followup-prox-fecha-group">
+                        <label>Fecha de Próxima Acción</label>
+                        <input type="date" id="followup-prox-fecha">
+                        <small id="followup-prox-sugerencia" style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 3px;"></small>
+                    </div>
+
+                    <div class="form-group" id="followup-prox-tipo-group">
+                        <label>Tipo de Próxima Acción</label>
+                        <select id="followup-prox-tipo">
+                            <option value="llamada">📞 Llamada de seguimiento</option>
+                            <option value="whatsapp">💬 Mensaje WhatsApp</option>
+                            <option value="correo">✉️ Enviar correo</option>
+                            <option value="reunion">🤝 Reunión</option>
+                            <option value="revision">📝 Revisión interna</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group full-width" id="followup-prox-desc-group">
+                        <label>Descripción del Próximo Compromiso</label>
+                        <input type="text" id="followup-prox-desc" placeholder="Ej. Llamar para consultar visto bueno de gerencia">
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('followUpModal')">Cancelar</button>
+                    <button type="submit" class="btn-success" id="btn-save-followup">💾 Guardar Gestión</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Loading Spinner Overlay -->
     <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
         <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
@@ -1128,6 +1326,8 @@
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_commercial.js?v=2"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
-    <script src="app_core.js?v=24"></script>
+    <script src="crm_work_calendar.js?v=1"></script>
+    <script src="crm_followup_calc.js?v=1"></script>
+    <script src="app_core.js?v=25"></script>
 </body>
 </html>
