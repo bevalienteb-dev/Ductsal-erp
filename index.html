@@ -186,7 +186,7 @@
 
                 <!-- CONTENEDOR 2: CARTERA COMPLETA (PIPELINE TRADICIONAL) -->
                 <div id="pipeline-view-container" style="display: none;">
-                    <div class="filter-pills-bar mb-3">
+                    <div class="filter-pills-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between;">
                         <div class="filter-pills-group" id="opp-status-pills">
                             <button type="button" id="filter-opp-activas" class="filter-pill active" onclick="setOppStatusFilter('activas')">
                                 ⚡ En Proceso / Activas <span class="filter-badge" id="count-opp-activas">0</span>
@@ -196,6 +196,17 @@
                             </button>
                             <button type="button" id="filter-opp-todas" class="filter-pill" onclick="setOppStatusFilter('todas')">
                                 📋 Todas <span class="filter-badge" id="count-opp-todas">0</span>
+                            </button>
+                        </div>
+                        <div class="filter-pills-group" id="opp-clasif-pills">
+                            <button type="button" id="filter-clasif-todas" class="filter-pill active" onclick="setOppClasifFilter('todas')">
+                                Todas
+                            </button>
+                            <button type="button" id="filter-clasif-ejecucion" class="filter-pill" onclick="setOppClasifFilter('ejecucion')">
+                                🏗️ Ejecución <span class="filter-badge" id="count-opp-ejecucion">0</span>
+                            </button>
+                            <button type="button" id="filter-clasif-presupuesto" class="filter-pill" onclick="setOppClasifFilter('presupuesto')">
+                                📐 Presupuestos <span class="filter-badge" id="count-opp-presupuesto">0</span>
                             </button>
                         </div>
                     </div>
@@ -503,7 +514,7 @@
                     <div class="glass-panel stock-card" style="border-left: 4px solid var(--danger);">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
                             <div>
-                                <span class="kpi-label" title="Oportunidades activas con días en etapa superiores al umbral máximo operativo">Alertas de Estancamiento</span>
+                                <span class="kpi-label" title="Oportunidades que requieren intervención o decisión gerencial">Oportunidades que requieren atención del gerente</span>
                                 <div class="kpi-value-lg" id="metric-alertas-count" style="color: var(--danger); margin-top: 2px;">0</div>
                             </div>
                             <div style="text-align: right;">
@@ -512,7 +523,7 @@
                             </div>
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 0.5rem; border-top: 1px solid var(--panel-border); font-size: 0.8rem;">
-                            <span id="sub-metric-alertas-status" style="color: var(--text-secondary);">Evaluando tiempos operativos...</span>
+                            <span id="sub-metric-alertas-status" style="color: var(--text-secondary);">Oportunidades pendientes de decisión</span>
                             <a href="#dashActiveTimesTable" style="color: var(--brand-gold); text-decoration: none; font-size: 0.75rem; font-weight: 600;">Ver lista ↓</a>
                         </div>
                     </div>
@@ -660,22 +671,40 @@
                     </div>
                 </div>
 
-                <!-- F. SECCIÓN 5: LISTA DE OPORTUNIDADES ACCIONABLES (ALERTAS DE ESTANCAMIENTO) -->
+                <!-- F. SECCIÓN 5: OPORTUNIDADES QUE REQUIEREN ATENCIÓN DEL GERENTE -->
                 <div class="chart-card glass-panel mt-4 dash-stagnant-card" style="margin-bottom: 2rem; padding: 1.25rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
-                            <h3 style="margin: 0; font-size: 1.05rem; color: white;">🚨 Oportunidades Estancadas en el Inventario Actual</h3>
-                            <p style="margin: 4px 0 0 0; font-size: 0.78rem; color: var(--text-secondary);">Oportunidades activas abiertas que exceden los límites máximos permitidos en su etapa actual</p>
+                            <h3 style="margin: 0; font-size: 1.05rem; color: white;">🚨 Oportunidades que requieren atención del gerente</h3>
+                            <p style="margin: 4px 0 0 0; font-size: 0.78rem; color: var(--text-secondary);">Oportunidades comerciales que requieren intervención o decisión gerencial según los criterios aprobados</p>
                         </div>
-                        <span id="dash-stagnant-counter-badge" class="badge" style="background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); font-size: 0.8rem;">0 críticas</span>
+                        <span id="dash-stagnant-counter-badge" class="badge" style="background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); font-size: 0.8rem;">0 pendientes</span>
+                    </div>
+
+                    <!-- Filtros de la tabla gerencial (motivo, responsable, estado) -->
+                    <div class="dash-attention-filters" style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
+                        <select id="filter-mgr-motivo" class="filter-select" onchange="renderDashboardActiveTimes()" style="background: rgba(255,255,255,0.08); color: white; border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                            <option value="all">Todos los tipos de atención</option>
+                            <option value="seguimiento">Seguimiento comercial (5 intentos)</option>
+                            <option value="solicitud_sin_contrato">Autorización sin contrato</option>
+                        </select>
+                        <select id="filter-mgr-responsable" class="filter-select" onchange="renderDashboardActiveTimes()" style="background: rgba(255,255,255,0.08); color: white; border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                            <option value="all">Todos los responsables</option>
+                        </select>
+                        <select id="filter-mgr-estado" class="filter-select" onchange="renderDashboardActiveTimes()" style="background: rgba(255,255,255,0.08); color: white; border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                            <option value="pendientes">Alertas Pendientes</option>
+                            <option value="autorizadas">Continuidad Autorizada</option>
+                            <option value="orden_cierre">Orden de Cierre Emitida</option>
+                            <option value="todas">Todas (incluye resueltas)</option>
+                        </select>
                     </div>
 
                     <!-- Estado vacío autónomo: 100% centrado y responsivo, sin dependencia de la tabla de datos -->
                     <div id="dash-stagnant-empty-box" class="dash-empty-state-box" style="display: none;">
                         <div style="font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.85;">🎉</div>
-                        <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Oportunidades Estancadas</div>
+                        <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">Sin Oportunidades Pendientes de Atención Gerencial</div>
                         <div style="color: var(--text-secondary); font-size: 0.82rem; max-width: 340px; line-height: 1.4; text-align: center;">
-                            Todas las oportunidades del inventario actual se encuentran dentro de los tiempos límite establecidos.
+                            No existen oportunidades que requieran intervención o decisión gerencial en este momento.
                         </div>
                     </div>
 
@@ -685,14 +714,13 @@
                         <table id="dashActiveTimesTable">
                             <thead>
                                 <tr>
-                                    <th style="width: 90px;">Código</th>
-                                    <th>Proyecto / Obra</th>
-                                    <th>Cliente</th>
+                                    <th style="width: 80px;">Código</th>
+                                    <th>Cliente / Proyecto</th>
                                     <th>Responsable</th>
-                                    <th>Etapa Actual</th>
-                                    <th style="text-align: right;">Importe</th>
-                                    <th style="text-align: center;">Días en Etapa</th>
-                                    <th style="text-align: right; width: 120px;">Acción</th>
+                                    <th>Motivo de Atención</th>
+                                    <th>Historial / Gestiones</th>
+                                    <th style="text-align: center; width: 130px;">Estado Alerta</th>
+                                    <th style="text-align: right; width: 140px;">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="dash-active-times-body">
@@ -881,9 +909,14 @@
                                 <!-- Form injected by JS depending on next stage -->
                             </div>
 
-                            <div class="action-buttons mt-3" id="action-buttons-container" style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
-                                <button class="btn-primary" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
-                                <button class="btn-danger ml-2" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                            <div class="stage-actions-container" id="action-buttons-container">
+                                <div class="stage-actions-primary-group">
+                                    <button type="button" class="btn-primary btn-stage-action btn-stage-advance" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
+                                    <button type="button" class="btn-success btn-stage-action btn-stage-proposal" id="btn-new-proposal" style="display: none;" onclick="showNewProposalForm()">Registrar Nueva Propuesta</button>
+                                </div>
+                                <div class="stage-actions-danger-group">
+                                    <button type="button" class="btn-danger btn-stage-action btn-stage-lose" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                                </div>
                             </div>
                         </div>
 
@@ -993,6 +1026,13 @@
                     <select id="new-tipo-producto" required>
                         <option value="Chute">Chute</option>
                         <option value="Ducto">Ducto</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Clasificación comercial</label>
+                    <select id="new-clasificacion" required>
+                        <option value="ejecucion">🏗️ Oferta para ejecución (intención comercial confirmada)</option>
+                        <option value="presupuesto">📐 Cotización para presupuesto (referencial o de planificación)</option>
                     </select>
                 </div>
                 <button type="submit" class="btn-primary mt-2" style="width:100%">Crear Oportunidad</button>
@@ -1212,101 +1252,323 @@
 
     <!-- Follow-Up Management Modal -->
     <div id="followUpModal" class="modal" style="display:none; z-index: 1050;">
-        <div class="modal-content glass-panel" style="max-width: 620px; width: 95%;">
-            <span class="close" onclick="closeModal('followUpModal')">&times;</span>
-            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">Registrar Gestión de Seguimiento</h2>
-            <p id="followup-modal-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">Proyecto: -</p>
+        <div class="modal-content glass-panel modal-scrollable-container" style="max-width: 620px; width: 95%;">
+            <div class="modal-header-fixed">
+                <span class="close" onclick="closeModal('followUpModal')">&times;</span>
+                <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">Registrar Gestión de Seguimiento</h2>
+                <p id="followup-modal-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin: 0;">Proyecto: -</p>
+            </div>
 
-            <form id="followUpForm" onsubmit="processSaveFollowUp(event)">
+            <form id="followUpForm" onsubmit="processSaveFollowUp(event)" style="display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; margin: 0;">
                 <input type="hidden" id="followup-prospect-id">
 
-                <!-- Banner contextual de cadencia / alertas -->
-                <div id="followup-cadence-alert-box" style="display: none; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem;"></div>
+                <div class="modal-body-scrollable">
+                    <!-- Banner contextual de cadencia / alertas -->
+                    <div id="followup-cadence-alert-box" style="display: none; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem;"></div>
 
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Canal Utilizado *</label>
-                        <select id="followup-canal" required onchange="handleFollowUpCanalChange()">
-                            <option value="llamada">📞 Llamada Telefónica</option>
-                            <option value="whatsapp">💬 WhatsApp Corporativo</option>
-                            <option value="correo">✉️ Correo Electrónico</option>
-                            <option value="reunion">🤝 Reunión Presencial</option>
-                            <option value="interno">📝 Nota Interna (Sin contacto)</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Resultado del Contacto *</label>
-                        <select id="followup-resultado" required onchange="handleFollowUpResultadoChange()">
-                            <option value="respondio_evaluando">Cliente respondió y continúa evaluando</option>
-                            <option value="solicito_tiempo">Cliente solicitó más tiempo</option>
-                            <option value="solicito_cambios">Cliente solicitó cambios o nueva cotización</option>
-                            <option value="sin_respuesta">Se intentó contactar y no hubo respuesta</option>
-                            <option value="no_continua">Cliente confirmó que no desea continuar</option>
-                            <option value="nota_interna" style="display: none;">Nota interna sin contacto con el cliente</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group full-width">
-                        <label>Detalle de la Gestión *</label>
-                        <textarea id="followup-detalle" required rows="3" placeholder="Describe lo conversado con el cliente o la situación actual del trato..." style="resize: vertical;"></textarea>
-                    </div>
-
-                    <!-- Campo de fecha de entrega de oferta si aplica -->
-                    <div class="form-group full-width" id="followup-fecha-entrega-box" style="display: none; background: rgba(255,204,77,0.08); padding: 0.75rem; border-radius: 6px; border: 1px dashed rgba(255,204,77,0.3);">
-                        <label style="color: var(--brand-gold);">📅 Fecha de Entrega Efectiva de la Oferta</label>
-                        <span style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Indica cuándo se entregó la cotización al cliente para computar la cadencia oficial:</span>
-                        <input type="date" id="followup-fecha-entrega-oferta" style="max-width: 200px;">
-                    </div>
-
-                    <!-- Sección de Decisión tras 3 intentos -->
-                    <div class="form-group full-width" id="followup-decision-box" style="display: none; background: rgba(239,68,68,0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(239,68,68,0.3);">
-                        <label style="color: var(--danger); font-weight: 700;">⚠️ Decisión Comercial (3+ Intentos sin respuesta)</label>
-                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Esta oportunidad acumula 3 intentos fallidos consecutivos. Debes justificar la continuidad comercial para poder programar un nuevo intento:</p>
-                        <label style="font-size: 0.8rem;">Justificación de Continuidad *</label>
-                        <input type="text" id="followup-justificacion" placeholder="Motivo comercial para continuar el seguimiento (ej. cliente en vacaciones)...">
-                    </div>
-
-                    <!-- Aclaración semántica de "No continúa" -->
-                    <div class="form-group full-width" id="followup-no-continua-box" style="display: none; background: rgba(59, 130, 246, 0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.3);">
-                        <label style="color: #60a5fa; font-weight: 700;">ℹ️ Registro de negativa del cliente (No continúa)</label>
-                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0.25rem 0 0.5rem 0;">
-                            Al registrar que el cliente no desea continuar, <strong>se desprogramará la próxima acción</strong> y la oportunidad saldrá de la agenda diaria de seguimiento.
-                        </p>
-                        <div style="font-size: 0.8rem; color: #93c5fd; background: rgba(0,0,0,0.25); padding: 0.5rem; border-radius: 4px; line-height: 1.4;">
-                            ⚠️ <strong>Importante:</strong> Esta acción <strong>NO marca la oportunidad como perdida</strong> en el pipeline ni en las estadísticas comerciales. La oportunidad permanecerá abierta y activa en su etapa actual. Para formalizar el cierre comercial como pérdida definitiva, utiliza el botón <strong>"Marcar como Perdido"</strong> en la ficha del proyecto especificando el motivo reglamentario.
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Canal Utilizado *</label>
+                            <select id="followup-canal" required onchange="handleFollowUpCanalChange()">
+                                <option value="llamada">📞 Llamada Telefónica</option>
+                                <option value="whatsapp">💬 WhatsApp Corporativo</option>
+                                <option value="correo">✉️ Correo Electrónico</option>
+                                <option value="reunion">🤝 Reunión Presencial</option>
+                                <option value="interno">📝 Nota Interna (Sin contacto)</option>
+                            </select>
                         </div>
-                    </div>
 
-                    <!-- Próxima acción -->
-                    <div class="form-group" id="followup-prox-fecha-group">
-                        <label>Fecha de Próxima Acción</label>
-                        <input type="date" id="followup-prox-fecha">
-                        <small id="followup-prox-sugerencia" style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 3px;"></small>
-                    </div>
+                        <div class="form-group">
+                            <label>Resultado del Contacto *</label>
+                            <select id="followup-resultado" required onchange="handleFollowUpResultadoChange()">
+                                <option value="respondio_evaluando">Cliente respondió y continúa evaluando</option>
+                                <option value="solicito_tiempo">Cliente solicitó más tiempo</option>
+                                <option value="solicito_cambios">Cliente solicitó cambios o nueva cotización</option>
+                                <option value="sin_respuesta">Se intentó contactar y no hubo respuesta</option>
+                                <option value="no_continua">Cliente confirmó que no desea continuar</option>
+                                <option value="nota_interna" style="display: none;">Nota interna sin contacto con el cliente</option>
+                            </select>
+                        </div>
 
-                    <div class="form-group" id="followup-prox-tipo-group">
-                        <label>Tipo de Próxima Acción</label>
-                        <select id="followup-prox-tipo">
-                            <option value="llamada">📞 Llamada de seguimiento</option>
-                            <option value="whatsapp">💬 Mensaje WhatsApp</option>
-                            <option value="correo">✉️ Enviar correo</option>
-                            <option value="reunion">🤝 Reunión</option>
-                            <option value="revision">📝 Revisión interna</option>
-                        </select>
-                    </div>
+                        <div class="form-group full-width">
+                            <label>Detalle de la Gestión *</label>
+                            <textarea id="followup-detalle" required rows="3" placeholder="Describe lo conversado con el cliente o la situación actual del trato..." style="resize: vertical;"></textarea>
+                        </div>
 
-                    <div class="form-group full-width" id="followup-prox-desc-group">
-                        <label>Descripción del Próximo Compromiso</label>
-                        <input type="text" id="followup-prox-desc" placeholder="Ej. Llamar para consultar visto bueno de gerencia">
+                        <!-- Sección de Decisión tras 3 intentos -->
+                        <div class="form-group full-width" id="followup-decision-box" style="display: none; background: rgba(239,68,68,0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(239,68,68,0.3);">
+                            <label style="color: var(--danger); font-weight: 700;">⚠️ Decisión Comercial (3+ Intentos sin respuesta)</label>
+                            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Esta oportunidad acumula 3 intentos fallidos consecutivos. Debes justificar la continuidad comercial para poder programar un nuevo intento:</p>
+                            <label style="font-size: 0.8rem;">Justificación de Continuidad *</label>
+                            <input type="text" id="followup-justificacion" placeholder="Motivo comercial para continuar el seguimiento (ej. cliente en vacaciones)...">
+                        </div>
+
+                        <!-- Aclaración semántica de "No continúa" -->
+                        <div class="form-group full-width" id="followup-no-continua-box" style="display: none; background: rgba(59, 130, 246, 0.1); padding: 0.85rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.3);">
+                            <label style="color: #60a5fa; font-weight: 700;">ℹ️ Registro de negativa del cliente (No continúa)</label>
+                            <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0.25rem 0 0.5rem 0;">
+                                Al registrar que el cliente no desea continuar, <strong>se desprogramará la próxima acción</strong> y la oportunidad saldrá de la agenda diaria de seguimiento.
+                            </p>
+                            <div style="font-size: 0.8rem; color: #93c5fd; background: rgba(0,0,0,0.25); padding: 0.5rem; border-radius: 4px; line-height: 1.4;">
+                                ⚠️ <strong>Importante:</strong> Esta acción <strong>NO marca la oportunidad como perdida</strong> en el pipeline ni en las estadísticas comerciales. La oportunidad permanecerá abierta y activa en su etapa actual. Para formalizar el cierre comercial como pérdida definitiva, utiliza el botón <strong>"Marcar como Perdido"</strong> en la ficha del proyecto especificando el motivo reglamentario.
+                            </div>
+                        </div>
+
+                        <!-- Próxima acción -->
+                        <div class="form-group" id="followup-prox-fecha-group">
+                            <label>Fecha de Próxima Acción</label>
+                            <input type="date" id="followup-prox-fecha">
+                            <small id="followup-prox-sugerencia" style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 3px;"></small>
+                        </div>
+
+                        <div class="form-group" id="followup-prox-tipo-group">
+                            <label>Tipo de Próxima Acción</label>
+                            <select id="followup-prox-tipo">
+                                <option value="llamada">📞 Llamada de seguimiento</option>
+                                <option value="whatsapp">💬 Mensaje WhatsApp</option>
+                                <option value="correo">✉️ Enviar correo</option>
+                                <option value="reunion">🤝 Reunión</option>
+                                <option value="revision">📝 Revisión interna</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group full-width" id="followup-prox-desc-group">
+                            <label>Descripción del Próximo Compromiso</label>
+                            <input type="text" id="followup-prox-desc" placeholder="Ej. Llamar para consultar visto bueno de gerencia">
+                        </div>
                     </div>
                 </div>
 
-                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;">
+                <div class="modal-footer-fixed">
                     <button type="button" class="btn-secondary" onclick="closeModal('followUpModal')">Cancelar</button>
                     <button type="submit" class="btn-success" id="btn-save-followup">💾 Guardar Gestión</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Reassign Vendor Modal -->
+    <div id="reassignModal" class="modal" style="display:none; z-index: 1060;">
+        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
+            <span class="close" onclick="closeModal('reassignModal')">&times;</span>
+            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">🔄 Reasignar Oportunidad</h2>
+            <p id="reassign-modal-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">Proyecto: -</p>
+
+            <form id="reassignForm" onsubmit="processConfirmReassign(event)">
+                <input type="hidden" id="reassign-prospect-id">
+
+                <div id="reassign-error-box" style="display: none; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1rem;"></div>
+
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.85rem; margin-bottom: 1.25rem;">
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Responsable Actual</div>
+                    <div id="reassign-current-vendor" style="font-size: 1rem; font-weight: 600; color: white;">-</div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label for="reassign-new-vendor-select" style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Nuevo Responsable Comercial *</label>
+                    <select id="reassign-new-vendor-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.9rem;">
+                        <option value="">-- Selecciona un vendedor o gestor --</option>
+                    </select>
+                    <small style="color: var(--text-secondary); font-size: 0.75rem; display: block; margin-top: 4px;">
+                        Solo se muestran usuarios activos con rol Vendedor o Gestor. Los Gerentes y Administradores están excluidos.
+                    </small>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('reassignModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-confirm-reassign" style="background: var(--brand-gold); color: var(--brand-blue); font-weight: 700;">
+                        Confirmar Reasignación
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Configuración de Cadencia Comercial (Fase 2.1) -->
+    <div id="cadenceModal" class="modal" style="display:none; z-index: 1065;">
+        <div class="modal-content glass-panel" style="max-width: 580px; width: 95%;">
+            <span class="close" onclick="closeModal('cadenceModal')">&times;</span>
+            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">⚙️ Configurar Cadencia Comercial</h2>
+            <p id="cadence-modal-title" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">Proyecto: -</p>
+
+            <form id="cadenceConfigForm" onsubmit="processSaveCadence(event)">
+                <input type="hidden" id="cadence-prospect-id">
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Seleccionar Cadencia de Seguimiento *</label>
+                    <select id="cadence-select-tipo" onchange="handleCadenceSelectChange()" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.9rem;">
+                        <option value="estandar">📅 Estándar Ductsal (1er contacto 5d hábiles / intervalo 2d / tiempo 15d)</option>
+                        <option value="urgente">⚡ Proyecto Urgente / Licitación Rápida (1er contacto 3d hábiles / intervalo 2d / tiempo 7d)</option>
+                        <option value="corporativa">🏢 Gran Cuenta / Comité Corporativo (1er contacto 5d hábiles / intervalo 3d / tiempo 15d)</option>
+                    </select>
+                    <div id="cadence-desc-box" style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.5rem; line-height: 1.4; padding: 0.5rem; background: rgba(255,255,255,0.03); border-radius: 4px;">
+                        Cadencia comercial por defecto: 1er contacto a 5 días hábiles; reintentos cada 2 días hábiles; pauta de tiempo 15 días.
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Motivo del Cambio de Cadencia * (Mínimo 5 caracteres)</label>
+                    <textarea id="cadence-motivo" required rows="3" placeholder="Explica la justificación comercial para aplicar esta cadencia (ej. licitación pública con fecha de cierre en 7 días, comité programado para el día 15, etc.)..." style="width: 100%; resize: vertical; padding: 0.6rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.85rem;"></textarea>
+                </div>
+
+                <!-- Límites comerciales inviolables -->
+                <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 0.75rem; margin-bottom: 1.25rem; font-size: 0.78rem; color: #93c5fd; line-height: 1.4;">
+                    🛡️ <strong>Límites comerciales obligatorios:</strong> La selección de cadencia ajusta los intervalos de contacto pero <strong>NO permite</strong> evadir la llamada obligatoria en el 2º intento, la justificación comercial al 3º intento, ni el escalamiento gerencial obligatorio al 5º intento sin respuesta. Los contadores no se reinician.
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('cadenceModal')">Cancelar</button>
+                    <button type="submit" class="btn-success" id="btn-save-cadence">💾 Guardar Cadencia</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Reclasificación Comercial (Presupuesto vs Ejecución) -->
+    <div id="reclassifyModal" class="modal" style="display:none; z-index: 1065;">
+        <div class="modal-content glass-panel" style="max-width: 560px; width: 95%;">
+            <span class="close" onclick="closeModal('reclassifyModal')">&times;</span>
+            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">🔄 Clasificación Comercial</h2>
+            <p id="reclassify-modal-title" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">Proyecto: -</p>
+
+            <form id="reclassifyForm" onsubmit="processSaveReclassification(event)">
+                <input type="hidden" id="reclassify-prospect-id">
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Clasificación de la Oportunidad *</label>
+                    <select id="reclassify-select" onchange="handleReclassifySelectChange()" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.9rem;">
+                        <option value="ejecucion">🏗️ Oferta para ejecución (intención comercial confirmada de compra/instalación)</option>
+                        <option value="presupuesto">📐 Cotización para presupuesto (referencial, estimación o planificación)</option>
+                    </select>
+                    <div id="reclassify-desc-box" style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.5rem; line-height: 1.4; padding: 0.6rem; background: rgba(255,255,255,0.03); border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Motivo Comercial del Cambio * (Mínimo 5 caracteres)</label>
+                    <textarea id="reclassify-motivo" required rows="3" placeholder="Explica la justificación comercial del cambio (ej. cliente confirmó partida aprobada y solicita oferta para firma de contrato; o cliente pospuso decisión y solo requiere estimación referencial)..." style="width: 100%; resize: vertical; padding: 0.6rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.85rem;"></textarea>
+                </div>
+
+                <div style="background: rgba(147, 51, 234, 0.08); border: 1px solid rgba(147, 51, 234, 0.3); border-radius: 6px; padding: 0.75rem; margin-bottom: 1.25rem; font-size: 0.78rem; color: #c084fc; line-height: 1.4;">
+                    ℹ️ <strong>Impacto comercial:</strong> Las ofertas para ejecución se contabilizan en el pronóstico de ventas y activan el seguimiento comercial al avanzar a Negociación. Las cotizaciones para presupuesto se registran con fines referenciales y no inflan el pipeline ponderado de ventas.
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('reclassifyModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-save-reclassify">💾 Confirmar Clasificación</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Decisión Gerencial de Seguimiento (Fase 1.3) -->
+    <div id="modal-manager-decision" class="modal" style="display:none; z-index: 1060;">
+        <div class="modal-content glass-panel" style="max-width: 650px; width: 95%; max-height: 90vh; overflow-y: auto;">
+            <span class="close" onclick="closeModal('modal-manager-decision')">&times;</span>
+            <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">⚖️ Decisión Gerencial de Seguimiento</h2>
+            <p id="mgr-decision-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">Oportunidad: -</p>
+
+            <input type="hidden" id="mgr-decision-prospect-id">
+
+            <!-- Banner de Alerta Gerencial -->
+            <div id="mgr-decision-alert-banner" style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; padding: 0.85rem; margin-bottom: 1.25rem; font-size: 0.85rem;">
+                <div style="font-weight: 700; color: #f87171; margin-bottom: 4px;" id="mgr-decision-motivo-title">🚨 Escalamiento a Gerencia</div>
+                <div style="color: var(--text-primary); line-height: 1.4;" id="mgr-decision-motivo-desc">-</div>
+                <div style="margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary);" id="mgr-decision-historial-summary">-</div>
+            </div>
+
+            <!-- Selector de Tipo de Decisión Gerencial -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 1.25rem;">
+                <button type="button" id="tab-btn-autorizar" class="btn-stage-action" style="flex: 1; height: 38px; background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5);" onclick="switchManagerDecisionTab('autorizar')">
+                    ✅ Autorizar Continuar
+                </button>
+                <button type="button" id="tab-btn-cierre" class="btn-stage-action" style="flex: 1; height: 38px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" onclick="switchManagerDecisionTab('cierre')">
+                    🛑 Ordenar Cierre
+                </button>
+            </div>
+
+            <!-- Sección Opción 1: Autorizar Continuar -->
+            <div id="mgr-tab-autorizar" class="mgr-decision-card active-option">
+                <h4 style="color: #34d399; margin: 0 0 0.5rem 0; font-size: 0.95rem;">Opción 1: Autorizar Continuación de la Oportunidad</h4>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Permite que el responsable continúe las gestiones. Se mantiene la oportunidad abierta y el historial completo, estableciendo un próximo seguimiento.
+                </p>
+
+                <div class="form-group">
+                    <label>Justificación Gerencial de Continuidad * (Mínimo 5 caracteres)</label>
+                    <textarea id="mgr-autorizar-justificacion" rows="3" placeholder="Explique por qué se autoriza continuar el seguimiento a pesar de los 5 intentos sin respuesta..." style="width: 100%; resize: vertical;"></textarea>
+                </div>
+
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div class="form-group">
+                        <label>Fecha de Próxima Acción *</label>
+                        <input type="date" id="mgr-autorizar-prox-fecha" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo de Contacto</label>
+                        <select id="mgr-autorizar-prox-tipo">
+                            <option value="llamada">📞 Llamada Telefónica</option>
+                            <option value="reunion">🤝 Reunión / Visita</option>
+                            <option value="whatsapp">💬 WhatsApp Corporativo</option>
+                            <option value="correo">✉️ Correo Electrónico</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Directriz / Descripción de la Próxima Acción</label>
+                    <input type="text" id="mgr-autorizar-prox-desc" placeholder="Ej. Insistir con contacto a nivel directivo o programar visita técnica" style="width: 100%;">
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('modal-manager-decision')">Cancelar</button>
+                    <button type="button" class="btn-success" id="btn-submit-mgr-autorizar" onclick="submitManagerDecision('autorizar_continuar')">
+                        ✅ Confirmar Autorización
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sección Opción 2: Ordenar Cierre -->
+            <div id="mgr-tab-cierre" class="mgr-decision-card" style="display: none;">
+                <h4 style="color: #f87171; margin: 0 0 0.5rem 0; font-size: 0.95rem;">Opción 2: Ordenar el Cierre Comercial</h4>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Emite la orden formal de cierre comercial por falta de respuesta u otro motivo. Puede ejecutarse de inmediato marcando la oportunidad como perdida.
+                </p>
+
+                <div class="form-group">
+                    <label>Motivo de Pérdida Comercial *</label>
+                    <select id="mgr-cierre-motivo" required style="width: 100%;">
+                        <option value="">-- Selecciona motivo --</option>
+                        <option value="Precio">Precio</option>
+                        <option value="Falta de seguimiento">Falta de seguimiento</option>
+                        <option value="No se cumplían los requerimientos técnicos">No se cumplían los requerimientos técnicos</option>
+                        <option value="Tiempo de entrega">Tiempo de entrega</option>
+                        <option value="Cliente desiste">Cliente desiste</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Justificación o Instrucción Gerencial (Opcional)</label>
+                    <textarea id="mgr-cierre-justificacion" rows="2" placeholder="Detalle adicional sobre la orden de descarte o cierre de la oportunidad..." style="width: 100%; resize: vertical;"></textarea>
+                </div>
+
+                <div class="form-group" style="background: rgba(239,68,68,0.06); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(239,68,68,0.2);">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: white;">
+                        <input type="checkbox" id="mgr-cierre-ejecutar-inmediato" checked style="width: auto;">
+                        <span><strong>Ejecutar cierre comercial inmediatamente</strong> (cambiar estado a perdido formalmente)</span>
+                    </label>
+                    <small style="display: block; color: var(--text-secondary); margin-top: 4px; margin-left: 1.5rem;">
+                        Si se desmarca, se emite una «Orden de cierre pendiente» que deberá ser procesada por el vendedor o gestor responsable.
+                    </small>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('modal-manager-decision')">Cancelar</button>
+                    <button type="button" class="btn-danger" id="btn-submit-mgr-cierre" onclick="submitManagerDecision('ordenar_cierre')">
+                        🛑 Confirmar Orden de Cierre
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -23,6 +23,15 @@ const identity = require('./clientIdentity');
 const { ServiceError } = require('./clientsService');
 const { validators } = require('./commercialService');
 
+let CrmFollowUpCalc = null;
+try {
+  CrmFollowUpCalc = require('./crm_followup_calc');
+} catch (e) {
+  try {
+    CrmFollowUpCalc = require('../crm_followup_calc');
+  } catch (e2) {}
+}
+
 const { bad, asObject, reqString, reqDocId, reqOpId } = validators;
 
 const STAGES = ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
@@ -226,6 +235,63 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         if (input.doc_oferta.length > 0) datos.doc_oferta = input.doc_oferta;
         if (input.doc_costos.length > 0) datos.doc_costos = input.doc_costos;
         logMsg += ` (Cotizado: ${fmtMoney(input.precio_cotizado)}, Costo: ${fmtMoney(input.costo_venta)})`;
+
+        // Regla Fase 2.2: La transición de «Cotización» a «Negociación» determina oficialmente la entrega de la oferta al cliente
+        if (p.etapa === 'cotizacion' && nextStage === 'negociacion') {
+          const clasificacion = p.clasificacion || 'ejecucion';
+          if (clasificacion === 'presupuesto') {
+            throw precondition('Esta oportunidad está clasificada como "Cotización para presupuesto" (referencial o de planificación). No puede avanzar a Negociación ni activar cadencia de seguimiento mientras sea presupuestaria. Si el cliente confirmó intención comercial de ejecución, cambie primero la clasificación a "Oferta para ejecución".');
+          }
+
+          const curSeguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+          const curCadence = (curSeguimiento.cadencia && typeof curSeguimiento.cadencia === 'object') ? curSeguimiento.cadencia : {};
+          const tipoCadencia = curCadence.tipo_cadencia || 'estandar';
+          const cadConfig = CrmFollowUpCalc ? CrmFollowUpCalc.getCadenceConfig(tipoCadencia) : { dias_primer_contacto: 5 };
+          const dias1erContacto = cadConfig.dias_primer_contacto || 5;
+
+          // Preservar la fecha original si ya existía (ej. corrección autorizada o transición previa)
+          const existingDelivery = p.fecha_entrega_oferta || curCadence.fecha_entrega_oferta;
+          const deliveryStamp = existingDelivery || at;
+
+          if (!existingDelivery) {
+            patch.fecha_entrega_oferta = deliveryStamp;
+          }
+
+          let primerContactoYMD = '';
+          if (CrmFollowUpCalc) {
+            const primerContactoDate = CrmFollowUpCalc.addBusinessDaysForExternalContact(deliveryStamp, dias1erContacto);
+            primerContactoYMD = CrmFollowUpCalc.formatDateYMD(primerContactoDate);
+          } else {
+            const d = new Date(deliveryStamp);
+            d.setDate(d.getDate() + 7);
+            primerContactoYMD = d.toISOString().slice(0, 10);
+          }
+
+          const curProxima = curSeguimiento.proxima_accion || null;
+          const nextProxima = (curProxima && curProxima.fecha) ? curProxima : {
+            fecha: primerContactoYMD,
+            tipo: 'llamada',
+            descripcion: `Primer seguimiento comercial post-oferta (${dias1erContacto} días hábiles)`
+          };
+
+          const nextCadence = {
+            ...curCadence,
+            tipo_cadencia: tipoCadencia,
+            fecha_entrega_oferta: deliveryStamp,
+            fecha_entrega_oferta_ymd: CrmFollowUpCalc ? CrmFollowUpCalc.getCommercialYMD(deliveryStamp) : deliveryStamp.slice(0, 10),
+            entregado_por_id: caller.cid,
+            entregado_por_nombre: caller.name || 'Comercial'
+          };
+
+          patch.seguimiento = {
+            ...curSeguimiento,
+            cadencia: nextCadence,
+            proxima_accion: nextProxima
+          };
+
+          const ymdDisplay = CrmFollowUpCalc ? CrmFollowUpCalc.getCommercialYMD(deliveryStamp) : deliveryStamp.slice(0, 10);
+          logMsg += ` [Entrega de Oferta Registrada: ${ymdDisplay}. Primer contacto: ${nextProxima.fecha}]`;
+        }
       } else {
         // cierre: the client record must be complete, the DUI document must exist and the contract rules apply.
         const missing = missingClientFields(client);
@@ -267,12 +333,30 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
+      const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
+      const transitionEntry = {
+        from: p.etapa,
+        to: nextStage,
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role
+      };
+
       tx.update(ref, {
         ...patch, datos, etapa: nextStage,
         stage_timestamps: { ...(p.stage_timestamps && typeof p.stage_timestamps === 'object' ? p.stage_timestamps : {}), [nextStage]: at },
+        stage_transitions: transitions.concat([transitionEntry]),
         logs: withLog(p, caller, logMsg)
       });
-      addAudit(tx, caller, nextStage === 'cierre' ? 'closeSale' : 'advanceStage', prospectId, { from: p.etapa, to: nextStage });
+      addAudit(tx, caller, nextStage === 'cierre' ? 'closeSale' : 'advanceStage', prospectId, {
+        from: p.etapa,
+        to: nextStage,
+        ...(nextStage === 'negociacion' ? {
+          fecha_entrega_oferta: patch.fecha_entrega_oferta || p.fecha_entrega_oferta,
+          primer_contacto: patch.seguimiento && patch.seguimiento.proxima_accion && patch.seguimiento.proxima_accion.fecha
+        } : {})
+      });
       return { status: 'advanced', etapa: nextStage, estado: patch.estado || p.estado };
     });
   }

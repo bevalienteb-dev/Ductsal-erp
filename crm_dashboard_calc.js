@@ -324,10 +324,25 @@
         let countSinProbabilidad = 0;
         let countSinPrecio = 0;
 
+        // Métricas específicas para Cotizaciones para Presupuesto (referenciales / planificación)
+        let montoPresupuestoReferencial = 0;
+        let countPresupuestoReferencial = 0;
+        let countEjecucion = 0;
+
         (activeList || []).forEach(p => {
             if (!p || p.estado !== 'activo' || p.eliminado === true) return;
             countTotal++;
             const subtotal = getProjectSubtotal(p);
+
+            // Regla: Presupuestos referenciales no se contabilizan en el pronóstico comercial de ejecución
+            const clasificacion = p.clasificacion || 'ejecucion';
+            if (clasificacion === 'presupuesto') {
+                countPresupuestoReferencial++;
+                montoPresupuestoReferencial += subtotal;
+                return;
+            }
+
+            countEjecucion++;
             totalNominal += subtotal;
 
             const hasProb = typeof p.probabilidad !== 'undefined' && p.probabilidad !== null && p.probabilidad !== '' && !isNaN(Number(p.probabilidad));
@@ -374,7 +389,10 @@
             countPonderadas,
             countSinPonderar,
             countSinProbabilidad,
-            countSinPrecio
+            countSinPrecio,
+            montoPresupuestoReferencial,
+            countPresupuestoReferencial,
+            countEjecucion
         };
     }
 
@@ -1049,6 +1067,15 @@
             if (!p || p.estado !== 'activo' || p.eliminado === true) return;
             const s = resolveSeller(p);
             const subtotal = getProjectSubtotal(p);
+
+            const clasificacion = p.clasificacion || 'ejecucion';
+            if (clasificacion === 'presupuesto') {
+                s.montoPresupuestos = (s.montoPresupuestos || 0) + subtotal;
+                s.countPresupuestos = (s.countPresupuestos || 0) + 1;
+                s.countActivas++;
+                return;
+            }
+
             s.pipelineNominal += subtotal;
             s.countActivas++;
 
@@ -1153,9 +1180,20 @@
             let montoPonderado = 0;
             let countSinProb = 0;
             let montoSinProb = 0;
+            let montoPresupuesto = 0;
+            let countPresupuesto = 0;
+            let countEjecucion = 0;
 
             ops.forEach(p => {
                 const subtotal = getProjectSubtotal(p);
+                const clasificacion = p.clasificacion || 'ejecucion';
+                if (clasificacion === 'presupuesto') {
+                    montoPresupuesto += subtotal;
+                    countPresupuesto++;
+                    return;
+                }
+
+                countEjecucion++;
                 montoNominal += subtotal;
 
                 const hasProb = typeof p.probabilidad !== 'undefined' && p.probabilidad !== null && p.probabilidad !== '' && !isNaN(Number(p.probabilidad));
@@ -1173,8 +1211,11 @@
             return {
                 stage: st,
                 count: ops.length,
+                countEjecucion,
+                countPresupuesto,
                 montoNominal,
                 montoPonderado,
+                montoPresupuesto,
                 countSinProb,
                 montoSinProb,
                 limitDays: limits[st] || 5

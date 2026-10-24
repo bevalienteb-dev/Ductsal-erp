@@ -135,18 +135,22 @@ function getProspectVendorInfo(p) {
     if (!p) return { id: '', name: 'Sistema', role: '' };
 
     let userId = p.vendedorId || p.createdBy;
-    let name = p.vendedorName || p.createdByName || p.creado_por || p.vendedor;
+    let name = (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.resolveSellerName === 'function')
+        ? CrmFollowUpCalc.resolveSellerName(p, users)
+        : (p.vendedorName || p.createdByName || p.creado_por || p.vendedor);
     let role = p.vendedorRole || p.createdByRole || '';
 
     if (userId) {
-        const u = users.find(x => x.id === userId);
+        const u = Array.isArray(users) ? users.find(x => x && (x.id === userId || (x.authUid && x.authUid === userId))) : null;
         if (u) {
-            name = u.nombre;
-            role = u.role;
+            if (!name || name === 'Sin Asignar') name = u.nombre;
+            role = u.role || role;
         }
     }
 
-    if (!name) name = 'Sistema / Desconocido';
+    if (!name || name === 'Sin Asignar') {
+        name = p.vendedorName || p.vendedor || 'Sin Asignar';
+    }
 
     let roleText = '';
     if (role === 'manager') roleText = 'Gerente';
@@ -156,7 +160,7 @@ function getProspectVendorInfo(p) {
     return { id: userId, name, role: roleText };
 }
 
-function reassignVendor(prospectId) {
+function reassignVendor(prospectId, directTargetId) {
     const p = prospects.find(x => x.id === prospectId);
     if (!p) return;
     const isClosed = (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : (p && (p.postcierre_habilitado === true || p.etapa === 'cierre')));
@@ -166,38 +170,175 @@ function reassignVendor(prospectId) {
     if (!currentUser || currentUser.role !== 'manager') {
         return alert("Solo los Gerentes pueden reasignar oportunidades.");
     }
+
     const currentVendor = getProspectVendorInfo(p);
-    const activeUsers = users.filter(u => u.activo !== false);
-    let optionsText = activeUsers.map((u, idx) => {
-        const rName = u.role === 'manager' ? 'Gerente' : (u.role === 'gestor' ? 'Gestor' : 'Vendedor');
-        return `${idx + 1}. ${u.nombre} (${rName})`;
-    }).join('\n');
+    const modalEl = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('reassignModal') : null;
 
-    let selStr = prompt(`Reasignar Oportunidad: "${p.proyecto}"\n\nVendedor Actual: ${currentVendor.name}\n\nIngresa el número del nuevo vendedor:\n${optionsText}`);
-    if (!selStr) return;
+    if (modalEl && !directTargetId) {
+        const subTitle = document.getElementById('reassign-modal-subtitle');
+        if (subTitle) subTitle.textContent = `Proyecto: ${p.proyecto || p.codigo || '-'}`;
 
-    let targetUser = activeUsers.find(u => u.email.toLowerCase() === selStr.toLowerCase().trim() || u.nombre.toLowerCase().includes(selStr.toLowerCase().trim()));
-    const num = parseInt(selStr, 10);
-    if (!targetUser && !isNaN(num) && num > 0 && num <= activeUsers.length) {
-        targetUser = activeUsers[num - 1];
+        const currVendorEl = document.getElementById('reassign-current-vendor');
+        if (currVendorEl) {
+            const roleLabel = currentVendor.role ? ` (${currentVendor.role})` : '';
+            currVendorEl.textContent = `${currentVendor.name}${roleLabel}`;
+        }
+
+        const pidInput = document.getElementById('reassign-prospect-id');
+        if (pidInput) pidInput.value = p.id;
+
+        const errBox = document.getElementById('reassign-error-box');
+        if (errBox) {
+            errBox.style.display = 'none';
+            errBox.textContent = '';
+        }
+
+        const selectEl = document.getElementById('reassign-new-vendor-select');
+        if (selectEl) {
+            selectEl.innerHTML = '<option value="">-- Selecciona un vendedor o gestor --</option>';
+
+            // Solo usuarios activos con rol 'vendedor' o 'gestor'
+            // Se excluyen explícitamente gerentes, administradores e inactivos.
+            const validUsers = (Array.isArray(users) ? users : []).filter(u => {
+                if (!u || u.activo === false) return false;
+                const r = String(u.role || '').toLowerCase();
+                return r === 'vendedor' || r === 'gestor';
+            });
+
+            validUsers.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+            validUsers.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                const roleName = u.role === 'gestor' ? 'Gestor' : 'Vendedor';
+                opt.textContent = `${u.nombre} (${roleName})`;
+                if (u.id === currentVendor.id) {
+                    opt.textContent += ' [Actual]';
+                }
+                selectEl.appendChild(opt);
+            });
+        }
+
+        const btnSubmit = document.getElementById('btn-confirm-reassign');
+        if (btnSubmit) {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Confirmar Reasignación';
+        }
+
+        if (typeof openModal === 'function') {
+            openModal('reassignModal');
+        }
+        return;
+    }
+
+    // Fallback para entornos de prueba sin modal DOM completo o invocación directa
+    let targetUser = null;
+    const activeVendors = (Array.isArray(users) ? users : []).filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
+
+    if (directTargetId) {
+        targetUser = activeVendors.find(u => u.id === directTargetId || u.cid === directTargetId || (u.email && u.email.toLowerCase() === String(directTargetId).toLowerCase()));
+    } else if (typeof prompt === 'function') {
+        const selStr = prompt(`Reasignar Oportunidad: "${p.proyecto}"\nVendedor Actual: ${currentVendor.name}`);
+        if (!selStr) return;
+        targetUser = activeVendors.find(u => (u.email && u.email.toLowerCase() === selStr.toLowerCase().trim()) || (u.nombre && u.nombre.toLowerCase().includes(selStr.toLowerCase().trim())));
+        const num = parseInt(selStr, 10);
+        if (!targetUser && !isNaN(num) && num > 0 && num <= activeVendors.length) {
+            targetUser = activeVendors[num - 1];
+        }
     }
 
     if (!targetUser) return alert("Vendedor no encontrado.");
 
-    // The server authorises (manager / gestor), validates the target and writes the log with the identity of the session.
     const fb = (typeof firebase !== 'undefined') ? firebase : null;
     if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
         return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
     }
-    showLoading('Reasignando vendedor...');
-    return CrmCommercial.reassign(fb, { prospectId: p.id, vendedorId: targetUser.id, dbSuffix: DB_SUFFIX }).then(res => {
+    if (typeof showLoading === 'function') showLoading('Reasignando vendedor...');
+    return CrmCommercial.reassign(fb, { prospectId: p.id, vendedorId: targetUser.id, dbSuffix: typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : '_prod' }).then(res => {
         if (res.status === 'reassigned') {
-            p.vendedorId = res.vendedorId; p.vendedorName = res.vendedorName; p.vendedorRole = res.vendedorRole;
+            p.vendedorId = res.vendedorId;
+            p.vendedorName = res.vendedorName;
+            p.vendedorRole = res.vendedorRole;
         }
+        if (typeof openDetail === 'function') openDetail(p.id);
+        if (typeof renderList === 'function') renderList();
+        alert(res.status === 'reassigned' ? `✔️ Oportunidad reasignada exitosamente a ${targetUser.nombre}.` : 'La oportunidad ya estaba asignada a ese vendedor.');
+    }).catch(err => alert(CrmCommercial.errorMessage(err))).finally(() => {
+        if (typeof hideLoading === 'function') hideLoading();
+    });
+}
+
+async function processConfirmReassign(event) {
+    if (event) event.preventDefault();
+    const pidInput = document.getElementById('reassign-prospect-id');
+    const selectEl = document.getElementById('reassign-new-vendor-select');
+    const errBox = document.getElementById('reassign-error-box');
+    const btnSubmit = document.getElementById('btn-confirm-reassign');
+
+    const prospectId = pidInput ? pidInput.value : null;
+    const targetUserId = selectEl ? selectEl.value : null;
+
+    if (!prospectId) return;
+
+    if (!targetUserId) {
+        if (errBox) {
+            errBox.textContent = 'Por favor selecciona un nuevo responsable comercial.';
+            errBox.style.display = 'block';
+        }
+        return;
+    }
+
+    const targetUser = (Array.isArray(users) ? users : []).find(u => u.id === targetUserId);
+    if (!targetUser || (targetUser.role !== 'vendedor' && targetUser.role !== 'gestor')) {
+        if (errBox) {
+            errBox.textContent = 'El usuario seleccionado no es un Vendedor o Gestor válido.';
+            errBox.style.display = 'block';
+        }
+        return;
+    }
+
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        if (errBox) {
+            errBox.textContent = typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.';
+            errBox.style.display = 'block';
+        }
+        return;
+    }
+
+    if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Reasignando...';
+    }
+    if (errBox) errBox.style.display = 'none';
+
+    try {
+        const res = await CrmCommercial.reassign(fb, { prospectId: p.id, vendedorId: targetUser.id, dbSuffix: DB_SUFFIX });
+        if (res.status === 'reassigned') {
+            p.vendedorId = res.vendedorId;
+            p.vendedorName = res.vendedorName;
+            p.vendedorRole = res.vendedorRole;
+        }
+        closeModal('reassignModal');
         openDetail(p.id);
         renderList();
-        alert(res.status === 'reassigned' ? `✔️ Vendedor reasignado exitosamente a ${targetUser.nombre}.` : 'La oportunidad ya estaba asignada a ese vendedor.');
-    }).catch(err => alert(CrmCommercial.errorMessage(err))).finally(hideLoading);
+        alert(res.status === 'reassigned' ? `✔️ Oportunidad reasignada exitosamente a ${targetUser.nombre}.` : 'La oportunidad ya estaba asignada a ese vendedor.');
+    } catch (err) {
+        if (errBox) {
+            errBox.textContent = CrmCommercial.errorMessage(err);
+            errBox.style.display = 'block';
+        } else {
+            alert(CrmCommercial.errorMessage(err));
+        }
+    } finally {
+        if (btnSubmit) {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Confirmar Reasignación';
+        }
+    }
 }
 
 function updateOppSortIcons() {
@@ -2670,14 +2811,26 @@ function getClientName(clientId) {
 }
 
 let oppStatusFilter = 'activas';
+let oppClasifFilter = 'todas';
 
 function getOppStatusFilter() {
     return oppStatusFilter;
 }
 
+function getOppClasifFilter() {
+    return oppClasifFilter;
+}
+
 function setOppStatusFilter(filterKey) {
     if (['activas', 'perdidas', 'todas'].includes(filterKey)) {
         oppStatusFilter = filterKey;
+        renderList();
+    }
+}
+
+function setOppClasifFilter(filterKey) {
+    if (['todas', 'ejecucion', 'presupuesto'].includes(filterKey)) {
+        oppClasifFilter = filterKey;
         renderList();
     }
 }
@@ -2728,12 +2881,12 @@ function renderDailyAgenda() {
     const sellerSelect = document.getElementById('agenda-seller-select');
     const escaladasPill = document.getElementById('filter-agenda-escaladas');
 
-    const isManagerOrGestor = currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor');
+    const isManager = currentUser && currentUser.role === 'manager';
 
-    // Manejar selector de comercial y botón de escaladas para Manager / Gestor
+    // Manejar selector de comercial y botón de escaladas EXCLUSIVAMENTE para Manager
     if (sellerWrap) {
-        sellerWrap.style.display = isManagerOrGestor ? 'flex' : 'none';
-        if (isManagerOrGestor && sellerSelect && sellerSelect.options.length <= 1) {
+        sellerWrap.style.display = isManager ? 'flex' : 'none';
+        if (isManager && sellerSelect && sellerSelect.options.length <= 1) {
             const activeUsers = users.filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
             activeUsers.forEach(u => {
                 const opt = document.createElement('option');
@@ -2745,17 +2898,20 @@ function renderDailyAgenda() {
     }
 
     if (escaladasPill) {
-        escaladasPill.style.display = isManagerOrGestor ? 'inline-flex' : 'none';
+        escaladasPill.style.display = isManager ? 'inline-flex' : 'none';
     }
 
-    // Filtrar universo de oportunidades por comercial si se seleccionó en el dropdown
+    // Filtrar universo de oportunidades por comercial si el Manager seleccionó en el dropdown
     let targetUniverse = prospects;
-    if (isManagerOrGestor && sellerSelect && sellerSelect.value !== 'all') {
+    let agendaUser = currentUser;
+    if (isManager && sellerSelect && sellerSelect.value !== 'all') {
         const selId = sellerSelect.value;
         targetUniverse = prospects.filter(p => p && (p.vendedorId === selId || p.createdBy === selId));
+        const matchedSeller = (Array.isArray(users) ? users.find(u => u.id === selId) : null) || { id: selId, role: 'vendedor' };
+        agendaUser = matchedSeller;
     }
 
-    const agendaData = CrmFollowUpCalc.generateAgenda(targetUniverse, currentUser, currentAgendaFilter);
+    const agendaData = CrmFollowUpCalc.generateAgenda(targetUniverse, agendaUser, currentAgendaFilter, new Date(), users);
 
     // Actualizar contadores en píldoras
     const counts = agendaData.counts;
@@ -2940,19 +3096,7 @@ function openRecordFollowUpModal(prospectId) {
     const detalleEl = document.getElementById('followup-detalle');
     if (detalleEl) detalleEl.value = '';
 
-    // Fecha de entrega de cotización (si no existe y está en cotizacion/negociacion)
-    const fechaEntregaBox = document.getElementById('followup-fecha-entrega-box');
-    const fechaEntregaInput = document.getElementById('followup-fecha-entrega-oferta');
     const cadencia = (p.seguimiento && p.seguimiento.cadencia) || {};
-    if (fechaEntregaBox) {
-        const etapa = p.etapa || 'prospecto';
-        if ((etapa === 'cotizacion' || etapa === 'negociacion') && !cadencia.fecha_entrega_oferta) {
-            fechaEntregaBox.style.display = 'block';
-            if (fechaEntregaInput) fechaEntregaInput.value = '';
-        } else {
-            fechaEntregaBox.style.display = 'none';
-        }
-    }
 
     // Sección de justificación tras 3 intentos
     const decisionBox = document.getElementById('followup-decision-box');
@@ -2965,13 +3109,18 @@ function openRecordFollowUpModal(prospectId) {
     // Cuadro explicativo de cliente no continúa (oculto por defecto)
     const noContinuaBox = document.getElementById('followup-no-continua-box');
     if (noContinuaBox) noContinuaBox.style.display = 'none';
+    const proxFechaGroup = document.getElementById('followup-prox-fecha-group');
+    if (proxFechaGroup) proxFechaGroup.style.display = 'block';
+    const proxTipoGroup = document.getElementById('followup-prox-tipo-group');
+    if (proxTipoGroup) proxTipoGroup.style.display = 'block';
+    const proxDescGroup = document.getElementById('followup-prox-desc-group');
+    if (proxDescGroup) proxDescGroup.style.display = 'block';
 
     // Próxima acción sugerida
     updateSuggestedFollowUpDate();
 
     // Mostrar modal
-    const modal = document.getElementById('followUpModal');
-    if (modal) modal.style.display = 'flex';
+    openModal('followUpModal');
 }
 
 function updateSuggestedFollowUpDate() {
@@ -2982,14 +3131,20 @@ function updateSuggestedFollowUpDate() {
     if (!resultadoEl || !proxFechaEl) return;
 
     const res = resultadoEl.value;
-    const p = prospects.find(x => x.id === currentProspectId);
-    const intentos = (p && p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.intentos_fallidos) || 0;
+    const pid = (document.getElementById('followup-prospect-id') && document.getElementById('followup-prospect-id').value) || currentProspectId;
+    const p = prospects.find(x => x.id === pid);
+    const curCadence = (p && p.seguimiento && p.seguimiento.cadencia) || {};
+    const intentos = (curCadence && curCadence.intentos_fallidos) || 0;
+    const tipoCadencia = curCadence.tipo_cadencia || 'estandar';
+    const cadConfig = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.getCadenceConfig)
+        ? CrmFollowUpCalc.getCadenceConfig(tipoCadencia)
+        : { dias_primer_contacto: 5, intervalo_sin_respuesta: 2, dias_solicito_tiempo: 15, nombre: 'Estándar Ductsal' };
 
     const canalEl = document.getElementById('followup-canal');
     const canal = canalEl ? canalEl.value : 'llamada';
     const isInternal = canal === 'interno';
 
-    const suggested = CrmFollowUpCalc.suggestNextContactDate(new Date(), res, intentos, { channel: canal, isInternal });
+    const suggested = CrmFollowUpCalc.suggestNextContactDate(new Date(), res, intentos, { channel: canal, isInternal, cadenceConfig: cadConfig });
     if (suggested) {
         const ymd = CrmFollowUpCalc.formatDateYMD(suggested);
         proxFechaEl.value = ymd;
@@ -3000,18 +3155,19 @@ function updateSuggestedFollowUpDate() {
     }
 
     if (sugerenciaEl) {
+        const cadLbl = cadConfig.nombre || tipoCadencia;
         if (res === 'solicito_tiempo') {
-            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +15 días calendario acordados';
+            sugerenciaEl.textContent = `💡 Sugerencia (${cadLbl}): +${cadConfig.dias_solicito_tiempo} días calendario acordados`;
         } else if (res === 'sin_respuesta') {
-            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +2 días hábiles (salta fines de semana y asuetos)';
+            sugerenciaEl.textContent = `💡 Sugerencia (${cadLbl}): +${cadConfig.intervalo_sin_respuesta} días hábiles (salta fines de semana y asuetos)`;
         } else if (res === 'solicito_cambios') {
-            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +5 días hábiles para cotizar cambios';
+            sugerenciaEl.textContent = `💡 Sugerencia (${cadLbl}): +${cadConfig.dias_primer_contacto} días hábiles para cotizar cambios`;
         } else if (res === 'no_continua') {
             sugerenciaEl.textContent = '💡 Cliente no continúa: No se programa seguimiento automático (la oportunidad no se marca como perdida).';
         } else if (res === 'nota_interna') {
             sugerenciaEl.textContent = '💡 Nota interna: No altera la cadencia comercial con el cliente.';
         } else {
-            sugerenciaEl.textContent = '💡 Sugerencia cadencia: +2 días hábiles';
+            sugerenciaEl.textContent = `💡 Sugerencia (${cadLbl}): +${cadConfig.intervalo_sin_respuesta} días hábiles`;
         }
 
         if (suggested) {
@@ -3045,15 +3201,26 @@ function handleFollowUpResultadoChange() {
     const resultadoEl = document.getElementById('followup-resultado');
     const decisionBox = document.getElementById('followup-decision-box');
     const noContinuaBox = document.getElementById('followup-no-continua-box');
-    const p = prospects.find(x => x.id === currentProspectId);
+    const proxFechaGroup = document.getElementById('followup-prox-fecha-group');
+    const proxTipoGroup = document.getElementById('followup-prox-tipo-group');
+    const proxDescGroup = document.getElementById('followup-prox-desc-group');
+    const pid = (document.getElementById('followup-prospect-id') && document.getElementById('followup-prospect-id').value) || currentProspectId;
+    const p = prospects.find(x => x.id === pid);
     const intentos = (p && p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.intentos_fallidos) || 0;
 
+    const resVal = resultadoEl ? resultadoEl.value : '';
+    const isNoContinua = resVal === 'no_continua';
+
     if (decisionBox) {
-        decisionBox.style.display = (resultadoEl.value === 'sin_respuesta' && intentos >= 3) ? 'block' : 'none';
+        decisionBox.style.display = (resVal === 'sin_respuesta' && intentos >= 3) ? 'block' : 'none';
     }
     if (noContinuaBox) {
-        noContinuaBox.style.display = (resultadoEl.value === 'no_continua') ? 'block' : 'none';
+        noContinuaBox.style.display = isNoContinua ? 'block' : 'none';
     }
+    if (proxFechaGroup) proxFechaGroup.style.display = isNoContinua ? 'none' : 'block';
+    if (proxTipoGroup) proxTipoGroup.style.display = isNoContinua ? 'none' : 'block';
+    if (proxDescGroup) proxDescGroup.style.display = isNoContinua ? 'none' : 'block';
+
     updateSuggestedFollowUpDate();
 }
 
@@ -3075,9 +3242,6 @@ async function processSaveFollowUp(event) {
     const proxTipo = document.getElementById('followup-prox-tipo').value;
     const proxDesc = document.getElementById('followup-prox-desc').value.trim();
 
-    const fechaEntregaInput = document.getElementById('followup-fecha-entrega-oferta');
-    const fechaEntregaOferta = fechaEntregaInput && fechaEntregaInput.value ? fechaEntregaInput.value : undefined;
-
     const justifInput = document.getElementById('followup-justificacion');
     const justificacionContinuidad = justifInput ? justifInput.value.trim() : '';
 
@@ -3086,7 +3250,6 @@ async function processSaveFollowUp(event) {
         resultado,
         detalle,
         proxima_accion: proxFecha ? { fecha: proxFecha, tipo: proxTipo, descripcion: proxDesc } : undefined,
-        fecha_entrega_oferta: fechaEntregaOferta,
         justificacion_continuidad: justificacionContinuidad || undefined
     };
 
@@ -3202,32 +3365,240 @@ function renderFollowUpSummary(p) {
         histHtml += `</div>`;
     }
 
+    const etapa = p.etapa || 'prospecto';
+    const deliveryDate = p.fecha_entrega_oferta || cad.fecha_entrega_oferta || null;
+    let deliveryHtml = '';
+    if (deliveryDate) {
+        const ymd = (typeof CrmFollowUpCalc !== 'undefined') ? CrmFollowUpCalc.getCommercialYMD(deliveryDate) : String(deliveryDate).slice(0, 10);
+        const deliverer = cad.entregado_por_nombre ? ` <span style="color:var(--text-secondary); font-size:0.75rem;">(por ${escapeHtmlDoc(cad.entregado_por_nombre)})</span>` : '';
+        deliveryHtml = `<div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">📅 Oferta Entregada:</span> <strong style="color:white;">${ymd}</strong>${deliverer}</div>`;
+    } else if (etapa === 'negociacion' || etapa === 'cierre') {
+        deliveryHtml = `<div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">📅 Oferta Entregada:</span> <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-size:0.75rem;">⚠️ Sin fecha de entrega de oferta registrada (Histórica)</span></div>`;
+    }
+
+    const tipoCadencia = cad.tipo_cadencia || 'estandar';
+    const cadConfig = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.getCadenceConfig) ? CrmFollowUpCalc.getCadenceConfig(tipoCadencia) : { nombre: 'Estándar Ductsal' };
+    const isAssigned = currentUser && (p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
+    const canChangeCadence = p.estado === 'activo' && !!currentUser && (currentUser.role === 'manager' || isAssigned);
+
+    const cadenceChangeBtn = canChangeCadence
+        ? `<button type="button" class="btn btn-secondary" onclick="openCadenceModal('${p.id}')" style="padding:2px 8px; font-size:0.7rem; margin-left:6px; cursor:pointer;" title="Configurar cadencia comercial">⚙️ Cambiar Cadencia</button>`
+        : '';
+
+    let cadHistHtml = '';
+    const cadHist = Array.isArray(cad.historial_cambios) ? cad.historial_cambios : [];
+    if (cadHist.length > 0) {
+        cadHistHtml = `<div style="margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px; font-size:0.75rem; color:var(--text-secondary);">
+            <div style="font-weight:700; color:var(--text-muted); margin-bottom:4px;">Historial de Cambios de Cadencia:</div>
+            ${cadHist.map(h => {
+                const fStr = (typeof formatDate === 'function') ? formatDate(h.fecha) : h.fecha;
+                return `<div style="margin-bottom:2px;">• <strong>${fStr}</strong>: ${escapeHtmlDoc(h.cadenciaAnterior)} ➔ <strong>${escapeHtmlDoc(h.cadenciaNueva)}</strong> por ${escapeHtmlDoc(h.usuarioNombre || 'Comercial')}. <span style="color:var(--text-muted); font-style:italic;">"${escapeHtmlDoc(h.motivo || '')}"</span></div>`;
+            }).join('')}
+        </div>`;
+    }
+
     summaryEl.innerHTML = `
         <div style="display:grid; grid-template-columns:1fr; gap:6px; margin-bottom:8px;">
             <div><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Último Contacto:</span> <div>${ultHtml}</div></div>
             <div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Próxima Acción:</span> <div>${proxHtml}</div></div>
+            ${deliveryHtml}
             <div style="margin-top:4px;">
                 <span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Cadencia:</span>
-                <span class="badge ${intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral'}" style="font-size:0.75rem;">
+                <span class="badge bg-neutral" style="font-size:0.75rem; border: 1px solid var(--border-color);" title="${cadConfig.descripcion || ''}">
+                    ${escapeHtmlDoc(cadConfig.nombre || tipoCadencia)}
+                </span>
+                ${cadenceChangeBtn}
+                <span class="badge ${intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral'}" style="font-size:0.75rem; margin-left:4px;">
                     ${intentos} de 5 intentos fallidos
                 </span>
                 ${cad.alerta_gerencial ? '<span class="badge badge-urgency-escalada" style="margin-left:4px;">Alerta Gerencial Activa</span>' : ''}
             </div>
-            ${cad.justificacion_continuidad ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;"><strong>Justificación:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}</div>` : ''}
+            ${cad.justificacion_continuidad ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;"><strong>Justificación continuidad:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}</div>` : ''}
+            ${cadHistHtml}
         </div>
         ${histHtml}
     `;
 }
 
+function openCadenceModal(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+    const modal = document.getElementById('cadenceModal');
+    if (!modal) return;
+
+    document.getElementById('cadence-prospect-id').value = prospectId;
+    document.getElementById('cadence-modal-title').textContent = `Proyecto: ${p.codigo || ''} ${p.proyecto || ''}`;
+
+    const curCadence = (p.seguimiento && p.seguimiento.cadencia) || {};
+    const curTipo = curCadence.tipo_cadencia || 'estandar';
+    const selectEl = document.getElementById('cadence-select-tipo');
+    if (selectEl) {
+        selectEl.value = curTipo;
+        handleCadenceSelectChange();
+    }
+
+    const motivoEl = document.getElementById('cadence-motivo');
+    if (motivoEl) motivoEl.value = '';
+
+    modal.style.display = 'flex';
+}
+
+function handleCadenceSelectChange() {
+    const selectEl = document.getElementById('cadence-select-tipo');
+    const descBox = document.getElementById('cadence-desc-box');
+    if (!selectEl || !descBox) return;
+
+    const val = selectEl.value;
+    if (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.CADENCIAS_VALIDAS && CrmFollowUpCalc.CADENCIAS_VALIDAS[val]) {
+        const c = CrmFollowUpCalc.CADENCIAS_VALIDAS[val];
+        descBox.innerHTML = `<strong>${c.nombre}:</strong> ${c.descripcion}`;
+    }
+}
+
+async function processSaveCadence(event) {
+    if (event) event.preventDefault();
+    const prospectId = document.getElementById('cadence-prospect-id').value;
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const selectEl = document.getElementById('cadence-select-tipo');
+    const motivoEl = document.getElementById('cadence-motivo');
+    const tipoCadencia = selectEl ? selectEl.value : 'estandar';
+    const motivo = motivoEl ? motivoEl.value.trim() : '';
+
+    if (!motivo || motivo.length < 5) {
+        return alert('Por favor indica el motivo comercial del cambio de cadencia (mínimo 5 caracteres).');
+    }
+
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+    }
+
+    const btn = document.getElementById('btn-save-cadence');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await CrmCommercial.updateProspectCadence(fb, { prospectId, tipoCadencia, motivo, dbSuffix: DB_SUFFIX });
+        if (res && res.cadencia) {
+            if (!p.seguimiento) p.seguimiento = {};
+            p.seguimiento.cadencia = res.cadencia;
+            if (res.seguimiento) p.seguimiento = res.seguimiento;
+            if (!Array.isArray(p.logs)) p.logs = [];
+            p.logs.push({
+                text: `(${currentUser ? currentUser.nombre : 'Comercial'}) [CADENCIA COMERCIAL] Cadencia cambiada a "${tipoCadencia}". Motivo: ${motivo}`,
+                date: new Date().toISOString(),
+                auto: true
+            });
+        }
+
+        closeModal('cadenceModal');
+        renderDailyAgenda();
+        renderList();
+        if (currentProspectId === prospectId) {
+            renderFollowUpSummary(p);
+        }
+    } catch (err) {
+        console.error('Error al actualizar cadencia:', err);
+        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.errorMessage(err) : (err.message || 'Error al actualizar cadencia comercial.'));
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function openReclassifyModal(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const idInput = document.getElementById('reclassify-prospect-id');
+    const titleEl = document.getElementById('reclassify-modal-title');
+    const selectEl = document.getElementById('reclassify-select');
+    const motivoEl = document.getElementById('reclassify-motivo');
+
+    if (idInput) idInput.value = prospectId;
+    if (titleEl) {
+        titleEl.textContent = `Proyecto: ${p.proyecto} (${getClientName(p.clientId)}) · Clasificación actual: ${p.clasificacion === 'presupuesto' ? 'Cotización para Presupuesto' : 'Oferta para Ejecución'}`;
+    }
+    if (selectEl) {
+        selectEl.value = (p.clasificacion === 'presupuesto') ? 'ejecucion' : 'presupuesto';
+    }
+    if (motivoEl) motivoEl.value = '';
+
+    handleReclassifySelectChange();
+    openModal('reclassifyModal');
+}
+
+function handleReclassifySelectChange() {
+    const selectEl = document.getElementById('reclassify-select');
+    const descBox = document.getElementById('reclassify-desc-box');
+    if (!selectEl || !descBox) return;
+
+    if (selectEl.value === 'ejecucion') {
+        descBox.innerHTML = '<strong>🏗️ Oferta para Ejecución:</strong> Representa una oportunidad con intención de compra/ejecución confirmada. Se incluye en el pronóstico ponderado y permite avanzar a la etapa de Negociación con seguimiento activo.';
+    } else {
+        descBox.innerHTML = '<strong>📐 Cotización para Presupuesto:</strong> Estimación referencial o de planificación presupuestaria del cliente. No infla el forecast comercial y permanece en cotización hasta que el cliente confirme intención de ejecución.';
+    }
+}
+
+async function processSaveReclassification(event) {
+    if (event) event.preventDefault();
+    const prospectId = document.getElementById('reclassify-prospect-id').value;
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const selectEl = document.getElementById('reclassify-select');
+    const motivoEl = document.getElementById('reclassify-motivo');
+    const clasificacion = selectEl ? selectEl.value : 'ejecucion';
+    const motivo = motivoEl ? motivoEl.value.trim() : '';
+
+    if (!motivo || motivo.length < 5) {
+        return alert('Por favor indica el motivo comercial del cambio de clasificación (mínimo 5 caracteres).');
+    }
+
+    const fb = (typeof firebase !== 'undefined') ? firebase : null;
+    if (typeof CrmCommercial !== 'undefined' && !CrmCommercial.hasSessionSync(fb)) {
+        return alert(CrmCommercial.NO_SESSION_MESSAGE);
+    }
+
+    const btn = document.getElementById('btn-save-reclassify');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await CrmCommercial.reclassifyProspect(fb, { prospectId, clasificacion, motivo, dbSuffix: DB_SUFFIX });
+        if (res && res.clasificacion) {
+            p.clasificacion = res.clasificacion;
+            if (res.historial_clasificacion) {
+                p.historial_clasificacion = res.historial_clasificacion;
+            }
+            if (!Array.isArray(p.logs)) p.logs = [];
+            p.logs.push({
+                text: `(${currentUser ? currentUser.nombre : 'Comercial'}) [CLASIFICACIÓN COMERCIAL] Clasificación cambiada a "${clasificacion === 'ejecucion' ? 'Oferta para ejecución' : 'Cotización para presupuesto'}". Motivo: ${motivo}`,
+                date: new Date().toISOString(),
+                auto: true
+            });
+        }
+
+        closeModal('reclassifyModal');
+        renderList();
+        if (currentProspectId === prospectId) {
+            renderTracker(p);
+            renderInfo(p);
+            const advContainer = document.getElementById('advance-form-container');
+            if (advContainer) advContainer.innerHTML = '';
+        }
+    } catch (err) {
+        console.error('Error al reclasificar prospecto:', err);
+        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.errorMessage(err) : (err.message || 'Error al cambiar clasificación comercial.'));
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 
 function renderList() {
     let filtered = prospects;
-    if (currentUser && currentUser.role === 'gestor') {
-        // Gestor manages leads they entered originally OR leads assigned to them as responsible
-        filtered = filtered.filter(p => p.vendedorId === currentUser.id || p.createdBy === currentUser.id);
-    } else if (currentUser && currentUser.role === 'vendedor') {
-        // Vendedor manages assigned leads; prior vendor leaves operational access
-        filtered = filtered.filter(p => p.vendedorId === currentUser.id || (p.createdBy === currentUser.id && (!p.vendedorId || p.vendedorId === currentUser.id)));
+    if (currentUser && (currentUser.role === 'gestor' || currentUser.role === 'vendedor')) {
+        filtered = filtered.filter(p => p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
     }
     const tbody = document.getElementById('opp-table-body');
     if (!tbody) return;
@@ -3257,6 +3628,23 @@ function renderList() {
         }
     });
 
+    // Update classification filter badge counters
+    const countEjecucion = baseProspects.filter(p => (p.clasificacion || 'ejecucion') === 'ejecucion').length;
+    const countPresupuesto = baseProspects.filter(p => p.clasificacion === 'presupuesto').length;
+
+    const elEjecucion = document.getElementById('count-opp-ejecucion');
+    if (elEjecucion) elEjecucion.textContent = countEjecucion;
+    const elPresupuesto = document.getElementById('count-opp-presupuesto');
+    if (elPresupuesto) elPresupuesto.textContent = countPresupuesto;
+
+    ['todas', 'ejecucion', 'presupuesto'].forEach(key => {
+        const btn = document.getElementById(`filter-clasif-${key}`);
+        if (btn) {
+            if (key === oppClasifFilter) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+
     // Apply status filter: default 'activas' strictly excludes lost opportunities
     let visibleProspects = baseProspects;
     if (oppStatusFilter === 'activas') {
@@ -3265,6 +3653,13 @@ function renderList() {
         visibleProspects = baseProspects.filter(p => p.estado === 'perdido');
     } else if (oppStatusFilter === 'todas') {
         visibleProspects = baseProspects;
+    }
+
+    // Apply classification filter
+    if (oppClasifFilter === 'ejecucion') {
+        visibleProspects = visibleProspects.filter(p => (p.clasificacion || 'ejecucion') === 'ejecucion');
+    } else if (oppClasifFilter === 'presupuesto') {
+        visibleProspects = visibleProspects.filter(p => p.clasificacion === 'presupuesto');
     }
 
     // Apply Search Filter
@@ -3391,18 +3786,16 @@ function renderList() {
         // Calculate days in stage
         const timestamp = p.stage_timestamps && p.stage_timestamps[p.etapa] ? p.stage_timestamps[p.etapa] : p.fecha_creacion;
         const daysInStage = getDaysDifference(timestamp);
-        const limit = KPI_LIMITS[p.etapa] || 999;
-        const isLate = p.estado === 'activo' && daysInStage > limit;
-
-        if (isLate) {
-            tr.style.backgroundColor = 'rgba(220, 20, 60, 0.15)'; // Red tint
-            tr.style.color = '#ff6b6b';
-        }
 
         const vendor = getProspectVendorInfo(p);
         const vendorBadge = vendor.role ? `<span style="font-size:0.75rem; color:var(--text-secondary); display:block;">(${vendor.role})</span>` : '';
 
-        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td>${formatProspectDate(p.fecha_creacion)}</td><td style="text-transform: capitalize;">${p.etapa} ${isLate ? '<span style="font-size:0.7rem; color:var(--danger); font-weight:bold;">(Retrasado)</span>' : ''}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
+        const isPresupuesto = p.clasificacion === 'presupuesto';
+        const clasifBadge = isPresupuesto
+            ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Cotización referencial para presupuesto">📐 Presupuesto</span>`
+            : `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Oferta para ejecución comercial">🏗️ Ejecución</span>`;
+
+        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}${clasifBadge}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td>${formatProspectDate(p.fecha_creacion)}</td><td style="text-transform: capitalize;">${p.etapa}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -3664,11 +4057,38 @@ async function cancelPendingClientReservation() {
     }
 }
 
+function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.style.display = 'flex';
+        if (typeof document !== 'undefined' && document.body && document.body.classList) {
+            document.body.classList.add('modal-open');
+        }
+    }
+}
+
 function closeModal(id) {
     if (id === 'clientModal') {
         cancelPendingClientReservation();
     }
-    document.getElementById(id).style.display = 'none';
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        const openModals = document.querySelectorAll('.modal');
+        let anyOpen = false;
+        for (let i = 0; i < openModals.length; i++) {
+            if (openModals[i].style.display === 'flex' || openModals[i].style.display === 'block') {
+                anyOpen = true;
+                break;
+            }
+        }
+        if (!anyOpen && document.body && document.body.classList) {
+            document.body.classList.remove('modal-open');
+        }
+    } else if (typeof document !== 'undefined' && document.body && document.body.classList) {
+        document.body.classList.remove('modal-open');
+    }
 }
 // Selector of NEW opportunities. Deliberately NOT getVisibleClients(): that is the portfolio shown in the Clients
 // section. A vendedor with a Firebase session searches the WHOLE catalogue on the server (searchClientsCatalog: id,
@@ -3880,6 +4300,7 @@ async function createNewProspect(e) {
         return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
     }
 
+    const clasifEl = document.getElementById('new-clasificacion');
     const prospect = {
         clientId: clientId,
         proyecto: document.getElementById('new-proyecto').value,
@@ -3887,6 +4308,9 @@ async function createNewProspect(e) {
         tipo_proyecto: document.getElementById('new-tipo-proyecto').value,
         tipo_producto: document.getElementById('new-tipo-producto').value
     };
+    if (clasifEl && clasifEl.value) {
+        prospect.clasificacion = clasifEl.value;
+    }
     const vendorSelect = document.getElementById('new-vendedor-select');
     if (vendorSelect && vendorSelect.value && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor')) {
         prospect.vendedorId = vendorSelect.value; // only a hint: the server re-checks the role and that the user exists
@@ -3911,17 +4335,9 @@ async function createNewProspect(e) {
 // ========================
 function openDetail(id) {
     currentProspectId = id; const p = prospects.find(x => x.id === id); if (!p) return;
-    if (currentUser && currentUser.role === 'vendedor') {
+    if (currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor')) {
         const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);
         if (!isAssigned) {
-            alert('No tienes acceso a esta oportunidad');
-            showView('list-view');
-            return;
-        }
-    }
-    if (currentUser && currentUser.role === 'gestor') {
-        const isOwnOrPost = p.vendedorId === currentUser.id || p.createdBy === currentUser.id || hasEnteredPostclosing(p);
-        if (!isOwnOrPost) {
             alert('No tienes acceso a esta oportunidad');
             showView('list-view');
             return;
@@ -3955,19 +4371,18 @@ function openDetail(id) {
     const trackerContainer = document.getElementById('stage-tracker');
 
     if (p.estado === 'activo') {
-        actionContainer.style.display = 'block'; finTracker.style.display = 'none'; stageTitleText.parentElement.style.display = 'block'; trackerContainer.style.display = 'flex'; stageTitleText.textContent = "Avance de Etapa"; document.getElementById('btn-advance').style.display = p.etapa === 'cierre' ? 'none' : 'inline-block';
+        actionContainer.style.display = 'flex';
+        finTracker.style.display = 'none';
+        stageTitleText.parentElement.style.display = 'block';
+        trackerContainer.style.display = 'flex';
+        stageTitleText.textContent = "Avance de Etapa";
+        const btnAdv = document.getElementById('btn-advance');
+        if (btnAdv) btnAdv.style.display = p.etapa === 'cierre' ? 'none' : 'inline-flex';
+        const btnNewProp = document.getElementById('btn-new-proposal');
+        if (btnNewProp) btnNewProp.style.display = p.etapa === 'negociacion' ? 'inline-flex' : 'none';
+        const btnLose = document.getElementById('btn-lose');
+        if (btnLose) btnLose.style.display = 'inline-flex';
         if (stageWorkflowBox) stageWorkflowBox.style.display = 'block';
-
-        const existingBtn = document.getElementById('btn-new-proposal');
-        if (existingBtn) existingBtn.remove();
-        if (p.etapa === 'negociacion') {
-            const btn = document.createElement('button');
-            btn.id = 'btn-new-proposal';
-            btn.className = 'btn-success ml-2';
-            btn.textContent = 'Registrar Nueva Propuesta';
-            btn.onclick = () => showNewProposalForm();
-            actionContainer.appendChild(btn);
-        }
     } else if (p.estado === 'ganado' || (hasEnteredPostclosing(p) && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor'))) {
         actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; if (stageWorkflowBox) stageWorkflowBox.style.display = 'none'; renderFinancials(p);
     } else {
@@ -4379,7 +4794,18 @@ function renderTracker(p) {
         else if (p.estado !== 'perdido') { if (index < currentIndex) statusClass = 'completed'; if (index === currentIndex) statusClass = 'current'; if (p.estado === 'ganado' && stage === 'cierre') statusClass = 'completed'; }
         tracker.innerHTML += `<div class="stage-step ${statusClass}"><div class="stage-circle">${index + 1}</div><div class="stage-label">${stage}</div></div>`;
     });
-    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>`;
+    const isPresupuesto = p.clasificacion === 'presupuesto';
+    const clasifBadge = isPresupuesto
+        ? `<span class="badge" style="background: rgba(147, 51, 234, 0.2); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.45); font-size: 0.75rem; margin-left: 8px;">📐 Cotización para Presupuesto</span>`
+        : `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); font-size: 0.75rem; margin-left: 8px;">🏗️ Oferta para Ejecución</span>`;
+
+    const isAssigned = currentUser && (p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
+    const canReclassify = p.estado === 'activo' && !!currentUser && (currentUser.role === 'manager' || isAssigned);
+    const reclassBtn = canReclassify
+        ? `<button type="button" class="btn-secondary" onclick="openReclassifyModal('${p.id}')" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 8px;" title="Cambiar clasificación comercial">🔄 Clasificación</button>`
+        : '';
+
+    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>${clasifBadge}${reclassBtn}`;
 }
 
 function renderInfo(p) {
@@ -4390,7 +4816,8 @@ function renderInfo(p) {
     const daysTotal = getDaysDifference(p.fecha_creacion);
     const dateFormatted = formatProspectDate(p.fecha_creacion);
 
-    const canEditBase = !!currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor') && p.estado === 'activo';
+    const isAssignedBase = currentUser && (p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
+    const canEditBase = !!currentUser && (currentUser.role === 'manager' || isAssignedBase) && p.estado === 'activo';
     const editBaseLink = canEditBase ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold); text-decoration:underline;" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span>` : '';
 
     // 1. Resumen Comercial / KPI Hero (Prioridad 2)
@@ -4451,7 +4878,16 @@ function renderInfo(p) {
         }
         vendorLinkHTML += `</li>`;
 
-        list.innerHTML = `<li><strong>Creación:</strong> ${dateFormatted}</li>${vendorLinkHTML}<li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
+        const isPresupuesto = p.clasificacion === 'presupuesto';
+        const clasifDesc = isPresupuesto ? '📐 Cotización para presupuesto' : '🏗️ Oferta para ejecución';
+        list.innerHTML = `<li><strong>Creación:</strong> ${dateFormatted}</li>${vendorLinkHTML}<li><strong>Clasificación:</strong> <span style="font-weight:600; color: ${isPresupuesto ? '#c084fc' : '#93c5fd'}">${clasifDesc}</span></li><li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
+
+        if (Array.isArray(p.historial_clasificacion) && p.historial_clasificacion.length > 0) {
+            const lastChg = p.historial_clasificacion[p.historial_clasificacion.length - 1];
+            list.innerHTML += `<li style="font-size:0.75rem; color:var(--text-secondary); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; margin-top:4px;">
+                🔄 <strong>Último cambio de clasificación:</strong> ${lastChg.fecha ? lastChg.fecha.slice(0, 16).replace('T', ' ') : '-'} por ${lastChg.usuarioNombre || 'Usuario'} (Motivo: "${lastChg.motivo || '-'}")
+            </li>`;
+        }
 
         if (p.datos.ubicacion) {
             list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
@@ -4837,6 +5273,23 @@ function toggleContractRequirement(checked) {
 function showAdvanceForm() {
     const p = prospects.find(x => x.id === currentProspectId); const container = document.getElementById('advance-form-container');
     const currentIndex = STAGES.indexOf(p.etapa); if (currentIndex >= STAGES.length - 1) return; const nextStage = STAGES[currentIndex + 1];
+
+    if (nextStage === 'negociacion' && p.clasificacion === 'presupuesto') {
+        container.innerHTML = `<div style="background: rgba(147, 51, 234, 0.1); border: 1px solid rgba(147, 51, 234, 0.5); padding: 1.5rem; border-radius: 6px; margin-top: 1rem;">
+            <h4 style="color:#c084fc">📐 Cotización para Presupuesto (No Avanzable a Negociación)</h4>
+            <p style="font-size: 0.9rem; margin-top: 0.5rem; color: var(--text-primary); line-height: 1.5;">
+                Esta oportunidad está registrada como <strong>Cotización para Presupuesto</strong> (estimación referencial para el cliente). La etapa de <em>Negociación</em> está reservada exclusivamente para ofertas con intención comercial confirmada de ejecución.
+            </p>
+            <p style="font-size: 0.85rem; margin-top: 0.5rem; color: var(--text-secondary); line-height: 1.4;">
+                Si el cliente confirmó que desea proceder con la compra o contratación del proyecto, debes <strong>reclasificarla formalmente</strong> a <em>Oferta para Ejecución</em> indicando la justificación comercial correspondiente.
+            </p>
+            <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
+                <button type="button" class="btn-primary" onclick="openReclassifyModal('${p.id}')">🔄 Reclasificar a Oferta para Ejecución</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>
+            </div>
+        </div>`;
+        return;
+    }
 
     if (nextStage === 'cierre') {
         const c = clients.find(x => x.id === p.clientId);
@@ -5407,35 +5860,36 @@ function renderDashboard() {
     if (cxcBar) cxcBar.style.width = cxcMetrics.pctCobrado + '%';
 
     // 7. ALERTAS Y RESUMEN OPERATIVO DEL STOCK
-    const wipStats = typeof CrmDashboardCalc !== 'undefined'
-        ? CrmDashboardCalc.calculateActiveWipTimes(filterRes.stockActivo, KPI_LIMITS, new Date())
-        : { allItems: [], overLimitItems: [], totalActive: 0, totalOverLimit: 0 };
+    // 7. ALERTAS Y RESUMEN OPERATIVO DEL STOCK: ATENCIÓN GERENCIAL (Fase 1.3)
+    const managerAttention = typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateManagerAttentionItems === 'function'
+        ? CrmFollowUpCalc.calculateManagerAttentionItems(prospects, users)
+        : { counts: { total: 0, pendientes: 0, autorizadas: 0, orden_cierre: 0 }, items: [], pendingUniqueCount: 0 };
 
     const metricAlertasCount = document.getElementById('metric-alertas-count');
-    if (metricAlertasCount) metricAlertasCount.textContent = wipStats.totalOverLimit;
+    if (metricAlertasCount) metricAlertasCount.textContent = managerAttention.pendingUniqueCount;
 
     const metricActivasTotal = document.getElementById('metric-activas-total-count');
-    if (metricActivasTotal) metricActivasTotal.textContent = wipStats.totalActive;
+    if (metricActivasTotal) metricActivasTotal.textContent = filterRes.stockActivo ? filterRes.stockActivo.length : (prospects ? prospects.filter(p => p && p.estado === 'activo' && p.eliminado !== true).length : 0);
 
     const dashStagnantBadge = document.getElementById('dash-stagnant-counter-badge');
     if (dashStagnantBadge) {
-        dashStagnantBadge.textContent = `${wipStats.totalOverLimit} críticas`;
-        dashStagnantBadge.style.background = wipStats.totalOverLimit > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
-        dashStagnantBadge.style.color = wipStats.totalOverLimit > 0 ? 'var(--danger)' : 'var(--success)';
-        dashStagnantBadge.style.borderColor = wipStats.totalOverLimit > 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)';
+        dashStagnantBadge.textContent = `${managerAttention.pendingUniqueCount} pendiente${managerAttention.pendingUniqueCount !== 1 ? 's' : ''}`;
+        dashStagnantBadge.style.background = managerAttention.pendingUniqueCount > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+        dashStagnantBadge.style.color = managerAttention.pendingUniqueCount > 0 ? 'var(--danger)' : 'var(--success)';
+        dashStagnantBadge.style.borderColor = managerAttention.pendingUniqueCount > 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)';
     }
 
     const subAlertasStatus = document.getElementById('sub-metric-alertas-status');
     if (subAlertasStatus) {
-        subAlertasStatus.textContent = wipStats.totalOverLimit > 0
-            ? `${wipStats.totalOverLimit} oportunidades requieren atención comercial`
-            : 'Embudo al día sin estancamientos';
+        subAlertasStatus.textContent = managerAttention.pendingUniqueCount > 0
+            ? `${managerAttention.pendingUniqueCount} oportunidades requieren decisión gerencial`
+            : 'Sin alertas gerenciales pendientes';
     }
 
     // 8. RENDERIZADO DE GRÁFICOS Y TABLAS (Flujo vs Stock)
     renderCharts(filterRes);
     renderDashboardKpiTimes(filterRes);
-    renderDashboardActiveTimes(filterRes.stockActivo);
+    renderDashboardActiveTimes();
 
     // 9. AUDITORÍA (Solo manager, suscripción controlada)
     if (currentUser && currentUser.role === 'manager') {
@@ -5531,31 +5985,53 @@ function renderDashboardActiveTimes(activeList) {
     const tbody = document.getElementById('dash-active-times-body');
     const counterBadge = document.getElementById('dash-stagnant-counter-badge');
 
-    const activeOps = Array.isArray(activeList)
-        ? activeList
-        : (prospects ? prospects.filter(p => p && p.estado === 'activo' && p.eliminado !== true) : []);
+    // 1. Obtener filtros de atención gerencial
+    const filterMotivo = document.getElementById('filter-mgr-motivo') ? document.getElementById('filter-mgr-motivo').value : 'all';
+    const filterRespSelect = document.getElementById('filter-mgr-responsable');
+    const filterResp = filterRespSelect ? filterRespSelect.value : 'all';
+    const filterEstado = document.getElementById('filter-mgr-estado') ? document.getElementById('filter-mgr-estado').value : 'pendientes';
 
-    const wipStats = typeof CrmDashboardCalc !== 'undefined'
-        ? CrmDashboardCalc.calculateActiveWipTimes(activeOps, KPI_LIMITS, new Date())
-        : { allItems: [], overLimitItems: [], totalActive: 0, totalOverLimit: 0 };
+    // 2. Calcular universo de atención gerencial con reglas oficiales
+    const attentionData = typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateManagerAttentionItems === 'function'
+        ? CrmFollowUpCalc.calculateManagerAttentionItems(prospects, users, {
+            filterMotivo,
+            filterResponsable: filterResp,
+            filterEstado
+        })
+        : { counts: { total: 0, pendientes: 0, autorizadas: 0, orden_cierre: 0 }, items: [], pendingUniqueCount: 0 };
 
-    const overLimit = wipStats.overLimitItems;
+    // 3. Poblar dropdown de responsables dinámicamente si no está poblado
+    if (filterRespSelect && filterRespSelect.options.length <= 1) {
+        const rawItems = CrmFollowUpCalc.calculateManagerAttentionItems(prospects, users, { filterMotivo: 'all', filterResponsable: 'all', filterEstado: 'todas' }).items;
+        const respSet = new Set();
+        rawItems.forEach(it => { if (it.responsable && it.responsable !== '-') respSet.add(it.responsable); });
+        Array.from(respSet).sort().forEach(respName => {
+            const opt = document.createElement('option');
+            opt.value = respName;
+            opt.textContent = respName;
+            filterRespSelect.appendChild(opt);
+        });
+    }
+
+    const pendingCount = attentionData.pendingUniqueCount;
 
     if (counterBadge) {
-        if (overLimit.length === 0) {
-            counterBadge.textContent = '0 críticas';
+        if (pendingCount === 0) {
+            counterBadge.textContent = '0 pendientes';
             counterBadge.style.color = '#10b981';
             counterBadge.style.background = 'rgba(16, 185, 129, 0.15)';
             counterBadge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
         } else {
-            counterBadge.textContent = `${overLimit.length} crítica${overLimit.length > 1 ? 's' : ''}`;
+            counterBadge.textContent = `${pendingCount} pendiente${pendingCount > 1 ? 's' : ''}`;
             counterBadge.style.color = 'var(--danger)';
             counterBadge.style.background = 'rgba(239, 68, 68, 0.15)';
             counterBadge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
         }
     }
 
-    if (overLimit.length === 0) {
+    const displayItems = attentionData.items;
+
+    if (displayItems.length === 0) {
         if (tableWrapper) tableWrapper.style.display = 'none';
         if (emptyBox) emptyBox.style.display = 'flex';
         if (tbody) tbody.innerHTML = '';
@@ -5567,31 +6043,226 @@ function renderDashboardActiveTimes(activeList) {
 
     if (!tbody) return;
 
+    const isManager = currentUser && currentUser.role === 'manager';
+
     let rowsHtml = '';
-    overLimit.forEach(item => {
+    displayItems.forEach(item => {
         const clientName = typeof getClientName === 'function' ? getClientName(item.clientId) : (item.clientId || '-');
-        const badgeEtapaClass = item.etapa === 'cierre' ? 'ganado' : 'activo';
+
+        let statusBadge = '';
+        if (item.alerta_estado === 'continuidad_autorizada') {
+            statusBadge = '<span class="badge-mgr-alert badge-mgr-authorized">✅ Continuidad Autorizada</span>';
+        } else if (item.alerta_estado === 'orden_cierre_pendiente') {
+            statusBadge = '<span class="badge-mgr-alert badge-mgr-closing">🛑 Orden Cierre Pendiente</span>';
+        } else if (item.alerta_estado === 'orden_cierre_ejecutada') {
+            statusBadge = '<span class="badge-mgr-alert badge-mgr-resolved">🔒 Cierre Ejecutado</span>';
+        } else {
+            statusBadge = '<span class="badge-mgr-alert badge-mgr-pending">⏳ Decisión Pendiente</span>';
+        }
+
+        const motivosHtml = (item.motivoObjects && item.motivoObjects.length > 0)
+            ? item.motivoObjects.map(m => {
+                if (m.tipo === 'seguimiento' || m.tipo === 'cinco_intentos' || m.subtipo === 'cinco_intentos') {
+                    return `<span class="badge-mgr-reason badge-mgr-followup" style="display: block; font-size: 0.78rem; color: #f87171; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">📞 <span style="background: rgba(239, 68, 68, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(239, 68, 68, 0.4);">Seguimiento</span> ${escapeHtmlDoc(m.descripcion)}</span>`;
+                } else if (m.tipo === 'solicitud_sin_contrato') {
+                    return `<span class="badge-mgr-reason badge-mgr-contract" style="display: block; font-size: 0.78rem; color: var(--brand-gold); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">📄 <span style="background: rgba(245, 158, 11, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(245, 158, 11, 0.4);">Sin Contrato</span> ${escapeHtmlDoc(m.descripcion)}</span>`;
+                }
+                return `<span style="display: block; font-size: 0.78rem; color: var(--danger); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">⚠️ ${escapeHtmlDoc(m.descripcion || m)}</span>`;
+            }).join('')
+            : (item.motivos || [item.motivoPrincipal]).map(m =>
+                `<span style="display: block; font-size: 0.78rem; color: var(--danger); font-weight: 600; line-height: 1.3;">⚠️ ${escapeHtmlDoc(m)}</span>`
+            ).join('');
+
+        let historialSummary = '';
+        if (item.intentosValidos > 0) {
+            historialSummary += `<span style="font-size: 0.78rem; color: var(--text-secondary); display: block;">${item.intentosValidos} intentos sin respuesta</span>`;
+        }
+        if (item.justificacionVendedor) {
+            historialSummary += `<span style="font-size: 0.75rem; color: var(--brand-gold); display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtmlDoc(item.justificacionVendedor)}">💬 Vendedor: ${escapeHtmlDoc(item.justificacionVendedor)}</span>`;
+        }
+        if (!historialSummary) {
+            historialSummary = `<span style="font-size: 0.75rem; color: var(--text-muted);">-</span>`;
+        }
+
+        const canDecideFollowUp = isManager && item.isPending && (item.hasFollowUpEscalation || (item.motivoObjects && item.motivoObjects.some(m => m.tipo === 'seguimiento' || m.tipo === 'cinco_intentos')));
+        const canResolveNoContract = isManager && item.isPending && (item.hasNoContractRequest || (item.motivoObjects && item.motivoObjects.some(m => m.tipo === 'solicitud_sin_contrato')));
+
+        let actionButtonsHtml = '';
+        if (canDecideFollowUp) {
+            actionButtonsHtml += `<button class="btn-table-action" style="background: rgba(245, 158, 11, 0.2); color: var(--brand-gold); border: 1px solid var(--brand-gold); padding: 0.25rem 0.5rem; font-size: 0.75rem; font-weight: 700;" onclick="openManagerDecisionModal('${item.id}')" title="Tomar decisión de continuidad o cierre">⚖️ Decidir</button>`;
+        }
+        if (canResolveNoContract && !canDecideFollowUp) {
+            actionButtonsHtml += `<button class="btn-table-action" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; padding: 0.25rem 0.5rem; font-size: 0.75rem; font-weight: 700;" onclick="openDetail('${item.id}')" title="Revisar y resolver solicitud sin contrato">📄 Resolver</button>`;
+        }
+        actionButtonsHtml += `<button class="btn-table-action btn-table-edit" onclick="openDetail('${item.id}')" title="Ver detalle completo">👁️ Ver</button>`;
 
         rowsHtml += `
             <tr class="cursor-pointer" onclick="openDetail('${item.id}')">
-                <td><strong style="color: var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
-                <td><strong style="color: white;">${escapeHtmlDoc(item.proyecto)}</strong></td>
-                <td>${escapeHtmlDoc(clientName)}</td>
-                <td><span style="color: var(--text-secondary); font-size: 0.85rem;">${escapeHtmlDoc(item.vendedor || '-')}</span></td>
-                <td><span class="badge ${badgeEtapaClass}" style="text-transform: capitalize;">${escapeHtmlDoc(item.etapa)}</span></td>
-                <td style="text-align: right; font-weight: 600; color: white;">${formatCurrency(item.monto || 0)}</td>
-                <td style="text-align: center;">
-                    <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); font-weight: 700;">⚠️ ${item.days} d</span>
-                    <small style="color: var(--text-muted); margin-left: 4px;">(Máx ${item.limit}d)</small>
+                <td><strong style="color: var(--brand-gold);">${escapeHtmlDoc(item.codigo || item.id.slice(-4))}</strong></td>
+                <td>
+                    <strong style="color: white; display: block;">${escapeHtmlDoc(item.proyecto)}</strong>
+                    <small style="color: var(--text-secondary);">${escapeHtmlDoc(clientName)}</small>
                 </td>
+                <td><strong style="color: white; font-size: 0.85rem;">${escapeHtmlDoc(item.responsable)}</strong></td>
+                <td>${motivosHtml}</td>
+                <td>${historialSummary}</td>
+                <td style="text-align: center;">${statusBadge}</td>
                 <td style="text-align: right;" onclick="event.stopPropagation()">
-                    <button class="btn-table-action btn-table-edit" onclick="openDetail('${item.id}')" title="Ver expediente y avanzar etapa">👁️ Gestionar</button>
+                    <div style="display: flex; gap: 0.35rem; justify-content: flex-end; flex-wrap: wrap;">
+                        ${actionButtonsHtml}
+                    </div>
                 </td>
             </tr>
         `;
     });
 
     tbody.innerHTML = rowsHtml;
+}
+
+// ==========================================================================
+// Fase 1.3: Manager Decision Modal Handlers
+// ==========================================================================
+let currentDecisionProspectId = null;
+
+function switchManagerDecisionTab(tab) {
+    const tabAutorizar = document.getElementById('mgr-tab-autorizar');
+    const tabCierre = document.getElementById('mgr-tab-cierre');
+    const btnAutorizar = document.getElementById('tab-btn-autorizar');
+    const btnCierre = document.getElementById('tab-btn-cierre');
+
+    if (tab === 'autorizar') {
+        if (tabAutorizar) tabAutorizar.style.display = 'block';
+        if (tabCierre) tabCierre.style.display = 'none';
+        if (btnAutorizar) {
+            btnAutorizar.style.background = 'rgba(16, 185, 129, 0.2)';
+            btnAutorizar.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+            btnAutorizar.style.color = '#34d399';
+        }
+        if (btnCierre) {
+            btnCierre.style.background = 'transparent';
+            btnCierre.style.borderColor = 'var(--panel-border)';
+            btnCierre.style.color = 'var(--text-secondary)';
+        }
+    } else {
+        if (tabAutorizar) tabAutorizar.style.display = 'none';
+        if (tabCierre) tabCierre.style.display = 'block';
+        if (btnCierre) {
+            btnCierre.style.background = 'rgba(239, 68, 68, 0.2)';
+            btnCierre.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+            btnCierre.style.color = '#f87171';
+        }
+        if (btnAutorizar) {
+            btnAutorizar.style.background = 'transparent';
+            btnAutorizar.style.borderColor = 'var(--panel-border)';
+            btnAutorizar.style.color = 'var(--text-secondary)';
+        }
+    }
+}
+
+function openManagerDecisionModal(prospectId) {
+    if (!currentUser || currentUser.role !== 'manager') {
+        return alert("Solo los usuarios con rol Gerente pueden registrar decisiones gerenciales.");
+    }
+
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return alert("Oportunidad no encontrada");
+
+    currentDecisionProspectId = prospectId;
+    document.getElementById('mgr-decision-prospect-id').value = prospectId;
+
+    const clientName = typeof getClientName === 'function' ? getClientName(p.clientId) : (p.clientId || '-');
+    const vendorName = typeof CrmFollowUpCalc !== 'undefined' ? CrmFollowUpCalc.resolveSellerName(p, users) : (p.vendedorName || p.vendedor || '-');
+
+    document.getElementById('mgr-decision-subtitle').textContent = `Proyecto: ${p.proyecto || '-'} | Cliente: ${clientName} | Responsable: ${vendorName}`;
+
+    const seguimiento = p.seguimiento || {};
+    const cadencia = seguimiento.cadencia || {};
+    const intentos = cadencia.intentos_validos_sin_respuesta || 0;
+
+    let motivoDesc = "Esta oportunidad ha alcanzado 5 intentos válidos de contacto sin respuesta por parte del cliente y requiere resolución gerencial para continuar o cerrar el caso.";
+    if (cadencia.motivo_escalacion) {
+        motivoDesc = cadencia.motivo_escalacion;
+    }
+    document.getElementById('mgr-decision-motivo-desc').textContent = motivoDesc;
+
+    let histText = `Intentos registrados: ${intentos} intentos sin respuesta.`;
+    if (cadencia.justificacion_continuidad) {
+        histText += ` | Justificación anterior del vendedor: "${cadencia.justificacion_continuidad}"`;
+    }
+    document.getElementById('mgr-decision-historial-summary').textContent = histText;
+
+    // Reset fields
+    document.getElementById('mgr-autorizar-justificacion').value = '';
+    document.getElementById('mgr-autorizar-prox-desc').value = '';
+    document.getElementById('mgr-cierre-justificacion').value = '';
+    document.getElementById('mgr-cierre-motivo').value = '';
+    document.getElementById('mgr-cierre-ejecutar-inmediato').checked = true;
+
+    // Default next follow-up date: 2 business days from now
+    const nextDate = typeof CrmWorkCalendar !== 'undefined'
+        ? CrmWorkCalendar.addBusinessDays(new Date(), 2)
+        : new Date(Date.now() + 2 * 86400000);
+    const dateStr = nextDate.toISOString().split('T')[0];
+    document.getElementById('mgr-autorizar-prox-fecha').value = dateStr;
+
+    switchManagerDecisionTab('autorizar');
+    openModal('modal-manager-decision');
+}
+
+async function submitManagerDecision(decisionType) {
+    const prospectId = currentDecisionProspectId || document.getElementById('mgr-decision-prospect-id').value;
+    if (!prospectId) return;
+
+    if (decisionType === 'autorizar_continuar') {
+        const justificacion = document.getElementById('mgr-autorizar-justificacion').value.trim();
+        if (!justificacion || justificacion.length < 5) {
+            return alert("Por favor ingresa una justificación gerencial detallada (mínimo 5 caracteres).");
+        }
+        const fecha = document.getElementById('mgr-autorizar-prox-fecha').value;
+        if (!fecha) {
+            return alert("Debes seleccionar una fecha para la próxima acción de seguimiento.");
+        }
+        const tipo = document.getElementById('mgr-autorizar-prox-tipo').value;
+        const descripcion = document.getElementById('mgr-autorizar-prox-desc').value.trim();
+
+        const payload = {
+            prospectId,
+            decision: 'autorizar_continuar',
+            justificacion,
+            proximaAccion: { fecha, tipo, descripcion },
+            dbSuffix: DB_SUFFIX
+        };
+
+        const res = await runWorkflowOp('Registrando autorización gerencial...', fb => CrmCommercial.resolveFollowUpEscalation(fb, payload));
+        if (res) {
+            closeModal('modal-manager-decision');
+            renderDashboard();
+            if (currentProspectId === prospectId) openDetail(prospectId);
+        }
+    } else if (decisionType === 'ordenar_cierre') {
+        const motivo = document.getElementById('mgr-cierre-motivo').value;
+        if (!motivo) {
+            return alert("Debes seleccionar un motivo de pérdida comercial.");
+        }
+        const justificacion = document.getElementById('mgr-cierre-justificacion').value.trim();
+        const ejecutarCierre = document.getElementById('mgr-cierre-ejecutar-inmediato').checked;
+
+        const payload = {
+            prospectId,
+            decision: 'ordenar_cierre',
+            motivo,
+            justificacion,
+            ejecutarCierre,
+            dbSuffix: DB_SUFFIX
+        };
+
+        const res = await runWorkflowOp('Registrando orden de cierre...', fb => CrmCommercial.resolveFollowUpEscalation(fb, payload));
+        if (res) {
+            closeModal('modal-manager-decision');
+            renderDashboard();
+            if (currentProspectId === prospectId) openDetail(prospectId);
+        }
+    }
 }
 
 function renderCharts(filterRes) {

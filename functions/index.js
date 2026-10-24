@@ -1378,6 +1378,39 @@ exports.deleteProspectLogAdmin = functions.https.onCall((data, context) => runCo
 exports.recordProspectFollowUpAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
   (service, caller, d) => service.recordFollowUp({ caller, prospectId: d.prospectId, data: d.followUp, opId: d.opId })));
 
+/** { prospectId, tipoCadencia, motivo, opId, dbSuffix? } -> { status: 'updated' | 'unchanged', tipoCadencia, cadencia, seguimiento } */
+exports.updateProspectCadenceAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
+  (service, caller, d) => service.updateProspectCadence({
+    caller,
+    prospectId: d.prospectId,
+    tipoCadencia: d.tipoCadencia,
+    motivo: d.motivo,
+    opId: d.opId
+  })));
+
+/** { prospectId, clasificacion, motivo, opId, dbSuffix? } -> { status: 'reclassified' | 'unchanged', clasificacion, historial_clasificacion } */
+exports.reclassifyProspectAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
+  (service, caller, d) => service.reclassifyProspect({
+    caller,
+    prospectId: d.prospectId,
+    clasificacion: d.clasificacion,
+    motivo: d.motivo,
+    opId: d.opId
+  })));
+
+/** { prospectId, decision: 'ordenar_cierre' | 'autorizar_continuar', motivo?, justificacion?, proximaAccion?, ejecutarCierre?, opId, dbSuffix? } -> { status: 'resolved', decision, seguimiento, estado } (manager only) */
+exports.resolveProspectEscalationAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
+  (service, caller, d) => service.resolveFollowUpEscalation({
+    caller,
+    prospectId: d.prospectId,
+    decision: d.decision,
+    motivo: d.motivo,
+    justificacion: d.justificacion,
+    proximaAccion: d.proximaAccion,
+    ejecutarCierre: d.ejecutarCierre,
+    opId: d.opId
+  })));
+
 /** { prospectId, vendedorId, dbSuffix? } -> { status: 'reassigned' | 'unchanged' } (manager / gestor) */
 exports.reassignProspectAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
   (service, caller, d) => service.reassign({ caller, prospectId: d.prospectId, vendedorId: d.vendedorId })));

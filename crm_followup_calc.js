@@ -45,6 +45,65 @@
         UPCOMING_THRESHOLD_DAYS: 7
     });
 
+    // Alternativas de cadencia comercial predefinidas y autorizadas (Fase 2.1)
+    const CADENCIAS_VALIDAS = Object.freeze({
+        estandar: Object.freeze({
+            id: 'estandar',
+            nombre: 'Estándar Ductsal (5d inicial / 2d intervalo)',
+            descripcion: 'Cadencia comercial por defecto: 1er contacto a 5 días hábiles; reintentos cada 2 días hábiles; pauta de tiempo 15 días.',
+            dias_primer_contacto: 5,
+            intervalo_sin_respuesta: 2,
+            dias_solicito_tiempo: 15
+        }),
+        urgente: Object.freeze({
+            id: 'urgente',
+            nombre: 'Proyecto Urgente / Licitación Rápida (3d inicial / 2d intervalo)',
+            descripcion: 'Para ofertas de corto plazo o requerimiento inmediato: 1er contacto a 3 días hábiles; reintentos cada 2 días hábiles; pauta de tiempo 7 días.',
+            dias_primer_contacto: 3,
+            intervalo_sin_respuesta: 2,
+            dias_solicito_tiempo: 7
+        }),
+        corporativa: Object.freeze({
+            id: 'corporativa',
+            nombre: 'Gran Cuenta / Comité Corporativo (5d inicial / 3d intervalo)',
+            descripcion: 'Para cuentas corporativas o procesos con junta/comité: 1er contacto a 5 días hábiles; reintentos cada 3 días hábiles; pauta de tiempo 15 días.',
+            dias_primer_contacto: 5,
+            intervalo_sin_respuesta: 3,
+            dias_solicito_tiempo: 15
+        })
+    });
+
+    // Límites comerciales obligatorios e inviolables (Invariants de negocio)
+    const LIMITES_COMERCIALES_CADENCIA = Object.freeze({
+        MIN_DIAS_PRIMER_CONTACTO: 1,
+        MAX_DIAS_PRIMER_CONTACTO: 5,
+        MIN_INTERVALO_SIN_RESPUESTA: 1,
+        MAX_INTERVALO_SIN_RESPUESTA: 3,
+        MAX_DIAS_SOLICITO_TIEMPO: 15,
+        MANDATORY_CALL_ATTEMPT: 2,
+        DECISION_REQUIRED_ATTEMPTS: 3,
+        MANAGER_ESCALATION_ATTEMPTS: 5
+    });
+
+    function getCadenceConfig(tipoCadencia = 'estandar') {
+        if (tipoCadencia && CADENCIAS_VALIDAS[tipoCadencia]) {
+            return CADENCIAS_VALIDAS[tipoCadencia];
+        }
+        return CADENCIAS_VALIDAS.estandar;
+    }
+
+    function validateCadenceSelection(cadenceId) {
+        if (!cadenceId || typeof cadenceId !== 'string') {
+            return { valid: false, error: 'Identificador de cadencia inválido' };
+        }
+        const cleaned = cadenceId.trim().toLowerCase();
+        if (!CADENCIAS_VALIDAS[cleaned]) {
+            const validKeys = Object.keys(CADENCIAS_VALIDAS).join(', ');
+            return { valid: false, error: `Alternativa de cadencia comercial no autorizada: "${cadenceId}". Opciones válidas: ${validKeys}` };
+        }
+        return { valid: true, cadence: CADENCIAS_VALIDAS[cleaned] };
+    }
+
     const FOLLOWUP_CHANNELS = Object.freeze([
         'llamada',
         'correo',
@@ -203,20 +262,23 @@
         const base = parseDate(fromDate) || new Date();
         const cal = getWorkCalendar();
 
+        const cadConfig = options.cadenceConfig || getCadenceConfig(options.tipoCadencia || (options.cadencia && options.cadencia.tipo_cadencia));
+
         const isInternal = options.isInternal === true || options.channel === 'interno' || options.tipo === 'revision';
         const isExternal = options.isExternalContact === true || (options.isExternalContact === undefined && options.channel && options.channel !== 'interno') || options.rollSaturday === true;
 
         if (resultado === 'solicito_tiempo') {
-            const rawDate = addCalendarDays(base, FOLLOWUP_CADENCE.DEFAULT_MORE_TIME_CALENDAR_DAYS);
+            const timeDays = (cadConfig && cadConfig.dias_solicito_tiempo) || FOLLOWUP_CADENCE.DEFAULT_MORE_TIME_CALENDAR_DAYS;
+            const rawDate = addCalendarDays(base, timeDays);
             if (isExternal && cal && typeof cal.adjustDateForExternalContact === 'function') {
                 return cal.adjustDateForExternalContact(rawDate, options);
             }
             return rawDate;
         }
 
-        let daysToAdd = FOLLOWUP_CADENCE.UNANSWERED_INTERVAL_BUSINESS;
-        if (resultado === 'solicito_cambios') {
-            daysToAdd = FOLLOWUP_CADENCE.INITIAL_DAYS_AFTER_QUOTE_BUSINESS;
+        let daysToAdd = (cadConfig && cadConfig.intervalo_sin_respuesta) || FOLLOWUP_CADENCE.UNANSWERED_INTERVAL_BUSINESS;
+        if (resultado === 'solicito_cambios' || resultado === 'primer_contacto') {
+            daysToAdd = (cadConfig && cadConfig.dias_primer_contacto) || FOLLOWUP_CADENCE.INITIAL_DAYS_AFTER_QUOTE_BUSINESS;
         }
 
         const workOptions = {
@@ -260,8 +322,26 @@
         const proximaAccion = (seguimiento.proxima_accion && typeof seguimiento.proxima_accion === 'object') ? seguimiento.proxima_accion : null;
         const ultimoContacto = (seguimiento.ultimo_contacto && typeof seguimiento.ultimo_contacto === 'object') ? seguimiento.ultimo_contacto : null;
 
-        const intentosFallidos = Number(cadencia.intentos_fallidos) || 0;
-        const isEscalado = cadencia.alerta_gerencial === true || intentosFallidos >= FOLLOWUP_CADENCE.MANAGER_ESCALATION_ATTEMPTS;
+        // Regla: Presupuestos referenciales quedan dormidos y no activan cadencia de seguimiento comercial
+        if (prospect.clasificacion === 'presupuesto') {
+            return {
+                inAgenda: false,
+                status: 'al_dia',
+                isPresupuesto: true,
+                sin_fecha_entrega_historica: false,
+                dias_retraso: 0,
+                intentos_fallidos: 0,
+                requiere_decision: false,
+                llamada_obligatoria: false,
+                proxima_accion: proximaAccion,
+                ultimo_contacto: ultimoContacto,
+                motivo_agenda: '📐 Cotización para presupuesto referencial (dormido / sin seguimiento comercial activo)',
+                prioridad: 0
+            };
+        }
+
+        const intentosFallidos = Number(cadencia.intentos_fallidos !== undefined ? cadencia.intentos_fallidos : cadencia.intentos_validos_sin_respuesta) || 0;
+        const isEscalado = cadencia.alerta_gerencial === true || cadencia.estado_cadencia === 'alerta_gerencial' || intentosFallidos >= FOLLOWUP_CADENCE.MANAGER_ESCALATION_ATTEMPTS;
         const isDecisionReq = intentosFallidos >= FOLLOWUP_CADENCE.DECISION_REQUIRED_ATTEMPTS && !isEscalado;
         const isCallMandatory = intentosFallidos === 1; // El intento 2 debe ser llamada
 
@@ -305,19 +385,23 @@
             }
 
             // Oportunidades sin seguimiento programado
+            const isHistoricalNegotiationNoDelivery = (etapa === 'negociacion' && !cadencia.fecha_entrega_oferta && !prospect.fecha_entrega_oferta);
             return {
                 inAgenda: true,
                 status: 'sin_seguimiento',
+                sin_fecha_entrega_historica: isHistoricalNegotiationNoDelivery,
                 dias_retraso: 0,
                 intentos_fallidos: intentosFallidos,
                 requiere_decision: true,
                 llamada_obligatoria: isCallMandatory,
                 proxima_accion: null,
                 ultimo_contacto: ultimoContacto,
-                motivo_agenda: (etapa === 'cotizacion' || etapa === 'negociacion')
-                    ? '📋 Sin seguimiento programado: Registra la fecha de entrega de oferta o programa contacto'
-                    : 'Sin próxima acción programada en pipeline activo',
-                prioridad: 40
+                motivo_agenda: isHistoricalNegotiationNoDelivery
+                    ? '⚠️ Sin seguimiento programado: Oportunidad histórica en Negociación sin fecha de entrega de oferta registrada (auditar entrega o programar contacto manual)'
+                    : ((etapa === 'cotizacion' || etapa === 'negociacion')
+                        ? '📋 Sin seguimiento programado: Programa la próxima acción comercial'
+                        : 'Sin próxima acción programada en pipeline activo'),
+                prioridad: isHistoricalNegotiationNoDelivery ? 45 : 40
             };
         }
 
@@ -382,11 +466,67 @@
     }
 
     /**
-     * Construye la lista consolidada de la Agenda Diaria para el vendedor o gerente.
+     * Resuelve de forma determinista y estricta el responsable comercial de una oportunidad o gestión.
+     * Atribuye inequívocamente a Alejandra Ayala ('1776904514932') y Roberto Flores ('1788471603604'),
+     * resuelve contra el directorio de usuarios proporcionado, y conserva 'Sin Asignar' cuando no hay responsable.
      */
-    function generateAgenda(prospectsList, user, filterStatus = 'todas', now = new Date()) {
+    function resolveSellerName(p, userDirectory = null) {
+        if (!p || typeof p !== 'object') return 'Sin Asignar';
+
+        let dir = userDirectory;
+        if (!dir && typeof window !== 'undefined' && Array.isArray(window.users)) {
+            dir = window.users;
+        } else if (!dir && typeof globalThis !== 'undefined' && Array.isArray(globalThis.users)) {
+            dir = globalThis.users;
+        }
+
+        const findUser = (idOrEmail) => {
+            if (!dir || !idOrEmail) return null;
+            if (Array.isArray(dir)) {
+                return dir.find(u => u && (u.id === idOrEmail || u.cid === idOrEmail || (u.email && u.email.toLowerCase() === String(idOrEmail).toLowerCase())));
+            }
+            if (typeof dir === 'object') {
+                return dir[idOrEmail] || null;
+            }
+            return null;
+        };
+
+        const targetId = (p.vendedorId && String(p.vendedorId).trim() !== '' && String(p.vendedorId) !== 'sistema' && String(p.vendedorId) !== 'Sin Asignar')
+            ? String(p.vendedorId).trim()
+            : (p.createdBy && String(p.createdBy).trim() !== '' && String(p.createdBy) !== 'sistema' ? String(p.createdBy).trim() : null);
+
+        // 1. Búsqueda directa en el directorio canónico de usuarios por targetId (vendedorId o createdBy)
+        if (targetId) {
+            const u = findUser(targetId);
+            if (u && u.nombre) return u.nombre;
+        }
+
+        // 2. Campo vendedorName explícito y válido en el documento
+        if (p.vendedorName && typeof p.vendedorName === 'string' && p.vendedorName.trim() !== '' && p.vendedorName !== 'Sin Asignar' && p.vendedorName !== 'Sistema') {
+            return p.vendedorName.trim();
+        }
+
+        // 3. Fallback a campos históricos de texto en el documento
+        if (p.vendedor && typeof p.vendedor === 'string' && p.vendedor.trim() !== '' && p.vendedor !== 'Sin Asignar' && p.vendedor !== 'Sistema' && p.vendedor !== '-') {
+            return p.vendedor.trim();
+        }
+        const creatorName = p.createdByName || p.creado_por;
+        if (creatorName && typeof creatorName === 'string' && creatorName.trim() !== '' && creatorName !== 'Sin Asignar' && creatorName !== 'Sistema') {
+            return creatorName.trim();
+        }
+
+        return 'Sin Asignar';
+    }
+
+    /**
+     * Construye la lista consolidada de la Agenda Diaria para el vendedor, gestor o gerente.
+     * Vendedor y Gestor consultan ÚNICAMENTE sus propias oportunidades asignadas (o creadas sin asignar).
+     * Gestor NO recibe acceso global en la agenda. Gerente consulta el pipeline completo en su vista
+     * y recibe en su agenda diaria las escalaciones gerenciales y sus propias oportunidades, no la agenda global de llamadas rutinarias.
+     */
+    function generateAgenda(prospectsList, user, filterStatus = 'todas', now = new Date(), userDirectory = null) {
         const list = Array.isArray(prospectsList) ? prospectsList : [];
-        const isManager = user && (user.role === 'manager' || user.role === 'gestor');
+        const isManager = user && user.role === 'manager';
 
         const items = [];
         const counts = {
@@ -401,12 +541,26 @@
         list.forEach(p => {
             if (!p || p.eliminado === true || p.estado !== 'activo') return;
 
-            // Filtro de visibilidad por rol
-            if (!isManager && user && user.cid) {
-                if (p.vendedorId !== user.cid && p.createdBy !== user.cid) return;
+            const classification = classifyFollowUp(p, now);
+
+            // Filtro de visibilidad estricto por rol:
+            // 1. Vendedor y Gestor: ven exclusivamente sus propias oportunidades asignadas (o creadas si no están reasignadas).
+            // 2. Gerente/Manager: recibe en su agenda las escalaciones gerenciales y sus oportunidades propias.
+            //    NO recibe la agenda diaria global de llamadas y tareas rutinarias de todos los vendedores.
+            if (user) {
+                const uid = user.cid || user.id;
+                const isOwn = uid ? ((p.vendedorId === uid) || (!p.vendedorId && p.createdBy === uid)) : false;
+                if (isManager) {
+                    if (!classification.isEscaladoGerencia && !isOwn) {
+                        return;
+                    }
+                } else {
+                    if (!isOwn) {
+                        return;
+                    }
+                }
             }
 
-            const classification = classifyFollowUp(p, now);
             if (!classification.inAgenda && filterStatus !== 'todas_abiertas') return;
 
             // Conteo por categoría
@@ -433,7 +587,7 @@
                 clientId: p.clientId,
                 proyecto: p.proyecto || 'Sin Nombre',
                 vendedorId: p.vendedorId,
-                vendedorName: p.vendedorName || p.vendedor || 'Sin Asignar',
+                vendedorName: resolveSellerName(p, userDirectory),
                 etapa: p.etapa || 'prospecto',
                 monto: Number(p.precio_cotizado) || 0,
                 classification
@@ -457,6 +611,195 @@
         };
     }
 
+    /**
+     * Calcula las oportunidades que requieren atención gerencial en el Dashboard.
+     * Criterios aprobados:
+     * 1. Cinco intentos válidos de contacto sin respuesta (alcanzado límite de escalamiento).
+     * 2. Solicitudes de autorización de venta sin contrato pendientes de resolución.
+     * Deduplica oportunidades para que cada una cuente exactamente una vez en el indicador global.
+     * Excluye alertas ya resueltas (continuidad autorizada, orden de cierre ejecutada, solicitud resuelta).
+     */
+    function calculateManagerAttentionItems(prospectsList, userDirectory = null, options = {}) {
+        const list = Array.isArray(prospectsList) ? prospectsList : [];
+        const { filterStatus = 'todas', filterEstado = null, filterResponsable = 'todos', filterMotivo = 'todos' } = options || {};
+        const statusFilter = filterEstado || filterStatus || 'todas';
+
+        const items = [];
+        const counts = {
+            totalPending: 0,
+            cinco_intentos: 0,
+            solicitud_sin_contrato: 0,
+            resueltas: 0
+        };
+
+        list.forEach(p => {
+            if (!p || p.eliminado === true) return;
+
+            const motivos = [];
+            let isPending = false;
+            let alertState = 'al_dia';
+            let fechaDeteccion = null;
+            let limiteIncumplido = null;
+            let valorEsperado = null;
+            let valorObservado = null;
+
+            const cad = (p.seguimiento && typeof p.seguimiento === 'object' && p.seguimiento.cadencia) ? p.seguimiento.cadencia : null;
+            const solicitudes = Array.isArray(p.solicitudes_sin_contrato) ? p.solicitudes_sin_contrato : [];
+            const pendingReq = (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'pendiente')
+                ? p.solicitud_sin_contrato
+                : solicitudes.find(r => r && r.estado === 'pendiente');
+
+            // Criterio B: Cinco intentos válidos de contacto sin respuesta en una oportunidad destinada a ejecución
+            if (cad && p.estado === 'activo' && p.clasificacion !== 'presupuesto') {
+                const intentos = Number(cad.intentos_fallidos || cad.intentos_validos_sin_respuesta) || 0;
+                const isEscalado = cad.alerta_gerencial === true ||
+                    cad.estado_cadencia === 'escalado_gerencia' ||
+                    cad.estado_cadencia === 'escalada_gerencia' ||
+                    (intentos >= FOLLOWUP_CADENCE.MANAGER_ESCALATION_ATTEMPTS && cad.estado_cadencia !== 'continuidad_autorizada');
+
+                if (isEscalado) {
+                    motivos.push({
+                        tipo: 'seguimiento',
+                        subtipo: 'cinco_intentos',
+                        descripcion: 'Cinco intentos válidos de contacto sin respuesta',
+                        limite: 'Máximo 5 intentos sin respuesta',
+                        esperado: '<= 4 intentos',
+                        observado: `${intentos} intentos`,
+                        fecha: cad.fecha_escalacion || (p.seguimiento.ultimo_contacto && p.seguimiento.ultimo_contacto.fecha) || null
+                    });
+                    isPending = true;
+                    alertState = 'pendiente';
+                    fechaDeteccion = cad.fecha_escalacion || fechaDeteccion;
+                    limiteIncumplido = 'Máximo 5 intentos de contacto sin respuesta';
+                    valorEsperado = '<= 4';
+                    valorObservado = `${intentos}`;
+                    counts.cinco_intentos++;
+                    counts.seguimiento = (counts.seguimiento || 0) + 1;
+                } else if (cad.estado_cadencia === 'continuidad_autorizada') {
+                    alertState = 'continuidad_autorizada';
+                } else if (cad.estado_cadencia === 'orden_cierre_pendiente') {
+                    alertState = 'orden_cierre_pendiente';
+                }
+            }
+
+            // Criterio A: Límite comercial de Venta sin contrato pendiente de autorización
+            if (pendingReq && p.estado === 'activo') {
+                motivos.push({
+                    tipo: 'solicitud_sin_contrato',
+                    subtipo: 'solicitud_sin_contrato',
+                    descripcion: `Solicitud de venta sin contrato pendiente (${pendingReq.solicitante_nombre || 'Comercial'})`,
+                    limite: 'Instalación > $10,000 requiere contrato',
+                    esperado: 'Aprobación gerencial requerida',
+                    observado: pendingReq.motivo || 'Pendiente de resolución',
+                    fecha: pendingReq.fecha_solicitud || null,
+                    requestId: pendingReq.id
+                });
+                isPending = true;
+                if (alertState !== 'pendiente') alertState = 'pendiente';
+                if (!fechaDeteccion) fechaDeteccion = pendingReq.fecha_solicitud;
+                if (!limiteIncumplido) limiteIncumplido = 'Venta sin contrato pendiente de autorización';
+                counts.solicitud_sin_contrato++;
+            }
+
+            // Alertas en historial / resueltas
+            if (!isPending) {
+                const hasResolvedEscalation = cad && (cad.estado_cadencia === 'continuidad_autorizada' || cad.estado_cadencia === 'orden_cierre_pendiente' || (Array.isArray(cad.historial_escalaciones) && cad.historial_escalaciones.length > 0));
+                const hasResolvedReq = solicitudes.some(r => r && (r.estado === 'aprobada' || r.estado === 'rechazada'));
+                if (hasResolvedEscalation || hasResolvedReq) {
+                    if (alertState === 'al_dia') alertState = 'resuelta';
+                    counts.resueltas++;
+                }
+            }
+
+            // Si no tiene alertas activas ni historial de alertas resueltas, no pertenece a este panel
+            if (motivos.length === 0 && alertState === 'al_dia') {
+                return;
+            }
+
+            const responsableNombre = resolveSellerName(p, userDirectory);
+            const responsableId = p.vendedorId || p.createdBy || '';
+
+            // Cada oportunidad cuenta una sola vez en el total de pendientes
+            if (isPending) {
+                counts.totalPending++;
+            }
+
+            // Aplicación de filtros de consulta
+            if (statusFilter && statusFilter !== 'todas') {
+                if (statusFilter === 'pendientes' && !isPending) return;
+                if ((statusFilter === 'continuidad_autorizada' || statusFilter === 'autorizadas') && alertState !== 'continuidad_autorizada') return;
+                if (statusFilter === 'orden_cierre' && alertState !== 'orden_cierre_pendiente') return;
+                if (statusFilter === 'resueltas' && (isPending || alertState === 'al_dia')) return;
+            }
+
+            if (filterResponsable && filterResponsable !== 'todos' && filterResponsable !== 'all') {
+                if (responsableId !== filterResponsable && responsableNombre !== filterResponsable) return;
+            }
+
+            if (filterMotivo && filterMotivo !== 'todos' && filterMotivo !== 'all') {
+                const matches = motivos.some(m => {
+                    if (m.tipo === filterMotivo || m.subtipo === filterMotivo) return true;
+                    if (filterMotivo === 'seguimiento' && (m.tipo === 'cinco_intentos' || m.tipo === 'seguimiento' || m.subtipo === 'cinco_intentos' || m.tipo === 'cadencia_5_intentos')) return true;
+                    if ((filterMotivo === 'cadencia_5_intentos' || filterMotivo === 'cinco_intentos') && (m.tipo === 'cinco_intentos' || m.tipo === 'seguimiento' || m.subtipo === 'cinco_intentos')) return true;
+                    if ((filterMotivo === 'solicitud_sin_contrato' || filterMotivo === 'sin_contrato') && m.tipo === 'solicitud_sin_contrato') return true;
+                    return false;
+                });
+                if (!matches) return;
+            }
+
+            items.push({
+                prospect: p,
+                id: p.id,
+                codigo: p.codigo || (p.id ? String(p.id).slice(-4) : '-'),
+                proyecto: p.proyecto || 'Sin Nombre',
+                clientId: p.clientId,
+                responsableId,
+                responsableNombre,
+                responsable: responsableNombre,
+                etapa: p.etapa || 'prospecto',
+                monto: Number(p.precio_cotizado) || 0,
+                estado: p.estado || 'activo',
+                motivos: motivos.map(m => m.descripcion),
+                motivoObjects: motivos,
+                motivoPrincipal: motivos[0] ? motivos[0].descripcion : (alertState === 'continuidad_autorizada' ? 'Continuidad autorizada' : 'Alerta resuelta'),
+                isPending,
+                alertState,
+                alerta_estado: alertState,
+                fechaDeteccion: fechaDeteccion || (p.fecha_creacion ? String(p.fecha_creacion).slice(0, 10) : '-'),
+                limiteIncumplido: limiteIncumplido || '-',
+                valorEsperado: valorEsperado || '-',
+                valorObservado: valorObservado || '-',
+                intentosFallidos: cad ? (Number(cad.intentos_fallidos || cad.intentos_validos_sin_respuesta) || 0) : 0,
+                intentosValidos: cad ? (Number(cad.intentos_fallidos || cad.intentos_validos_sin_respuesta) || 0) : 0,
+                historialGestiones: (p.seguimiento && Array.isArray(p.seguimiento.historial_gestiones)) ? p.seguimiento.historial_gestiones : [],
+                justificacionesAnteriores: cad ? (cad.justificacion_continuidad || null) : null,
+                justificacionVendedor: cad ? (cad.justificacion_continuidad || null) : null,
+                hasFollowUpEscalation: motivos.some(m => m.tipo === 'seguimiento' || m.tipo === 'cinco_intentos'),
+                hasNoContractRequest: !!pendingReq || motivos.some(m => m.tipo === 'solicitud_sin_contrato'),
+                cadencia: cad,
+                solicitudesSinContrato: solicitudes
+            });
+        });
+
+        // Ordenamiento: primero pendientes con mayor número de intentos fallidos
+        items.sort((a, b) => {
+            if (a.isPending !== b.isPending) return a.isPending ? -1 : 1;
+            return (b.intentosFallidos - a.intentosFallidos);
+        });
+
+        return {
+            items,
+            pendingItems: items.filter(x => x.isPending),
+            totalPending: counts.totalPending,
+            pendingUniqueCount: counts.totalPending,
+            counts: {
+                ...counts,
+                pendientes: counts.totalPending,
+                total: items.length
+            }
+        };
+    }
+
     return {
         TIMEZONE_COMMERCIAL,
         FOLLOWUP_CADENCE,
@@ -476,6 +819,12 @@
         suggestNextExternalContactDate,
         suggestNextInternalTaskDate,
         classifyFollowUp,
-        generateAgenda
+        resolveSellerName,
+        generateAgenda,
+        calculateManagerAttentionItems,
+        CADENCIAS_VALIDAS,
+        LIMITES_COMERCIALES_CADENCIA,
+        getCadenceConfig,
+        validateCadenceSelection
     };
 });

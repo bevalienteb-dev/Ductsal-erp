@@ -87,6 +87,42 @@
         return callIdempotent(key, opId => fb.functions().httpsCallable('recordProspectFollowUpAdmin')({ prospectId, followUp, opId, dbSuffix }));
     }
 
+    function updateProspectCadence(fb, { prospectId, tipoCadencia, motivo, dbSuffix }) {
+        const key = ['updateProspectCadence', dbSuffix, prospectId, tipoCadencia, motivo || ''].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('updateProspectCadenceAdmin')({
+            prospectId,
+            tipoCadencia,
+            motivo,
+            opId,
+            dbSuffix
+        }));
+    }
+
+    function resolveFollowUpEscalation(fb, { prospectId, decision, motivo, justificacion, proximaAccion, ejecutarCierre, dbSuffix }) {
+        const key = ['resolveEscalation', dbSuffix, prospectId, decision, motivo || '', justificacion || '', stableStringify(proximaAccion), ejecutarCierre === true].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('resolveProspectEscalationAdmin')({
+            prospectId,
+            decision,
+            motivo,
+            justificacion,
+            proximaAccion,
+            ejecutarCierre,
+            opId,
+            dbSuffix
+        }));
+    }
+
+    function reclassifyProspect(fb, { prospectId, clasificacion, motivo, dbSuffix }) {
+        const key = ['reclassifyProspect', dbSuffix, prospectId, clasificacion, motivo || ''].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('reclassifyProspectAdmin')({
+            prospectId,
+            clasificacion,
+            motivo,
+            opId,
+            dbSuffix
+        }));
+    }
+
     function reassign(fb, { prospectId, vendedorId, dbSuffix }) {
         return call(fb, 'reassignProspectAdmin', { prospectId, vendedorId, dbSuffix });
     }
@@ -209,6 +245,9 @@
         addLog,
         deleteLog,
         recordFollowUp,
+        updateProspectCadence,
+        resolveFollowUpEscalation,
+        reclassifyProspect,
         reassign,
         setNoContractAuthorization,
         requestNoContractAuthorization,

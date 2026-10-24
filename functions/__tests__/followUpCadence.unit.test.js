@@ -766,13 +766,27 @@ describe('Pruebas Obligatorias de Cadencia Comercial y Agenda Diaria', () => {
       }
     ];
 
-    // Gerente sin filtro de comercial (ve todas las asignadas)
+    // Gerente por defecto recibe sus oportunidades propias y escalaciones gerenciales,
+    // NO la agenda global de llamadas ordinarias de todos los vendedores
     const agendaGlobal = CrmFollowUpCalc.generateAgenda(opps, { role: 'manager', cid: 'MGR' }, 'todas', CLOCK);
-    expect(agendaGlobal.items).toHaveLength(2);
+    expect(agendaGlobal.items).toHaveLength(0);
 
-    // Gerente filtrando solo V1
+    // Oportunidad con escalación a gerencia
+    const oppEscalada = {
+      id: 'P-MGR-ESC',
+      estado: 'activo',
+      vendedorId: 'V1',
+      seguimiento: {
+        cadencia: { alerta_gerencial: true, intentos_fallidos: 5 }
+      }
+    };
+    const agendaConEscalacion = CrmFollowUpCalc.generateAgenda([...opps, oppEscalada], { role: 'manager', cid: 'MGR' }, 'todas', CLOCK);
+    expect(agendaConEscalacion.items).toHaveLength(1);
+    expect(agendaConEscalacion.items[0].id).toBe('P-MGR-ESC');
+
+    // Gerente consultando la agenda de un vendedor específico (V1)
     const v1Universe = opps.filter(p => p.vendedorId === 'V1');
-    const agendaV1 = CrmFollowUpCalc.generateAgenda(v1Universe, { role: 'manager', cid: 'MGR' }, 'todas', CLOCK);
+    const agendaV1 = CrmFollowUpCalc.generateAgenda(v1Universe, { role: 'vendedor', cid: 'V1' }, 'todas', CLOCK);
     expect(agendaV1.items).toHaveLength(1);
     expect(agendaV1.items[0].vendedorId).toBe('V1');
     expect(agendaV1.counts.hoy).toBe(1);

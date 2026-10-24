@@ -25,12 +25,22 @@ const crypto = require('crypto');
 const identity = require('./clientIdentity');
 const { ServiceError, CRM_ROLES, PRIVILEGED, stableHash } = require('./clientsService');
 
+let CrmFollowUpCalc = null;
+try {
+  CrmFollowUpCalc = require('./crm_followup_calc');
+} catch (e) {
+  try {
+    CrmFollowUpCalc = require('../crm_followup_calc');
+  } catch (e2) {}
+}
+
 const DOC_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const OP_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
 const SETTINGS_LISTS = ['visitantes', 'encargados'];
 const SETTINGS_ACTIONS = ['addItem', 'removeItem', 'setFactoryAddress'];
 const CRM_TZ_OFFSET_MS = -6 * 3600 * 1000; // El Salvador (no DST): the year of the opportunity code follows local time
 const MAX_LOGS = 2000;
+const MOTIVOS_PERDIDA = ['Precio', 'Falta de seguimiento', 'No se cumplían los requerimientos técnicos', 'Tiempo de entrega', 'Cliente desiste'];
 
 function namesFor(suffix) {
   return {
@@ -164,11 +174,20 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   async function createProspect({ caller, data, opId }) {
     data = asObject(data, 'Datos de la oportunidad');
     reqOpId(opId);
+    let clasificacion = 'ejecucion';
+    if (data.clasificacion !== undefined && data.clasificacion !== null && data.clasificacion !== '') {
+      const c = String(data.clasificacion).trim().toLowerCase();
+      if (c !== 'ejecucion' && c !== 'presupuesto') {
+        throw bad('Clasificación inválida: debe ser "ejecucion" o "presupuesto"');
+      }
+      clasificacion = c;
+    }
     const fields = {
       proyecto: reqString(data.proyecto, 'El nombre del proyecto', 200),
       origen: reqString(data.origen, 'El origen', 100),
       tipo_proyecto: reqString(data.tipo_proyecto, 'El tipo de proyecto', 100),
-      tipo_producto: reqString(data.tipo_producto, 'El tipo de producto', 100)
+      tipo_producto: reqString(data.tipo_producto, 'El tipo de producto', 100),
+      clasificacion
     };
     const clientId = reqDocId(data.clientId, 'clientId');
     const askedVendor = (data.vendedorId === undefined || data.vendedorId === null || data.vendedorId === '') ? caller.cid : reqDocId(data.vendedorId, 'vendedorId');
@@ -274,7 +293,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (at === -1) return { status: 'absent' }; // already removed (retry) or never existed: nothing to do
       const entry = logs[at];
       if (entry.auto === true || entry.auto === 'true') throw new ServiceError('permission-denied', 'Las entradas automáticas del historial no se pueden eliminar');
-      if (!PRIVILEGED.includes(caller.role) && entry.by !== caller.cid) throw new ServiceError('permission-denied', 'Solo puedes eliminar las notas que tú escribiste');
+      if (caller.role !== 'manager' && entry.by !== caller.cid) throw new ServiceError('permission-denied', 'Solo puedes eliminar las notas que tú escribiste');
       const next = logs.slice(0, at).concat(logs.slice(at + 1));
       tx.update(ref, { logs: next });
       tx.create(auditRef(), auditEntry(caller, 'deleteProspectLog', 'prospect', prospectId, { date: entryDate, textPreview: entryText.slice(0, 200), writtenBy: entry.by || null }));
@@ -324,8 +343,12 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       };
     }
 
-    const justificacionContinuidad = typeof data.justificacion_continuidad === 'string' ? data.justificacion_continuidad.trim() : '';
-    const fechaEntregaOferta = typeof data.fecha_entrega_oferta === 'string' ? data.fecha_entrega_oferta.trim() : null;
+    const justificacionContinuidad = (typeof data.justificacion_continuidad === 'string' && data.justificacion_continuidad.trim())
+      || (typeof data.justificacionContinuidad === 'string' && data.justificacionContinuidad.trim())
+      || '';
+    const fechaEntregaOferta = (typeof data.fecha_entrega_oferta === 'string' && data.fecha_entrega_oferta.trim())
+      || (typeof data.fechaEntregaOferta === 'string' && data.fechaEntregaOferta.trim())
+      || null;
 
     return db.runTransaction(async tx => {
       const ref = col('prospects').doc(prospectId);
@@ -333,6 +356,14 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
       const p = snap.data() || {};
       requireProspectAccess(caller, p);
+
+      // Restricción horizontal estricta: Gestores y Vendedores solo gestionan sus propias oportunidades asignadas (o creadas si no tienen vendedor asignado)
+      if (caller.role === 'gestor' || caller.role === 'vendedor') {
+        const isAssigned = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
+        if (!isAssigned) {
+          throw new ServiceError('permission-denied', 'No tienes permiso para gestionar el seguimiento de una oportunidad ajena');
+        }
+      }
 
       if (p.estado !== 'activo') {
         throw new ServiceError('failed-precondition', 'Solo se pueden registrar seguimientos en oportunidades activas');
@@ -348,7 +379,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       }
 
       const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
-      const prevAttempts = Number(curCadence.intentos_fallidos) || 0;
+      const prevAttempts = Number(curCadence.intentos_fallidos || curCadence.intentos_validos_sin_respuesta) || 0;
 
       const esContactoValido = canal !== 'interno' && resultado !== 'nota_interna';
 
@@ -359,7 +390,8 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
 
       // Rule check: after 3 failed attempts, continuing requires justification
       if (esContactoValido && resultado === 'sin_respuesta' && prevAttempts >= 3) {
-        if (!justificacionContinuidad || justificacionContinuidad.length < 5) {
+        const justif = justificacionContinuidad || curCadence.justificacion_continuidad;
+        if (!justif || justif.length < 5) {
           throw new ServiceError('failed-precondition', 'Tras 3 intentos fallidos es obligatorio registrar la justificación de continuidad comercial');
         }
       }
@@ -410,11 +442,13 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
 
       const nextCadencia = {
         ...curCadence,
+        tipo_cadencia: curCadence.tipo_cadencia || 'estandar',
         intentos_fallidos: newAttempts,
+        intentos_validos_sin_respuesta: newAttempts,
         estado_cadencia: estadoCadencia,
         alerta_gerencial: alertaGerencial,
         fecha_escalacion: fechaEscalacion,
-        fecha_entrega_oferta: fechaEntregaOferta || curCadence.fecha_entrega_oferta || null
+        fecha_entrega_oferta: curCadence.fecha_entrega_oferta || p.fecha_entrega_oferta || null
       };
       if (justificacionContinuidad) {
         nextCadencia.justificacion_continuidad = justificacionContinuidad;
@@ -460,6 +494,411 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
     });
   }
 
+  // ---------- manager decision on follow-up escalation ----------
+  // Permite a la gerencia intervenir sobre oportunidades con 5 intentos sin respuesta u otros límites excedidos:
+  // Opción 1 ('ordenar_cierre'): Exige motivo reglamentario. Si ejecutarCierre es true, ejecuta el cierre formal como pérdida.
+  // Opción 2 ('autorizar_continuar'): Exige justificación gerencial (>= 5 caracteres) y próxima acción con fecha.
+  // Preserva historial completo, intentos fallidos y no reinicia artificialmente el contador.
+  async function resolveFollowUpEscalation({ caller, prospectId, decision, motivo, justificacion, proximaAccion, ejecutarCierre, opId }) {
+    await requireManager(caller, 'tomar decisiones gerenciales de seguimiento');
+    reqDocId(prospectId, 'prospectId');
+    reqOpId(opId);
+    if (decision !== 'autorizar_continuar' && decision !== 'ordenar_cierre') {
+      throw bad('decision debe ser autorizar_continuar u ordenar_cierre');
+    }
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+      requireNotDeleted(p);
+
+      const seguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+      const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
+      const escalaciones = Array.isArray(curCadence.historial_escalaciones) ? curCadence.historial_escalaciones : [];
+
+      // Idempotency: retry with same opId
+      const prior = escalaciones.find(e => e && e.opId === opId);
+      if (prior) {
+        return { status: 'resolved', replay: true, escalacion: prior, seguimiento: p.seguimiento };
+      }
+
+      const stamp = iso();
+      const attempts = Number(curCadence.intentos_fallidos || curCadence.intentos_validos_sin_respuesta) || 0;
+      let nextCadence = {
+        ...curCadence,
+        intentos_fallidos: attempts,
+        intentos_validos_sin_respuesta: attempts
+      };
+      let nextSeguimiento = { ...seguimiento };
+      let patch = {};
+      let auditDetail = { decision, prospectId };
+
+      if (decision === 'autorizar_continuar') {
+        if (typeof justificacion !== 'string' || justificacion.trim().length < 5) {
+          throw bad('Es obligatorio indicar una justificación gerencial detallada (mínimo 5 caracteres)');
+        }
+        const why = justificacion.trim().slice(0, 1000);
+
+        const proxInput = proximaAccion && typeof proximaAccion === 'object' ? proximaAccion : null;
+        if (!proxInput || !proxInput.fecha) {
+          throw bad('Es obligatorio establecer la fecha de la próxima acción de seguimiento');
+        }
+        const nextAction = {
+          fecha: reqString(proxInput.fecha, 'La fecha de próxima acción', 50),
+          tipo: typeof proxInput.tipo === 'string' ? proxInput.tipo.trim() : 'llamada',
+          descripcion: typeof proxInput.descripcion === 'string' ? proxInput.descripcion.trim().slice(0, 500) : ''
+        };
+
+        const escalacionEntry = {
+          id: `esc_res_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          decision: 'autorizar_continuar',
+          estado: 'continuidad_autorizada',
+          fecha_resolucion: stamp,
+          resuelto_por_id: caller.cid,
+          resuelto_por: caller.name || 'Gerente',
+          justificacion: why,
+          proxima_accion: nextAction,
+          opId
+        };
+
+        nextCadence.alerta_gerencial = false;
+        nextCadence.estado_cadencia = 'continuidad_autorizada';
+        nextCadence.justificacion_gerencial = why;
+        nextCadence.historial_escalaciones = escalaciones.concat([escalacionEntry]);
+
+        nextSeguimiento.cadencia = nextCadence;
+        nextSeguimiento.proxima_accion = nextAction;
+
+        const logText = `[DECISIÓN GERENCIAL] Continuidad comercial AUTORIZADA por gerente ${caller.name}. Justificación: ${why}. Próxima acción: ${nextAction.fecha} (${nextAction.tipo || 'seguimiento'})`;
+        patch.seguimiento = nextSeguimiento;
+        patch.logs = logsOf(p).concat([logEntry(caller, logText, { auto: true, opId })]);
+
+        auditDetail.justificacion = why;
+        auditDetail.proxima_accion = nextAction;
+      } else if (decision === 'ordenar_cierre') {
+        const reason = reqString(motivo, 'El motivo de cierre', 100);
+        if (!MOTIVOS_PERDIDA.includes(reason)) {
+          throw bad('Motivo de cierre comercial inválido');
+        }
+        const why = (typeof justificacion === 'string' && justificacion.trim()) ? justificacion.trim().slice(0, 1000) : null;
+        const executeNow = ejecutarCierre === true;
+
+        const escalacionEntry = {
+          id: `esc_res_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          decision: 'ordenar_cierre',
+          estado: executeNow ? 'orden_cierre_ejecutada' : 'orden_cierre_pendiente',
+          fecha_resolucion: stamp,
+          resuelto_por_id: caller.cid,
+          resuelto_por: caller.name || 'Gerente',
+          motivo: reason,
+          justificacion: why,
+          ejecutarCierre: executeNow,
+          opId
+        };
+
+        nextCadence.alerta_gerencial = false;
+        nextCadence.estado_cadencia = executeNow ? 'cerrada' : 'orden_cierre_pendiente';
+        nextCadence.motivo_cierre_gerencial = reason;
+        nextCadence.historial_escalaciones = escalaciones.concat([escalacionEntry]);
+
+        nextSeguimiento.cadencia = nextCadence;
+        if (executeNow) {
+          nextSeguimiento.proxima_accion = null;
+        }
+
+        patch.seguimiento = nextSeguimiento;
+
+        if (executeNow) {
+          if (p.estado !== 'activo') {
+            throw new ServiceError('failed-precondition', 'Solo una oportunidad activa puede marcarse como perdida');
+          }
+          patch.estado = 'perdido';
+          patch.motivo_perdida = reason;
+          patch.fecha_perdida = stamp;
+
+          let vendorsToRemove = [];
+          if (p.etapa === 'cierre' && p.clientId) {
+            const otherSnap = await tx.get(
+              col('prospects')
+                .where('clientId', '==', p.clientId)
+                .where('etapa', '==', 'cierre')
+            );
+            const candidates = [p.vendedorId, p.createdBy].filter(v => v && v !== 'sistema');
+            const remainingClosing = new Set();
+            otherSnap.docs.forEach(d => {
+              if (d.id === prospectId) return;
+              const op = d.data() || {};
+              if (op.eliminado === true || op.estado === 'perdido') return;
+              if (op.vendedorId) remainingClosing.add(String(op.vendedorId));
+              if (op.createdBy) remainingClosing.add(String(op.createdBy));
+            });
+            vendorsToRemove = candidates.filter(v => !remainingClosing.has(String(v)));
+          }
+
+          for (const v of vendorsToRemove) {
+            tx.update(col('clients').doc(p.clientId), {
+              closingVendors: FieldValue.arrayRemove(v)
+            });
+          }
+
+          const logText = `[DECISIÓN GERENCIAL] CIERRE EJECUTADO por gerente ${caller.name}. Motivo: ${reason}${why ? `. Justificación: ${why}` : ''}`;
+          patch.logs = logsOf(p).concat([logEntry(caller, logText, { auto: true, opId })]);
+        } else {
+          const logText = `[DECISIÓN GERENCIAL] ORDEN DE CIERRE EMITIDA por gerente ${caller.name}. Motivo ordenado: ${reason}${why ? `. Instrucción: ${why}` : ''}`;
+          patch.logs = logsOf(p).concat([logEntry(caller, logText, { auto: true, opId })]);
+        }
+
+        auditDetail.motivo = reason;
+        auditDetail.justificacion = why;
+        auditDetail.ejecutarCierre = executeNow;
+      }
+
+      tx.update(ref, patch);
+      tx.create(auditRef(), auditEntry(caller, 'resolveFollowUpEscalation', 'prospect', prospectId, auditDetail));
+
+      return {
+        status: 'resolved',
+        decision,
+        seguimiento: nextSeguimiento,
+        estado: patch.estado || p.estado
+      };
+    });
+  }
+
+  // ---------- cadencia configurable y controlada por límites (Fase 2.1) ----------
+  async function updateProspectCadence({ caller, prospectId, tipoCadencia, motivo, opId }) {
+    reqDocId(prospectId, 'prospectId');
+    reqOpId(opId);
+    const targetCadence = reqString(tipoCadencia, 'El tipo de cadencia', 50).toLowerCase();
+    const reason = reqString(motivo, 'El motivo del cambio de cadencia', 500);
+    if (reason.length < 5) {
+      throw bad('Es obligatorio registrar el motivo del cambio de cadencia (mínimo 5 caracteres)');
+    }
+
+    // Validar que la cadencia sea una de las alternativas aprobadas
+    const validation = CrmFollowUpCalc ? CrmFollowUpCalc.validateCadenceSelection(targetCadence) : { valid: ['estandar', 'urgente', 'corporativa'].includes(targetCadence) };
+    if (!validation.valid) {
+      throw bad(validation.error || 'Alternativa de cadencia comercial no autorizada');
+    }
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+      requireProspectAccess(caller, p);
+
+      if (caller.role === 'gestor' || caller.role === 'vendedor') {
+        const isAssigned = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
+        if (!isAssigned) {
+          throw new ServiceError('permission-denied', 'No tienes permiso para modificar la cadencia de una oportunidad ajena');
+        }
+      }
+
+      if (p.estado !== 'activo') {
+        throw new ServiceError('failed-precondition', 'Solo se puede configurar la cadencia en oportunidades activas');
+      }
+
+      const seguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+      const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
+      const historialCambios = Array.isArray(curCadence.historial_cambios) ? curCadence.historial_cambios : [];
+
+      // Idempotency: retry with same opId
+      const prior = historialCambios.find(c => c && c.opId === opId);
+      if (prior) {
+        return { status: 'updated', replay: true, cadencia: curCadence, seguimiento: p.seguimiento };
+      }
+
+      const prevCadenceId = curCadence.tipo_cadencia || 'estandar';
+      if (prevCadenceId === targetCadence) {
+        return { status: 'unchanged', cadencia: curCadence, seguimiento: p.seguimiento };
+      }
+
+      // Invariants inviolables (Fase 2.1):
+      // No permitir que la selección modifique umbrales de escalamiento, elimine intentos fallidos ni reinicie contadores
+      const attempts = Number(curCadence.intentos_fallidos || curCadence.intentos_validos_sin_respuesta) || 0;
+      const estadoCadencia = curCadence.estado_cadencia || 'normal';
+      const alertaGerencial = curCadence.alerta_gerencial === true;
+      const fechaEscalacion = curCadence.fecha_escalacion || null;
+
+      const at = iso();
+      const cambioEntry = {
+        id: `cad_chg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role,
+        cadenciaAnterior: prevCadenceId,
+        cadenciaNueva: targetCadence,
+        motivo: reason,
+        opId
+      };
+
+      const cadProfile = CrmFollowUpCalc ? CrmFollowUpCalc.CADENCIAS_VALIDAS[targetCadence] : null;
+
+      const nextCadence = {
+        ...curCadence,
+        tipo_cadencia: targetCadence,
+        nombre_cadencia: cadProfile ? cadProfile.nombre : targetCadence,
+        intentos_fallidos: attempts,
+        intentos_validos_sin_respuesta: attempts,
+        estado_cadencia: estadoCadencia,
+        alerta_gerencial: alertaGerencial,
+        fecha_escalacion: fechaEscalacion,
+        historial_cambios: historialCambios.concat([cambioEntry])
+      };
+
+      const nextSeguimiento = {
+        ...seguimiento,
+        cadencia: nextCadence
+      };
+
+      const logText = `[CADENCIA COMERCIAL] Cadencia cambiada de "${prevCadenceId}" a "${targetCadence}" por ${caller.name || 'Comercial'}. Motivo: ${reason}`;
+      const patch = {
+        seguimiento: nextSeguimiento,
+        logs: logsOf(p).concat([logEntry(caller, logText, { auto: true, opId })])
+      };
+
+      tx.update(ref, patch);
+      tx.create(auditRef(), auditEntry(caller, 'updateCadence', 'prospect', prospectId, {
+        cadenciaAnterior: prevCadenceId,
+        cadenciaNueva: targetCadence,
+        motivo: reason,
+        intentos_preservados: attempts
+      }));
+
+      return {
+        status: 'updated',
+        tipoCadencia: targetCadence,
+        cadencia: nextCadence,
+        seguimiento: nextSeguimiento
+      };
+    });
+  }
+
+  // ---------- clasificación comercial: presupuesto frente a ejecución ----------
+  async function reclassifyProspect({ caller, prospectId, clasificacion, motivo, opId }) {
+    reqDocId(prospectId, 'prospectId');
+    reqOpId(opId);
+    if (!clasificacion || typeof clasificacion !== 'string') {
+      throw bad('Clasificación requerida');
+    }
+    const targetClasif = clasificacion.trim().toLowerCase();
+    if (targetClasif !== 'ejecucion' && targetClasif !== 'presupuesto') {
+      throw bad('Clasificación comercial inválida. Opciones válidas: ejecucion, presupuesto');
+    }
+
+    const reason = reqString(motivo, 'El motivo comercial del cambio de clasificación', 500);
+    if (reason.trim().length < 5) {
+      throw bad('El motivo del cambio de clasificación debe tener al menos 5 caracteres');
+    }
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+      requireProspectAccess(caller, p);
+
+      if (caller.role === 'gestor' || caller.role === 'vendedor') {
+        const isAssigned = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
+        if (!isAssigned) {
+          throw new ServiceError('permission-denied', 'No tienes permiso para modificar la clasificación de una oportunidad ajena');
+        }
+      }
+
+      if (p.estado !== 'activo') {
+        throw new ServiceError('failed-precondition', 'Solo se pueden reclasificar oportunidades activas');
+      }
+
+      const historialClasificacion = Array.isArray(p.historial_clasificacion) ? p.historial_clasificacion : [];
+
+      // Idempotency: retry with same opId
+      const prior = historialClasificacion.find(c => c && c.opId === opId);
+      if (prior) {
+        return { status: 'reclassified', replay: true, clasificacion: p.clasificacion || targetClasif, historial_clasificacion: historialClasificacion };
+      }
+
+      const prevClasif = p.clasificacion || 'ejecucion';
+      if (prevClasif === targetClasif) {
+        return { status: 'unchanged', clasificacion: prevClasif, historial_clasificacion: historialClasificacion };
+      }
+
+      const at = iso();
+      const cambioEntry = {
+        id: `clasif_chg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role,
+        clasificacionAnterior: prevClasif,
+        clasificacionNueva: targetClasif,
+        motivo: reason,
+        opId
+      };
+
+      const nextHistorial = historialClasificacion.concat([cambioEntry]);
+      const patch = {
+        clasificacion: targetClasif,
+        historial_clasificacion: nextHistorial,
+        updatedAt: at
+      };
+
+      // Si pasa de presupuesto a ejecución: activar reglas comerciales correspondientes en el momento adecuado
+      // Si la oportunidad ya estaba en etapa de negociación, registrar fecha_entrega_oferta
+      if (prevClasif === 'presupuesto' && targetClasif === 'ejecucion') {
+        if (p.etapa === 'negociacion') {
+          const curDelivery = p.fecha_entrega_oferta || (p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.fecha_entrega_oferta);
+          if (!curDelivery) {
+            patch.fecha_entrega_oferta = at;
+          }
+          const curSeg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+          if (!curSeg.proxima_accion || !curSeg.proxima_accion.fecha) {
+            const cadConfig = CrmFollowUpCalc ? CrmFollowUpCalc.getCadenceConfig((curSeg.cadencia && curSeg.cadencia.tipo_cadencia) || 'estandar') : { dias_primer_contacto: 5 };
+            const dias1er = cadConfig.dias_primer_contacto || 5;
+            let proxYMD = '';
+            if (CrmFollowUpCalc) {
+              const d = CrmFollowUpCalc.addBusinessDaysForExternalContact(at, dias1er);
+              proxYMD = CrmFollowUpCalc.formatDateYMD(d);
+            } else {
+              const d = new Date();
+              d.setDate(d.getDate() + 7);
+              proxYMD = d.toISOString().slice(0, 10);
+            }
+            patch['seguimiento.proxima_accion'] = {
+              fecha: proxYMD,
+              tipo: 'llamada',
+              descripcion: '1er contacto de seguimiento post-oferta (activado tras confirmar oferta para ejecución)'
+            };
+          }
+        }
+      }
+
+      const prevLabel = prevClasif === 'presupuesto' ? 'Cotización para presupuesto' : 'Oferta para ejecución';
+      const newLabel = targetClasif === 'presupuesto' ? 'Cotización para presupuesto' : 'Oferta para ejecución';
+      const logText = `[CLASIFICACIÓN COMERCIAL] Clasificación cambiada de "${prevLabel}" a "${newLabel}" por ${caller.name || 'Comercial'}. Motivo: ${reason}`;
+      const logs = logsOf(p);
+      logs.push(logEntry(caller, logText, { auto: true }));
+      patch.logs = logs;
+
+      tx.update(ref, patch);
+
+      tx.create(auditRef(), auditEntry(caller, 'reclassifyProspect', 'prospect', prospectId, {
+        clasificacionAnterior: prevClasif,
+        clasificacionNueva: targetClasif,
+        motivo: reason
+      }));
+
+      return {
+        status: 'reclassified',
+        clasificacion: targetClasif,
+        historial_clasificacion: nextHistorial
+      };
+    });
+  }
+
   // ---------- reassignment ----------
   async function reassign({ caller, prospectId, vendedorId }) {
     await requireManager(caller, 'reasignar oportunidades');
@@ -475,6 +914,9 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         throw new ServiceError('failed-precondition', 'No se puede reasignar una oportunidad que ya completó el cierre comercial');
       }
       const target = await readAssignee(tx, vendedorId);
+      if (target.role !== 'vendedor' && target.role !== 'gestor') {
+        throw bad('Solo se pueden reasignar oportunidades a usuarios con rol Vendedor o Gestor');
+      }
       if (p.vendedorId === target.cid) return { status: 'unchanged', vendedorId: target.cid }; // retry of an applied request
 
       let clientRef = null;
@@ -774,8 +1216,8 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
     });
   }
 
-  const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, hasEnteredPostclosing, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names };
-  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
+  const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, hasEnteredPostclosing, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names, reclassifyProspect };
+  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, updateProspectCadence, resolveFollowUpEscalation, reclassifyProspect, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
 }
 
 module.exports = { createCommercialService, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };
