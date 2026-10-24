@@ -639,4 +639,273 @@ describe('Auditoría Integral de Permisos por Rol y Layout CRM', () => {
 
   });
 
+
+  // =========================================================================
+  // SECCIÓN 8: REGRESIÓN — CONSOLIDACIÓN «TODOS LOS COMERCIALES» Y FILTROS DE AGENDA
+  // =========================================================================
+  describe('8. Regresión: Consolidación «Todos los comerciales» y Filtros de Agenda', () => {
+
+    const multiSellerPipeline = [
+      makeOpp('lead-v1-a', 'U-V1', 'ejecucion', 'prospecto', {
+        codigo: 'COD-1001',
+        seguimiento: {
+          cadencia: { intentos_fallidos: 0 },
+          proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada rutinaria V1 A' }
+        }
+      }),
+      makeOpp('lead-v1-b', 'U-V1', 'ejecucion', 'negociacion', {
+        codigo: 'COD-1002',
+        fecha_entrega_oferta: '2026-10-20',
+        seguimiento: {
+          cadencia: { intentos_fallidos: 2 },
+          proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada rutinaria V1 B' }
+        }
+      }),
+      makeOpp('lead-v2-a', 'U-V2', 'ejecucion', 'prospecto', {
+        codigo: 'COD-2001',
+        seguimiento: {
+          cadencia: { intentos_fallidos: 1 },
+          proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada rutinaria V2 A' }
+        }
+      }),
+      makeOpp('lead-v2-b', 'U-V2', 'ejecucion', 'negociacion', {
+        codigo: 'COD-2002',
+        fecha_entrega_oferta: '2026-10-19',
+        seguimiento: {
+          cadencia: { intentos_fallidos: 3 },
+          proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada rutinaria V2 B' }
+        }
+      }),
+      makeOpp('lead-g1-a', 'U-G1', 'ejecucion', 'prospecto', {
+        codigo: 'COD-3001',
+        seguimiento: {
+          cadencia: { intentos_fallidos: 1 },
+          proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada rutinaria G1 A' }
+        }
+      })
+    ];
+
+    // Simula la lógica de renderDailyAgenda en app_core.js para evaluar la interacción de filtros y deduplicación
+    function simulateRenderDailyAgendaLogic({ currentUser, selectedValue, prospectsList, usersList }) {
+      const isManager = currentUser && currentUser.role === 'manager';
+      let targetUniverse = prospectsList;
+      let agendaUser = currentUser;
+
+      if (isManager) {
+        if (selectedValue === 'all') {
+          agendaUser = { ...currentUser, viewAll: true };
+          targetUniverse = prospectsList;
+        } else if (selectedValue === 'manager_only') {
+          agendaUser = { ...currentUser, viewAll: false };
+          targetUniverse = prospectsList;
+        } else {
+          const selId = selectedValue;
+          targetUniverse = prospectsList.filter(p => p && (p.vendedorId === selId || (!p.vendedorId && p.createdBy === selId)));
+          const matchedSeller = (Array.isArray(usersList) ? usersList.find(u => u && (u.id === selId || u.cid === selId)) : null) || { id: selId, cid: selId, role: 'vendedor' };
+          agendaUser = matchedSeller;
+        }
+      } else {
+        // Vendedor / Gestor: no tienen selector de comerciales y solo reciben su propio contexto
+        targetUniverse = prospectsList;
+        agendaUser = currentUser;
+      }
+
+      // Deduplicación preventiva idéntica a app_core.js
+      const uniqueMap = new Map();
+      (targetUniverse || []).forEach(p => {
+        if (p && p.id && !uniqueMap.has(p.id)) {
+          uniqueMap.set(p.id, p);
+        }
+      });
+      targetUniverse = Array.from(uniqueMap.values());
+
+      return CrmFollowUpCalc.generateAgenda(targetUniverse, agendaUser, 'todas', CLOCK, usersList);
+    }
+
+    test('8.1 «Todos los comerciales» consolida las agendas correspondientes a todos los vendedores', () => {
+      const mgr = USERS.find(u => u.role === 'manager');
+      const result = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'all',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+
+      // No debe ser vacío y debe sumar las gestiones de todo el equipo
+      expect(result.items.length).toBe(5);
+      expect(result.counts.total).toBe(5);
+
+      const ids = result.items.map(it => it.id);
+      expect(ids).toContain('lead-v1-a');
+      expect(ids).toContain('lead-v1-b');
+      expect(ids).toContain('lead-v2-a');
+      expect(ids).toContain('lead-v2-b');
+      expect(ids).toContain('lead-g1-a');
+    });
+
+    test('8.2 No se duplican oportunidades cuando aparecen repetidas por ID o por código', () => {
+      const mgr = USERS.find(u => u.role === 'manager');
+
+      // 1. Duplicados por ID en la lista completa para renderDailyAgenda
+      const duplicatedById = [
+        ...multiSellerPipeline,
+        { ...multiSellerPipeline[0] }, // Duplicado de lead-v1-a
+        { ...multiSellerPipeline[2] }  // Duplicado de lead-v2-a
+      ];
+
+      const resById = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'all',
+        prospectsList: duplicatedById,
+        usersList: USERS
+      });
+
+      expect(resById.items.length).toBe(5);
+      const uniqueIds = new Set(resById.items.map(it => it.id));
+      expect(uniqueIds.size).toBe(5);
+
+      // 2. Duplicados directos por mismo ID evaluados en CrmFollowUpCalc.generateAgenda
+      const duplicateById = [
+        makeOpp('lead-dup-id', 'U-V1', 'ejecucion', 'prospecto'),
+        makeOpp('lead-dup-id', 'U-V1', 'ejecucion', 'prospecto')
+      ];
+      const agendaDedupId = CrmFollowUpCalc.generateAgenda(duplicateById, { id: 'U-V1', cid: 'U-V1', role: 'vendedor' }, 'todas', CLOCK, USERS);
+      expect(agendaDedupId.items.length).toBe(1);
+
+      // 3. Duplicados directos por mismo código evaluados en CrmFollowUpCalc.generateAgenda
+      const duplicateByCodigo = [
+        { codigo: 'MISMO-CODIGO', vendedorId: 'U-V1', estado: 'activo', clasificacion: 'ejecucion', etapa: 'prospecto', seguimiento: { proxima_accion: { fecha: '2026-10-22' } } },
+        { codigo: 'MISMO-CODIGO', vendedorId: 'U-V1', estado: 'activo', clasificacion: 'ejecucion', etapa: 'prospecto', seguimiento: { proxima_accion: { fecha: '2026-10-22' } } }
+      ];
+      const agendaDedupCodigo = CrmFollowUpCalc.generateAgenda(duplicateByCodigo, { id: 'U-V1', cid: 'U-V1', role: 'vendedor' }, 'todas', CLOCK, USERS);
+      expect(agendaDedupCodigo.items.length).toBe(1);
+    });
+
+    test('8.3 Seleccionar un comercial individual devuelve únicamente su agenda', () => {
+      const mgr = USERS.find(u => u.role === 'manager');
+
+      // Seleccionar Vendedor Uno (U-V1)
+      const resV1 = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'U-V1',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+      expect(resV1.counts.total).toBe(2);
+      expect(resV1.items.map(it => it.id).sort()).toEqual(['lead-v1-a', 'lead-v1-b']);
+
+      // Seleccionar Vendedor Dos (U-V2)
+      const resV2 = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'U-V2',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+      expect(resV2.counts.total).toBe(2);
+      expect(resV2.items.map(it => it.id).sort()).toEqual(['lead-v2-a', 'lead-v2-b']);
+
+      // Seleccionar Gestor Uno (U-G1)
+      const resG1 = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'U-G1',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+      expect(resG1.counts.total).toBe(1);
+      expect(resG1.items.map(it => it.id)).toEqual(['lead-g1-a']);
+    });
+
+    test('8.4 «Mi Agenda» conserva el comportamiento de escalaciones y oportunidades propias', () => {
+      const mgr = USERS.find(u => u.role === 'manager');
+
+      // Universo que incluye llamadas rutinarias de terceros, una escalación y un lead propio del Gerente
+      const pipelineWithEscalation = [
+        ...multiSellerPipeline,
+        makeOpp('lead-esc-01', 'U-V1', 'ejecucion', 'negociacion', {
+          seguimiento: {
+            cadencia: { intentos_fallidos: 5, alerta_gerencial: true }
+          }
+        }),
+        makeOpp('lead-mgr-own', 'U-MGR', 'ejecucion', 'prospecto', {
+          seguimiento: {
+            cadencia: { intentos_fallidos: 0 },
+            proxima_accion: { fecha: '2026-10-22', descripcion: 'Llamada del Gerente' }
+          }
+        })
+      ];
+
+      const resManagerOnly = simulateRenderDailyAgendaLogic({
+        currentUser: mgr,
+        selectedValue: 'manager_only',
+        prospectsList: pipelineWithEscalation,
+        usersList: USERS
+      });
+
+      // Debe incluir únicamente la escalación y el lead propio (2 items), excluyendo las 5 rutinas ajenas
+      expect(resManagerOnly.counts.total).toBe(2);
+      const ids = resManagerOnly.items.map(it => it.id);
+      expect(ids).toContain('lead-esc-01');
+      expect(ids).toContain('lead-mgr-own');
+      expect(ids).not.toContain('lead-v1-a');
+      expect(ids).not.toContain('lead-v2-a');
+      expect(ids).not.toContain('lead-g1-a');
+    });
+
+    test('8.5 Vendedor y gestor no pueden ampliar sus permisos mediante viewAll', () => {
+      const v1 = USERS.find(u => u.id === 'U-V1');
+      const g1 = USERS.find(u => u.id === 'U-G1');
+
+      // Vendedor intentando inyectar viewAll: true directamente en generateAgenda
+      const maliciousVendedor = { ...v1, viewAll: true };
+      const resVendedor = CrmFollowUpCalc.generateAgenda(multiSellerPipeline, maliciousVendedor, 'todas', CLOCK, USERS);
+      expect(resVendedor.counts.total).toBe(2);
+      expect(resVendedor.items.every(it => it.vendedorId === 'U-V1')).toBe(true);
+
+      // Gestor intentando inyectar viewAll: true directamente en generateAgenda
+      const maliciousGestor = { ...g1, viewAll: true };
+      const resGestor = CrmFollowUpCalc.generateAgenda(multiSellerPipeline, maliciousGestor, 'todas', CLOCK, USERS);
+      expect(resGestor.counts.total).toBe(1);
+      expect(resGestor.items.every(it => it.vendedorId === 'U-G1')).toBe(true);
+    });
+
+    test('8.6 La consolidación está limitada al rol gerente', () => {
+      const v1 = USERS.find(u => u.id === 'U-V1');
+      const g1 = USERS.find(u => u.id === 'U-G1');
+
+      // En el flujo simulado de UI, pasar selectedValue: 'all' con rol vendedor no tiene efecto
+      const resV1Ui = simulateRenderDailyAgendaLogic({
+        currentUser: v1,
+        selectedValue: 'all',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+      expect(resV1Ui.counts.total).toBe(2);
+      expect(resV1Ui.items.map(it => it.id).sort()).toEqual(['lead-v1-a', 'lead-v1-b']);
+
+      // En el flujo simulado de UI con rol gestor tampoco tiene efecto
+      const resG1Ui = simulateRenderDailyAgendaLogic({
+        currentUser: g1,
+        selectedValue: 'all',
+        prospectsList: multiSellerPipeline,
+        usersList: USERS
+      });
+      expect(resG1Ui.counts.total).toBe(1);
+      expect(resG1Ui.items.map(it => it.id)).toEqual(['lead-g1-a']);
+    });
+
+    test('8.7 Backend: Gestor no puede reasignar oportunidades (solo Manager y Admin tienen permiso)', async () => {
+      const { fdb, commercial } = makeEnv();
+      fdb.collection('prospects_prod').doc('P-V1').set(makeOpp('P-V1', 'U-V1'));
+      USERS.forEach(u => fdb.collection('users_prod').doc(u.id).set(u));
+
+      await expect(
+        commercial.reassign({
+          caller: { uid: 'auth-g1', role: 'gestor', cid: 'U-G1', name: 'Gestor Uno' },
+          prospectId: 'P-V1',
+          vendedorId: 'U-V2'
+        })
+      ).rejects.toThrow(/Solo un gerente puede reasignar oportunidades/);
+    });
+
+  });
 });

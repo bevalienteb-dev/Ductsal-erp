@@ -147,7 +147,8 @@
                         <div id="agenda-seller-filter-wrap" style="display: none; align-items: center; gap: 0.5rem;">
                             <span style="font-size: 0.8rem; color: var(--text-secondary);">👤 Comercial:</span>
                             <select id="agenda-seller-select" class="form-control" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem;" onchange="renderDailyAgenda()">
-                                <option value="all">Todos los comerciales</option>
+                                <option value="all">👥 Todos los comerciales</option>
+                                <option value="manager_only">🛡️ Mi Agenda (Escalaciones y Leads Propios)</option>
                             </select>
                         </div>
                     </div>
@@ -555,7 +556,7 @@
                             <span class="badge bg-neutral" style="font-size: 0.72rem;">Volumen & Éxito</span>
                         </div>
                         <div id="conversion-chart-container" style="flex-grow: 1; position: relative; width: 100%; min-width: 0;">
-                            <div id="conversion-canvas-container" style="position: relative; width: 100%; height: 280px; min-width: 0;">
+                            <div id="conversion-canvas-container" style="position: relative; width: 100%; height: 300px; min-width: 0;">
                                 <canvas id="conversionChart"></canvas>
                             </div>
                         </div>
@@ -911,11 +912,17 @@
 
                             <div class="stage-actions-container" id="action-buttons-container">
                                 <div class="stage-actions-primary-group">
-                                    <button type="button" class="btn-primary btn-stage-action btn-stage-advance" id="btn-advance" onclick="showAdvanceForm()">Avanzar Etapa</button>
-                                    <button type="button" class="btn-success btn-stage-action btn-stage-proposal" id="btn-new-proposal" style="display: none;" onclick="showNewProposalForm()">Registrar Nueva Propuesta</button>
+                                    <button type="button" class="btn-primary btn-stage-action btn-stage-advance" id="btn-advance" onclick="showAdvanceForm()">
+                                        <span>🚀 Avanzar Etapa</span>
+                                    </button>
+                                    <button type="button" class="btn-success btn-stage-action btn-stage-proposal" id="btn-new-proposal" style="display: none;" onclick="showNewProposalForm()">
+                                        <span>📄 Registrar Nueva Propuesta</span>
+                                    </button>
                                 </div>
                                 <div class="stage-actions-danger-group">
-                                    <button type="button" class="btn-danger btn-stage-action btn-stage-lose" id="btn-lose" onclick="showLoseForm()">Marcar como Perdido</button>
+                                    <button type="button" class="btn-danger btn-stage-action btn-stage-lose" id="btn-lose" onclick="showLoseForm()">
+                                        <span>❌ Marcar como Perdido</span>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -942,17 +949,19 @@
                         </div>
 
                         <!-- Control de Seguimiento Comercial -->
-                        <div class="followup-control-box mt-4" style="background: rgba(0,0,0,0.18); padding: 1rem; border-radius: 8px; border: 1px solid var(--panel-border);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">
-                                <h3 style="margin: 0; font-size: 1rem; color: white;">📞 Seguimiento Comercial</h3>
+                        <div class="followup-control-box mt-4" style="background: rgba(0,0,0,0.18); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--panel-border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+                                <h3 style="margin: 0; font-size: 1rem; color: white; display: flex; align-items: center; gap: 6px;">
+                                    <span>📞</span> Seguimiento Comercial
+                                </h3>
                                 <span id="detail-followup-badge" class="badge bg-neutral" style="font-size: 0.75rem;">Sin estado</span>
                             </div>
 
-                            <div id="detail-followup-summary" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+                            <div id="detail-followup-summary" style="font-size: 0.85rem;">
                                 <!-- Populated by JS -->
                             </div>
 
-                            <button type="button" class="btn-primary" style="width: 100%; font-size: 0.85rem; padding: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="openRecordFollowUpModal(currentProspectId)">
+                            <button type="button" class="btn-primary mt-3" style="width: 100%; font-size: 0.88rem; padding: 0.6rem; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;" onclick="openRecordFollowUpModal(currentProspectId)">
                                 <span>📞 Registrar Gestión de Contacto</span>
                             </button>
                         </div>
@@ -1374,7 +1383,7 @@
                     </small>
                 </div>
 
-                <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <div class="modal-actions-container" style="display: flex; justify-content: flex-end; gap: 0.75rem;">
                     <button type="button" class="btn-secondary" onclick="closeModal('reassignModal')">Cancelar</button>
                     <button type="submit" class="btn-primary" id="btn-confirm-reassign" style="background: var(--brand-gold); color: var(--brand-blue); font-weight: 700;">
                         Confirmar Reasignación

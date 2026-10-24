@@ -1879,6 +1879,7 @@ function showView(viewId) {
         showView('list-view');
         return;
     }
+    const previousSection = lastViewedSection;
     lastViewedSection = viewId === 'detail-view' ? lastViewedSection : viewId;
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
@@ -1886,8 +1887,20 @@ function showView(viewId) {
 
     if (viewId === 'list-view') {
         document.getElementById('nav-list').classList.add('active');
-        renderList();
-        if (typeof switchListMode === 'function') switchListMode(currentListMode);
+        // Al entrar en Oportunidades de Venta como gerente, debe aparecer primero Cartera Completa / Pipeline.
+        // La Agenda Diaria de Seguimiento sigue disponible como vista secundaria.
+        // Los demás roles (vendedor/gestor) entran a su Agenda Diaria de Seguimiento.
+        const isManager = currentUser && currentUser.role === 'manager';
+        if (isManager && previousSection !== 'list-view' && previousSection !== 'detail-view') {
+            currentListMode = 'pipeline';
+        } else if (!currentListMode) {
+            currentListMode = isManager ? 'pipeline' : 'agenda';
+        }
+        if (typeof switchListMode === 'function') {
+            switchListMode(currentListMode);
+        } else {
+            renderList();
+        }
     }
     if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
     if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
@@ -2052,15 +2065,18 @@ function applyRolePermissions() {
     headerAction.style.display = 'none';
 
     if (role === 'manager') {
+        currentListMode = 'pipeline';
         [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         showView('dashboard-view');
     }
     else if (role === 'gestor') {
+        currentListMode = 'agenda';
         [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
         showView('projects-view');
     }
     else {
+        currentListMode = 'agenda';
         [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
         showView('list-view');
@@ -2886,14 +2902,25 @@ function renderDailyAgenda() {
     // Manejar selector de comercial y botón de escaladas EXCLUSIVAMENTE para Manager
     if (sellerWrap) {
         sellerWrap.style.display = isManager ? 'flex' : 'none';
-        if (isManager && sellerSelect && sellerSelect.options.length <= 1) {
-            const activeUsers = users.filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
-            activeUsers.forEach(u => {
-                const opt = document.createElement('option');
-                opt.value = u.id;
-                opt.textContent = `${u.nombre || u.id} (${u.role})`;
-                sellerSelect.appendChild(opt);
-            });
+        if (isManager && sellerSelect) {
+            const curVal = sellerSelect.value || 'all';
+            const expectedStatic = 2; // 'all' y 'manager_only'
+            const activeUsers = (users || []).filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
+            const dynamicCount = sellerSelect.options.length - expectedStatic;
+
+            if (dynamicCount !== activeUsers.length || sellerSelect.options.length < 2) {
+                sellerSelect.innerHTML = `
+                    <option value="all">👥 Todos los comerciales</option>
+                    <option value="manager_only">🛡️ Mi Agenda (Escalaciones y Leads Propios)</option>
+                `;
+                activeUsers.forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = u.id;
+                    opt.textContent = `👤 ${u.nombre || u.id} (${u.role === 'gestor' ? 'Gestor' : 'Vendedor'})`;
+                    sellerSelect.appendChild(opt);
+                });
+                sellerSelect.value = curVal;
+            }
         }
     }
 
@@ -2904,12 +2931,31 @@ function renderDailyAgenda() {
     // Filtrar universo de oportunidades por comercial si el Manager seleccionó en el dropdown
     let targetUniverse = prospects;
     let agendaUser = currentUser;
-    if (isManager && sellerSelect && sellerSelect.value !== 'all') {
-        const selId = sellerSelect.value;
-        targetUniverse = prospects.filter(p => p && (p.vendedorId === selId || p.createdBy === selId));
-        const matchedSeller = (Array.isArray(users) ? users.find(u => u.id === selId) : null) || { id: selId, role: 'vendedor' };
-        agendaUser = matchedSeller;
+    if (isManager && sellerSelect) {
+        if (sellerSelect.value === 'all') {
+            // "Todos los comerciales": el Gerente inspecciona la agenda consolidada de todo el equipo comercial
+            agendaUser = { ...currentUser, viewAll: true };
+            targetUniverse = prospects;
+        } else if (sellerSelect.value === 'manager_only') {
+            // "Mi Agenda": el Gerente solo ve sus oportunidades propias y escalaciones gerenciales
+            agendaUser = { ...currentUser, viewAll: false };
+            targetUniverse = prospects;
+        } else {
+            const selId = sellerSelect.value;
+            targetUniverse = prospects.filter(p => p && (p.vendedorId === selId || (!p.vendedorId && p.createdBy === selId)));
+            const matchedSeller = (Array.isArray(users) ? users.find(u => u && (u.id === selId || u.cid === selId)) : null) || { id: selId, cid: selId, role: 'vendedor' };
+            agendaUser = matchedSeller;
+        }
     }
+
+    // Deduplicación preventiva de targetUniverse para garantizar ausencia de registros duplicados
+    const uniqueMap = new Map();
+    (targetUniverse || []).forEach(p => {
+        if (p && p.id && !uniqueMap.has(p.id)) {
+            uniqueMap.set(p.id, p);
+        }
+    });
+    targetUniverse = Array.from(uniqueMap.values());
 
     const agendaData = CrmFollowUpCalc.generateAgenda(targetUniverse, agendaUser, currentAgendaFilter, new Date(), users);
 
@@ -3333,16 +3379,17 @@ function renderFollowUpSummary(p) {
 
     const intentos = Number(cad.intentos_fallidos) || 0;
 
-    let ultHtml = '<span style="color:var(--text-muted)">Sin contactos previos registrados</span>';
+    let ultHtml = '<span style="color:var(--text-muted); font-style:italic;">Sin contactos previos registrados</span>';
     if (ult && ult.fecha) {
         const canalLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[ult.canal]) || ult.canal;
         const resLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[ult.resultado]) || ult.resultado;
-        ultHtml = `<strong>${escapeHtmlDoc(canalLbl)}</strong> (${formatDate(ult.fecha)})<br><span style="color:var(--text-secondary)">${escapeHtmlDoc(resLbl)}</span>`;
+        const resColor = (ult.resultado === 'contacto_positivo' || ult.resultado === 'reunion_agendada') ? 'var(--brand-gold)' : 'var(--text-secondary)';
+        ultHtml = `<div><strong>${escapeHtmlDoc(canalLbl)}</strong> (${formatDate(ult.fecha)})</div><div style="color:${resColor}; font-size:0.8rem; margin-top:2px;">${escapeHtmlDoc(resLbl)}</div>`;
     }
 
-    let proxHtml = '<span style="color:var(--text-muted)">Sin próxima acción</span>';
+    let proxHtml = '<span style="color:var(--text-muted); font-style:italic;">Sin próxima acción programada</span>';
     if (prox && prox.fecha) {
-        proxHtml = `<strong style="color:white;">📅 ${prox.fecha}</strong> ${prox.descripcion ? `— ${escapeHtmlDoc(prox.descripcion)}` : ''}`;
+        proxHtml = `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><strong style="color:white; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.82rem;">📅 ${prox.fecha}</strong> ${prox.descripcion ? `<span style="color:var(--text-secondary); font-size:0.82rem;">${escapeHtmlDoc(prox.descripcion)}</span>` : ''}</div>`;
     }
 
     // Historial de gestiones estructuradas
@@ -3371,9 +3418,21 @@ function renderFollowUpSummary(p) {
     if (deliveryDate) {
         const ymd = (typeof CrmFollowUpCalc !== 'undefined') ? CrmFollowUpCalc.getCommercialYMD(deliveryDate) : String(deliveryDate).slice(0, 10);
         const deliverer = cad.entregado_por_nombre ? ` <span style="color:var(--text-secondary); font-size:0.75rem;">(por ${escapeHtmlDoc(cad.entregado_por_nombre)})</span>` : '';
-        deliveryHtml = `<div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">📅 Oferta Entregada:</span> <strong style="color:white;">${ymd}</strong>${deliverer}</div>`;
+        deliveryHtml = `
+            <div class="followup-card-row">
+                <div class="followup-card-row-header"><span>📅 Fecha de Entrega de Oferta</span></div>
+                <div class="followup-card-row-content">
+                    <strong style="color:white;">${ymd}</strong>${deliverer}
+                </div>
+            </div>`;
     } else if (etapa === 'negociacion' || etapa === 'cierre') {
-        deliveryHtml = `<div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">📅 Oferta Entregada:</span> <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-size:0.75rem;">⚠️ Sin fecha de entrega de oferta registrada (Histórica)</span></div>`;
+        deliveryHtml = `
+            <div class="followup-card-row">
+                <div class="followup-card-row-header"><span>📅 Fecha de Entrega de Oferta</span></div>
+                <div class="followup-card-row-content">
+                    <span class="badge" style="background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.35); font-size:0.75rem; white-space:normal; line-height:1.3;">⚠️ Sin fecha de entrega de oferta registrada (Histórica)</span>
+                </div>
+            </div>`;
     }
 
     const tipoCadencia = cad.tipo_cadencia || 'estandar';
@@ -3382,13 +3441,13 @@ function renderFollowUpSummary(p) {
     const canChangeCadence = p.estado === 'activo' && !!currentUser && (currentUser.role === 'manager' || isAssigned);
 
     const cadenceChangeBtn = canChangeCadence
-        ? `<button type="button" class="btn btn-secondary" onclick="openCadenceModal('${p.id}')" style="padding:2px 8px; font-size:0.7rem; margin-left:6px; cursor:pointer;" title="Configurar cadencia comercial">⚙️ Cambiar Cadencia</button>`
+        ? `<button type="button" class="btn-secondary" onclick="openCadenceModal('${p.id}')" style="padding:2px 8px; font-size:0.7rem; border-radius:4px; cursor:pointer;" title="Configurar cadencia comercial">⚙️ Cambiar</button>`
         : '';
 
     let cadHistHtml = '';
     const cadHist = Array.isArray(cad.historial_cambios) ? cad.historial_cambios : [];
     if (cadHist.length > 0) {
-        cadHistHtml = `<div style="margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px; font-size:0.75rem; color:var(--text-secondary);">
+        cadHistHtml = `<div style="margin-top:6px; border-top:1px dashed rgba(255,255,255,0.08); padding-top:6px; font-size:0.75rem; color:var(--text-secondary);">
             <div style="font-weight:700; color:var(--text-muted); margin-bottom:4px;">Historial de Cambios de Cadencia:</div>
             ${cadHist.map(h => {
                 const fStr = (typeof formatDate === 'function') ? formatDate(h.fecha) : h.fecha;
@@ -3398,22 +3457,64 @@ function renderFollowUpSummary(p) {
     }
 
     summaryEl.innerHTML = `
-        <div style="display:grid; grid-template-columns:1fr; gap:6px; margin-bottom:8px;">
-            <div><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Último Contacto:</span> <div>${ultHtml}</div></div>
-            <div style="margin-top:4px;"><span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Próxima Acción:</span> <div>${proxHtml}</div></div>
-            ${deliveryHtml}
-            <div style="margin-top:4px;">
-                <span class="label" style="font-size:0.75rem; color:var(--text-secondary);">Cadencia:</span>
-                <span class="badge bg-neutral" style="font-size:0.75rem; border: 1px solid var(--border-color);" title="${cadConfig.descripcion || ''}">
-                    ${escapeHtmlDoc(cadConfig.nombre || tipoCadencia)}
-                </span>
-                ${cadenceChangeBtn}
-                <span class="badge ${intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral'}" style="font-size:0.75rem; margin-left:4px;">
-                    ${intentos} de 5 intentos fallidos
-                </span>
-                ${cad.alerta_gerencial ? '<span class="badge badge-urgency-escalada" style="margin-left:4px;">Alerta Gerencial Activa</span>' : ''}
+        <div class="followup-panel-card">
+            <div class="followup-card-row">
+                <div class="followup-card-row-header">
+                    <span>💬 Último Contacto</span>
+                </div>
+                <div class="followup-card-row-content">
+                    ${ultHtml}
+                </div>
             </div>
-            ${cad.justificacion_continuidad ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;"><strong>Justificación continuidad:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}</div>` : ''}
+
+            <div class="followup-card-row">
+                <div class="followup-card-row-header">
+                    <span>🎯 Próxima Acción</span>
+                </div>
+                <div class="followup-card-row-content">
+                    ${proxHtml}
+                </div>
+            </div>
+
+            ${deliveryHtml}
+
+            <div class="followup-cadence-grid">
+                <div class="followup-card-row">
+                    <div class="followup-card-row-header">
+                        <span>⏱️ Cadencia</span>
+                    </div>
+                    <div class="followup-card-row-content" style="display:flex; align-items:center; justify-content:space-between; gap:4px; flex-wrap:wrap; margin-top:2px;">
+                        <span class="badge bg-neutral" style="font-size:0.75rem; border:1px solid var(--border-color);" title="${cadConfig.descripcion || ''}">
+                            ${escapeHtmlDoc(cadConfig.nombre || tipoCadencia)}
+                        </span>
+                        ${cadenceChangeBtn}
+                    </div>
+                </div>
+
+                <div class="followup-card-row">
+                    <div class="followup-card-row-header">
+                        <span>📞 Intentos</span>
+                    </div>
+                    <div class="followup-card-row-content" style="margin-top:2px;">
+                        <span class="badge ${intentos >= 5 ? 'badge-urgency-escalada' : (intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral')}" style="font-size:0.75rem;">
+                            ${intentos} de 5 fallidos
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            ${cad.alerta_gerencial ? `
+                <div style="padding:6px 10px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:6px; font-size:0.78rem; color:#fca5a5; display:flex; align-items:center; gap:6px;">
+                    <span>🚨</span> <strong>Alerta Gerencial Activa</strong> (Límite de 5 intentos alcanzado)
+                </div>
+            ` : ''}
+
+            ${cad.justificacion_continuidad ? `
+                <div style="font-size:0.75rem; color:var(--text-secondary); padding:6px 10px; background:rgba(0,0,0,0.2); border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+                    <strong style="color:var(--brand-gold);">Justificación continuidad:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}
+                </div>
+            ` : ''}
+
             ${cadHistHtml}
         </div>
         ${histHtml}
@@ -6510,10 +6611,14 @@ function renderCharts(filterRes) {
             if (existing) existing.destroy();
         }
         const isMobileScreen = typeof window !== 'undefined' && window.innerWidth <= 640;
+
+        // Etiquetas limpias de canales en una sola línea con rotación uniforme para legibilidad total
+        const chartLabels = repNames.map(name => (name ? String(name).trim() : ''));
+
         chartOrigin = new Chart(convCanvas.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: repNames,
+                labels: chartLabels,
                 datasets: [
                     { type: 'bar', label: 'Ganado', data: dataGanado, backgroundColor: success, stack: 'ops', borderRadius: 2 },
                     { type: 'bar', label: 'En Proceso', data: dataActivo, backgroundColor: gold, stack: 'ops', borderRadius: 2 },
@@ -6540,17 +6645,19 @@ function renderCharts(filterRes) {
                         left: isMobileScreen ? 2 : 6,
                         right: isMobileScreen ? 2 : 6,
                         top: 6,
-                        bottom: 2
+                        bottom: isMobileScreen ? 8 : 10
                     }
                 },
                 scales: {
                     x: {
                         display: true,
                         ticks: {
-                            font: { size: isMobileScreen ? 9 : 10 },
-                            color: '#a0aabf',
-                            maxRotation: 0,
-                            autoSkip: false
+                            font: { size: isMobileScreen ? 8.5 : 9.5, weight: '500' },
+                            color: '#cbd5e1',
+                            maxRotation: isMobileScreen ? 45 : 35,
+                            minRotation: isMobileScreen ? 40 : 30,
+                            autoSkip: false,
+                            padding: 4
                         },
                         grid: { display: false }
                     },
@@ -6596,12 +6703,17 @@ function renderCharts(filterRes) {
                         labels: {
                             boxWidth: isMobileScreen ? 8 : 10,
                             font: { size: isMobileScreen ? 8.5 : 9.5 },
-                            padding: isMobileScreen ? 6 : 10,
+                            padding: isMobileScreen ? 8 : 12,
                             color: '#a0aabf'
                         }
                     },
                     tooltip: {
                         callbacks: {
+                            title: function (items) {
+                                if (!items || !items.length) return '';
+                                const idx = items[0].dataIndex;
+                                return repNames[idx] || (Array.isArray(items[0].label) ? items[0].label.join(' ') : items[0].label);
+                            },
                             label: function (context) {
                                 if (context.dataset.yAxisID === 'yRate') {
                                     return context.raw !== null ? `Tasa de Cierre: ${context.raw}% (Ganadas/Concluidas)` : 'Tasa: Sin cierres concluidos';

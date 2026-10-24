@@ -538,20 +538,29 @@
             total: 0
         };
 
+        const seenProspectIds = new Set();
+
         list.forEach(p => {
             if (!p || p.eliminado === true || p.estado !== 'activo') return;
+
+            // Deduplicación estricta por ID o código de oportunidad
+            const pid = p.id || p.codigo;
+            if (pid) {
+                if (seenProspectIds.has(pid)) return;
+                seenProspectIds.add(pid);
+            }
 
             const classification = classifyFollowUp(p, now);
 
             // Filtro de visibilidad estricto por rol:
             // 1. Vendedor y Gestor: ven exclusivamente sus propias oportunidades asignadas (o creadas si no están reasignadas).
-            // 2. Gerente/Manager: recibe en su agenda las escalaciones gerenciales y sus oportunidades propias.
-            //    NO recibe la agenda diaria global de llamadas y tareas rutinarias de todos los vendedores.
+            // 2. Gerente/Manager: recibe en su agenda personal las escalaciones gerenciales y sus oportunidades propias.
+            //    Cuando inspecciona explícitamente "Todos los comerciales" (user.viewAll === true), reúne la agenda consolidada de todo el equipo comercial.
             if (user) {
                 const uid = user.cid || user.id;
                 const isOwn = uid ? ((p.vendedorId === uid) || (!p.vendedorId && p.createdBy === uid)) : false;
                 if (isManager) {
-                    if (!classification.isEscaladoGerencia && !isOwn) {
+                    if (!user.viewAll && !classification.isEscaladoGerencia && !isOwn) {
                         return;
                     }
                 } else {
