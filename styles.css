@@ -134,14 +134,76 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
 .log-item.auto { border-left-color: var(--brand-gold); }
 .log-item .date { display: block; color: var(--text-muted); font-size: 0.7rem; margin-bottom: 0.25rem;}
 .add-log-box textarea { width: 100%; height: 60px; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); color: white; padding: 0.5rem; border-radius: 4px; resize:none;}
-.stage-tracker { display: flex; justify-content: space-between; align-items: center; position: relative; margin-top: 1rem; }
-.stage-tracker::before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: var(--panel-border); z-index: 0; }
-.stage-step { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
-.stage-circle { width: 30px; height: 30px; border-radius: 50%; background: var(--bg-dark); border: 2px solid var(--text-secondary); display: flex; align-items: center; justify-content: center; font-size: 0.8rem; color: var(--text-secondary); }
-.stage-step.completed .stage-circle { background: var(--brand-gold); border-color: var(--brand-gold); color: var(--bg-dark); }
-.stage-step.current .stage-circle { border-color: var(--brand-gold); color: var(--brand-gold); }
-.stage-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: capitalize;}
-.stage-step.current .stage-label, .stage-step.completed .stage-label { color: white; font-weight: 600;}
+.stage-tracker {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    position: relative;
+    margin-top: 1.25rem;
+    margin-bottom: 0.75rem;
+    padding: 0 0.5rem;
+}
+.stage-tracker::before {
+    content: '';
+    position: absolute;
+    top: 15px;
+    left: 25px;
+    right: 25px;
+    height: 2px;
+    background: var(--panel-border);
+    z-index: 0;
+}
+.stage-step {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+.stage-circle {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    border-radius: 50%;
+    background: var(--bg-dark);
+    border: 2px solid var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+.stage-step.completed .stage-circle {
+    background: var(--brand-gold);
+    border-color: var(--brand-gold);
+    color: var(--bg-dark);
+}
+.stage-step.current .stage-circle {
+    border-color: var(--brand-gold);
+    color: var(--brand-gold);
+    box-shadow: 0 0 10px rgba(255, 204, 77, 0.35);
+}
+.stage-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: capitalize;
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+.stage-step.current .stage-label, .stage-step.completed .stage-label {
+    color: white;
+    font-weight: 600;
+}
 
 /* Payment Progress Bar */
 .progress-bar-container { width: 100%; height: 12px; background: rgba(0,0,0,0.3); border-radius: 6px; overflow: hidden; border: 1px solid var(--panel-border); }
@@ -1035,13 +1097,12 @@ body.modal-open {
    ========================================================================== */
 .stage-actions-container {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
+    flex-direction: column;
+    gap: 0.85rem;
     margin-top: 1.25rem;
     padding-top: 1rem;
     border-top: 1px solid var(--panel-border);
-    flex-wrap: wrap;
+    width: 100%;
 }
 
 .stage-actions-primary-group {
@@ -1049,19 +1110,24 @@ body.modal-open {
     align-items: center;
     gap: 0.75rem;
     flex-wrap: wrap;
+    width: 100%;
 }
 
 .stage-actions-danger-group {
     display: flex;
     align-items: center;
-    margin-left: auto;
+    justify-content: flex-start;
+    width: 100%;
+    margin-left: 0;
+    padding-top: 0.5rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
 }
 
 .btn-stage-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 8px;
     height: 42px;
     padding: 0 1.35rem;
     font-size: 0.88rem;
@@ -1107,7 +1173,7 @@ body.modal-open {
 }
 
 .btn-stage-lose {
-    background: transparent;
+    background: rgba(239, 68, 68, 0.06);
     color: #f87171;
     border: 1px solid rgba(239, 68, 68, 0.35);
 }
@@ -1122,10 +1188,25 @@ body.modal-open {
     transform: translateY(0);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 640px) {
+    .stage-tracker {
+        padding: 0;
+    }
+    .stage-tracker::before {
+        left: 14px;
+        right: 14px;
+        top: 13px;
+    }
+    .stage-circle {
+        width: 26px;
+        height: 26px;
+        min-width: 26px;
+        font-size: 0.72rem;
+    }
+    .stage-label {
+        font-size: 0.65rem;
+    }
     .stage-actions-container {
-        flex-direction: column;
-        align-items: stretch;
         gap: 0.65rem;
     }
     .stage-actions-primary-group {
@@ -1139,11 +1220,10 @@ body.modal-open {
         margin-left: 0;
         margin-top: 0.25rem;
         padding-top: 0.65rem;
-        border-top: 1px dashed rgba(255, 255, 255, 0.08);
     }
     .btn-stage-action {
         width: 100%;
-        height: 42px;
+        height: 44px;
         justify-content: center;
     }
 }
