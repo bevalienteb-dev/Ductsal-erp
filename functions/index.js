@@ -1485,6 +1485,14 @@ const runWorkflowOp = (data, context, op) => runCommercialOp(data, context,
 exports.advanceProspectStageAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.advanceStage({ caller, prospectId: d.prospectId, nextStage: d.nextStage, data: d.data })));
 
+/** { prospectId, data, dbSuffix? } -> { status: 'saved', prospectId } */
+exports.saveClosingDocumentsAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.saveClosingDocuments({ caller, prospectId: d.prospectId, data: d.data })));
+
+/** { prospectId, data, opId?, dbSuffix? } -> { status: 'finalized' | 'already_finalized', etapa: 'cierre', estado: 'ganado', facturaAnticipo, montoAnticipo } */
+exports.finalizeProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.finalizeProspect({ caller, prospectId: d.prospectId, data: d.data, opId: d.opId })));
+
 /** { prospectId, reason, dbSuffix? } -> { status: 'lost' | 'unchanged' } */
 exports.markProspectLostAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.markLost({ caller, prospectId: d.prospectId, reason: d.reason })));

@@ -210,8 +210,14 @@ function defineWorkflowSuite({ label, makeEnv }) {
 
         test('closes the sale: won, 100%, advance invoice with 13% VAT times the payment form, contract document, no client-supplied amounts', async () => {
           await put(negociacion({ precio_cotizado: 10000, costo_venta: 6000 }));
-          const r = await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, monto: 1, estado: 'activo' } });
-          expect(r).toMatchObject({ status: 'advanced', etapa: 'cierre', estado: 'ganado' });
+          const rAdv = await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, monto: 1, estado: 'activo' } });
+          expect(rAdv).toMatchObject({ status: 'advanced', etapa: 'cierre', estado: 'activo' });
+          const pMid = await prospect('W1');
+          expect(pMid).toMatchObject({ estado: 'activo', etapa: 'cierre', fecha_inicio_cierre: env.now.toISOString() });
+          expect(pMid.fecha_limite_cierre).toBeDefined();
+
+          const r = await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, monto: 1, estado: 'activo' } });
+          expect(r).toMatchObject({ status: 'finalized', etapa: 'cierre', estado: 'ganado' });
           const p = await prospect('W1');
           expect(p).toMatchObject({ estado: 'ganado', etapa: 'cierre', probabilidad: 100, forma_pago: '70/30', encargado: 'Pedro', fecha_cierre: env.now.toISOString() });
           expect(p.facturas).toHaveLength(1);
@@ -219,36 +225,40 @@ function defineWorkflowSuite({ label, makeEnv }) {
           expect(p.datos.doc_oferta_firmada).toEqual(file('firmado.pdf')); // exactly 10,000 is not "large" (rule is > 10,000)
           expect(p.datos.doc_contrato).toBeUndefined();
           expect(p.datos.doc_comprobante).toEqual(file('comp.pdf'));
-          expect(p.logs[p.logs.length - 1].text).toContain('VENTA CERRADA');
-          expect((await audit('closeSale'))).toHaveLength(1);
+          expect(p.logs[p.logs.length - 1].text).toContain('VENTA FINALIZADA');
+          expect((await audit('finalizeProspect'))).toHaveLength(1);
         });
 
         test('payment forms: 100% anticipado and 50/50; unknown form refused', async () => {
           await put(negociacion());
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, forma_pago: '10/90' } }), 'invalid-argument');
-          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, forma_pago: '100% anticipado' } });
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, forma_pago: '10/90' } }), 'invalid-argument');
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, forma_pago: '100% anticipado' } });
           expect((await prospect('W1')).facturas[0].monto).toBe(11300);
           await put(negociacion());
           await env.seed('prospects_prod/W1', negociacion());
-          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, forma_pago: '50/50' } });
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, forma_pago: '50/50' } });
           expect((await prospect('W1')).facturas[0].monto).toBe(5650);
         });
 
         test('an export client pays no VAT', async () => {
           await put(negociacion({ clientId: 'CX' }));
-          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, forma_pago: '100% anticipado' } });
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, forma_pago: '100% anticipado' } });
           expect((await prospect('W1')).facturas[0].monto).toBe(10000);
         });
 
         test('refused when the client record is incomplete or the DUI document is missing', async () => {
           await put(negociacion());
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
           await env.seed('clients_prod/CW', { ...CLIENT_OK, correo_fact: '', nrc: '' });
-          const e = await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE }), 'failed-precondition');
+          const e = await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE }), 'failed-precondition');
           expect(e.message).toMatch(/Correo para Facturación/);
           expect(e.message).toMatch(/NRC/);
           const { dui: _dui, ...docsWithoutDui } = CLIENT_OK.documentos;
           await env.seed('clients_prod/CW', { ...CLIENT_OK, documentos: docsWithoutDui }); // the real Admin SDK rejects `undefined` values
-          const e2 = await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE }), 'failed-precondition');
+          const e2 = await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE }), 'failed-precondition');
           expect(e2.message).toMatch(/DUI/);
           expect((await prospect('W1')).estado).toBe('activo');
         });
@@ -256,45 +266,51 @@ function defineWorkflowSuite({ label, makeEnv }) {
         test('a large manufacturing + installation project needs the legal documents unless a manager authorization is STORED; the request cannot claim it', async () => {
           await put(negociacion({ precio_cotizado: 20000 }));
           await env.seed('clients_prod/CW', { ...CLIENT_OK, documentos: { dui: file('dui.pdf') } });
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, autorizado_sin_contrato: true, datos: { autorizado_sin_contrato: true } } }), 'failed-precondition');
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, autorizado_sin_contrato: true, datos: { autorizado_sin_contrato: true } } }), 'failed-precondition');
           // The authorization is a stored fact written by setNoContractAuthorization.
           await put(negociacion({ precio_cotizado: 20000, datos: { doc_oferta: [file('of.pdf')], doc_costos: [file('co.pdf')], autorizado_sin_contrato: true, autorizado_por: 'Gerente Alfa' } }));
-          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE });
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE });
           const p = await prospect('W1');
           expect(p.estado).toBe('ganado');
           expect(p.datos.doc_oferta_firmada).toEqual(file('firmado.pdf'));
           expect(p.datos.doc_contrato).toBeUndefined();
           expect(p.datos.autorizado_por).toBe('Gerente Alfa');
-          expect(p.logs[p.logs.length - 1].text).toContain('VENTA CERRADA');
+          expect(p.logs[p.logs.length - 1].text).toContain('VENTA FINALIZADA');
         });
 
         test('a small project, or one that is not manufacturing + installation, does not need the legal documents; the installer is required only for installations', async () => {
           await env.seed('clients_prod/CW', { ...CLIENT_OK, documentos: { dui: file('dui.pdf') } });
           await put(negociacion({ tipo_proyecto: 'Nuevo', precio_cotizado: 50000 }));
-          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, encargado: undefined } });
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, encargado: undefined } });
           expect((await prospect('W1')).estado).toBe('ganado');
           await put(negociacion({ precio_cotizado: 500 }));
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, encargado: '' } }), 'invalid-argument');
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, encargado: '' } }), 'invalid-argument');
         });
 
         test('closing needs the signed document and the advance proof', async () => {
           await put(negociacion());
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, doc_firmado: undefined } }), 'invalid-argument');
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, doc_comprobante: undefined } }), 'invalid-argument');
-          await rejects(wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: { ...CIE, factura_anticipo: ' ' } }), 'invalid-argument');
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, doc_firmado: undefined } }), 'failed-precondition');
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, doc_comprobante: undefined } }), 'failed-precondition');
+          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, factura_anticipo: ' ' } }), 'invalid-argument');
         });
 
         test('closing twice produces exactly one invoice and one closing log', async () => {
           await put(negociacion());
+          await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
           const [a, b] = await Promise.all([
-            wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE }),
-            wf.advanceStage({ caller: caller('MGR'), prospectId: 'W1', nextStage: 'cierre', data: CIE })
+            wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE }),
+            wf.finalizeProspect({ caller: caller('MGR'), prospectId: 'W1', data: CIE })
           ]);
-          expect([a.status, b.status].sort()).toEqual(['advanced', 'unchanged']);
+          expect([a.status, b.status].sort()).toEqual(['already_finalized', 'finalized']);
           const p = await prospect('W1');
           expect(p.facturas).toHaveLength(1);
-          expect(p.logs.filter(l => /VENTA CERRADA/.test(l.text))).toHaveLength(1);
-          expect(await audit('closeSale')).toHaveLength(1);
+          expect(p.logs.filter(l => /VENTA FINALIZADA/.test(l.text))).toHaveLength(1);
+          expect(await audit('finalizeProspect')).toHaveLength(1);
         });
       });
     });
@@ -403,6 +419,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
         await put(toClose({ precio_cotizado: 10000, costo_venta: 6000, createdBy: P.GES.id, vendedorId: P.V1.id }));
         await editBase('GES', { precio: 8000, costo: 5000 });
         await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE_BASE });
+        await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE_BASE });
         const closed = await prospect('W1');
         expect(closed.estado).toBe('ganado');
         expect(closed.facturas[0].monto).toBe(6328); // 8000 x 1.13 x 70 %, NOT the original 10000 (7910)
@@ -414,9 +431,10 @@ function defineWorkflowSuite({ label, makeEnv }) {
 
       test('an edit racing with the closing: the advance invoice always matches the stored price (either the edit came first, or it was refused)', async () => {
         await put(toClose({ precio_cotizado: 10000, costo_venta: 6000 }));
+        await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE_BASE });
         const [e, c] = await Promise.allSettled([
           editBase('MGR', { precio: 8000, costo: 5000 }),
-          wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: CIE_BASE })
+          wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE_BASE })
         ]);
         expect(c.status).toBe('fulfilled');
         const p = await prospect('W1');

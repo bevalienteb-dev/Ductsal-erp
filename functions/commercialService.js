@@ -78,6 +78,74 @@ function reqOpId(v) {
   return v;
 }
 
+// ---------- canonical postclosing helper ----------
+function hasEnteredPostclosing(p) {
+  if (!p || typeof p !== 'object') return false;
+
+  // 1. Explicitly disabled postclosing
+  if (p.postcierre_habilitado === false) return false;
+
+  // 2. Active / open opportunities are in-process, never in postclosing
+  // (unless explicitly finalized with postcierre_habilitado === true)
+  if (p.estado === 'activo' && p.postcierre_habilitado !== true) return false;
+
+  // 3. Modern finalized opportunity (formal closure via finalizeProspect)
+  // Or closed project preserved in postclosing (even if subsequently marked 'perdido', per SEC-04/06)
+  if (p.postcierre_habilitado === true) return true;
+
+  // 4. Lost opportunities without postcierre_habilitado === true cannot enter postclosing
+  // (residual invoices or historical tags on lost leads are not authorized)
+  if (p.estado === 'perdido') return false;
+
+  // 5. Historical records (created before postcierre_habilitado was introduced)
+  // Must possess verifiable, consistent historical closing evidence.
+
+  // 5a. Accounting / Fiscal evidence: at least one well-formed, valid invoice
+  const hasFacturas = Array.isArray(p.facturas) && p.facturas.some(f => {
+    if (!f || typeof f !== 'object') return false;
+    const hasNumero = typeof f.numero === 'string' && f.numero.trim().length > 0;
+    const numMonto = typeof f.monto === 'number' ? f.monto : parseFloat(f.monto);
+    const hasMonto = typeof numMonto === 'number' && !isNaN(numMonto) && numMonto > 0;
+    return hasNumero && hasMonto;
+  });
+  if (hasFacturas) return true;
+
+  // 5b. Contractual / Documental evidence:
+  // Must have a valid closure date or cierre stage timestamp
+  const hasCloseDate = (typeof p.fecha_cierre === 'string' && p.fecha_cierre.trim().length > 0)
+    || (typeof p.fecha_postcierre === 'string' && p.fecha_postcierre.trim().length > 0)
+    || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre);
+
+  if (!hasCloseDate) return false;
+
+  const datos = (p.datos && typeof p.datos === 'object') ? p.datos : null;
+  const hasDoc = d => (Array.isArray(d) ? d.length > 0 : !!d);
+
+  // Contractual proof: contrato_archivo, doc_firmado, doc_contrato, or authorized bypass
+  const hasContractOrSignedDoc = !!p.contrato_archivo
+    || hasDoc(p.doc_firmado)
+    || (!!datos && (hasDoc(datos.doc_contrato) || hasDoc(datos.doc_firmado)))
+    || p.autorizado_sin_contrato === true
+    || (!!datos && datos.autorizado_sin_contrato === true);
+
+  // Advance receipt proof: doc_comprobante
+  const hasAdvanceReceipt = hasDoc(p.doc_comprobante)
+    || (!!datos && hasDoc(datos.doc_comprobante));
+
+  // Closing evidence requires physical contract in storage (contrato_archivo)
+  // OR both contractual proof AND advance receipt proof.
+  // (forma_pago or factura_anticipo alone are NEVER sufficient)
+  const hasClosingEvidence = !!p.contrato_archivo
+    || (hasContractOrSignedDoc && hasAdvanceReceipt);
+
+  if (hasClosingEvidence) {
+    return true;
+  }
+
+  // 6. Inconsistent, ambiguous, or unverified records default to false (require manual review)
+  return false;
+}
+
 function createCommercialService({ db, FieldValue, suffix, verifyManager, now = () => new Date(), newProspectId = () => String(Date.now()) }) {
   if (suffix !== '_local' && suffix !== '_prod') throw new Error('Invalid suffix');
   if (typeof verifyManager !== 'function') throw new Error('verifyManager is required');
@@ -86,13 +154,6 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   const iso = () => now().toISOString();
 
   // ---------- authorization ----------
-  function hasEnteredPostclosing(p) {
-    if (!p || typeof p !== 'object') return false;
-    return p.postcierre_habilitado === true
-      || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
-      || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre)
-      || (Array.isArray(p.facturas) && p.facturas.length > 0);
-  }
 
   const canAccessProspect = (caller, p) => {
     if (!caller || !p) return false;
@@ -910,7 +971,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
       const p = snap.data() || {};
       requireNotDeleted(p);
-      if (hasEnteredPostclosing(p) || p.etapa === 'cierre') {
+      if (hasEnteredPostclosing(p) || (p.etapa === 'cierre' && p.estado === 'ganado')) {
         throw new ServiceError('failed-precondition', 'No se puede reasignar una oportunidad que ya completó el cierre comercial');
       }
       const target = await readAssignee(tx, vendedorId);
@@ -1220,4 +1281,4 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, updateProspectCadence, resolveFollowUpEscalation, reclassifyProspect, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
 }
 
-module.exports = { createCommercialService, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };
+module.exports = { createCommercialService, hasEnteredPostclosing, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };

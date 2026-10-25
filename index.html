@@ -147,8 +147,8 @@
                         <div id="agenda-seller-filter-wrap" style="display: none; align-items: center; gap: 0.5rem;">
                             <span style="font-size: 0.8rem; color: var(--text-secondary);">👤 Comercial:</span>
                             <select id="agenda-seller-select" class="form-control" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem;" onchange="renderDailyAgenda()">
-                                <option value="all">👥 Todos los comerciales</option>
-                                <option value="manager_only">🛡️ Mi Agenda (Escalaciones y Leads Propios)</option>
+                                <option value="manager_only" selected>🛡️ Mi Agenda (Escalaciones y Leads Propios)</option>
+                                <option value="all">👥 Todos los comerciales (Consolidado)</option>
                             </select>
                         </div>
                     </div>
@@ -688,6 +688,7 @@
                             <option value="all">Todos los tipos de atención</option>
                             <option value="seguimiento">Seguimiento comercial (5 intentos)</option>
                             <option value="solicitud_sin_contrato">Autorización sin contrato</option>
+                            <option value="limite_etapa">Límite de etapa superado</option>
                         </select>
                         <select id="filter-mgr-responsable" class="filter-select" onchange="renderDashboardActiveTimes()" style="background: rgba(255,255,255,0.08); color: white; border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.8rem;">
                             <option value="all">Todos los responsables</option>

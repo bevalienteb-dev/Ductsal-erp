@@ -85,6 +85,15 @@
         MANAGER_ESCALATION_ATTEMPTS: 5
     });
 
+    // Matriz oficial de plazos máximos de permanencia en etapa (en días hábiles salvadoreños)
+    const STAGE_LIMITS_BUSINESS_DAYS = Object.freeze({
+        prospecto: 3,
+        levantamiento: 5,
+        cotizacion: 5,
+        negociacion: null, // Sin límite fijo de permanencia
+        cierre: 5
+    });
+
     function getCadenceConfig(tipoCadencia = 'estandar') {
         if (tipoCadencia && CADENCIAS_VALIDAS[tipoCadencia]) {
             return CADENCIAS_VALIDAS[tipoCadencia];
@@ -305,6 +314,138 @@
     }
 
     /**
+     * Calcula el estado de cumplimiento del SLA de permanencia en la etapa actual.
+     * Utiliza la matriz oficial STAGE_LIMITS_BUSINESS_DAYS y el calendario laboral salvadoreño
+     * (excluyendo sábados, domingos y asuetos oficiales).
+     */
+    function calculateStageSla(prospect, now = new Date()) {
+        if (!prospect || prospect.eliminado === true || prospect.estado !== 'activo') {
+            return {
+                inSla: false,
+                etapa: null,
+                etapaLabel: '',
+                isOverdue: false,
+                elapsedBusinessDays: 0,
+                limitBusinessDays: null,
+                diasAtraso: 0,
+                stageStart: null,
+                fechaInicio: null,
+                fechaLimite: null,
+                pendingDocumentation: null
+            };
+        }
+
+        const etapa = prospect.etapa || 'prospecto';
+        const STAGE_NAMES = {
+            prospecto: 'Prospecto',
+            levantamiento: 'Levantamiento',
+            cotizacion: 'Cotización',
+            negociacion: 'Negociación',
+            cierre: 'Cierre'
+        };
+        const etapaLabel = STAGE_NAMES[etapa] || etapa;
+        const limitBusinessDays = Object.prototype.hasOwnProperty.call(STAGE_LIMITS_BUSINESS_DAYS, etapa)
+            ? STAGE_LIMITS_BUSINESS_DAYS[etapa]
+            : null;
+
+        // Determinar fecha de entrada efectiva a la etapa (conservando marcas históricas)
+        const ts = (prospect.stage_timestamps && typeof prospect.stage_timestamps === 'object') ? prospect.stage_timestamps : {};
+        const stageStart = (etapa === 'cierre' ? (prospect.fecha_inicio_cierre || ts.cierre) : ts[etapa])
+            || (prospect.stage_transitions && Array.isArray(prospect.stage_transitions) && prospect.stage_transitions.length > 0
+                ? (prospect.stage_transitions.slice().reverse().find(t => t && t.to === etapa) || {}).fecha
+                : null)
+            || (etapa === 'prospecto' ? (ts.prospecto || prospect.fecha_creacion) : null);
+
+        let elapsedBusinessDays = 0;
+        let fechaLimite = null;
+        let diasAtraso = 0;
+        let isOverdue = false;
+
+        const cal = getWorkCalendar();
+
+        if (stageStart && limitBusinessDays !== null && limitBusinessDays !== undefined) {
+            if (cal && typeof cal.getWorkTimeBetween === 'function') {
+                elapsedBusinessDays = cal.getWorkTimeBetween(stageStart, now, { excludeSaturday: true });
+            } else {
+                const sDate = parseDate(stageStart);
+                const eDate = parseDate(now);
+                if (sDate && eDate && eDate > sDate) {
+                    let cur = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
+                    const target = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
+                    while (cur < target) {
+                        cur.setDate(cur.getDate() + 1);
+                        const dow = cur.getDay();
+                        if (dow !== 0 && dow !== 6) {
+                            elapsedBusinessDays++;
+                        }
+                    }
+                }
+            }
+
+            if (cal && typeof cal.addWorkDays === 'function') {
+                const limitDate = cal.addWorkDays(stageStart, limitBusinessDays, { excludeSaturday: true });
+                fechaLimite = limitDate ? getCommercialYMD(limitDate) : null;
+            }
+
+            if (elapsedBusinessDays > limitBusinessDays) {
+                isOverdue = true;
+                diasAtraso = elapsedBusinessDays - limitBusinessDays;
+            }
+        }
+
+        // Si la etapa es Cierre, analizar lista de documentación requerida y pendiente
+        let pendingDocumentation = null;
+        if (etapa === 'cierre') {
+            pendingDocumentation = [];
+            const datos = (prospect.datos && typeof prospect.datos === 'object') ? prospect.datos : {};
+            const client = (prospect.client && typeof prospect.client === 'object') ? prospect.client : null;
+            const clientDocs = (client && client.documentos && typeof client.documentos === 'object') ? client.documentos : {};
+
+            if (client) {
+                if (!clientDocs.dui) pendingDocumentation.push('DUI del cliente');
+                if (client.tipo === 'juridica') {
+                    const isBig = prospect.tipo_proyecto === 'Fabricación e instalación' && Math.max(parseFloat(prospect.precio_cotizado) || 0, parseFloat(prospect.costo_venta) || 0) > 10000;
+                    const bypass = isBig && (datos.autorizado_sin_contrato === true || (prospect.solicitud_sin_contrato && prospect.solicitud_sin_contrato.estado === 'aprobada'));
+                    if (isBig && !bypass && !(clientDocs.escritura && clientDocs.credencial && clientDocs.nit && clientDocs.nrc)) {
+                        pendingDocumentation.push('Documentos legales de empresa (Escritura, Credencial, NIT, NRC)');
+                    }
+                }
+            }
+
+            const docFirmado = datos.doc_firmado || datos.doc_contrato || datos.doc_oferta_firmada;
+            if (!docFirmado) pendingDocumentation.push('Contrato u oferta firmada');
+
+            const docComp = datos.doc_comprobante;
+            if (!docComp) pendingDocumentation.push('Comprobante o CCF de anticipo');
+
+            const facAnticipo = prospect.factura_anticipo || datos.factura_anticipo;
+            if (!facAnticipo) pendingDocumentation.push('Número de factura de anticipo');
+
+            const formaPago = prospect.forma_pago || datos.forma_pago;
+            if (!formaPago) pendingDocumentation.push('Forma de pago acordada');
+
+            if (prospect.tipo_proyecto === 'Fabricación e instalación') {
+                const encargado = prospect.encargado || datos.encargado;
+                if (!encargado) pendingDocumentation.push('Encargado de instalación');
+            }
+        }
+
+        return {
+            inSla: true,
+            etapa,
+            etapaLabel,
+            isOverdue,
+            elapsedBusinessDays,
+            limitBusinessDays,
+            diasAtraso,
+            stageStart: stageStart ? (typeof stageStart === 'string' ? stageStart : stageStart.toISOString()) : null,
+            fechaInicio: stageStart ? (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart)) : null,
+            fechaLimite,
+            pendingDocumentation
+        };
+    }
+
+    /**
      * Clasifica el estado de seguimiento de una oportunidad para la Agenda Diaria.
      */
     function classifyFollowUp(prospect, now = new Date()) {
@@ -322,8 +463,32 @@
         const proximaAccion = (seguimiento.proxima_accion && typeof seguimiento.proxima_accion === 'object') ? seguimiento.proxima_accion : null;
         const ultimoContacto = (seguimiento.ultimo_contacto && typeof seguimiento.ultimo_contacto === 'object') ? seguimiento.ultimo_contacto : null;
 
-        // Regla: Presupuestos referenciales quedan dormidos y no activan cadencia de seguimiento comercial
+        const stageSla = calculateStageSla(prospect, now);
+
+        // Regla: Presupuestos referenciales quedan dormidos en Negociación y no activan cadencia comercial
         if (prospect.clasificacion === 'presupuesto') {
+            // Pero en Prospecto, Levantamiento y Cotización SI están sujetos a los límites de etapa
+            if (stageSla.isOverdue && (prospect.etapa === 'prospecto' || prospect.etapa === 'levantamiento' || prospect.etapa === 'cotizacion')) {
+                return {
+                    inAgenda: true,
+                    status: 'vencida',
+                    isPresupuesto: true,
+                    isOverdueStage: true,
+                    stageSla,
+                    etapa: prospect.etapa,
+                    dias_retraso: stageSla.diasAtraso,
+                    dias_habiles: stageSla.elapsedBusinessDays,
+                    limite_dias: stageSla.limitBusinessDays,
+                    sin_fecha_entrega_historica: false,
+                    intentos_fallidos: 0,
+                    requiere_decision: true,
+                    llamada_obligatoria: false,
+                    proxima_accion: proximaAccion,
+                    ultimo_contacto: ultimoContacto,
+                    motivo_agenda: `⚠️ Límite de etapa superado en ${stageSla.etapaLabel} (${stageSla.elapsedBusinessDays} días hábiles vs máx. ${stageSla.limitBusinessDays})`,
+                    prioridad: 85 + Math.min(10, stageSla.diasAtraso)
+                };
+            }
             return {
                 inAgenda: false,
                 status: 'al_dia',
@@ -336,7 +501,8 @@
                 proxima_accion: proximaAccion,
                 ultimo_contacto: ultimoContacto,
                 motivo_agenda: '📐 Cotización para presupuesto referencial (dormido / sin seguimiento comercial activo)',
-                prioridad: 0
+                prioridad: 0,
+                stageSla
             };
         }
 
@@ -344,6 +510,52 @@
         const isEscalado = cadencia.alerta_gerencial === true || cadencia.estado_cadencia === 'alerta_gerencial' || intentosFallidos >= FOLLOWUP_CADENCE.MANAGER_ESCALATION_ATTEMPTS;
         const isDecisionReq = intentosFallidos >= FOLLOWUP_CADENCE.DECISION_REQUIRED_ATTEMPTS && !isEscalado;
         const isCallMandatory = intentosFallidos === 1; // El intento 2 debe ser llamada
+
+        // Si la oportunidad está en etapa Cierre (gobernada por el SLA de 5 días hábiles de documentación):
+        if (prospect.etapa === 'cierre') {
+            if (stageSla.isOverdue) {
+                const docText = (stageSla.pendingDocumentation && stageSla.pendingDocumentation.length > 0)
+                    ? ` Pendiente: ${stageSla.pendingDocumentation.join(', ')}.`
+                    : '';
+                return {
+                    inAgenda: true,
+                    status: 'vencida',
+                    isOverdueStage: true,
+                    stageSla,
+                    etapa: 'cierre',
+                    dias_retraso: stageSla.diasAtraso,
+                    dias_habiles: stageSla.elapsedBusinessDays,
+                    limite_dias: stageSla.limitBusinessDays,
+                    intentos_fallidos: intentosFallidos,
+                    requiere_decision: true,
+                    llamada_obligatoria: isCallMandatory,
+                    proxima_accion: proximaAccion || { fecha: stageSla.fechaLimite, descripcion: 'Completar documentación de Cierre' },
+                    ultimo_contacto: ultimoContacto,
+                    motivo_agenda: `🚨 Plazo de Cierre vencido (${stageSla.elapsedBusinessDays} días hábiles vs máx. 5).${docText}`,
+                    prioridad: 85 + Math.min(10, stageSla.diasAtraso)
+                };
+            }
+            const docText = (stageSla.pendingDocumentation && stageSla.pendingDocumentation.length > 0)
+                ? ` Pendiente: ${stageSla.pendingDocumentation.join(', ')}.`
+                : ' Validación documental final.';
+            return {
+                inAgenda: true,
+                status: 'hoy',
+                isCierrePendiente: true,
+                stageSla,
+                etapa: 'cierre',
+                dias_retraso: 0,
+                dias_habiles: stageSla.elapsedBusinessDays,
+                limite_dias: stageSla.limitBusinessDays,
+                intentos_fallidos: 0,
+                requiere_decision: true,
+                llamada_obligatoria: false,
+                proxima_accion: proximaAccion || { fecha: stageSla.fechaLimite, descripcion: 'Completar documentación de Cierre' },
+                ultimo_contacto: ultimoContacto,
+                motivo_agenda: `📄 Cierre pendiente de documentación (${stageSla.elapsedBusinessDays}/5 días hábiles).${docText}`,
+                prioridad: 75
+            };
+        }
 
         // Verificar si existe fecha de próxima acción programada
         const targetYMD = (proximaAccion && proximaAccion.fecha) ? getCommercialYMD(proximaAccion.fecha) : '';
@@ -357,14 +569,18 @@
                     inAgenda: true,
                     status: 'pendiente_decision',
                     isEscaladoGerencia: true,
+                    isOverdueStage: stageSla.isOverdue,
                     dias_retraso: 0,
+                    dias_habiles: stageSla.elapsedBusinessDays,
+                    limite_dias: stageSla.limitBusinessDays,
                     intentos_fallidos: intentosFallidos,
                     requiere_decision: true,
                     llamada_obligatoria: isCallMandatory,
                     proxima_accion: proximaAccion,
                     ultimo_contacto: ultimoContacto,
                     motivo_agenda: '🚨 Escalada a Gerencia: 5 o más intentos sin respuesta del cliente',
-                    prioridad: 100
+                    prioridad: 100,
+                    stageSla
                 };
             }
 
@@ -373,35 +589,72 @@
                     inAgenda: true,
                     status: 'pendiente_decision',
                     isDecisionVendedor: true,
+                    isOverdueStage: stageSla.isOverdue,
                     dias_retraso: 0,
+                    dias_habiles: stageSla.elapsedBusinessDays,
+                    limite_dias: stageSla.limitBusinessDays,
                     intentos_fallidos: intentosFallidos,
                     requiere_decision: true,
                     llamada_obligatoria: isCallMandatory,
                     proxima_accion: proximaAccion,
                     ultimo_contacto: ultimoContacto,
                     motivo_agenda: '⚠️ 3 intentos sin respuesta: Vendedor debe decidir si justifica continuar o propone cierre',
-                    prioridad: 90
+                    prioridad: 90,
+                    stageSla
                 };
             }
 
             // Oportunidades sin seguimiento programado
             const isHistoricalNegotiationNoDelivery = (etapa === 'negociacion' && !cadencia.fecha_entrega_oferta && !prospect.fecha_entrega_oferta);
+            let motivoSinSeguimiento = '';
+            if (stageSla.isOverdue) {
+                motivoSinSeguimiento = `⚠️ Sin seguimiento y límite de etapa superado en ${stageSla.etapaLabel} (${stageSla.elapsedBusinessDays} días hábiles vs máx. ${stageSla.limitBusinessDays})`;
+            } else if (isHistoricalNegotiationNoDelivery) {
+                motivoSinSeguimiento = '⚠️ Sin seguimiento programado: Oportunidad histórica en Negociación sin fecha de entrega de oferta registrada (auditar entrega o programar contacto manual)';
+            } else if (etapa === 'cotizacion' || etapa === 'negociacion') {
+                motivoSinSeguimiento = '📋 Sin seguimiento programado: Programa la próxima acción comercial';
+            } else {
+                motivoSinSeguimiento = 'Sin próxima acción programada en pipeline activo';
+            }
+
             return {
                 inAgenda: true,
                 status: 'sin_seguimiento',
+                isOverdueStage: stageSla.isOverdue,
                 sin_fecha_entrega_historica: isHistoricalNegotiationNoDelivery,
                 dias_retraso: 0,
+                dias_habiles: stageSla.elapsedBusinessDays,
+                limite_dias: stageSla.limitBusinessDays,
+                dias_retraso_etapa: stageSla.diasAtraso,
                 intentos_fallidos: intentosFallidos,
                 requiere_decision: true,
                 llamada_obligatoria: isCallMandatory,
                 proxima_accion: null,
                 ultimo_contacto: ultimoContacto,
-                motivo_agenda: isHistoricalNegotiationNoDelivery
-                    ? '⚠️ Sin seguimiento programado: Oportunidad histórica en Negociación sin fecha de entrega de oferta registrada (auditar entrega o programar contacto manual)'
-                    : ((etapa === 'cotizacion' || etapa === 'negociacion')
-                        ? '📋 Sin seguimiento programado: Programa la próxima acción comercial'
-                        : 'Sin próxima acción programada en pipeline activo'),
-                prioridad: isHistoricalNegotiationNoDelivery ? 45 : 40
+                motivo_agenda: motivoSinSeguimiento,
+                prioridad: stageSla.isOverdue ? 85 : (isHistoricalNegotiationNoDelivery ? 45 : 40),
+                stageSla
+            };
+        }
+
+        // Si tiene próxima acción pero además la etapa está vencida:
+        if (stageSla.isOverdue) {
+            return {
+                inAgenda: true,
+                status: 'vencida',
+                isOverdueStage: true,
+                stageSla,
+                etapa: prospect.etapa,
+                dias_retraso: Math.max(diffDaysCalendar(targetYMD, todayYMD), stageSla.diasAtraso),
+                dias_habiles: stageSla.elapsedBusinessDays,
+                limite_dias: stageSla.limitBusinessDays,
+                intentos_fallidos: intentosFallidos,
+                requiere_decision: true,
+                llamada_obligatoria: isCallMandatory,
+                proxima_accion: proximaAccion,
+                ultimo_contacto: ultimoContacto,
+                motivo_agenda: `⚠️ Límite de etapa superado en ${stageSla.etapaLabel} (${stageSla.elapsedBusinessDays} días hábiles vs máx. ${stageSla.limitBusinessDays})`,
+                prioridad: 85 + Math.min(10, stageSla.diasAtraso)
             };
         }
 
@@ -461,7 +714,8 @@
             proxima_accion: proximaAccion,
             ultimo_contacto: ultimoContacto,
             motivo_agenda: motivo,
-            prioridad
+            prioridad,
+            stageSla
         };
     }
 
@@ -630,14 +884,16 @@
      */
     function calculateManagerAttentionItems(prospectsList, userDirectory = null, options = {}) {
         const list = Array.isArray(prospectsList) ? prospectsList : [];
-        const { filterStatus = 'todas', filterEstado = null, filterResponsable = 'todos', filterMotivo = 'todos' } = options || {};
+        const { filterStatus = 'todas', filterEstado = null, filterResponsable = 'todos', filterMotivo = 'todos', now: optNow } = options || {};
         const statusFilter = filterEstado || filterStatus || 'todas';
+        const now = optNow ? parseDate(optNow) : new Date();
 
         const items = [];
         const counts = {
             totalPending: 0,
             cinco_intentos: 0,
             solicitud_sin_contrato: 0,
+            limite_etapa: 0,
             resueltas: 0
         };
 
@@ -658,7 +914,7 @@
                 ? p.solicitud_sin_contrato
                 : solicitudes.find(r => r && r.estado === 'pendiente');
 
-            // Criterio B: Cinco intentos válidos de contacto sin respuesta en una oportunidad destinada a ejecución
+            // Criterio B: Cinco intentos válidos de contacto sin respuesta en una oportunidad comercial activa para ejecución
             if (cad && p.estado === 'activo' && p.clasificacion !== 'presupuesto') {
                 const intentos = Number(cad.intentos_fallidos || cad.intentos_validos_sin_respuesta) || 0;
                 const isEscalado = cad.alerta_gerencial === true ||
@@ -710,6 +966,75 @@
                 counts.solicitud_sin_contrato++;
             }
 
+            // Criterio C: Límite de permanencia en etapa superado (días hábiles salvadoreños)
+            // Oportunidades presupuestarias quedan exentas de alertas gerenciales en este panel
+            if (p.estado === 'activo' && p.clasificacion !== 'presupuesto') {
+                const etapa = p.etapa || 'prospecto';
+                const limitDias = STAGE_LIMITS_BUSINESS_DAYS[etapa];
+                if (limitDias !== null && limitDias !== undefined) {
+                    const ts = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
+                    const stageStart = (etapa === 'cierre' ? (p.fecha_inicio_cierre || ts.cierre) : ts[etapa])
+                        || (etapa === 'prospecto' ? (ts.prospecto || p.fecha_creacion) : null);
+                    if (stageStart) {
+                            const cal = getWorkCalendar();
+                            let elapsedBusinessDays = 0;
+                            if (cal && typeof cal.getWorkTimeBetween === 'function') {
+                                elapsedBusinessDays = cal.getWorkTimeBetween(stageStart, now, { excludeSaturday: true });
+                            } else {
+                                const sDate = parseDate(stageStart);
+                                const eDate = parseDate(now);
+                                if (sDate && eDate && eDate > sDate) {
+                                    let cur = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
+                                    const target = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
+                                    while (cur < target) {
+                                        cur.setDate(cur.getDate() + 1);
+                                        const dow = cur.getDay();
+                                        if (dow !== 0 && dow !== 6) {
+                                            elapsedBusinessDays++;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (elapsedBusinessDays > limitDias) {
+                                const STAGE_NAMES = {
+                                    prospecto: 'Prospecto',
+                                    levantamiento: 'Levantamiento',
+                                    cotizacion: 'Cotización',
+                                    negociacion: 'Negociación',
+                                    cierre: 'Cierre'
+                                };
+                                const etapaLabel = STAGE_NAMES[etapa] || etapa;
+                                const diasAtraso = elapsedBusinessDays - limitDias;
+                                const desc = (etapa === 'cierre')
+                                    ? `Plazo de cierre documental vencido (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`
+                                    : `Límite de etapa superado en ${etapaLabel} (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`;
+
+                                motivos.push({
+                                    tipo: 'limite_etapa',
+                                    subtipo: 'limite_etapa',
+                                    descripcion: desc,
+                                    limite: `Máximo ${limitDias} días hábiles`,
+                                    esperado: `<= ${limitDias} días hábiles`,
+                                    observado: `${elapsedBusinessDays} días hábiles`,
+                                    fecha: (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart)) || null,
+                                    etapa,
+                                    etapaLabel,
+                                    diasHabiles: elapsedBusinessDays,
+                                    limiteDias: limitDias,
+                                    diasAtraso
+                                });
+                                isPending = true;
+                                if (alertState !== 'pendiente') alertState = 'pendiente';
+                                if (!fechaDeteccion) fechaDeteccion = (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart));
+                                if (!limiteIncumplido) limiteIncumplido = `Límite de etapa superado en ${etapaLabel} (máx. ${limitDias} días hábiles)`;
+                                if (!valorEsperado) valorEsperado = `<= ${limitDias} días hábiles`;
+                                if (!valorObservado) valorObservado = `${elapsedBusinessDays} días hábiles`;
+                            }
+                        }
+                    }
+                }
+
             // Alertas en historial / resueltas
             if (!isPending) {
                 const hasResolvedEscalation = cad && (cad.estado_cadencia === 'continuidad_autorizada' || cad.estado_cadencia === 'orden_cierre_pendiente' || (Array.isArray(cad.historial_escalaciones) && cad.historial_escalaciones.length > 0));
@@ -751,10 +1076,19 @@
                     if (filterMotivo === 'seguimiento' && (m.tipo === 'cinco_intentos' || m.tipo === 'seguimiento' || m.subtipo === 'cinco_intentos' || m.tipo === 'cadencia_5_intentos')) return true;
                     if ((filterMotivo === 'cadencia_5_intentos' || filterMotivo === 'cinco_intentos') && (m.tipo === 'cinco_intentos' || m.tipo === 'seguimiento' || m.subtipo === 'cinco_intentos')) return true;
                     if ((filterMotivo === 'solicitud_sin_contrato' || filterMotivo === 'sin_contrato') && m.tipo === 'solicitud_sin_contrato') return true;
+                    if ((filterMotivo === 'limite_etapa' || filterMotivo === 'etapa_vencida') && m.tipo === 'limite_etapa') return true;
                     return false;
                 });
                 if (!matches) return;
             }
+
+            const STAGE_NAMES = {
+                prospecto: 'Prospecto',
+                levantamiento: 'Levantamiento',
+                cotizacion: 'Cotización',
+                negociacion: 'Negociación',
+                cierre: 'Cierre'
+            };
 
             items.push({
                 prospect: p,
@@ -766,6 +1100,8 @@
                 responsableNombre,
                 responsable: responsableNombre,
                 etapa: p.etapa || 'prospecto',
+                etapaLabel: STAGE_NAMES[p.etapa || 'prospecto'] || (p.etapa || 'prospecto'),
+                diasAtraso: motivos.reduce((max, m) => Math.max(max, m.diasAtraso || 0), 0),
                 monto: Number(p.precio_cotizado) || 0,
                 estado: p.estado || 'activo',
                 motivos: motivos.map(m => m.descripcion),
@@ -785,6 +1121,7 @@
                 justificacionVendedor: cad ? (cad.justificacion_continuidad || null) : null,
                 hasFollowUpEscalation: motivos.some(m => m.tipo === 'seguimiento' || m.tipo === 'cinco_intentos'),
                 hasNoContractRequest: !!pendingReq || motivos.some(m => m.tipo === 'solicitud_sin_contrato'),
+                hasStageLimitExceeded: motivos.some(m => m.tipo === 'limite_etapa'),
                 cadencia: cad,
                 solicitudesSinContrato: solicitudes
             });
@@ -828,11 +1165,13 @@
         suggestNextExternalContactDate,
         suggestNextInternalTaskDate,
         classifyFollowUp,
+        calculateStageSla,
         resolveSellerName,
         generateAgenda,
         calculateManagerAttentionItems,
         CADENCIAS_VALIDAS,
         LIMITES_COMERCIALES_CADENCIA,
+        STAGE_LIMITS_BUSINESS_DAYS,
         getCadenceConfig,
         validateCadenceSelection
     };

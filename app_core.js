@@ -42,10 +42,69 @@ if (isLocal) {
 
 function hasEnteredPostclosing(p) {
     if (!p || typeof p !== 'object') return false;
-    return p.postcierre_habilitado === true
-        || (typeof p.fecha_cierre === 'string' && p.fecha_cierre.length > 0)
-        || !!(p.stage_timestamps && p.stage_timestamps.cierre)
-        || (Array.isArray(p.facturas) && p.facturas.length > 0);
+
+    // 1. Explicitly disabled postclosing
+    if (p.postcierre_habilitado === false) return false;
+
+    // 2. Active / open opportunities are in-process, never in postclosing
+    // (unless explicitly finalized with postcierre_habilitado === true)
+    if (p.estado === 'activo' && p.postcierre_habilitado !== true) return false;
+
+    // 3. Modern finalized opportunity (formal closure via finalizeProspect)
+    // Or closed project preserved in postclosing (even if subsequently marked 'perdido', per SEC-04/06)
+    if (p.postcierre_habilitado === true) return true;
+
+    // 4. Lost opportunities without postcierre_habilitado === true cannot enter postclosing
+    // (residual invoices or historical tags on lost leads are not authorized)
+    if (p.estado === 'perdido') return false;
+
+    // 5. Historical records (created before postcierre_habilitado was introduced)
+    // Must possess verifiable, consistent historical closing evidence.
+
+    // 5a. Accounting / Fiscal evidence: at least one well-formed, valid invoice
+    const hasFacturas = Array.isArray(p.facturas) && p.facturas.some(f => {
+        if (!f || typeof f !== 'object') return false;
+        const hasNumero = typeof f.numero === 'string' && f.numero.trim().length > 0;
+        const numMonto = typeof f.monto === 'number' ? f.monto : parseFloat(f.monto);
+        const hasMonto = typeof numMonto === 'number' && !isNaN(numMonto) && numMonto > 0;
+        return hasNumero && hasMonto;
+    });
+    if (hasFacturas) return true;
+
+    // 5b. Contractual / Documental evidence:
+    // Must have a valid closure date or cierre stage timestamp
+    const hasCloseDate = (typeof p.fecha_cierre === 'string' && p.fecha_cierre.trim().length > 0)
+        || (typeof p.fecha_postcierre === 'string' && p.fecha_postcierre.trim().length > 0)
+        || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre);
+
+    if (!hasCloseDate) return false;
+
+    const datos = (p.datos && typeof p.datos === 'object') ? p.datos : null;
+    const hasDoc = d => (Array.isArray(d) ? d.length > 0 : !!d);
+
+    // Contractual proof: contrato_archivo, doc_firmado, doc_contrato, or authorized bypass
+    const hasContractOrSignedDoc = !!p.contrato_archivo
+        || hasDoc(p.doc_firmado)
+        || (!!datos && (hasDoc(datos.doc_contrato) || hasDoc(datos.doc_firmado)))
+        || p.autorizado_sin_contrato === true
+        || (!!datos && datos.autorizado_sin_contrato === true);
+
+    // Advance receipt proof: doc_comprobante
+    const hasAdvanceReceipt = hasDoc(p.doc_comprobante)
+        || (!!datos && hasDoc(datos.doc_comprobante));
+
+    // Closing evidence requires physical contract in storage (contrato_archivo)
+    // OR both contractual proof AND advance receipt proof.
+    // (forma_pago or factura_anticipo alone are NEVER sufficient)
+    const hasClosingEvidence = !!p.contrato_archivo
+        || (hasContractOrSignedDoc && hasAdvanceReceipt);
+
+    if (hasClosingEvidence) {
+        return true;
+    }
+
+    // 6. Inconsistent, ambiguous, or unverified records default to false (require manual review)
+    return false;
 }
 
 // Variables Globales de Ordenamiento para Oportunidades, Proyectos y Clientes
@@ -163,7 +222,7 @@ function getProspectVendorInfo(p) {
 function reassignVendor(prospectId, directTargetId) {
     const p = prospects.find(x => x.id === prospectId);
     if (!p) return;
-    const isClosed = (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : (p && (p.postcierre_habilitado === true || p.etapa === 'cierre')));
+    const isClosed = (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : (p && (p.postcierre_habilitado === true || (p.etapa === 'cierre' && p.estado === 'ganado'))));
     if (isClosed) {
         return alert("No se puede reasignar una oportunidad que ya completó el cierre comercial.");
     }
@@ -1504,7 +1563,7 @@ const STAGES = ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cier
 const PROBABILIDADES = { 'alta': 75, 'media': 50, 'baja': 25, 'improbable': 10 };
 const MOTIVOS_PERDIDA = ["Precio", "Falta de seguimiento", "No se cumplían los requerimientos técnicos", "Tiempo de entrega", "Cliente desiste"];
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-const KPI_LIMITS = { 'prospecto': 7, 'levantamiento': 10, 'cotizacion': 7, 'negociacion': 21, 'cierre': 5 };
+const KPI_LIMITS = { 'prospecto': 3, 'levantamiento': 5, 'cotizacion': 5, 'negociacion': null, 'cierre': 5 };
 
 // DB State
 let clients = [];
@@ -1879,6 +1938,16 @@ function showView(viewId) {
         showView('list-view');
         return;
     }
+    if (viewId === 'dashboard-view' && currentUser && currentUser.role !== 'manager') {
+        alert("Acceso denegado: este módulo es exclusivo para la Gerencia General.");
+        showView(currentUser.role === 'admin' ? 'users-view' : 'list-view');
+        return;
+    }
+    if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager' && currentUser.role !== 'admin') {
+        alert("Acceso denegado: este módulo es exclusivo para Administradores y Gerencia.");
+        showView('list-view');
+        return;
+    }
     const previousSection = lastViewedSection;
     lastViewedSection = viewId === 'detail-view' ? lastViewedSection : viewId;
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
@@ -2069,6 +2138,11 @@ function applyRolePermissions() {
         [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         showView('dashboard-view');
     }
+    else if (role === 'admin') {
+        currentListMode = 'pipeline';
+        [navUsers, navSettings, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        showView('users-view');
+    }
     else if (role === 'gestor') {
         currentListMode = 'agenda';
         [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
@@ -2084,7 +2158,7 @@ function applyRolePermissions() {
 
     renderList();
     renderClientsTable();
-    if (role === 'manager') {
+    if (role === 'manager' || role === 'admin') {
         renderUsersTable();
         if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
     }
@@ -2095,7 +2169,7 @@ function applyRolePermissions() {
 // ========================
 let adminUsersLoading = false;
 async function fetchAdminUsers() {
-    if (!currentUser || currentUser.role !== 'manager') return;
+    if (!currentUser || (currentUser.role !== 'manager' && currentUser.role !== 'admin')) return;
     if (adminUsersLoading) return;
     adminUsersLoading = true;
     try {
@@ -2903,15 +2977,15 @@ function renderDailyAgenda() {
     if (sellerWrap) {
         sellerWrap.style.display = isManager ? 'flex' : 'none';
         if (isManager && sellerSelect) {
-            const curVal = sellerSelect.value || 'all';
-            const expectedStatic = 2; // 'all' y 'manager_only'
+            const curVal = sellerSelect.value || 'manager_only';
+            const expectedStatic = 2; // 'manager_only' y 'all'
             const activeUsers = (users || []).filter(u => u && u.activo !== false && (u.role === 'vendedor' || u.role === 'gestor'));
             const dynamicCount = sellerSelect.options.length - expectedStatic;
 
             if (dynamicCount !== activeUsers.length || sellerSelect.options.length < 2) {
                 sellerSelect.innerHTML = `
-                    <option value="all">👥 Todos los comerciales</option>
                     <option value="manager_only">🛡️ Mi Agenda (Escalaciones y Leads Propios)</option>
+                    <option value="all">👥 Todos los comerciales (Consolidado)</option>
                 `;
                 activeUsers.forEach(u => {
                     const opt = document.createElement('option');
@@ -3048,7 +3122,12 @@ function renderDailyAgenda() {
 
         // Próxima acción / motivo
         let proxAccionHtml = '';
-        if (c.proxima_accion && c.proxima_accion.fecha) {
+        if (c.isOverdueStage) {
+            proxAccionHtml = `
+                <div style="font-size:0.82rem; font-weight:600; color:#fca5a5;">⚠️ ${escapeHtmlDoc(c.accion_pendiente || 'Acción de etapa')}</div>
+                <div style="font-size:0.75rem; color:var(--text-secondary); max-width:240px; line-height:1.3;" title="${escapeHtmlDoc(c.motivo_agenda)}">${escapeHtmlDoc(c.motivo_agenda)}</div>
+            `;
+        } else if (c.proxima_accion && c.proxima_accion.fecha) {
             let satBadge = '';
             const workCal = (typeof CrmWorkCalendar !== 'undefined' ? CrmWorkCalendar : (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null));
             if (workCal && workCal.isHalfDay(c.proxima_accion.fecha)) {
@@ -3064,6 +3143,26 @@ function renderDailyAgenda() {
 
         const clientName = getClientName(item.clientId);
 
+        let etapaCellHtml = `<span class="badge" style="text-transform:capitalize;">${escapeHtmlDoc(item.etapa)}</span>`;
+        if (c.isOverdueStage || c.stageSla) {
+            const sStart = c.stageSla?.fechaInicio || c.etapa_entrada || '-';
+            const sElapsed = c.stageSla?.elapsedBusinessDays ?? c.dias_habiles_transcurridos ?? '-';
+            const sLimit = c.stageSla?.limitBusinessDays ?? c.limite_habiles ?? '-';
+            const sDelay = c.stageSla?.diasAtraso ?? c.dias_habiles_atraso ?? c.dias_retraso ?? 0;
+            etapaCellHtml += `
+                <div style="font-size:0.72rem; color:var(--text-secondary); margin-top:3px;">Entrada: <strong>${escapeHtmlDoc(sStart)}</strong></div>
+                <div style="font-size:0.7rem; color:var(--text-muted);">Transcurridos: <strong>${sElapsed}d</strong> / Límite: <strong>${sLimit}d</strong> hábiles</div>
+                ${(c.stageSla?.isOverdue || c.dias_habiles_atraso || c.isOverdueStage) ? `<div style="font-size:0.7rem; font-weight:700; color:var(--danger);">Atraso: +${sDelay}d hábiles</div>` : ''}
+            `;
+        }
+
+        let actionBtnHtml = '';
+        if (item.etapa === 'cierre') {
+            actionBtnHtml = `<button class="btn-primary" style="padding:4px 8px; font-size:0.75rem; background:var(--brand-gold); border-color:var(--brand-gold); color:black; font-weight:600;" onclick="openDetail('${item.id}')" title="Completar documentación de Cierre">📁 Documentación</button>`;
+        } else {
+            actionBtnHtml = `<button class="btn-success" style="padding:4px 8px; font-size:0.75rem;" onclick="openRecordFollowUpModal('${item.id}')" title="Registrar contacto comercial">📞 Gestionar</button>`;
+        }
+
         tr.innerHTML = `
             <td>${badgeHtml}</td>
             <td><strong style="color:var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
@@ -3071,13 +3170,13 @@ function renderDailyAgenda() {
                 <div style="font-weight:600; color:white;">${escapeHtmlDoc(item.proyecto)}</div>
                 <div style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtmlDoc(clientName)}</div>
             </td>
-            <td><span class="badge" style="text-transform:capitalize;">${escapeHtmlDoc(item.etapa)}</span></td>
+            <td>${etapaCellHtml}</td>
             <td><span style="font-size:0.85rem; color:var(--text-secondary);">${escapeHtmlDoc(item.vendedorName)}</span></td>
             <td>${ultGestionHtml}</td>
             <td>${proxAccionHtml}</td>
             <td style="text-align:right;" onclick="event.stopPropagation()">
                 <div style="display:flex; gap:6px; justify-content:flex-end;">
-                    <button class="btn-success" style="padding:4px 8px; font-size:0.75rem;" onclick="openRecordFollowUpModal('${item.id}')" title="Registrar contacto comercial">📞 Gestionar</button>
+                    ${actionBtnHtml}
                     <button class="btn-secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="openDetail('${item.id}')" title="Ver expediente">👁️</button>
                 </div>
             </td>
@@ -3938,7 +4037,7 @@ function renderProjectsList() {
     if (elTodos) elTodos.textContent = countTodos;
 
     ['pendientes', 'pagados', 'todos'].forEach(key => {
-        const btn = document.getElementById(`pill-proj-${key}`);
+        const btn = document.getElementById(`filter-proj-${key}`) || document.getElementById(`pill-proj-${key}`);
         if (btn) {
             if (key === projPaymentFilter) btn.classList.add('active');
             else btn.classList.remove('active');
@@ -4476,7 +4575,7 @@ function openDetail(id) {
         finTracker.style.display = 'none';
         stageTitleText.parentElement.style.display = 'block';
         trackerContainer.style.display = 'flex';
-        stageTitleText.textContent = "Avance de Etapa";
+        stageTitleText.textContent = p.etapa === 'cierre' ? "Cierre Pendiente de Documentación" : "Avance de Etapa";
         const btnAdv = document.getElementById('btn-advance');
         if (btnAdv) btnAdv.style.display = p.etapa === 'cierre' ? 'none' : 'inline-flex';
         const btnNewProp = document.getElementById('btn-new-proposal');
@@ -4484,6 +4583,10 @@ function openDetail(id) {
         const btnLose = document.getElementById('btn-lose');
         if (btnLose) btnLose.style.display = 'inline-flex';
         if (stageWorkflowBox) stageWorkflowBox.style.display = 'block';
+
+        if (p.etapa === 'cierre' && typeof renderClosingDocumentationPanel === 'function') {
+            renderClosingDocumentationPanel(p);
+        }
     } else if (p.estado === 'ganado' || (hasEnteredPostclosing(p) && currentUser && (currentUser.role === 'manager' || currentUser.role === 'gestor'))) {
         actionContainer.style.display = 'none'; finTracker.style.display = 'block'; stageTitleText.parentElement.style.display = 'none'; trackerContainer.style.display = 'none'; if (stageWorkflowBox) stageWorkflowBox.style.display = 'none'; renderFinancials(p);
     } else {
@@ -4906,7 +5009,11 @@ function renderTracker(p) {
         ? `<button type="button" class="btn-secondary" onclick="openReclassifyModal('${p.id}')" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 8px;" title="Cambiar clasificación comercial">🔄 Clasificación</button>`
         : '';
 
-    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>${clasifBadge}${reclassBtn}`;
+    const cierreDocBadge = (p.etapa === 'cierre' && p.estado === 'activo')
+        ? `<span class="badge" style="background: rgba(212, 175, 55, 0.2); color: var(--brand-gold); border: 1px solid var(--brand-gold); margin-left: 8px;">PENDIENTE DE DOCUMENTACIÓN</span>`
+        : '';
+
+    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>${cierreDocBadge}${clasifBadge}${reclassBtn}`;
 }
 
 function renderInfo(p) {
@@ -5393,35 +5500,23 @@ function showAdvanceForm() {
     }
 
     if (nextStage === 'cierre') {
-        const c = clients.find(x => x.id === p.clientId);
-        let missing = [];
-        if (c.tipo === 'natural') {
-            if (!c.nombres) missing.push("Nombres");
-            if (!c.apellidos) missing.push("Apellidos");
-            if (!c.dui) missing.push("DUI");
-            if (!c.nit) missing.push("NIT");
-        } else {
-            if (!c.empresa) missing.push("Nombre de la Empresa");
-            if (!c.contacto) missing.push("Contacto Principal");
-            if (!c.nit) missing.push("NIT");
-            if (!c.nrc) missing.push("NRC");
-        }
-        if (!c.telefono) missing.push("Teléfono");
-        if (!c.correo) missing.push("Correo Electrónico");
-        if (!c.correo_fact) missing.push("Correo para Facturación");
-
-        if (missing.length > 0) {
-            container.innerHTML = `<div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 1.5rem; border-radius: 6px; margin-top: 1rem;">
-                <h4 style="color:var(--danger)">⚠️ Información de Cliente Incompleta</h4>
-                <p style="font-size: 0.9rem; margin-top: 0.5rem; color: var(--text-primary);">Para poder cerrar formalmente la oportunidad y generar el proyecto, el cliente debe tener su expediente completo (para propósitos de facturación y cobro). Faltan los siguientes campos:</p>
-                <ul style="margin-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--brand-gold);">
-                    ${missing.map(m => `<li>${m}</li>`).join('')}
-                </ul>
-                <button class="btn-primary" onclick="openClientModal('${c.id}')">Completar Datos del Cliente</button>
-                <button class="btn-secondary ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>
-            </div>`;
-            return;
-        }
+        container.innerHTML = `<div style="background: rgba(212, 175, 55, 0.08); border: 1px solid var(--brand-gold); padding: 1.5rem; border-radius: 8px; margin-top: 1rem;">
+            <h4 style="color:var(--brand-gold); margin-top:0;">🚀 Avanzar a Cierre (Pendiente de Documentación)</h4>
+            <p style="font-size: 0.9rem; margin-top: 0.5rem; color: var(--text-primary); line-height: 1.5;">
+                Esta acción avanza la oportunidad comercial de <strong>Negociación</strong> a la etapa de <strong>Cierre</strong> para formalización y validación documental.
+            </p>
+            <ul style="font-size: 0.85rem; color: var(--text-secondary); margin: 0.75rem 0 1rem 1.25rem; line-height: 1.6;">
+                <li>Se registrará la fecha y hora oficial de entrada a Cierre.</li>
+                <li>Inicia el plazo oficial de <strong>5 días hábiles</strong> para recopilar, adjuntar y validar la documentación requerida.</li>
+                <li>La oportunidad permanece <strong>abierta y en proceso</strong> (no ganada).</li>
+                <li>No se transferirá a Proyectos y Cobros hasta que se ejecute la acción <strong>Finalizar oportunidad</strong> con todos los documentos aprobados.</li>
+            </ul>
+            <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+                <button type="button" class="btn-primary" onclick="confirmAdvanceToCierre('${p.id}')">Avanzar a Cierre</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>
+            </div>
+        </div>`;
+        return;
     }
 
     let formHTML = `<h4>Avanzar a: <span style="text-transform:capitalize; color:var(--brand-gold)">${nextStage}</span></h4><div class="form-grid mt-2">`;
@@ -5469,89 +5564,6 @@ function showAdvanceForm() {
                 <input type="file" id="adv-file2" multiple onchange="updateSelectedFilesList(this)">
                 <div id="adv-file2-list" style="margin-top: 8px;"></div>
             </div>`;
-    } else if (nextStage === 'cierre') {
-        const c = clients.find(x => x.id === p.clientId);
-        if (!c.documentos) c.documentos = {};
-
-        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-
-        let encOpts = settings.encargados.map(e => `<option value="${e}">${e}</option>`).join('');
-        if (!encOpts) encOpts = `<option value="">-- Sin encargados (Configure en ajustes) --</option>`;
-
-        formHTML += `<div class="form-group full-width" style="border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; margin-bottom: 0.5rem;"><strong>Configuración de Proyecto</strong></div>`;
-        formHTML += `<div class="form-group"><label>Forma de Pago Pactada</label>
-                <select id="adv-forma-pago" required><option value="100% anticipado">100% Anticipado</option><option value="70/30">70% Anticipo / 30% Cierre</option><option value="50/50">50% Anticipo / 50% Cierre</option></select></div>`;
-        formHTML += `<div class="form-group"><label>Número Factura de Anticipo</label><input type="text" id="adv-fac-anticipo" required placeholder="Ej. FCF-001"></div>`;
-        if (p.tipo_proyecto === 'Fabricación e instalación') { formHTML += `<div class="form-group"><label>Encargado de Instalación</label><select id="adv-encargado" required><option value="">-- Seleccione --</option>${encOpts}</select></div>`; }
-
-        formHTML += `<div class="form-group full-width" style="border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; margin-top: 1rem; margin-bottom: 0.5rem; color:var(--brand-gold);"><strong>Documentación Requerida para Cierre</strong></div>`;
-
-        // DUI (from legal representative or individual customer) is ALWAYS mandatory at closure
-        if (!c.documentos.dui) {
-            formHTML += `<div class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1);">❌ Obligatorio: Falta el DUI (del representante o cliente) en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.</div>`;
-        }
-
-        if (isBigInstalacion) {
-            const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
-            if (isAuthorized) {
-                formHTML += `<div class="form-group full-width" style="background: rgba(46, 204, 113, 0.1); border: 1px solid var(--success); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem;">
-                    <div style="display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--success);">
-                        <span>\u2714 Cierre Sin Contrato Autorizado</span>
-                    </div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 4px;">
-                        Esta venta ha sido autorizada sin contrato por el gerente: <strong>${p.datos.autorizado_por || 'Gerencia'}</strong>.
-                    </p>`;
-                if (currentUser && currentUser.role === 'manager') {
-                    formHTML += `<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px;">
-                        <input type="checkbox" id="adv-auth-no-contract-checkbox" checked onchange="toggleManagerApprovalInForm(this.checked)">
-                        <span>Revocar Autorización (Modo Gerente)</span>
-                    </label>`;
-                }
-                formHTML += `<input type="checkbox" id="adv-auth-no-contract" checked style="display: none;">
-                </div>`;
-            } else {
-                formHTML += `<div class="form-group full-width" style="background: rgba(212, 175, 55, 0.1); border: 1px solid var(--brand-gold); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem;">
-                    <div style="display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--brand-gold);">
-                        <span>\u26A0 Requiere Contrato</span>
-                    </div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; margin-bottom: 8px;">
-                        Esta venta supera los $10k e instalación, por lo que requiere un contrato y documentos de la empresa. Si el Gerente aprueba exceptuar el contrato, puede autorizarlo marcándolo desde su propia sesión (en el panel lateral o en este formulario).
-                    </p>`;
-
-                if (currentUser && currentUser.role === 'manager') {
-                    formHTML += `<label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px;">
-                        <input type="checkbox" id="adv-auth-no-contract-checkbox" onchange="toggleManagerApprovalInForm(this.checked)">
-                        <span>Autorizar sin Contrato (Modo Gerente)</span>
-                    </label>`;
-                }
-                // No password is typed or compared here: the exception is granted only by a manager from his own session, either directly
-                // or by approving the seller's request (requestNoContractAuthorizationAdmin / resolveNoContractAuthorizationAdmin).
-                formHTML += renderNoContractRequestHTML(p);
-                formHTML += `<input type="checkbox" id="adv-auth-no-contract" style="display: none;">
-                </div>`;
-            }
-
-            // Contract fields
-            formHTML += `<div id="contract-fields-container" style="width: 100%; display: ${isAuthorized ? 'none' : 'contents'};">`;
-            formHTML += `<div class="form-group full-width"><button type="button" class="btn-primary" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button><p style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">Haz clic aquí para imprimir el contrato ya rellenado. Luego, escanéalo firmado y súbelo a continuación.</p></div>`;
-            formHTML += `<div class="form-group full-width"><label>Contrato Firmado (Proyecto > $10k)</label><input type="file" id="adv-file1-contract" ${isAuthorized ? '' : 'required'}></div>`;
-            formHTML += `</div>`; // end contract-fields-container
-
-            // Validate company documents (excluding DUI since it is validated above)
-            if (c.tipo === 'juridica') {
-                const hasCompanyDocs = c.documentos.escritura && c.documentos.credencial && c.documentos.nit && c.documentos.nrc;
-                formHTML += `<div id="company-docs-warning" class="form-group full-width" style="color:var(--danger); font-size:0.9rem; font-weight:bold; border: 1px solid var(--danger); padding: 0.5rem; border-radius: 4px; background: rgba(239, 68, 68, 0.1); display: ${(!hasCompanyDocs && !isAuthorized) ? 'block' : 'none'};">❌ Obligatorio: Faltan documentos corporativos de la Empresa en el Directorio de Clientes (Escritura, Credencial, NIT, NRC). Ve al Directorio, edita el cliente y súbelos antes de poder cerrar este proyecto.</div>`;
-                formHTML += `<div id="company-docs-success" class="form-group full-width" style="color:var(--success); font-size:0.9rem; display: ${(hasCompanyDocs && !isAuthorized) ? 'block' : 'none'};">✔️ Documentación legal corporativa ya registrada en el directorio.</div>`;
-            }
-
-            // No contract fields
-            formHTML += `<div id="no-contract-fields-container" style="width: 100%; display: ${isAuthorized ? 'block' : 'none'};">`;
-            formHTML += `<div class="form-group full-width"><label>Oferta Firmada por Cliente</label><input type="file" id="adv-file1-nocontract" ${isAuthorized ? 'required' : ''}></div>`;
-            formHTML += `</div>`; // end no-contract-fields-container
-        } else {
-            formHTML += `<div class="form-group full-width"><label>Oferta Firmada por Cliente</label><input type="file" id="adv-file1" required></div>`;
-        }
-        formHTML += `<div class="form-group full-width"><label>Copia de Factura / C.F. Emitida</label><input type="file" id="adv-file2" required></div>`;
     }
     formHTML += `</div><button type="button" class="btn-primary mt-2" onclick="processAdvance('${nextStage}')">Confirmar Avance</button><button type="button" class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>`;
 
@@ -5616,57 +5628,440 @@ async function processAdvance(nextStage) {
         });
         if (!ok) return;
     } else if (nextStage === 'cierre') {
-        const fp = document.getElementById('adv-forma-pago').value; if (!fp) return alert("Selecciona la forma de pago.");
-        const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if (!facNum) return alert("Ingresa el número de factura de anticipo.");
-        data.forma_pago = fp; data.factura_anticipo = facNum;
-        if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); data.encargado = enc; }
+        const fpEl = document.getElementById('adv-forma-pago');
+        if (fpEl) {
+            const fp = fpEl.value; if (!fp) return alert("Selecciona la forma de pago.");
+            const facNum = document.getElementById('adv-fac-anticipo').value.trim(); if (!facNum) return alert("Ingresa el número de factura de anticipo.");
+            data.forma_pago = fp; data.factura_anticipo = facNum;
+            if (p.tipo_proyecto === 'Fabricación e instalación') { const enc = document.getElementById('adv-encargado').value.trim(); if (!enc) return alert("Debe asignar un Encargado de Instalación."); data.encargado = enc; }
 
-        const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-        // Only reflects the manager's STORED authorization (the checkbox is rendered from it); the server decides from the stored value too.
-        const authNoContractEl = document.getElementById('adv-auth-no-contract');
-        const bypassContract = authNoContractEl ? authNoContractEl.checked : false;
+            const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+            // Only reflects the manager's STORED authorization (the checkbox is rendered from it); the server decides from the stored value too.
+            const authNoContractEl = document.getElementById('adv-auth-no-contract');
+            const bypassContract = authNoContractEl ? authNoContractEl.checked : false;
 
-        const c = clients.find(x => x.id === p.clientId);
-        if (!c) return alert("No se encontró el cliente de esta oportunidad.");
-        if (!c.documentos) c.documentos = {};
+            const c = clients.find(x => x.id === p.clientId);
+            if (!c) return alert("No se encontró el cliente de esta oportunidad.");
+            if (!c.documentos) c.documentos = {};
 
-        // DUI is always mandatory for all closing transactions
-        if (!c.documentos.dui) {
-            return alert("❌ OBLIGATORIO: Falta el DUI (del representante o cliente) en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.");
-        }
+            // DUI is always mandatory for all closing transactions
+            if (!c.documentos.dui) {
+                return alert("❌ OBLIGATORIO: Falta el DUI (del representante o cliente) en el Directorio de Clientes. Ve al Directorio, edita el cliente y sube el documento antes de poder cerrar este proyecto.");
+            }
 
-        if (isBigInstalacion && !bypassContract) {
-            if (c.tipo === 'juridica') {
-                if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc) {
-                    return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar todos los documentos legales de la Empresa (Escritura, Credencial, NIT, NRC).");
+            if (isBigInstalacion && !bypassContract) {
+                if (c.tipo === 'juridica') {
+                    if (!c.documentos.escritura || !c.documentos.credencial || !c.documentos.nit || !c.documentos.nrc) {
+                        return alert("❌ OBLIGATORIO: Para cerrar este proyecto con contrato, primero debes ir al Directorio de Clientes y adjuntar todos los documentos legales de la Empresa (Escritura, Credencial, NIT, NRC).");
+                    }
                 }
             }
-        }
 
-        let f1;
-        if (isBigInstalacion) {
-            f1 = bypassContract ? document.getElementById('adv-file1-nocontract') : document.getElementById('adv-file1-contract');
+            let f1;
+            if (isBigInstalacion) {
+                f1 = bypassContract ? document.getElementById('adv-file1-nocontract') : document.getElementById('adv-file1-contract');
+            } else {
+                f1 = document.getElementById('adv-file1');
+            }
+
+            if (!f1 || f1.files.length === 0) return alert("Es obligatorio subir el Contrato o la Oferta firmada.");
+
+            const f2 = document.getElementById('adv-file2');
+            if (!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
+
+            const ok = await runWorkflowOp('Avanzando a Cierre y subiendo documentos...', async fb => {
+                const [docFirmado, docComprobante] = await Promise.all([
+                    uploadFileToStorage(f1.files[0], 'proyectos', { prospectId: p.id }),
+                    uploadFileToStorage(f2.files[0], 'facturas', { prospectId: p.id })
+                ]);
+                data.doc_firmado = docFirmado; data.doc_comprobante = docComprobante;
+                return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage, data, dbSuffix: DB_SUFFIX });
+            });
+            if (!ok) return;
         } else {
-            f1 = document.getElementById('adv-file1');
+            const ok = await runWorkflowOp('Avanzando a Cierre...', async fb => {
+                return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage: 'cierre', data: {}, dbSuffix: DB_SUFFIX });
+            });
+            if (!ok) return;
         }
-
-        if (!f1 || f1.files.length === 0) return alert("Es obligatorio subir el Contrato o la Oferta firmada.");
-
-        const f2 = document.getElementById('adv-file2');
-        if (!f2 || f2.files.length === 0) return alert("Es obligatorio subir la Factura o Comprobante de anticipo.");
-
-        const ok = await runWorkflowOp('Generando cierre y subiendo documentos finales...', async fb => {
-            const [docFirmado, docComprobante] = await Promise.all([
-                uploadFileToStorage(f1.files[0], 'proyectos', { prospectId: p.id }),
-                uploadFileToStorage(f2.files[0], 'facturas', { prospectId: p.id })
-            ]);
-            data.doc_firmado = docFirmado; data.doc_comprobante = docComprobante;
-            return CrmCommercial.advanceStage(fb, { prospectId: p.id, nextStage, data, dbSuffix: DB_SUFFIX });
-        });
-        if (!ok) return;
     }
 
     document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
+}
+
+async function confirmAdvanceToCierre(prospectId) {
+    const id = prospectId || currentProspectId;
+    const p = prospects.find(x => x.id === id);
+    if (!p) return;
+    return processAdvance('cierre');
+}
+
+function renderClosingDocumentationPanel(p) {
+    const container = document.getElementById('advance-form-container');
+    if (!container) return;
+
+    const c = (typeof clients !== 'undefined' && Array.isArray(clients)) ? (clients.find(x => x.id === p.clientId) || {}) : {};
+    const clientDocs = c.documentos || {};
+    const datos = p.datos || {};
+
+    const sla = typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateStageSla === 'function'
+        ? CrmFollowUpCalc.calculateStageSla(p, new Date())
+        : { elapsedBusinessDays: 0, limitBusinessDays: 5, diasAtraso: 0, isOverdue: false, fechaInicio: p.fecha_inicio_cierre || null, fechaLimite: p.fecha_limite_cierre || null };
+
+    const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+    const isAuthorized = datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada');
+
+    // Evaluaciones documentales
+    const hasDui = !!clientDocs.dui;
+    const hasCompanyDocs = !isBigInstalacion || isAuthorized || (c.tipo !== 'juridica') || (clientDocs.escritura && clientDocs.credencial && clientDocs.nit && clientDocs.nrc);
+    const hasDocFirmado = !!(datos.doc_firmado || datos.doc_contrato || datos.doc_oferta_firmada);
+    const hasDocComprobante = !!datos.doc_comprobante;
+    const hasFacturaAnticipo = !!(p.factura_anticipo || datos.factura_anticipo);
+    const hasFormaPago = !!(p.forma_pago || datos.forma_pago);
+    const hasEncargado = (p.tipo_proyecto !== 'Fabricación e instalación') || !!(p.encargado || datos.encargado);
+
+    // Listas de estado documental
+    const reqList = [];
+    const okList = [];
+    const pendingList = [];
+
+    // DUI
+    reqList.push("DUI de identificación (Directorio Clientes)");
+    if (hasDui) okList.push("DUI de identificación");
+    else pendingList.push("DUI de identificación (subir en Directorio de Clientes)");
+
+    // Jurídica Docs
+    if (isBigInstalacion && !isAuthorized && c.tipo === 'juridica') {
+        reqList.push("Documentos legales corporativos (Escritura, Credencial, NIT, NRC)");
+        if (hasCompanyDocs) okList.push("Documentos legales corporativos");
+        else pendingList.push("Documentos legales corporativos (subir en Directorio de Clientes)");
+    }
+
+    // Contrato u Oferta
+    if (isBigInstalacion && !isAuthorized) {
+        reqList.push("Contrato firmado escaneado (Proyecto > $10k)");
+        if (hasDocFirmado) okList.push("Contrato firmado escaneado");
+        else pendingList.push("Contrato firmado escaneado");
+    } else {
+        reqList.push("Oferta firmada por cliente");
+        if (hasDocFirmado) okList.push("Oferta firmada por cliente");
+        else pendingList.push("Oferta firmada por cliente");
+    }
+
+    // Comprobante anticipo
+    reqList.push("Comprobante / CCF de anticipo");
+    if (hasDocComprobante) okList.push("Comprobante / CCF de anticipo");
+    else pendingList.push("Comprobante / CCF de anticipo");
+
+    // Factura anticipo
+    reqList.push("Número de Factura de anticipo");
+    if (hasFacturaAnticipo) okList.push(`Factura de anticipo (#${p.factura_anticipo || datos.factura_anticipo})`);
+    else pendingList.push("Número de Factura de anticipo");
+
+    // Forma de pago
+    reqList.push("Forma de pago acordada");
+    if (hasFormaPago) okList.push(`Forma de pago (${p.forma_pago || datos.forma_pago})`);
+    else pendingList.push("Forma de pago acordada");
+
+    // Encargado si aplica
+    if (p.tipo_proyecto === 'Fabricación e instalación') {
+        reqList.push("Encargado de instalación");
+        if (hasEncargado) okList.push(`Encargado (${p.encargado || datos.encargado})`);
+        else pendingList.push("Encargado de instalación");
+    }
+
+    const respName = (typeof users !== 'undefined' && Array.isArray(users))
+        ? ((users.find(u => u.id === (p.vendedorId || p.createdBy)) || {}).nombre || p.vendedorId || 'No asignado')
+        : (p.vendedorId || 'No asignado');
+
+    let encOpts = (typeof settings !== 'undefined' && settings.encargados)
+        ? settings.encargados.map(e => `<option value="${e}" ${(p.encargado || datos.encargado) === e ? 'selected' : ''}>${e}</option>`).join('')
+        : '';
+    if (!encOpts) encOpts = `<option value="">-- Sin encargados (Configure en ajustes) --</option>`;
+
+    const currentFp = p.forma_pago || datos.forma_pago || '';
+    const currentFac = p.factura_anticipo || datos.factura_anticipo || '';
+
+    let html = `
+    <div class="closing-panel glass-panel" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 8px; padding: 1.5rem; margin-top: 1rem;">
+        <!-- Cabecera de SLA y Estado -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+            <div>
+                <h4 style="margin: 0; color: var(--brand-gold); display: flex; align-items: center; gap: 8px;">
+                    <span>📁 Cierre Comercial: Pendiente de Documentación</span>
+                </h4>
+                <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: var(--text-secondary);">
+                    Responsable de cierre: <strong style="color: white;">${escapeHtmlDoc(respName)}</strong>
+                </p>
+            </div>
+            <div style="text-align: right;">
+                ${sla.isOverdue
+                    ? `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); font-size: 0.85rem; padding: 4px 10px;">🚨 Plazo Vencido (+${sla.diasAtraso} días hábiles de atraso)</span>`
+                    : `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid var(--success); font-size: 0.85rem; padding: 4px 10px;">⏱️ Dentro del Plazo (${Math.max(0, 5 - sla.elapsedBusinessDays)} días hábiles restantes)</span>`
+                }
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                    Entrada a Cierre: <strong>${sla.fechaInicio || p.fecha_inicio_cierre || '-'}</strong> | Límite (5d hábiles): <strong>${sla.fechaLimite || p.fecha_limite_cierre || '-'}</strong>
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">
+                    Días hábiles transcurridos: <strong>${sla.elapsedBusinessDays}</strong> de 5 permitidos
+                </div>
+            </div>
+        </div>
+
+        <!-- Checklist de Validación Documental -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <!-- Documentos Requeridos -->
+            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.75rem 1rem;">
+                <div style="font-size: 0.82rem; font-weight: bold; color: var(--text-primary); margin-bottom: 0.5rem;">📋 Requisitos de Cierre (${reqList.length})</div>
+                <ul style="font-size: 0.78rem; color: var(--text-secondary); margin: 0; padding-left: 1.2rem; line-height: 1.5;">
+                    ${reqList.map(r => `<li>${escapeHtmlDoc(r)}</li>`).join('')}
+                </ul>
+            </div>
+
+            <!-- Cargados y Validados -->
+            <div style="background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 0.75rem 1rem;">
+                <div style="font-size: 0.82rem; font-weight: bold; color: var(--success); margin-bottom: 0.5rem;">✅ Cargados y Validados (${okList.length})</div>
+                <ul style="font-size: 0.78rem; color: #a7f3d0; margin: 0; padding-left: 1.2rem; line-height: 1.5;">
+                    ${okList.length > 0 ? okList.map(r => `<li>${escapeHtmlDoc(r)}</li>`).join('') : '<li style="color:var(--text-muted);">Ningún documento validado aún</li>'}
+                </ul>
+            </div>
+
+            <!-- Pendientes -->
+            <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.75rem 1rem;">
+                <div style="font-size: 0.82rem; font-weight: bold; color: ${pendingList.length > 0 ? 'var(--danger)' : 'var(--success)'}; margin-bottom: 0.5rem;">
+                    ${pendingList.length > 0 ? `⚠️ Pendientes (${pendingList.length})` : '🎉 ¡Expediente Completo!'}
+                </div>
+                <ul style="font-size: 0.78rem; color: ${pendingList.length > 0 ? '#fca5a5' : 'var(--success)'}; margin: 0; padding-left: 1.2rem; line-height: 1.5;">
+                    ${pendingList.length > 0 ? pendingList.map(r => `<li>${escapeHtmlDoc(r)}</li>`).join('') : '<li>Todos los requisitos obligatorios están cumplidos. Puedes finalizar la oportunidad.</li>'}
+                </ul>
+            </div>
+        </div>
+
+        <!-- Alertas de Cliente / Directorio si faltan documentos del cliente -->
+        ${!hasDui ? `
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; color: #fca5a5;">
+                ❌ <strong>Obligatorio:</strong> Falta el <strong>DUI del cliente o representante legal</strong> en su ficha de cliente.
+                <button type="button" class="btn-primary" style="margin-left: 10px; padding: 2px 8px; font-size: 0.75rem;" onclick="openClientModal('${c.id}')">Editar Cliente en Directorio</button>
+            </div>
+        ` : ''}
+
+        ${(isBigInstalacion && !isAuthorized && c.tipo === 'juridica' && !hasCompanyDocs) ? `
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; color: #fca5a5;">
+                ❌ <strong>Obligatorio:</strong> Venta con contrato (> $10k e instalación). Faltan documentos legales de la Empresa (Escritura, Credencial, NIT, NRC).
+                <button type="button" class="btn-primary" style="margin-left: 10px; padding: 2px 8px; font-size: 0.75rem;" onclick="openClientModal('${c.id}')">Completar en Directorio</button>
+            </div>
+        ` : ''}
+
+        <!-- Autorización de Contrato (si aplica para proyectos grandes) -->
+        ${isBigInstalacion ? `
+            <div style="margin-bottom: 1rem;">
+                ${isAuthorized ? `
+                    <div style="background: rgba(46, 204, 113, 0.1); border: 1px solid var(--success); padding: 0.75rem; border-radius: 6px;">
+                        <span style="color: var(--success); font-weight: bold;">✔️ Cierre Sin Contrato Autorizado</span>
+                        <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 4px 0 0 0;">
+                            Autorizado por: <strong>${datos.autorizado_por || 'Gerencia'}</strong>
+                        </p>
+                    </div>
+                ` : `
+                    <div style="background: rgba(212, 175, 55, 0.1); border: 1px solid var(--brand-gold); padding: 0.75rem; border-radius: 6px;">
+                        <div style="font-weight: bold; color: var(--brand-gold);">⚠️ Venta > $10k e Instalación: Requiere Contrato o Autorización Gerencial</div>
+                        <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 4px 0 8px 0;">
+                            Si el Gerente aprueba exceptuar el contrato, puede autorizarlo desde su sesión o a través de la solicitud de excepción.
+                        </p>
+                        ${(currentUser && currentUser.role === 'manager') ? `
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-bottom: 6px;">
+                                <input type="checkbox" id="closing-auth-no-contract-checkbox" onchange="toggleManagerApprovalInForm(this.checked)">
+                                <span>Autorizar sin Contrato (Modo Gerente)</span>
+                            </label>
+                        ` : ''}
+                        ${typeof renderNoContractRequestHTML === 'function' ? renderNoContractRequestHTML(p) : ''}
+                    </div>
+                `}
+            </div>
+        ` : ''}
+
+        <!-- Formulario de Configuración y Carga de Archivos -->
+        <div class="form-grid" style="margin-bottom: 1.25rem;">
+            <div class="form-group">
+                <label>Forma de Pago Pactada</label>
+                <select id="closing-forma-pago" required>
+                    <option value="">-- Seleccione --</option>
+                    <option value="100% anticipado" ${currentFp === '100% anticipado' ? 'selected' : ''}>100% Anticipado</option>
+                    <option value="70/30" ${currentFp === '70/30' ? 'selected' : ''}>70% Anticipo / 30% Cierre</option>
+                    <option value="50/50" ${currentFp === '50/50' ? 'selected' : ''}>50% Anticipo / 50% Cierre</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Número Factura de Anticipo</label>
+                <input type="text" id="closing-fac-anticipo" value="${escapeHtmlDoc(currentFac)}" placeholder="Ej. FCF-001" required>
+            </div>
+
+            ${p.tipo_proyecto === 'Fabricación e instalación' ? `
+                <div class="form-group">
+                    <label>Encargado de Instalación</label>
+                    <select id="closing-encargado" required>
+                        <option value="">-- Seleccione --</option>
+                        ${encOpts}
+                    </select>
+                </div>
+            ` : ''}
+
+            <!-- Subida de Oferta / Contrato -->
+            <div class="form-group full-width">
+                <label>${(isBigInstalacion && !isAuthorized) ? 'Contrato Firmado (Proyecto > $10k)' : 'Oferta Firmada por Cliente'}</label>
+                ${(isBigInstalacion && !isAuthorized) ? `
+                    <div style="margin-bottom: 6px;">
+                        <button type="button" class="btn-secondary" style="font-size: 0.78rem; padding: 4px 8px;" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button>
+                    </div>
+                ` : ''}
+                ${datos.doc_firmado ? `
+                    <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
+                        ✔️ Documento actual cargado: <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado, 'Doc Cierre', { prospectId: '${p.id}' })" style="color:var(--brand-gold);">Ver documento</a>
+                    </div>
+                ` : ''}
+                <input type="file" id="closing-file-doc-firmado">
+                <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos aceptados: PDF, JPG, PNG.</small>
+            </div>
+
+            <!-- Subida de Factura / Comprobante -->
+            <div class="form-group full-width">
+                <label>Copia de Factura o Comprobante de Anticipo Emitido</label>
+                ${datos.doc_comprobante ? `
+                    <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
+                        ✔️ Comprobante actual cargado: <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" style="color:var(--brand-gold);">Ver comprobante</a>
+                    </div>
+                ` : ''}
+                <input type="file" id="closing-file-doc-comprobante">
+                <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos aceptados: PDF, JPG, PNG.</small>
+            </div>
+        </div>
+
+        <!-- Botones de Acción: Guardar Avances vs Finalizar Oportunidad -->
+        <div style="display: flex; gap: 1rem; align-items: center; border-top: 1px solid var(--panel-border); padding-top: 1rem; flex-wrap: wrap;">
+            <button type="button" class="btn-secondary" onclick="saveClosingProgress('${p.id}')" style="display: flex; align-items: center; gap: 6px;">
+                <span>💾</span> Guardar Avances Documentales
+            </button>
+            <button type="button" class="btn-primary" onclick="finalizeOpportunity('${p.id}')" style="background: #10b981; border-color: #10b981; color: white; font-weight: 600; display: flex; align-items: center; gap: 6px; margin-left: auto;">
+                <span>🏁</span> Finalizar Oportunidad (Ganada)
+            </button>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem; text-align: right;">
+            * La oportunidad solo se transferirá a Proyectos y Cobros al pulsar <strong>Finalizar Oportunidad</strong> tras validar todos los requisitos.
+        </div>
+    </div>`;
+
+    container.innerHTML = html;
+}
+
+async function saveClosingProgress(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const fpEl = document.getElementById('closing-forma-pago');
+    const facEl = document.getElementById('closing-fac-anticipo');
+    const encEl = document.getElementById('closing-encargado');
+    const f1El = document.getElementById('closing-file-doc-firmado');
+    const f2El = document.getElementById('closing-file-doc-comprobante');
+
+    const data = {};
+    if (fpEl && fpEl.value) data.forma_pago = fpEl.value;
+    if (facEl && facEl.value.trim()) data.factura_anticipo = facEl.value.trim();
+    if (encEl && encEl.value.trim()) data.encargado = encEl.value.trim();
+
+    const ok = await runWorkflowOp('Guardando avances documentales...', async fb => {
+        if (f1El && f1El.files && f1El.files.length > 0) {
+            data.doc_firmado = await uploadFileToStorage(f1El.files[0], 'proyectos', { prospectId: p.id });
+        }
+        if (f2El && f2El.files && f2El.files.length > 0) {
+            data.doc_comprobante = await uploadFileToStorage(f2El.files[0], 'facturas', { prospectId: p.id });
+        }
+        return CrmCommercial.saveClosingDocuments(fb, { prospectId: p.id, data, dbSuffix: DB_SUFFIX });
+    });
+
+    if (ok) {
+        alert('Avances documentales guardados exitosamente.');
+        openDetail(p.id);
+    }
+}
+
+async function finalizeOpportunity(prospectId) {
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const fpEl = document.getElementById('closing-forma-pago');
+    const facEl = document.getElementById('closing-fac-anticipo');
+    const encEl = document.getElementById('closing-encargado');
+    const f1El = document.getElementById('closing-file-doc-firmado');
+    const f2El = document.getElementById('closing-file-doc-comprobante');
+
+    const c = (typeof clients !== 'undefined' && Array.isArray(clients)) ? (clients.find(x => x.id === p.clientId) || {}) : {};
+    const clientDocs = c.documentos || {};
+    const datos = p.datos || {};
+
+    const formaPago = (fpEl && fpEl.value) || p.forma_pago || datos.forma_pago;
+    const facAnticipo = (facEl && facEl.value.trim()) || p.factura_anticipo || datos.factura_anticipo;
+    const encargado = (encEl && encEl.value.trim()) || p.encargado || datos.encargado;
+
+    const hasNewF1 = f1El && f1El.files && f1El.files.length > 0;
+    const hasExistingF1 = !!(datos.doc_firmado || datos.doc_contrato || datos.doc_oferta_firmada);
+    const hasNewF2 = f2El && f2El.files && f2El.files.length > 0;
+    const hasExistingF2 = !!datos.doc_comprobante;
+
+    const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
+    const isAuthorized = datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada');
+
+    // Validación preventiva en cliente con reporte claro de requisitos faltantes
+    const missing = [];
+    if (!clientDocs.dui) missing.push("DUI del cliente (en Directorio de Clientes)");
+    if (isBigInstalacion && !isAuthorized && c.tipo === 'juridica') {
+        if (!clientDocs.escritura || !clientDocs.credencial || !clientDocs.nit || !clientDocs.nrc) {
+            missing.push("Documentos legales corporativos (Escritura, Credencial, NIT, NRC en Directorio)");
+        }
+    }
+    if (!formaPago) missing.push("Forma de pago pactada");
+    if (!facAnticipo) missing.push("Número de factura de anticipo");
+    if (p.tipo_proyecto === 'Fabricación e instalación' && !encargado) missing.push("Encargado de instalación");
+    if (!hasNewF1 && !hasExistingF1) {
+        missing.push(isBigInstalacion && !isAuthorized ? "Contrato firmado escaneado" : "Oferta firmada por cliente");
+    }
+    if (!hasNewF2 && !hasExistingF2) missing.push("Copia de factura o comprobante de anticipo");
+
+    if (missing.length > 0) {
+        return alert("❌ No se puede finalizar la oportunidad. Faltan los siguientes requisitos obligatorios:\n\n• " + missing.join("\n• "));
+    }
+
+    if (!confirm("¿Confirmas la finalización definitiva de esta oportunidad comercial?\n\n• Se marcará el estado como 'Ganado'\n• Se habilitará la transferencia a Proyectos y Cobros\n• Se generará la factura de anticipo")) {
+        return;
+    }
+
+    const data = {
+        forma_pago: formaPago,
+        factura_anticipo: facAnticipo
+    };
+    if (encargado) data.encargado = encargado;
+
+    const ok = await runWorkflowOp('Finalizando oportunidad y transfiriendo a Proyectos y Cobros...', async fb => {
+        if (hasNewF1) {
+            data.doc_firmado = await uploadFileToStorage(f1El.files[0], 'proyectos', { prospectId: p.id });
+        }
+        if (hasNewF2) {
+            data.doc_comprobante = await uploadFileToStorage(f2El.files[0], 'facturas', { prospectId: p.id });
+        }
+        return CrmCommercial.finalizeProspect(fb, { prospectId: p.id, data, dbSuffix: DB_SUFFIX });
+    });
+
+    if (ok) {
+        alert('🎉 ¡Oportunidad finalizada exitosamente! Se ha transferido a Proyectos y Cobros.');
+        openDetail(p.id);
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.renderClosingDocumentationPanel = renderClosingDocumentationPanel;
+    window.saveClosingProgress = saveClosingProgress;
+    window.finalizeOpportunity = finalizeOpportunity;
+    window.confirmAdvanceToCierre = confirmAdvanceToCierre;
 }
 
 function showLoseForm() {
@@ -5932,8 +6327,8 @@ function renderDashboard() {
         }
     }
 
-    // 6. CXC GLOBAL (Proyectos facturados)
-    const cxcUniverse = filterVal === 'all' ? prospects : filterRes.flujoGanadas;
+    // 6. CXC GLOBAL (Stock vivo de cuentas por cobrar hoy)
+    const cxcUniverse = (prospects && Array.isArray(prospects)) ? prospects.filter(p => p && p.eliminado !== true) : [];
     const cxcMetrics = typeof CrmDashboardCalc !== 'undefined'
         ? CrmDashboardCalc.calculateCxCMetrics(cxcUniverse)
         : { totalFacturado: 0, totalCobrado: 0, totalCxC: 0, pctCobrado: 0 };
@@ -6167,6 +6562,8 @@ function renderDashboardActiveTimes(activeList) {
                     return `<span class="badge-mgr-reason badge-mgr-followup" style="display: block; font-size: 0.78rem; color: #f87171; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">📞 <span style="background: rgba(239, 68, 68, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(239, 68, 68, 0.4);">Seguimiento</span> ${escapeHtmlDoc(m.descripcion)}</span>`;
                 } else if (m.tipo === 'solicitud_sin_contrato') {
                     return `<span class="badge-mgr-reason badge-mgr-contract" style="display: block; font-size: 0.78rem; color: var(--brand-gold); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">📄 <span style="background: rgba(245, 158, 11, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(245, 158, 11, 0.4);">Sin Contrato</span> ${escapeHtmlDoc(m.descripcion)}</span>`;
+                } else if (m.tipo === 'limite_etapa') {
+                    return `<span class="badge-mgr-reason badge-mgr-overdue" style="display: block; font-size: 0.78rem; color: #f87171; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">⏰ <span style="background: rgba(239, 68, 68, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(239, 68, 68, 0.4);">Límite Etapa</span> ${escapeHtmlDoc(m.descripcion)}</span>`;
                 }
                 return `<span style="display: block; font-size: 0.78rem; color: var(--danger); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">⚠️ ${escapeHtmlDoc(m.descripcion || m)}</span>`;
             }).join('')
@@ -6177,6 +6574,11 @@ function renderDashboardActiveTimes(activeList) {
         let historialSummary = '';
         if (item.intentosValidos > 0) {
             historialSummary += `<span style="font-size: 0.78rem; color: var(--text-secondary); display: block;">${item.intentosValidos} intentos sin respuesta</span>`;
+        }
+        if (item.hasStageLimitOverrun || (item.motivoObjects && item.motivoObjects.some(m => m.tipo === 'limite_etapa'))) {
+            const overrunObj = item.motivoObjects ? item.motivoObjects.find(m => m.tipo === 'limite_etapa') : null;
+            const atraso = overrunObj ? overrunObj.diasAtraso : (item.diasAtraso || item.dias_retraso);
+            historialSummary += `<span style="font-size: 0.78rem; color: #fca5a5; display: block;">Etapa: <strong>${item.etapa || '-'}</strong> | Atraso: <strong>+${atraso}d hábiles</strong></span>`;
         }
         if (item.justificacionVendedor) {
             historialSummary += `<span style="font-size: 0.75rem; color: var(--brand-gold); display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtmlDoc(item.justificacionVendedor)}">💬 Vendedor: ${escapeHtmlDoc(item.justificacionVendedor)}</span>`;

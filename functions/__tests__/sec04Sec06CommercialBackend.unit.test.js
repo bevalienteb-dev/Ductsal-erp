@@ -301,7 +301,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       });
 
       expect(res.status).toBe('advanced');
-      expect(res.estado).toBe('ganado');
+      expect(res.estado).toBe('activo');
 
       const c1 = db.data('clients_prod/C1');
       expect(c1.closingVendors).toContain(USERS.v1.id);
@@ -1167,10 +1167,15 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         facturas: []
       });
 
-      const res = await wfSvc.advanceStage({
+      await wfSvc.advanceStage({
         caller: caller('v1'),
         prospectId: 'P_CLS_V1',
         nextStage: 'cierre',
+        data: {}
+      });
+      const res = await wfSvc.finalizeProspect({
+        caller: caller('v1'),
+        prospectId: 'P_CLS_V1',
         data: {
           forma_pago: '70/30',
           factura_anticipo: 'CCF-001-V1',
@@ -1180,7 +1185,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         }
       });
 
-      expect(res.status).toBe('advanced');
+      expect(res.status).toBe('finalized');
       expect(res.estado).toBe('ganado');
 
       const pAfter = db.data('prospects_prod/P_CLS_V1');
@@ -1214,10 +1219,15 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         facturas: []
       });
 
-      const res = await wfSvc.advanceStage({
+      await wfSvc.advanceStage({
         caller: caller('ges'),
         prospectId: 'P_CLS_GES',
         nextStage: 'cierre',
+        data: {}
+      });
+      const res = await wfSvc.finalizeProspect({
+        caller: caller('ges'),
+        prospectId: 'P_CLS_GES',
         data: {
           forma_pago: '100% anticipado',
           factura_anticipo: 'CCF-GES-99',
@@ -1227,7 +1237,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         }
       });
 
-      expect(res.status).toBe('advanced');
+      expect(res.status).toBe('finalized');
       expect(res.estado).toBe('ganado');
 
       const pAfter = db.data('prospects_prod/P_CLS_GES');
@@ -1295,6 +1305,11 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         caller: caller('mgr'),
         prospectId: 'P_CLS_MGR',
         nextStage: 'cierre',
+        data: {}
+      });
+      await wfSvc.finalizeProspect({
+        caller: caller('mgr'),
+        prospectId: 'P_CLS_MGR',
         data: {
           forma_pago: '100% anticipado',
           factura_anticipo: 'CCF-MGR-01',
@@ -1342,10 +1357,15 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       expect(pMid.createdBy).toBe(USERS.v1.id);
 
       // V2 executes closure
-      const res = await wfSvc.advanceStage({
+      await wfSvc.advanceStage({
         caller: caller('v2'),
         prospectId: 'P_CLS_REASSIGN',
         nextStage: 'cierre',
+        data: {}
+      });
+      const res = await wfSvc.finalizeProspect({
+        caller: caller('v2'),
+        prospectId: 'P_CLS_REASSIGN',
         data: {
           forma_pago: '50/50',
           factura_anticipo: 'CCF-V2-FINAL',
@@ -1354,7 +1374,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         }
       });
 
-      expect(res.status).toBe('advanced');
+      expect(res.status).toBe('finalized');
       expect(res.estado).toBe('ganado');
 
       const pAfter = db.data('prospects_prod/P_CLS_REASSIGN');
@@ -1393,12 +1413,18 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         facturas: []
       });
 
-      // Missing client fields rejection
+      await wfSvc.advanceStage({
+        caller: caller('v1'),
+        prospectId: 'P_CLS_FAIL',
+        nextStage: 'cierre',
+        data: {}
+      });
+
+      // Missing client fields rejection upon finalization
       await expect(
-        wfSvc.advanceStage({
+        wfSvc.finalizeProspect({
           caller: caller('v1'),
           prospectId: 'P_CLS_FAIL',
-          nextStage: 'cierre',
           data: {
             forma_pago: '100% anticipado',
             factura_anticipo: 'FAC-FAIL',
@@ -1578,11 +1604,16 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         facturas: []
       });
 
-      // Close the prospect first
+      // Advance and finalize the prospect first
       await wfSvc.advanceStage({
         caller: caller('mgr'),
         prospectId: 'P_RACE',
         nextStage: 'cierre',
+        data: {}
+      });
+      await wfSvc.finalizeProspect({
+        caller: caller('mgr'),
+        prospectId: 'P_RACE',
         data: {
           forma_pago: '100% anticipado',
           factura_anticipo: 'FAC-RACE',
@@ -1631,10 +1662,15 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       });
 
       // Manager executes the administrative closing action
-      const res = await wfSvc.advanceStage({
+      await wfSvc.advanceStage({
         caller: caller('mgr'),
         prospectId: 'P_GES_CLOSE',
         nextStage: 'cierre',
+        data: {}
+      });
+      const res = await wfSvc.finalizeProspect({
+        caller: caller('mgr'),
+        prospectId: 'P_GES_CLOSE',
         data: {
           forma_pago: '100% anticipado',
           factura_anticipo: 'FAC-GES-1',
@@ -1643,7 +1679,7 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         }
       });
 
-      expect(res.status).toBe('advanced');
+      expect(res.status).toBe('finalized');
       const pAfter = db.data('prospects_prod/P_GES_CLOSE');
       expect(pAfter.vendedorId).toBe(USERS.ges.id); // Preserved as Gestor, NOT overwritten by Manager (mgr)
       expect(pAfter.postcierre_habilitado).toBe(true);

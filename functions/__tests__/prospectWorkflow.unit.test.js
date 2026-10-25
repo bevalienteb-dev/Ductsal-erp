@@ -35,8 +35,8 @@ describe('policy and construction', () => {
   test('every operation has an explicit policy entry; deleteProspect and reactivateProspect need the live manager check', () => {
     expect(Object.keys(POLICY).sort()).toEqual([
       'advanceStage', 'deleteChangeOrder', 'deleteInvoice', 'deletePayment', 'deleteProspect',
-      'editBasePrice', 'markLost', 'reactivateProspect', 'registerProposal', 'saveChangeOrder',
-      'saveInvoice', 'savePayment'
+      'editBasePrice', 'finalizeProspect', 'markLost', 'reactivateProspect', 'registerProposal', 'saveChangeOrder',
+      'saveClosingDocuments', 'saveInvoice', 'savePayment'
     ]);
     expect(POLICY.deleteProspect).toEqual(['manager-live']);
     expect(POLICY.reactivateProspect).toEqual(['manager-live']);

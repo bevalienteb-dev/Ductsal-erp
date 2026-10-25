@@ -531,8 +531,8 @@
             });
 
             const avgDays = countCompleted > 0 ? parseFloat((totalDays / countCompleted).toFixed(1)) : 0;
-            const limit = limits[stage] || 5;
-            const isOverLimit = countCompleted > 0 && avgDays > limit;
+            const limit = Object.prototype.hasOwnProperty.call(limits, stage) ? limits[stage] : 5;
+            const isOverLimit = countCompleted > 0 && limit !== null && limit !== undefined && avgDays > limit;
 
             results[stage] = {
                 stage,
@@ -575,9 +575,9 @@
                 }
             }
 
-            const limit = limits[etapa] || 5;
-            const isOverLimit = days > limit;
-            const isWarning = !isOverLimit && days >= Math.max(1, limit - 2);
+            const limit = Object.prototype.hasOwnProperty.call(limits, etapa) ? limits[etapa] : 5;
+            const isOverLimit = limit !== null && limit !== undefined && days > limit;
+            const isWarning = !isOverLimit && limit !== null && limit !== undefined && days >= Math.max(1, limit - 2);
 
             items.push({
                 id: p.id,
@@ -1218,7 +1218,7 @@
                 montoPresupuesto,
                 countSinProb,
                 montoSinProb,
-                limitDays: limits[st] || 5
+                limitDays: Object.prototype.hasOwnProperty.call(limits, st) ? limits[st] : 5
             };
         });
 

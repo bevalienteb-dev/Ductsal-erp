@@ -45,6 +45,15 @@
     // Zona horaria comercial canónica de El Salvador (UTC-6, sin horario de verano)
     const TIMEZONE_CANONICAL = 'America/El_Salvador';
 
+    // Matriz oficial única y centralizada de plazos máximos por etapa comercial (en días hábiles salvadoreños)
+    const STAGE_LIMITS_BUSINESS_DAYS = Object.freeze({
+        prospecto: 3,
+        levantamiento: 5,
+        cotizacion: 5,
+        negociacion: null, // Sin límite fijo de permanencia en etapa (controlada por cadencia)
+        cierre: 5
+    });
+
     // 1. Asuetos nacionales fijos fijados por Ley (Código de Trabajo art. 190, D.L. 208, D.L. 339)
     const NATIONAL_FIXED_HOLIDAYS = Object.freeze({
         '01-01': { name: 'Año Nuevo', legalBasis: 'Código de Trabajo art. 190', type: 'national' },
@@ -280,7 +289,10 @@
             return 0.0;
         }
         if (dayOfWeek === 6) {
-            // Sábado (media jornada)
+            // Sábado (media jornada; 0.0 si se excluye explícitamente en cómputos administrativos de etapas)
+            if (options && (options.excludeSaturday === true || options.excludeSaturdays === true || options.includeSaturday === false)) {
+                return 0.0;
+            }
             return 0.5;
         }
         // Lunes a viernes (jornada ordinaria completa)
@@ -515,6 +527,7 @@
         addWorkDays,
         addWorkDaysForExternalContact,
         addWorkDaysYMD,
-        getWorkTimeBetween
+        getWorkTimeBetween,
+        STAGE_LIMITS_BUSINESS_DAYS
     };
 });

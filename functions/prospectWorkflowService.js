@@ -48,6 +48,8 @@ const MAX_FILES = 20;
 // Roles allowed per operation, on top of "has access to the opportunity" (creator / assignee, or manager / gestor).
 const POLICY = {
   advanceStage: ['manager', 'gestor', 'vendedor'],
+  saveClosingDocuments: ['manager', 'gestor', 'vendedor'],
+  finalizeProspect: ['manager', 'gestor', 'vendedor'],
   markLost: ['manager', 'gestor', 'vendedor'],
   registerProposal: ['manager', 'gestor', 'vendedor'],
   // Postcierre (Proyectos y cobros): only manager and gestor. Vendedor is prohibited.
@@ -91,9 +93,42 @@ function optDate(v, label) {
 }
 const hasDoc = d => (Array.isArray(d) ? d.length > 0 : !!d);
 
+function fallbackHasEnteredPostclosing(p) {
+  if (!p || typeof p !== 'object') return false;
+  if (p.postcierre_habilitado === false) return false;
+  if (p.estado === 'activo' && p.postcierre_habilitado !== true) return false;
+  if (p.postcierre_habilitado === true) return true;
+  if (p.estado === 'perdido') return false;
+  const hasFacturas = Array.isArray(p.facturas) && p.facturas.some(f => {
+    if (!f || typeof f !== 'object') return false;
+    const hasNumero = typeof f.numero === 'string' && f.numero.trim().length > 0;
+    const numMonto = typeof f.monto === 'number' ? f.monto : parseFloat(f.monto);
+    const hasMonto = typeof numMonto === 'number' && !isNaN(numMonto) && numMonto > 0;
+    return hasNumero && hasMonto;
+  });
+  if (hasFacturas) return true;
+  const hasCloseDate = (typeof p.fecha_cierre === 'string' && p.fecha_cierre.trim().length > 0)
+    || (typeof p.fecha_postcierre === 'string' && p.fecha_postcierre.trim().length > 0)
+    || !!(p.stage_timestamps && typeof p.stage_timestamps === 'object' && p.stage_timestamps.cierre);
+  if (!hasCloseDate) return false;
+  const datos = (p.datos && typeof p.datos === 'object') ? p.datos : null;
+  const hasDoc = d => (Array.isArray(d) ? d.length > 0 : !!d);
+  const hasContractOrSignedDoc = !!p.contrato_archivo
+    || hasDoc(p.doc_firmado)
+    || (!!datos && (hasDoc(datos.doc_contrato) || hasDoc(datos.doc_firmado)))
+    || p.autorizado_sin_contrato === true
+    || (!!datos && datos.autorizado_sin_contrato === true);
+  const hasAdvanceReceipt = hasDoc(p.doc_comprobante)
+    || (!!datos && hasDoc(datos.doc_comprobante));
+  const hasClosingEvidence = !!p.contrato_archivo
+    || (hasContractOrSignedDoc && hasAdvanceReceipt);
+  if (hasClosingEvidence) return true;
+  return false;
+}
+
 function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = ['https://firebasestorage.googleapis.com/v0/b/'] }) {
   if (!kit || typeof kit.col !== 'function') throw new Error('kit is required');
-  const { col, iso, logEntry, logsOf, auditEntry, auditRef, requireProspectAccess, requireManager, hasEnteredPostclosing = (p => p && (p.postcierre_habilitado === true || !!p.fecha_cierre || (p.stage_timestamps && !!p.stage_timestamps.cierre) || (Array.isArray(p.facturas) && p.facturas.length > 0))) } = kit;
+  const { col, iso, logEntry, logsOf, auditEntry, auditRef, requireProspectAccess, requireManager, hasEnteredPostclosing = fallbackHasEnteredPostclosing } = kit;
 
   // ---------- helpers ----------
   // A file reference is what uploadFileToStorage returns: { name, url }. The server cannot see the object, but it can
@@ -171,7 +206,10 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   const sumPagos = f => (Array.isArray(f.pagos) ? f.pagos : []).reduce((a, x) => a + (parseFloat(x.monto) || 0), 0);
 
   function requirePostclosing(p) {
-    if (!hasEnteredPostclosing(p)) throw precondition('Esta operación solo está disponible en proyectos que hayan ingresado válidamente a Proyectos y cobros');
+    if (!p || typeof p !== 'object') throw precondition('Oportunidad inválida');
+    if (!hasEnteredPostclosing(p)) {
+      throw precondition('Esta operación solo está disponible en proyectos que hayan ingresado válidamente a Proyectos y cobros');
+    }
   }
   function uniqueId(taken, now) {
     let id = Number(now);
@@ -293,34 +331,31 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           logMsg += ` [Entrega de Oferta Registrada: ${ymdDisplay}. Primer contacto: ${nextProxima.fecha}]`;
         }
       } else {
-        // cierre: the client record must be complete, the DUI document must exist and the contract rules apply.
-        const missing = missingClientFields(client);
-        if (missing.length > 0) throw precondition(`El cliente tiene información incompleta para cerrar la venta. Faltan: ${missing.join(', ')}`);
-        const docs = client.documentos && typeof client.documentos === 'object' ? client.documentos : {};
-        if (!docs.dui) throw precondition('Falta el DUI (del representante o cliente) en el Directorio de Clientes: súbelo antes de cerrar el proyecto');
-        const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000;
-        // The exception is the manager's decision STORED on the opportunity (setNoContractAuthorizationAdmin): the request
-        // cannot claim it.
-        const bypass = isBig && datos.autorizado_sin_contrato === true;
-        if (isBig && !bypass && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
-          throw precondition('Para cerrar con contrato hay que adjuntar antes los documentos legales de la empresa (Escritura, Credencial, NIT, NRC)');
+        // cierre: La etapa de Cierre representa una oportunidad aceptada pendiente de documentación.
+        // Se registra fecha de inicio de cierre y plazo límite de 5 días hábiles.
+        // La oportunidad se mantiene abierta (estado = 'activo'). No se marca como ganado ni se crea factura de anticipo.
+        const workCal = (typeof CrmWorkCalendar !== 'undefined' && CrmWorkCalendar)
+          ? CrmWorkCalendar
+          : (CrmFollowUpCalc && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null);
+        let deadlineYMD = null;
+        if (workCal && typeof workCal.addWorkDays === 'function') {
+          const limitDate = workCal.addWorkDays(at, 5, { excludeSaturday: true });
+          deadlineYMD = (typeof workCal.getCommercialYMD === 'function') ? workCal.getCommercialYMD(limitDate) : limitDate.toISOString().slice(0, 10);
         }
-        if (p.tipo_proyecto === 'Fabricación e instalación') {
-          if (!input.encargado) throw bad('Debe asignar un Encargado de Instalación');
-          patch.encargado = input.encargado; logMsg += ` (Encargado: ${input.encargado})`;
-        }
-        if (bypass) logMsg += ` (Autorizado sin contrato por gerente: ${datos.autorizado_por || 'Gerente'})`;
-        if (isBig && !bypass) datos.doc_contrato = input.doc_firmado; else datos.doc_oferta_firmada = input.doc_firmado;
-        datos.doc_comprobante = input.doc_comprobante;
 
-        const subtotal = Number(p.precio_cotizado) || 0;
-        const totalConIVA = isExport(client) ? subtotal : subtotal * IVA;
-        const advanceAmount = round2(totalConIVA * FORMAS_PAGO[input.forma_pago]); // cents: the page stored e.g. 7909.999999999998
-        patch.forma_pago = input.forma_pago;
-        patch.estado = 'ganado'; patch.probabilidad = 100; patch.fecha_cierre = at;
-        patch.postcierre_habilitado = true; patch.fecha_postcierre = at;
-        patch.facturas = [{ id: uniqueId([], Date.now()), numero: input.factura_anticipo, monto: advanceAmount, doc_factura: input.doc_comprobante, pagos: [], fecha: at }];
-        logMsg = `¡VENTA CERRADA! Proyecto ${p.codigo || ''} generado con factura PENDIENTE ${input.factura_anticipo} por ${fmtMoney(advanceAmount)}`;
+        patch.fecha_inicio_cierre = at;
+        patch.fecha_limite_cierre = deadlineYMD;
+        patch.estado = 'activo';
+        patch.postcierre_habilitado = false;
+
+        // Guardar datos documentales preliminares si fueron enviados
+        if (input.forma_pago) patch.forma_pago = input.forma_pago;
+        if (input.encargado) patch.encargado = input.encargado;
+        if (input.factura_anticipo) datos.factura_anticipo = input.factura_anticipo;
+        if (input.doc_firmado) datos.doc_firmado = input.doc_firmado;
+        if (input.doc_comprobante) datos.doc_comprobante = input.doc_comprobante;
+
+        logMsg = `Avanzó a CIERRE. Oportunidad en proceso pendiente de documentación reglamentaria (plazo: 5 días hábiles, límite: ${deadlineYMD || '5 días'}).`;
       }
 
       if (nextStage === 'cierre' && p.clientId) {
@@ -349,15 +384,202 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         stage_transitions: transitions.concat([transitionEntry]),
         logs: withLog(p, caller, logMsg)
       });
-      addAudit(tx, caller, nextStage === 'cierre' ? 'closeSale' : 'advanceStage', prospectId, {
+      addAudit(tx, caller, 'advanceStage', prospectId, {
         from: p.etapa,
         to: nextStage,
         ...(nextStage === 'negociacion' ? {
           fecha_entrega_oferta: patch.fecha_entrega_oferta || p.fecha_entrega_oferta,
           primer_contacto: patch.seguimiento && patch.seguimiento.proxima_accion && patch.seguimiento.proxima_accion.fecha
+        } : {}),
+        ...(nextStage === 'cierre' ? {
+          fecha_inicio_cierre: at,
+          fecha_limite_cierre: patch.fecha_limite_cierre
         } : {})
       });
       return { status: 'advanced', etapa: nextStage, estado: patch.estado || p.estado };
+    });
+  }
+
+  // =====================================================================================================
+  // Save Closing Documents (sin finalizar oportunidad)
+  // =====================================================================================================
+  async function saveClosingDocuments({ caller, prospectId, data = {} }) {
+    authorize(caller, 'saveClosingDocuments');
+    reqDocId(prospectId, 'prospectId');
+
+    return db.runTransaction(async tx => {
+      const { ref, p } = await loadProspect(tx, caller, prospectId);
+      if (p.etapa !== 'cierre') throw precondition('Solo se pueden guardar avances documentales en etapa de Cierre');
+      if (p.estado !== 'activo') throw precondition('Solo una oportunidad en Cierre activo puede modificar documentos');
+
+      const datos = (p.datos && typeof p.datos === 'object') ? { ...p.datos } : {};
+      const patch = {};
+
+      if (data.forma_pago && Object.prototype.hasOwnProperty.call(FORMAS_PAGO, data.forma_pago)) {
+        patch.forma_pago = data.forma_pago;
+      }
+      if (data.encargado) {
+        patch.encargado = optString(data.encargado, 'El encargado', 120);
+      }
+      if (data.factura_anticipo) {
+        datos.factura_anticipo = reqString(data.factura_anticipo, 'El número de factura de anticipo', 60);
+      }
+      if (data.doc_firmado) {
+        datos.doc_firmado = fileRef(data.doc_firmado, 'Contrato u oferta firmada');
+      }
+      if (data.doc_comprobante) {
+        datos.doc_comprobante = fileRef(data.doc_comprobante, 'Factura o comprobante de anticipo');
+      }
+      if (data.notas_cierre) {
+        datos.notas_cierre = optString(data.notas_cierre, 'Notas de cierre', 500);
+      }
+
+      const logMsg = `Avance documental guardado en Cierre por ${caller.name || 'Comercial'}.`;
+      tx.update(ref, {
+        ...patch,
+        datos,
+        logs: withLog(p, caller, logMsg)
+      });
+
+      addAudit(tx, caller, 'saveClosingDocuments', prospectId, {
+        hasDocFirmado: !!datos.doc_firmado,
+        hasDocComprobante: !!datos.doc_comprobante,
+        forma_pago: patch.forma_pago || p.forma_pago
+      });
+
+      return { status: 'saved', prospectId };
+    });
+  }
+
+  // =====================================================================================================
+  // Finalize Prospect (cierre definitivo y pase a ganado / proyectos y cobros)
+  // =====================================================================================================
+  async function finalizeProspect({ caller, prospectId, data = {}, opId }) {
+    authorize(caller, 'finalizeProspect');
+    reqDocId(prospectId, 'prospectId');
+
+    return db.runTransaction(async tx => {
+      const { ref, p } = await loadProspect(tx, caller, prospectId);
+      if (p.etapa !== 'cierre') throw precondition('Solo una oportunidad en etapa de Cierre puede finalizarse');
+      if (p.estado === 'ganado') {
+        return { status: 'already_finalized', etapa: 'cierre', estado: 'ganado', prospectId };
+      }
+      if (p.estado !== 'activo') throw precondition('Solo una oportunidad activa puede finalizarse');
+
+      let client = null;
+      if (p.clientId) {
+        const cSnap = await tx.get(col('clients').doc(p.clientId));
+        client = cSnap.data() || {};
+      }
+
+      const missing = missingClientFields(client || {});
+      if (missing.length > 0) throw precondition(`El cliente tiene información incompleta para cerrar la venta. Faltan: ${missing.join(', ')}`);
+
+      const docs = (client && client.documentos && typeof client.documentos === 'object') ? client.documentos : {};
+      if (!docs.dui) throw precondition('Falta el DUI (del representante o cliente) en el Directorio de Clientes: súbelo antes de cerrar el proyecto');
+
+      const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000;
+      const datos = (p.datos && typeof p.datos === 'object') ? { ...p.datos } : {};
+      const bypass = isBig && (datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada'));
+
+      if (isBig && !bypass && client && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
+        throw precondition('Para cerrar con contrato hay que adjuntar antes los documentos legales de la empresa (Escritura, Credencial, NIT, NRC)');
+      }
+
+      const input = data || {};
+      const encargado = input.encargado || p.encargado || datos.encargado;
+      if (p.tipo_proyecto === 'Fabricación e instalación' && !encargado) {
+        throw bad('Debe asignar un Encargado de Instalación');
+      }
+
+      const docFirmado = (input.doc_firmado ? fileRef(input.doc_firmado, 'Contrato u oferta firmada') : null)
+        || (isBig && !bypass ? (datos.doc_contrato || datos.doc_firmado) : (datos.doc_oferta_firmada || datos.doc_firmado));
+      if (!docFirmado) {
+        throw precondition(isBig && !bypass ? 'Debe adjuntar el contrato firmado para finalizar' : 'Debe adjuntar la oferta firmada para finalizar');
+      }
+
+      const docComprobante = (input.doc_comprobante ? fileRef(input.doc_comprobante, 'Factura o comprobante de anticipo') : null)
+        || datos.doc_comprobante;
+      if (!docComprobante) {
+        throw precondition('Debe adjuntar el comprobante o factura de anticipo para finalizar');
+      }
+
+      const facturaAnticipo = (input.factura_anticipo ? reqString(input.factura_anticipo, 'El número de factura de anticipo', 60) : null)
+        || datos.factura_anticipo || p.factura_anticipo;
+      if (!facturaAnticipo) {
+        throw bad('El número de factura de anticipo es obligatorio');
+      }
+
+      const formaPago = input.forma_pago || p.forma_pago || datos.forma_pago;
+      if (!formaPago || !Object.prototype.hasOwnProperty.call(FORMAS_PAGO, formaPago)) {
+        throw bad('Forma de pago inválida');
+      }
+
+      const at = iso();
+      const patch = {};
+
+      if (isBig && !bypass) datos.doc_contrato = docFirmado; else datos.doc_oferta_firmada = docFirmado;
+      datos.doc_comprobante = docComprobante;
+      datos.factura_anticipo = facturaAnticipo;
+
+      if (encargado) patch.encargado = encargado;
+      patch.forma_pago = formaPago;
+      patch.estado = 'ganado';
+      patch.probabilidad = 100;
+      patch.fecha_cierre = at;
+      patch.fecha_finalizacion = at;
+      patch.postcierre_habilitado = true;
+      patch.fecha_postcierre = at;
+
+      const subtotal = Number(p.precio_cotizado) || 0;
+      const totalConIVA = isExport(client) ? subtotal : subtotal * IVA;
+      const advanceAmount = round2(totalConIVA * FORMAS_PAGO[formaPago]);
+
+      // Factura de anticipo generada transaccional e idempotentemente
+      const facturas = Array.isArray(p.facturas) ? p.facturas.slice() : [];
+      const alreadyHasAdvance = facturas.some(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
+      if (!alreadyHasAdvance) {
+        facturas.push({
+          id: uniqueId([], Date.now()),
+          numero: facturaAnticipo,
+          monto: advanceAmount,
+          doc_factura: docComprobante,
+          pagos: [],
+          fecha: at,
+          opId: opId || null
+        });
+      }
+      patch.facturas = facturas;
+
+      let logMsg = `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros con factura ${facturaAnticipo} por ${fmtMoney(advanceAmount)}`;
+      if (bypass) logMsg += ` (Autorizado sin contrato por gerente: ${datos.autorizado_por || 'Gerente'})`;
+
+      const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
+      const transitionEntry = {
+        from: 'cierre',
+        to: 'cierre_finalizado',
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role,
+        estadoFinal: 'ganado'
+      };
+
+      tx.update(ref, {
+        ...patch,
+        datos,
+        stage_transitions: transitions.concat([transitionEntry]),
+        logs: withLog(p, caller, logMsg)
+      });
+
+      addAudit(tx, caller, 'finalizeProspect', prospectId, {
+        forma_pago: formaPago,
+        factura_anticipo: facturaAnticipo,
+        monto_anticipo: advanceAmount,
+        estado: 'ganado'
+      });
+
+      return { status: 'finalized', etapa: 'cierre', estado: 'ganado', facturaAnticipo, montoAnticipo: advanceAmount };
     });
   }
 
@@ -382,14 +604,21 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         doc_costos: fileList(d.doc_costos, 'Cuadro de costos')
       };
     }
-    if (!Object.prototype.hasOwnProperty.call(FORMAS_PAGO, d.forma_pago)) throw bad('Forma de pago inválida');
-    return {
-      forma_pago: d.forma_pago,
-      factura_anticipo: reqString(d.factura_anticipo, 'El número de factura de anticipo', 60),
-      encargado: optString(d.encargado, 'El encargado', 120),
-      doc_firmado: fileRef(d.doc_firmado, 'Contrato u oferta firmada'),
-      doc_comprobante: fileRef(d.doc_comprobante, 'Factura o comprobante de anticipo')
-    };
+    if (stage === 'cierre') {
+      let formaPago = null;
+      if (d.forma_pago) {
+        if (!Object.prototype.hasOwnProperty.call(FORMAS_PAGO, d.forma_pago)) throw bad('Forma de pago inválida');
+        formaPago = d.forma_pago;
+      }
+      return {
+        forma_pago: formaPago,
+        factura_anticipo: optString(d.factura_anticipo, 'El número de factura de anticipo', 60),
+        encargado: optString(d.encargado, 'El encargado', 120),
+        doc_firmado: d.doc_firmado ? fileRef(d.doc_firmado, 'Contrato u oferta firmada') : null,
+        doc_comprobante: d.doc_comprobante ? fileRef(d.doc_comprobante, 'Factura o comprobante de anticipo') : null
+      };
+    }
+    throw bad('Etapa no reconocida');
   }
 
   // Same list the page shows before allowing a closing.
@@ -552,6 +781,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     reqDocId(prospectId, 'prospectId'); reqDocId(orderId, 'orderId');
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
+      requirePostclosing(p);
       const client = await loadClient(tx, p);
       const orders = Array.isArray(p.ordenes_cambio) ? p.ordenes_cambio : [];
       const i = orders.findIndex(o => o && o.id === orderId);
@@ -876,7 +1106,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  return { advanceStage, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
+  return { advanceStage, saveClosingDocuments, finalizeProspect, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
 }
 
-module.exports = { createProspectWorkflowService, POLICY, STAGES, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };
+module.exports = { createProspectWorkflowService, hasEnteredPostclosing: fallbackHasEnteredPostclosing, POLICY, STAGES, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };

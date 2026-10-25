@@ -162,6 +162,15 @@
         return call(fb, 'advanceProspectStageAdmin', { prospectId, nextStage, data, dbSuffix });
     }
 
+    function saveClosingDocuments(fb, { prospectId, data, dbSuffix }) {
+        return call(fb, 'saveClosingDocumentsAdmin', { prospectId, data, dbSuffix });
+    }
+
+    function finalizeProspect(fb, { prospectId, data, dbSuffix }) {
+        const key = ['finalizeProspect', dbSuffix, prospectId].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('finalizeProspectAdmin')({ prospectId, data, opId, dbSuffix }));
+    }
+
     function markLost(fb, { prospectId, reason, dbSuffix }) {
         return call(fb, 'markProspectLostAdmin', { prospectId, reason, dbSuffix });
     }
@@ -255,6 +264,8 @@
         updateSettings,
         deleteClient,
         advanceStage,
+        saveClosingDocuments,
+        finalizeProspect,
         markLost,
         registerProposal,
         editBasePrice,
