@@ -967,16 +967,25 @@
                             </button>
                         </div>
 
-                        <!-- Notas Operativas -->
+                        <!-- Bitácora y Notas Internas -->
                         <div class="operational-logs-box mt-4">
-                            <h3 style="margin: 0 0 0.75rem 0; font-size: 1rem; color: white; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">Notas Operativas</h3>
+                            <h3 style="margin: 0 0 0.75rem 0; font-size: 1rem; color: white; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">Bitácora y Notas Internas</h3>
                             <div class="logs-container" id="logs-container">
                                 <!-- Populated by JS -->
                             </div>
 
                             <div class="add-log-box mt-2">
-                                <textarea id="new-log-text" placeholder="Escribe una nota operativa o seguimiento..."></textarea>
-                                <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota</button>
+                                <div id="log-commercial-intent-banner" style="display:none; margin-bottom:8px; padding:10px 12px; background:rgba(59, 130, 246, 0.15); border:1px solid #3b82f6; border-radius:6px; font-size:0.83rem; color:#bfdbfe; line-height:1.4;">
+                                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                                        <span>💡 <strong>¿Registraste un contacto con el cliente?</strong> Las notas internas no modifican la agenda comercial. Podés registrarlo como gestión comercial:</span>
+                                        <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.75rem; background:transparent; border:none; color:var(--text-secondary); cursor:pointer;" onclick="dismissCommercialIntentBanner()" title="Descartar sugerencia">✕</button>
+                                    </div>
+                                    <div style="margin-top:6px; display:flex; gap:8px;">
+                                        <button type="button" class="btn-primary" style="padding:3px 10px; font-size:0.75rem; font-weight:600;" onclick="transferTextToFollowUpModal()">📞 Registrar Gestión</button>
+                                    </div>
+                                </div>
+                                <textarea id="new-log-text" placeholder="Escribe una nota interna o apunte técnico (no modifica la agenda comercial)..." oninput="onLogTextInput(this)"></textarea>
+                                <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota Interna</button>
                             </div>
                         </div>
                     </div>

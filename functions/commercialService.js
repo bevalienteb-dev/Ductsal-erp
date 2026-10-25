@@ -353,6 +353,9 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const at = logs.findIndex(l => l && l.date === entryDate && String(l.text).trim() === entryText);
       if (at === -1) return { status: 'absent' }; // already removed (retry) or never existed: nothing to do
       const entry = logs[at];
+      if (entry.gestionId || entry.tipo === 'gestion_comercial' || entry.tipo === 'gestion_anulada' || (typeof entry.text === 'string' && (entry.text.includes('[GESTIÓN COMERCIAL]') || entry.text.includes('[GESTIÓN ANULADA]')))) {
+        throw new ServiceError('failed-precondition', 'Las notas vinculadas a gestiones comerciales estructuradas no se pueden eliminar desde la bitácora. Requieren anulación gerencial.');
+      }
       if (entry.auto === true || entry.auto === 'true') throw new ServiceError('permission-denied', 'Las entradas automáticas del historial no se pueden eliminar');
       if (caller.role !== 'manager' && entry.by !== caller.cid) throw new ServiceError('permission-denied', 'Solo puedes eliminar las notas que tú escribiste');
       const next = logs.slice(0, at).concat(logs.slice(at + 1));
@@ -433,10 +436,54 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const seguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
       const historial = Array.isArray(seguimiento.historial_gestiones) ? seguimiento.historial_gestiones : [];
 
+      const currentPayloadHash = stableHash({
+        usuarioId: caller.cid,
+        canal,
+        resultado,
+        detalle,
+        proxima_accion: proximaAccion ? {
+          fecha: proximaAccion.fecha,
+          tipo: proximaAccion.tipo || 'llamada',
+          descripcion: proximaAccion.descripcion || ''
+        } : null,
+        justificacion_continuidad: justificacionContinuidad || ''
+      });
+
       // Idempotency: retry with same opId
       const prior = historial.find(g => g && g.opId === opId);
       if (prior) {
-        return { status: 'recorded', replay: true, seguimiento: p.seguimiento };
+        // Validación completa de coincidencia con la operación original (H-ID-01)
+        const priorProx = prior.proxima_accion || null;
+        const proxMatches = (() => {
+          if (!priorProx && !proximaAccion) return true;
+          if (!priorProx || !proximaAccion) return false;
+          return priorProx.fecha === proximaAccion.fecha &&
+            (priorProx.tipo || 'llamada') === (proximaAccion.tipo || 'llamada') &&
+            (priorProx.descripcion || '') === (proximaAccion.descripcion || '');
+        })();
+
+        const matches = (
+          (!prior.usuarioId || prior.usuarioId === caller.cid) &&
+          prior.canal === canal &&
+          prior.resultado === resultado &&
+          prior.detalle === detalle &&
+          proxMatches &&
+          (!prior.justificacion_continuidad || prior.justificacion_continuidad === justificacionContinuidad) &&
+          (!prior.payloadHash || prior.payloadHash === currentPayloadHash)
+        );
+
+        if (!matches) {
+          throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+        }
+
+        const priorLog = logsOf(p).find(l => l && (l.opId === opId || (prior.id && l.gestionId === prior.id)));
+        return { status: 'recorded', replay: true, seguimiento: p.seguimiento, logEntry: priorLog || null, entry: priorLog || null };
+      }
+
+      // Evitar que el opId se reutilice si ya fue usado en una nota de bitácora
+      const priorLogOther = logsOf(p).find(l => l && l.opId === opId);
+      if (priorLogOther) {
+        throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
       }
 
       const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
@@ -484,8 +531,9 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         }
       }
 
+      const gestionId = `gest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const gestionEntry = {
-        id: `gest_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        id: gestionId,
         fecha: at,
         usuarioId: caller.cid,
         usuarioNombre: caller.name || 'Comercial',
@@ -493,10 +541,12 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         canal,
         resultado,
         detalle,
+        justificacion_continuidad: justificacionContinuidad || null,
         es_contacto_valido: esContactoValido,
         intento_numero: esContactoValido && resultado === 'sin_respuesta' ? newAttempts : 0,
         proxima_accion: proximaAccion,
-        opId
+        opId,
+        payloadHash: currentPayloadHash
       };
 
       const nextHistorial = historial.concat([gestionEntry]);
@@ -535,7 +585,12 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const resLbl = FOLLOWUP_RESULT_LABELS[resultado] || resultado;
       const proxText = proximaAccion && proximaAccion.fecha ? ` | Próx: ${proximaAccion.fecha}${proximaAccion.descripcion ? ' (' + proximaAccion.descripcion + ')' : ''}` : '';
       const logText = `[GESTIÓN COMERCIAL] ${canalLbl} -> ${resLbl}${proxText}. Detalle: ${detalle}`;
-      const nextLogs = logsOf(p).concat([logEntry(caller, logText, { auto: false, opId })]);
+      const noteEntry = {
+        ...logEntry(caller, logText, { auto: true, opId }),
+        tipo: 'gestion_comercial',
+        gestionId: gestionEntry.id
+      };
+      const nextLogs = logsOf(p).concat([noteEntry]);
 
       tx.update(ref, {
         seguimiento: nextSeguimiento,
@@ -548,10 +603,11 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         intentos_fallidos: newAttempts,
         alerta_gerencial: alertaGerencial,
         estado_cadencia: estadoCadencia,
-        es_contacto_valido: esContactoValido
+        es_contacto_valido: esContactoValido,
+        gestionId: gestionEntry.id
       }));
 
-      return { status: 'recorded', seguimiento: nextSeguimiento };
+      return { status: 'recorded', seguimiento: nextSeguimiento, logEntry: noteEntry, entry: noteEntry };
     });
   }
 
@@ -725,6 +781,189 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         seguimiento: nextSeguimiento,
         estado: patch.estado || p.estado
       };
+    });
+  }
+
+  // ---------- voiding / annulling a mistakenly recorded follow-up (manager only) ----------
+  async function voidFollowUp({ caller, prospectId, gestionId, motivo, opId }) {
+    await requireManager(caller, 'anular gestiones comerciales');
+    reqDocId(prospectId, 'prospectId');
+    const gid = reqString(gestionId, 'El identificador de la gestión', 100);
+    reqOpId(opId);
+    const why = reqString(motivo, 'El motivo de anulación', 1000);
+    if (why.length < 5) {
+      throw bad('Es obligatorio indicar el motivo de anulación (mínimo 5 caracteres)');
+    }
+
+    return db.runTransaction(async tx => {
+      const ref = col('prospects').doc(prospectId);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
+      const p = snap.data() || {};
+      requireNotDeleted(p);
+
+      const seguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+      const historial = Array.isArray(seguimiento.historial_gestiones) ? seguimiento.historial_gestiones : [];
+
+      const idx = historial.findIndex(g => g && (g.id === gid || g.opId === gid));
+      if (idx === -1) throw new ServiceError('not-found', 'Gestión no encontrada en el historial');
+
+      const targetGestion = historial[idx];
+
+      // Idempotency: verificar si el opId ya fue utilizado en la anulación
+      const priorVoidByOp = historial.find(g => g && g.voidOpId === opId);
+      if (priorVoidByOp) {
+        if (priorVoidByOp.id !== targetGestion.id || priorVoidByOp.anuladoPor !== caller.cid || priorVoidByOp.motivoAnulacion !== why) {
+          throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+        }
+        const priorVoidLog = logsOf(p).find(l => l && (l.tipo === 'gestion_anulada' && l.gestionIdVoided === targetGestion.id));
+        return { status: 'already_voided', replay: true, seguimiento: p.seguimiento, logEntry: priorVoidLog || null, entry: priorVoidLog || null };
+      }
+
+      const priorGestionByOp = historial.find(g => g && g.opId === opId);
+      if (priorGestionByOp) {
+        throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+      }
+
+      const priorLogOther = logsOf(p).find(l => l && l.opId === opId && l.gestionIdVoided !== targetGestion.id);
+      if (priorLogOther) {
+        throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+      }
+
+      if (targetGestion.anulada === true) {
+        const priorVoidLog = logsOf(p).find(l => l && (l.tipo === 'gestion_anulada' && l.gestionIdVoided === targetGestion.id));
+        return { status: 'already_voided', seguimiento: p.seguimiento, logEntry: priorVoidLog || null, entry: priorVoidLog || null };
+      }
+
+      const at = iso();
+
+      const updatedGestion = {
+        ...targetGestion,
+        anulada: true,
+        fechaAnulacion: at,
+        anuladoPor: caller.cid,
+        anuladoPorNombre: caller.name || 'Gerencia',
+        motivoAnulacion: why,
+        voidOpId: opId
+      };
+
+      const nextHistorial = historial.slice(0, idx).concat([updatedGestion]).concat(historial.slice(idx + 1));
+
+      // Recompute active state from non-annulled valid gestiones
+      const activeValidGestiones = nextHistorial.filter(g => g && !g.anulada && g.es_contacto_valido);
+
+      const curCadence = (seguimiento.cadencia && typeof seguimiento.cadencia === 'object') ? seguimiento.cadencia : {};
+      const prevTotal = Number(curCadence.intentos_fallidos || curCadence.intentos_validos_sin_respuesta) || 0;
+      const wasFailedAttempt = targetGestion.es_contacto_valido && targetGestion.resultado === 'sin_respuesta';
+
+      let activeAttempts = 0;
+      if (activeValidGestiones.length > 0) {
+        for (let i = activeValidGestiones.length - 1; i >= 0; i--) {
+          const g = activeValidGestiones[i];
+          if (g.resultado === 'sin_respuesta') {
+            activeAttempts++;
+          } else {
+            break;
+          }
+        }
+      }
+
+      // Si el historial estructurado no contiene intentos históricos heredados, preservar el decremento seguro
+      if (wasFailedAttempt && (activeValidGestiones.length < (prevTotal - 1) || activeAttempts < (prevTotal - 1))) {
+        activeAttempts = Math.max(activeAttempts, prevTotal - 1);
+      }
+
+      let estadoCadencia = 'normal';
+      let alertaGerencial = false;
+      let fechaEscalacion = null;
+
+      if (activeAttempts >= 5) {
+        alertaGerencial = true;
+        estadoCadencia = 'escalado_gerencia';
+        let c = 0;
+        for (let i = 0; i < activeValidGestiones.length; i++) {
+          if (activeValidGestiones[i].resultado === 'sin_respuesta') {
+            c++;
+            if (c === 5) {
+              fechaEscalacion = activeValidGestiones[i].fecha;
+              break;
+            }
+          }
+        }
+      } else if (activeAttempts >= 3) {
+        estadoCadencia = 'requiere_decision_vendedor';
+      }
+
+      const nextCadence = {
+        ...curCadence,
+        intentos_fallidos: activeAttempts,
+        intentos_validos_sin_respuesta: activeAttempts,
+        estado_cadencia: estadoCadencia,
+        alerta_gerencial: alertaGerencial,
+        fecha_escalacion: fechaEscalacion
+      };
+
+      const lastActiveValid = activeValidGestiones.length > 0 ? activeValidGestiones[activeValidGestiones.length - 1] : null;
+      const nextUltimoContacto = lastActiveValid ? {
+        fecha: lastActiveValid.fecha,
+        canal: lastActiveValid.canal,
+        resultado: lastActiveValid.resultado,
+        detalle: lastActiveValid.detalle,
+        usuarioId: lastActiveValid.usuarioId,
+        usuarioNombre: lastActiveValid.usuarioNombre
+      } : null;
+
+      let nextProximaAccion = null;
+      if (lastActiveValid && lastActiveValid.proxima_accion && lastActiveValid.proxima_accion.fecha) {
+        nextProximaAccion = lastActiveValid.proxima_accion;
+      } else if (p.fecha_entrega_oferta && curCadence.tipo_cadencia) {
+        const dias1er = curCadence.tipo_cadencia === 'urgente' ? 3 : 5;
+        let primerYMD = '';
+        if (CrmFollowUpCalc && typeof CrmFollowUpCalc.addBusinessDaysForExternalContact === 'function') {
+          const dt = CrmFollowUpCalc.addBusinessDaysForExternalContact(p.fecha_entrega_oferta, dias1er);
+          primerYMD = CrmFollowUpCalc.formatDateYMD(dt);
+        } else {
+          primerYMD = p.fecha_entrega_oferta.slice(0, 10);
+        }
+        nextProximaAccion = {
+          fecha: primerYMD,
+          tipo: 'llamada',
+          descripcion: `Primer seguimiento comercial post-oferta (${dias1er} días hábiles)`
+        };
+      }
+
+      const nextSeguimiento = {
+        ...seguimiento,
+        ultimo_contacto: nextUltimoContacto,
+        proxima_accion: nextProximaAccion,
+        cadencia: nextCadence,
+        historial_gestiones: nextHistorial
+      };
+
+      const canalLbl = FOLLOWUP_CHANNEL_LABELS[targetGestion.canal] || targetGestion.canal;
+      const logText = `[GESTIÓN ANULADA] Gestión (${canalLbl}) anulada por gerente ${caller.name || 'Gerencia'}. Motivo: ${why}`;
+      const voidLogEntry = {
+        ...logEntry(caller, logText, { auto: true, opId }),
+        tipo: 'gestion_anulada',
+        gestionIdVoided: targetGestion.id
+      };
+      const nextLogs = logsOf(p).concat([voidLogEntry]);
+
+      tx.update(ref, {
+        seguimiento: nextSeguimiento,
+        logs: nextLogs
+      });
+
+      tx.create(auditRef(), auditEntry(caller, 'voidFollowUp', 'prospect', prospectId, {
+        gestionId: targetGestion.id,
+        canal: targetGestion.canal,
+        resultado: targetGestion.resultado,
+        motivo: why,
+        previousAttempts: Number(curCadence.intentos_fallidos || 0),
+        newAttempts: activeAttempts
+      }));
+
+      return { status: 'voided', seguimiento: nextSeguimiento, logEntry: voidLogEntry, entry: voidLogEntry };
     });
   }
 
@@ -1278,7 +1517,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   }
 
   const kit = { col, iso, now, logEntry, logsOf, auditEntry, auditRef, hasEnteredPostclosing, canAccessProspect, requireProspectAccess, requireNotDeleted, requirePrivileged, requireManager, names, reclassifyProspect };
-  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, updateProspectCadence, resolveFollowUpEscalation, reclassifyProspect, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
+  return { names, kit, hasEnteredPostclosing, createProspect, addLog, deleteLog, recordFollowUp, voidFollowUp, updateProspectCadence, resolveFollowUpEscalation, reclassifyProspect, reassign, setNoContractAuthorization, requestNoContractAuthorization, resolveNoContractAuthorization, updateSettings, deleteClient };
 }
 
 module.exports = { createCommercialService, hasEnteredPostclosing, namesFor, SETTINGS_LISTS, SETTINGS_ACTIONS, validators: { bad, asObject, reqString, reqDocId, reqOpId, DOC_ID_RE, OP_ID_RE, MAX_LOGS } };

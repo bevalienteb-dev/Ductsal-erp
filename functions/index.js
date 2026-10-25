@@ -1411,6 +1411,16 @@ exports.resolveProspectEscalationAdmin = functions.https.onCall((data, context) 
     opId: d.opId
   })));
 
+/** { prospectId, gestionId, motivo, opId, dbSuffix? } -> { status: 'voided' | 'already_voided', seguimiento, logEntry } (manager only) */
+exports.voidProspectFollowUpAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
+  (service, caller, d) => service.voidFollowUp({
+    caller,
+    prospectId: d.prospectId,
+    gestionId: d.gestionId,
+    motivo: d.motivo,
+    opId: d.opId
+  })));
+
 /** { prospectId, vendedorId, dbSuffix? } -> { status: 'reassigned' | 'unchanged' } (manager / gestor) */
 exports.reassignProspectAdmin = functions.https.onCall((data, context) => runCommercialOp(data, context,
   (service, caller, d) => service.reassign({ caller, prospectId: d.prospectId, vendedorId: d.vendedorId })));

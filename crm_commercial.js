@@ -87,6 +87,17 @@
         return callIdempotent(key, opId => fb.functions().httpsCallable('recordProspectFollowUpAdmin')({ prospectId, followUp, opId, dbSuffix }));
     }
 
+    function voidFollowUp(fb, { prospectId, gestionId, motivo, dbSuffix }) {
+        const key = ['voidFollowUp', dbSuffix, prospectId, gestionId, motivo || ''].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('voidProspectFollowUpAdmin')({
+            prospectId,
+            gestionId,
+            motivo,
+            opId,
+            dbSuffix
+        }));
+    }
+
     function updateProspectCadence(fb, { prospectId, tipoCadencia, motivo, dbSuffix }) {
         const key = ['updateProspectCadence', dbSuffix, prospectId, tipoCadencia, motivo || ''].join('|');
         return callIdempotent(key, opId => fb.functions().httpsCallable('updateProspectCadenceAdmin')({
@@ -254,6 +265,7 @@
         addLog,
         deleteLog,
         recordFollowUp,
+        voidFollowUp,
         updateProspectCadence,
         resolveFollowUpEscalation,
         reclassifyProspect,

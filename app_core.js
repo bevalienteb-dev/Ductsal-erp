@@ -3411,10 +3411,25 @@ async function processSaveFollowUp(event) {
         if (res && res.seguimiento) {
             p.seguimiento = res.seguimiento;
             if (!Array.isArray(p.logs)) p.logs = [];
-            const canalLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[canal]) || canal;
-            const resLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[resultado]) || resultado;
-            const logText = `[GESTIÓN COMERCIAL] ${canalLbl} -> ${resLbl}. Detalle: ${detalle}`;
-            p.logs.push({ text: `(${currentUser ? currentUser.nombre : 'Comercial'}) ${logText}`, date: new Date().toISOString(), auto: false });
+            const entryToAdd = res.logEntry || res.entry;
+            if (entryToAdd) {
+                const exists = p.logs.some(l => l && (l.date === entryToAdd.date || (entryToAdd.gestionId && l.gestionId === entryToAdd.gestionId) || (entryToAdd.opId && l.opId === entryToAdd.opId)));
+                if (!exists) {
+                    p.logs.push(entryToAdd);
+                }
+            }
+
+            // Preservación de borrador: limpiar únicamente tras guardado confirmado exitoso
+            const textEl = document.getElementById('new-log-text');
+            if (textEl && (textEl.value.trim() === detalle || (window._pendingFollowUpDraft && textEl.value.trim() === window._pendingFollowUpDraft))) {
+                textEl.value = '';
+                const banner = document.getElementById('log-commercial-intent-banner');
+                if (banner) {
+                    banner.style.display = 'none';
+                    banner.removeAttribute('data-dismissed');
+                }
+            }
+            window._pendingFollowUpDraft = null;
         }
 
         closeModal('followUpModal');
@@ -5373,9 +5388,72 @@ function addLogToProspect(p, text, isAuto = false) {
     p.logs.push({ text: `${isAuto ? '' : '(' + author + ') '} ${text}`, date: new Date().toISOString(), auto: isAuto });
 }
 
+function onLogTextInput(el) {
+    const text = (el && el.value) ? el.value.trim() : '';
+    const banner = document.getElementById('log-commercial-intent-banner');
+    if (!banner) return;
+    if (!text) {
+        banner.removeAttribute('data-dismissed');
+        banner.style.display = 'none';
+        return;
+    }
+    if (banner.getAttribute('data-dismissed') === 'true') {
+        banner.style.display = 'none';
+        return;
+    }
+    const commercialPattern = /(llam[eéó]|llamada|telefon|marqu[eé]|no contest|buz[oó]n|whatsapp|mensaj|reuni[oó]n|visit|habl[eé]|convers|contact|cotizaci[oó]n)/i;
+    if (commercialPattern.test(text)) {
+        banner.style.display = 'block';
+    } else {
+        banner.style.display = 'none';
+    }
+}
+
+function dismissCommercialIntentBanner() {
+    const banner = document.getElementById('log-commercial-intent-banner');
+    if (banner) {
+        banner.style.display = 'none';
+        banner.setAttribute('data-dismissed', 'true');
+    }
+}
+
+function transferTextToFollowUpModal() {
+    const textEl = document.getElementById('new-log-text');
+    const text = textEl ? textEl.value.trim() : '';
+    if (!text) return;
+
+    window._pendingFollowUpDraft = text;
+
+    if (!currentProspectId) return;
+    openRecordFollowUpModal(currentProspectId);
+
+    const detalleEl = document.getElementById('followup-detalle');
+    if (detalleEl) {
+        detalleEl.value = text;
+    }
+
+    const canalEl = document.getElementById('followup-canal');
+    if (canalEl) {
+        if (/\b(llam|marqu|telefon)/i.test(text)) {
+            canalEl.value = 'llamada';
+        } else if (/\b(whatsapp|mensaj)/i.test(text)) {
+            canalEl.value = 'whatsapp';
+        } else if (/\b(reuni|visit)/i.test(text)) {
+            canalEl.value = 'reunion';
+        } else if (/\b(correo|email)/i.test(text)) {
+            canalEl.value = 'correo';
+        }
+        handleFollowUpCanalChange();
+    }
+
+    const banner = document.getElementById('log-commercial-intent-banner');
+    if (banner) banner.style.display = 'none';
+}
+
 function addLog() {
     const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
     const btnEl = textEl.nextElementSibling;
+    const bannerEl = document.getElementById('log-commercial-intent-banner');
 
     let pObj = prospects.find(x => x.id === currentProspectId);
     if (!pObj) return;
@@ -5392,6 +5470,11 @@ function addLog() {
             pObj.logs.push(res.entry);
         }
         textEl.value = '';
+        if (bannerEl) {
+            bannerEl.style.display = 'none';
+            bannerEl.removeAttribute('data-dismissed');
+        }
+        window._pendingFollowUpDraft = null;
         renderLogs(pObj);
     }).catch(err => {
         alert(CrmCommercial.errorMessage(err));

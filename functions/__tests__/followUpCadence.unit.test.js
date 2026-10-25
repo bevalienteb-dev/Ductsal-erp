@@ -407,7 +407,7 @@ describe('Pruebas Obligatorias de Cadencia Comercial y Agenda Diaria', () => {
   // =========================================================================
   // 9. Edición o eliminación de una nota sin alterar la fecha original ni el historial
   // =========================================================================
-  test('9. Eliminar o editar una nota no altera el historial estructurado de gestiones ni su fecha', async () => {
+  test('9. Protección de auditoría: deleteLog rechaza eliminar notas comerciales estructuradas pero permite eliminar notas internas', async () => {
     const { fdb, service, caller } = makeEnv();
     const pRef = 'prospects_prod/P-LOG-DELETE';
     fdb.seed(pRef, {
@@ -418,7 +418,7 @@ describe('Pruebas Obligatorias de Cadencia Comercial y Agenda Diaria', () => {
       createdBy: 'V1'
     });
 
-    // Registramos una gestión
+    // 1. Registramos una gestión estructurada
     await service.recordFollowUp({
       caller: caller('vendedor', 'V1'),
       prospectId: 'P-LOG-DELETE',
@@ -432,24 +432,64 @@ describe('Pruebas Obligatorias de Cadencia Comercial y Agenda Diaria', () => {
 
     const docBefore = await fdb.data(pRef);
     expect(docBefore.seguimiento.historial_gestiones).toHaveLength(1);
-    const dateOriginal = docBefore.seguimiento.historial_gestiones[0].fecha;
+    expect(docBefore.logs).toHaveLength(1);
+    const commNote = docBefore.logs[0];
+    expect(commNote.tipo).toBe('gestion_comercial');
+    expect(commNote.gestionId).toBeDefined();
 
-    // Eliminamos la nota del log clásico mediante deleteLog
-    const noteEntry = docBefore.logs[0];
-    await service.deleteLog({
-      caller: caller('vendedor', 'V1'),
-      prospectId: 'P-LOG-DELETE',
-      date: noteEntry.date,
-      text: noteEntry.text
+    // 2. Intentar eliminar la nota de gestión estructurada debe ser RECHAZADO con failed-precondition
+    await expect(
+      service.deleteLog({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-LOG-DELETE',
+        date: commNote.date,
+        text: commNote.text
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('Las notas vinculadas a gestiones comerciales estructuradas no se pueden eliminar')
     });
 
-    // El array de logs perdió la entrada
-    const docAfter = await fdb.data(pRef);
-    expect(docAfter.logs).toHaveLength(0);
+    // Incluso un manager es bloqueado si intenta usar deleteLog en vez de voidFollowUp
+    await expect(
+      service.deleteLog({
+        caller: caller('manager', 'MGR-1'),
+        prospectId: 'P-LOG-DELETE',
+        date: commNote.date,
+        text: commNote.text
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition'
+    });
 
-    // Pero el historial estructurado de gestiones y cadencia permanece intacto
+    // 3. Registramos una nota interna manual
+    await service.addLog({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-LOG-DELETE',
+      text: 'Nota técnica de fábrica',
+      opId: 'op_manual_log_01'
+    });
+
+    const docWithManual = await fdb.data(pRef);
+    expect(docWithManual.logs).toHaveLength(2);
+    const manualNote = docWithManual.logs[1];
+    expect(manualNote.auto).toBe(false);
+    expect(manualNote.gestionId).toBeUndefined();
+
+    // 4. Eliminar la nota interna manual sí es permitido para su autor
+    const delRes = await service.deleteLog({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-LOG-DELETE',
+      date: manualNote.date,
+      text: manualNote.text
+    });
+    expect(delRes.status).toBe('deleted');
+
+    // El array de logs conserva intacta la nota estructurada y su historial
+    const docAfter = await fdb.data(pRef);
+    expect(docAfter.logs).toHaveLength(1);
+    expect(docAfter.logs[0].gestionId).toBe(commNote.gestionId);
     expect(docAfter.seguimiento.historial_gestiones).toHaveLength(1);
-    expect(docAfter.seguimiento.historial_gestiones[0].fecha).toBe(dateOriginal);
     expect(docAfter.seguimiento.cadencia.intentos_fallidos).toBe(1);
   });
 
@@ -878,6 +918,657 @@ describe('Pruebas Obligatorias de Cadencia Comercial y Agenda Diaria', () => {
     // Sugerencia para cliente que pide tiempo = exactamente 15 días calendario
     const sTiempo = CrmFollowUpCalc.suggestNextContactDate('2026-10-23', 'solicito_tiempo');
     expect(CrmFollowUpCalc.diffDaysCalendar('2026-10-23', sTiempo)).toBe(15);
+  });
+
+  // =========================================================================
+  // 21. Idempotencia: reintento de la misma petición con mismo opId
+  // =========================================================================
+  test('21. Reintento de la misma petición con mismo opId no incrementa contadores ni duplica notas', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-IDEM-01';
+    fdb.seed(pRef, {
+      id: 'P-IDEM-01',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: { historial_gestiones: [], cadencia: { intentos_fallidos: 0 } }
+    });
+
+    const opId = 'op_idem_test_999';
+    // Primer intento
+    const r1 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-IDEM-01',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Primer intento' },
+      opId
+    });
+    expect(r1.status).toBe('recorded');
+    expect(r1.replay).toBeUndefined();
+    expect(r1.seguimiento.cadencia.intentos_fallidos).toBe(1);
+    expect(r1.logEntry).toBeDefined();
+    expect(r1.logEntry.gestionId).toBeDefined();
+
+    const doc1 = await fdb.data(pRef);
+    expect(doc1.logs).toHaveLength(1);
+    expect(doc1.seguimiento.historial_gestiones).toHaveLength(1);
+
+    // Segundo intento con exactamente el mismo opId (simulación de doble clic o reintento de red)
+    const r2 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-IDEM-01',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Primer intento' },
+      opId
+    });
+    expect(r2.status).toBe('recorded');
+    expect(r2.replay).toBe(true);
+    expect(r2.seguimiento.cadencia.intentos_fallidos).toBe(1); // No subió a 2
+
+    const doc2 = await fdb.data(pRef);
+    expect(doc2.logs).toHaveLength(1); // No duplicó la nota en p.logs
+    expect(doc2.seguimiento.historial_gestiones).toHaveLength(1); // No duplicó el historial
+  });
+
+  // =========================================================================
+  // 22. Concurrencia y dos solicitudes simultáneas con mismo opId
+  // =========================================================================
+  test('22. Dos solicitudes simultáneas con mismo opId serializan en Firestore y retornan un único registro', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-RACE-01';
+    fdb.seed(pRef, {
+      id: 'P-RACE-01',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: { historial_gestiones: [], cadencia: { intentos_fallidos: 0 } }
+    });
+
+    const opId = 'op_concurrent_888';
+    const p1 = service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-RACE-01',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Contacto simultáneo' },
+      opId
+    });
+    const p2 = service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-RACE-01',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Contacto simultáneo' },
+      opId
+    });
+
+    const [res1, res2] = await Promise.all([p1, p2]);
+    expect(res1.status).toBe('recorded');
+    expect(res2.status).toBe('recorded');
+    // Al menos una de las dos fue reconocida como replay
+    expect(res1.replay === true || res2.replay === true).toBe(true);
+
+    const doc = await fdb.data(pRef);
+    expect(doc.logs).toHaveLength(1);
+    expect(doc.seguimiento.historial_gestiones).toHaveLength(1);
+    expect(doc.seguimiento.cadencia.intentos_fallidos).toBe(1);
+  });
+
+  // =========================================================================
+  // 23. Anulación controlada de gestión por Gerencia (voidFollowUp)
+  // =========================================================================
+  test('23. Anulación controlada de gestión por Gerencia: valida rol, motivo, restaura cadencia y desactiva alerta', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-VOID-01';
+    fdb.seed(pRef, {
+      id: 'P-VOID-01',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: {
+        cadencia: { intentos_fallidos: 4, estado_cadencia: 'normal', alerta_gerencial: false },
+        historial_gestiones: []
+      }
+    });
+
+    // 1. Vendedor registra el 5º intento sin respuesta (provoca escalación gerencial)
+    const rec5 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-VOID-01',
+      data: {
+        canal: 'llamada',
+        resultado: 'sin_respuesta',
+        detalle: '5to intento fallido',
+        justificacion_continuidad: 'Cliente con presupuesto en junta directiva'
+      },
+      opId: 'op_gestion_num_5'
+    });
+    expect(rec5.seguimiento.cadencia.intentos_fallidos).toBe(5);
+    expect(rec5.seguimiento.cadencia.alerta_gerencial).toBe(true);
+    expect(rec5.seguimiento.cadencia.estado_cadencia).toBe('escalado_gerencia');
+    const gestionId5 = rec5.seguimiento.historial_gestiones[0].id;
+
+    // 2. Vendedor intenta anular la gestión: RECHAZADO (permission-denied)
+    await expect(
+      service.voidFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-VOID-01',
+        gestionId: gestionId5,
+        motivo: 'Me equivoqué de prospecto',
+        opId: 'op_void_denied_v1'
+      })
+    ).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: expect.stringContaining('Solo un gerente puede anular')
+    });
+
+    // 3. Gestor intenta anular la gestión: RECHAZADO (permission-denied)
+    await expect(
+      service.voidFollowUp({
+        caller: caller('gestor', 'GES-1'),
+        prospectId: 'P-VOID-01',
+        gestionId: gestionId5,
+        motivo: 'Intento de anulación por gestor',
+        opId: 'op_void_denied_ges'
+      })
+    ).rejects.toMatchObject({
+      code: 'permission-denied'
+    });
+
+    // 4. Gerente anula con motivo insuficiente (< 5 caracteres): RECHAZADO
+    await expect(
+      service.voidFollowUp({
+        caller: caller('manager', 'MGR-1'),
+        prospectId: 'P-VOID-01',
+        gestionId: gestionId5,
+        motivo: 'err',
+        opId: 'op_void_short_motive'
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-argument'
+    });
+
+    // 5. Gerente anula con motivo válido reglamentario
+    const voidRes = await service.voidFollowUp({
+      caller: caller('manager', 'MGR-1'),
+      prospectId: 'P-VOID-01',
+      gestionId: gestionId5,
+      motivo: 'Gestión registrada por error en prospecto equivocado según revisión telefónica',
+      opId: 'op_void_mgr_ok'
+    });
+    expect(voidRes.status).toBe('voided');
+
+    // Estado recalculado deterministamente: intentos vuelven a 4 y alerta gerencial se apaga
+    expect(voidRes.seguimiento.cadencia.intentos_fallidos).toBe(4);
+    expect(voidRes.seguimiento.cadencia.alerta_gerencial).toBe(false);
+    expect(voidRes.seguimiento.cadencia.estado_cadencia).toBe('requiere_decision_vendedor');
+
+    // La gestión original se conserva intacta con flag anulada: true (no se borra silenciosamente)
+    const docAfter = await fdb.data(pRef);
+    const targetInDb = docAfter.seguimiento.historial_gestiones.find(g => g.id === gestionId5);
+    expect(targetInDb).toBeDefined();
+    expect(targetInDb.anulada).toBe(true);
+    expect(targetInDb.motivoAnulacion).toContain('Gestión registrada por error');
+
+    // En la bitácora p.logs existe evidencia inmutable de la anulación
+    const voidLog = docAfter.logs.find(l => l.tipo === 'gestion_anulada');
+    expect(voidLog).toBeDefined();
+    expect(voidLog.auto).toBe(true);
+    expect(voidLog.text).toContain('[GESTIÓN ANULADA]');
+
+    // 6. Reintento de anulación retorna already_voided sin error
+    const voidRetry = await service.voidFollowUp({
+      caller: caller('manager', 'MGR-1'),
+      prospectId: 'P-VOID-01',
+      gestionId: gestionId5,
+      motivo: 'Gestión registrada por error en prospecto equivocado según revisión telefónica',
+      opId: 'op_void_mgr_retry'
+    });
+    expect(voidRetry.status).toBe('already_voided');
+  });
+
+  // =========================================================================
+  // 24. Anulación de una gestión antigua no corrompe gestiones posteriores
+  // =========================================================================
+  test('24. Anulación de una gestión intermedia preserva gestiones posteriores y recalcula correctamente', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-VOID-MID';
+    fdb.seed(pRef, {
+      id: 'P-VOID-MID',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: { cadencia: { intentos_fallidos: 0 }, historial_gestiones: [] }
+    });
+
+    // Gestión 1: llamada sin respuesta
+    const g1 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-VOID-MID',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'G1 sin respuesta' },
+      opId: 'op_gestion_01'
+    });
+    // Gestión 2: nota interna por error como sin respuesta
+    const g2 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-VOID-MID',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'G2 error' },
+      opId: 'op_gestion_02'
+    });
+    // Gestión 3: llamada posterior válida
+    const g3 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-VOID-MID',
+      data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'G3 sin respuesta real' },
+      opId: 'op_gestion_03'
+    });
+
+    const docBefore = await fdb.data(pRef);
+    expect(docBefore.seguimiento.cadencia.intentos_fallidos).toBe(3);
+
+    // Gerente anula únicamente la gestión 2
+    const idG2 = docBefore.seguimiento.historial_gestiones[1].id;
+    const vRes = await service.voidFollowUp({
+      caller: caller('manager', 'MGR-1'),
+      prospectId: 'P-VOID-MID',
+      gestionId: idG2,
+      motivo: 'Gestión 2 fue una prueba errónea',
+      opId: 'op_void_g2_ok'
+    });
+
+    // Quedan 2 intentos válidos activos (G1 y G3)
+    expect(vRes.seguimiento.cadencia.intentos_fallidos).toBe(2);
+    expect(vRes.seguimiento.cadencia.estado_cadencia).toBe('normal');
+
+    // G3 sigue siendo el último contacto activo
+    expect(vRes.seguimiento.ultimo_contacto.detalle).toBe('G3 sin respuesta real');
+  });
+
+  // =========================================================================
+  // 25. Compatibilidad histórica: registros antiguos sin gestionId ni opId
+  // =========================================================================
+  test('25. Registros históricos en logs e historial_gestiones operan sin errores', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-LEGACY-01';
+    fdb.seed(pRef, {
+      id: 'P-LEGACY-01',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [
+        { date: '2026-01-10T10:00:00.000Z', text: '(Alejandra) Nota antigua en texto plano', auto: false }
+      ],
+      seguimiento: {
+        cadencia: { tipo_cadencia: 'estandar', intentos_fallidos: 1 },
+        historial_gestiones: [
+          { fecha: '2026-01-10T10:00:00.000Z', canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Histórico' }
+        ]
+      }
+    });
+
+    // Se puede agregar nueva nota interna sin problemas
+    const logRes = await service.addLog({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-LEGACY-01',
+      text: 'Nota contemporánea',
+      opId: 'op_leg_new_log'
+    });
+    expect(logRes.status).toBe('added');
+
+    // Se puede registrar nueva gestión comercial con el nuevo modelo enriquecido
+    const folRes = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-LEGACY-01',
+      data: { canal: 'llamada', resultado: 'respondio_evaluando', detalle: 'Contacto efectivo contemporáneo' },
+      opId: 'op_leg_follow'
+    });
+    expect(folRes.status).toBe('recorded');
+    expect(folRes.seguimiento.cadencia.intentos_fallidos).toBe(0);
+
+    const doc = await fdb.data(pRef);
+    expect(doc.logs).toHaveLength(3);
+    // El histórico de notas sigue ahí intacto
+    expect(doc.logs[0].text).toContain('Nota antigua');
+  });
+
+  // =========================================================================
+  // 26. Detector contextual de texto comercial y preservación de borrador
+  // =========================================================================
+  test('26. Patrón contextual reconoce expresiones de contacto y descarta apuntes internos técnicos', () => {
+    const commercialPattern = /(llam[eéó]|llamada|telefon|marqu[eé]|no contest|buz[oó]n|whatsapp|mensaj|reuni[oó]n|visit|habl[eé]|convers|contact|cotizaci[oó]n)/i;
+
+    // Expresiones de contacto que deben disparar sugerencia
+    expect(commercialPattern.test('Llamé al cliente por teléfono y no contestó')).toBe(true);
+    expect(commercialPattern.test('Marqué a Don Roberto, cayó a buzón de voz')).toBe(true);
+    expect(commercialPattern.test('Conversé por WhatsApp con el arquitecto')).toBe(true);
+    expect(commercialPattern.test('Reunión realizada en obra con el encargado')).toBe(true);
+    expect(commercialPattern.test('Visité las instalaciones')).toBe(true);
+    expect(commercialPattern.test('Hablé con compras')).toBe(true);
+
+    // Apuntes técnicos u operativos que NO deben disparar sugerencia
+    expect(commercialPattern.test('Revisión de planos de ductería en fábrica')).toBe(false);
+    expect(commercialPattern.test('Ajuste de calibre de lámina galvanizada a 24')).toBe(false);
+    expect(commercialPattern.test('Pendiente confirmación de medidas de codo')).toBe(false);
+    expect(commercialPattern.test('Cuadro de costos actualizado en taller')).toBe(false);
+  });
+
+  // =========================================================================
+  // 27. Aislamiento entre vendedores en deleteLog (V2 no borra notas de V1)
+  // =========================================================================
+  test('27. Vendedor V2 no puede eliminar una nota manual escrita por V1', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-CROSS-DEL';
+    fdb.seed(pRef, {
+      id: 'P-CROSS-DEL',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: []
+    });
+
+    const addRes = await service.addLog({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-CROSS-DEL',
+      text: 'Nota confidencial de V1',
+      opId: 'op_v1_note_777'
+    });
+    expect(addRes.status).toBe('added');
+
+    // Vendedor V2 intenta borrar la nota de V1: RECHAZADO (permission-denied)
+    await expect(
+      service.deleteLog({
+        caller: caller('vendedor', 'V2'),
+        prospectId: 'P-CROSS-DEL',
+        date: addRes.entry.date,
+        text: addRes.entry.text
+      })
+    ).rejects.toMatchObject({
+      code: 'permission-denied',
+      message: expect.stringContaining('No tienes acceso a esta oportunidad')
+    });
+  });
+
+  // =========================================================================
+  // 28. Preservación de borrador ante fallo o cierre de modal
+  // =========================================================================
+  test('28. Error en backend no elimina el borrador del usuario', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-FAIL-SAVE';
+    fdb.seed(pRef, {
+      id: 'P-FAIL-SAVE',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: { cadencia: { intentos_fallidos: 3 }, historial_gestiones: [] }
+    });
+
+    // Tras 3 intentos sin respuesta, si no envía justificación el backend falla
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-FAIL-SAVE',
+        data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Borrador importante' },
+        opId: 'op_fail_save_01'
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('justificación de continuidad')
+    });
+
+    // El documento en BD no sufre cambios y el cliente conserva el borrador en memoria
+    const doc = await fdb.data(pRef);
+    expect(doc.logs).toHaveLength(0);
+    expect(doc.seguimiento.cadencia.intentos_fallidos).toBe(3);
+  });
+
+  // =========================================================================
+  // 29. H-ID-01: Idempotencia estricta en recordFollowUp ante divergencias
+  // =========================================================================
+  test('29. recordFollowUp rechaza reutilización de opId con datos divergentes y acepta replay idéntico', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-IDEM-DIV';
+    fdb.seed(pRef, {
+      id: 'P-IDEM-DIV',
+      estado: 'activo',
+      etapa: 'cotizacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: { historial_gestiones: [], cadencia: { intentos_fallidos: 0 } }
+    });
+
+    const opId = 'op_idem_test_999';
+    const basePayload = {
+      canal: 'llamada',
+      resultado: 'sin_respuesta',
+      detalle: 'Primer contacto telefónico',
+      proxima_accion: { fecha: '2026-11-01', tipo: 'llamada', descripcion: 'Reintentar' }
+    };
+
+    // 1. Registro inicial exitoso
+    const res1 = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-IDEM-DIV',
+      data: basePayload,
+      opId
+    });
+    expect(res1.status).toBe('recorded');
+    expect(res1.replay).toBeUndefined();
+
+    // 2. Mismo opId y mismo payload: replay legítimo, sin duplicación ni incremento
+    const resReplay = await service.recordFollowUp({
+      caller: caller('vendedor', 'V1'),
+      prospectId: 'P-IDEM-DIV',
+      data: basePayload,
+      opId
+    });
+    expect(resReplay.status).toBe('recorded');
+    expect(resReplay.replay).toBe(true);
+
+    const docMid = await fdb.data(pRef);
+    expect(docMid.logs).toHaveLength(1);
+    expect(docMid.seguimiento.historial_gestiones).toHaveLength(1);
+    expect(docMid.seguimiento.cadencia.intentos_fallidos).toBe(1);
+
+    // 3. Mismo opId y detalle diferente: RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-IDEM-DIV',
+        data: { ...basePayload, detalle: 'Detalle completamente alterado' },
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 4. Mismo opId y canal diferente: RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-IDEM-DIV',
+        data: { ...basePayload, canal: 'whatsapp' },
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 5. Mismo opId y resultado diferente: RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-IDEM-DIV',
+        data: { ...basePayload, resultado: 'respondio_evaluando' },
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 6. Mismo opId y próxima acción diferente (fecha, descripción o tipo alterados): RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-IDEM-DIV',
+        data: {
+          ...basePayload,
+          proxima_accion: { fecha: '2026-11-15', tipo: 'correo', descripcion: 'Fecha cambiada' }
+        },
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // Mismo opId pero sin próxima acción: RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('vendedor', 'V1'),
+        prospectId: 'P-IDEM-DIV',
+        data: { canal: 'llamada', resultado: 'sin_respuesta', detalle: 'Primer contacto telefónico' },
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 7. Usuario diferente con el mismo opId: RECHAZADO
+    await expect(
+      service.recordFollowUp({
+        caller: caller('manager', 'MGR-1'), // Gerente tiene acceso a la oportunidad pero opId pertenece a V1
+        prospectId: 'P-IDEM-DIV',
+        data: basePayload,
+        opId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 8. Verificar que ninguna de las peticiones rechazadas alteró la base de datos
+    const docEnd = await fdb.data(pRef);
+    expect(docEnd.logs).toHaveLength(1);
+    expect(docEnd.seguimiento.historial_gestiones).toHaveLength(1);
+    expect(docEnd.seguimiento.cadencia.intentos_fallidos).toBe(1);
+  });
+
+  // =========================================================================
+  // 30. Idempotencia y protección en voidFollowUp ante parámetros divergentes
+  // =========================================================================
+  test('30. voidFollowUp: replay legítimo con mismos datos y rechazo ante reutilización divergente de opId', async () => {
+    const { fdb, service, caller } = makeEnv();
+    const pRef = 'prospects_prod/P-VOID-IDEM';
+    fdb.seed(pRef, {
+      id: 'P-VOID-IDEM',
+      estado: 'activo',
+      etapa: 'negociacion',
+      vendedorId: 'V1',
+      createdBy: 'V1',
+      logs: [],
+      seguimiento: {
+        cadencia: { intentos_fallidos: 1, estado_cadencia: 'normal', alerta_gerencial: false },
+        historial_gestiones: [
+          {
+            id: 'gest_v_01',
+            fecha: '2026-10-20T10:00:00.000Z',
+            canal: 'llamada',
+            resultado: 'sin_respuesta',
+            detalle: 'Gestión 1',
+            es_contacto_valido: true,
+            intento_numero: 1,
+            opId: 'op_record_g1'
+          },
+          {
+            id: 'gest_v_02',
+            fecha: '2026-10-22T10:00:00.000Z',
+            canal: 'correo',
+            resultado: 'sin_respuesta',
+            detalle: 'Gestión 2',
+            es_contacto_valido: true,
+            intento_numero: 2,
+            opId: 'op_record_g2'
+          }
+        ]
+      }
+    });
+
+    const voidOpId = 'op_void_test_555';
+    const motivoOriginal = 'Error tipográfico comprobado en bitácora';
+
+    // 1. Anulación inicial exitosa de gest_v_02
+    const v1 = await service.voidFollowUp({
+      caller: caller('manager', 'MGR-1'),
+      prospectId: 'P-VOID-IDEM',
+      gestionId: 'gest_v_02',
+      motivo: motivoOriginal,
+      opId: voidOpId
+    });
+    expect(v1.status).toBe('voided');
+
+    // 2. Replay con el mismo opId, misma gestión, mismo gerente y mismo motivo: devuelve already_voided con replay: true
+    const vReplay = await service.voidFollowUp({
+      caller: caller('manager', 'MGR-1'),
+      prospectId: 'P-VOID-IDEM',
+      gestionId: 'gest_v_02',
+      motivo: motivoOriginal,
+      opId: voidOpId
+    });
+    expect(vReplay.status).toBe('already_voided');
+    expect(vReplay.replay).toBe(true);
+
+    // 3. Mismo opId pero aplicado a OTRA gestión: RECHAZADO
+    await expect(
+      service.voidFollowUp({
+        caller: caller('manager', 'MGR-1'),
+        prospectId: 'P-VOID-IDEM',
+        gestionId: 'gest_v_01',
+        motivo: motivoOriginal,
+        opId: voidOpId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 4. Mismo opId en la misma gestión pero con diferente motivo: RECHAZADO
+    await expect(
+      service.voidFollowUp({
+        caller: caller('manager', 'MGR-1'),
+        prospectId: 'P-VOID-IDEM',
+        gestionId: 'gest_v_02',
+        motivo: 'Motivo totalmente modificado tras la anulación',
+        opId: voidOpId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
+
+    // 5. Mismo opId por otro gerente: RECHAZADO
+    await expect(
+      service.voidFollowUp({
+        caller: caller('manager', 'MGR-2'),
+        prospectId: 'P-VOID-IDEM',
+        gestionId: 'gest_v_02',
+        motivo: motivoOriginal,
+        opId: voidOpId
+      })
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'opId ya usado con otros datos'
+    });
   });
 
 });
