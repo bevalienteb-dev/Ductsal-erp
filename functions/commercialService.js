@@ -24,6 +24,7 @@
 const crypto = require('crypto');
 const identity = require('./clientIdentity');
 const { ServiceError, CRM_ROLES, PRIVILEGED, stableHash } = require('./clientsService');
+const { bindNoContractApproval } = require('./documentVersioningService');
 
 let CrmFollowUpCalc = null;
 try {
@@ -1377,19 +1378,29 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (cur.estado === wanted) return { status: 'unchanged', request: ncPublic(cur) };
       if (cur.estado !== 'pendiente') throw new ServiceError('failed-precondition', `La solicitud ya fue resuelta (${cur.estado})`);
       const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
+      let aprobacionRecord = null;
       if (approve) {
         if (p.estado !== 'activo') throw new ServiceError('failed-precondition', 'Solo una oportunidad activa puede autorizarse sin contrato');
-        datos.autorizado_sin_contrato = true;
-        datos.autorizado_por = caller.name;
-        datos.autorizado_por_id = caller.cid;
+        aprobacionRecord = bindNoContractApproval({
+          prospect: p,
+          datos,
+          caller,
+          offerDoc: (datos && (datos.doc_firmado || datos.doc_oferta_firmada || datos.doc_oferta)) || p.doc_firmado,
+          why,
+          isoStamp: iso()
+        });
       }
       const resolved = { ...cur, estado: wanted, resuelto_por_id: caller.cid, resuelto_por: caller.name || '', fecha_resolucion: iso(), motivo_decision: why || null };
       const next = list.slice(); next[at] = resolved;
       const text = approve
         ? `Autorización de venta sin contrato APROBADA por gerente ${caller.name} (solicitada por ${cur.solicitante_nombre || cur.solicitante_id})${why ? `. Motivo: ${why}` : ''}`
         : `Solicitud de venta sin contrato RECHAZADA por gerente ${caller.name} (solicitada por ${cur.solicitante_nombre || cur.solicitante_id}). Motivo: ${why}`;
-      tx.update(ref, { ...(approve ? { datos } : {}), solicitudes_sin_contrato: next, logs: logsOf(p).concat([logEntry(caller, text, { auto: true })]) });
-      tx.create(auditRef(), auditEntry(caller, approve ? 'approveNoContractRequest' : 'rejectNoContractRequest', 'prospect', prospectId, { requestId, solicitanteId: cur.solicitante_id, motivoDecision: why || null }));
+      tx.update(ref, {
+        ...(approve ? { datos, aprobacion_sin_contrato: aprobacionRecord } : {}),
+        solicitudes_sin_contrato: next,
+        logs: logsOf(p).concat([logEntry(caller, text, { auto: true })])
+      });
+      tx.create(auditRef(), auditEntry(caller, approve ? 'approveNoContractRequest' : 'rejectNoContractRequest', 'prospect', prospectId, { requestId, solicitanteId: cur.solicitante_id || cur.solicitanteId || null, motivoDecision: why || null }));
       return { status: approve ? 'approved' : 'rejected', request: ncPublic(resolved) };
     });
   }
@@ -1405,6 +1416,7 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
       const p = snap.data() || {};
       requireNotDeleted(p);
+      if (p.estado !== 'activo') throw new ServiceError('failed-precondition', 'Solo una oportunidad activa puede autorizarse sin contrato');
       const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
       const current = datos.autorizado_sin_contrato === true;
       if (current === authorized) return { status: 'unchanged', authorized };
@@ -1421,19 +1433,35 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         }
         return r;
       });
+      let aprobacionRecord = null;
       if (authorized) {
-        datos.autorizado_sin_contrato = true;
-        datos.autorizado_por = caller.name;
-        datos.autorizado_por_id = caller.cid;
+        aprobacionRecord = bindNoContractApproval({
+          prospect: p,
+          datos,
+          caller,
+          offerDoc: (datos && (datos.doc_firmado || datos.doc_oferta_firmada || datos.doc_oferta)) || p.doc_firmado,
+          why: 'Autorización directa del gerente',
+          isoStamp: stamp
+        });
       } else {
         datos.autorizado_sin_contrato = false;
         delete datos.autorizado_por;
         delete datos.autorizado_por_id;
+        aprobacionRecord = {
+          ...(p.aprobacion_sin_contrato || (datos && datos.aprobacion_sin_contrato) || {}),
+          estado: 'revocada',
+          fecha_revocacion: stamp,
+          revocado_por_id: caller.cid
+        };
       }
       const text = authorized
         ? `Autorización de venta sin contrato otorgada por gerente: ${caller.name}`
         : `Autorización de venta sin contrato revocada por gerente: ${caller.name}`;
-      const patch = { datos, logs: logsOf(p).concat([logEntry(caller, text, { auto: true })]) };
+      const patch = {
+        datos,
+        aprobacion_sin_contrato: aprobacionRecord,
+        logs: logsOf(p).concat([logEntry(caller, text, { auto: true })])
+      };
       if (ncOf(p).length > 0) patch.solicitudes_sin_contrato = list;
       tx.update(ref, patch);
       tx.create(auditRef(), auditEntry(caller, authorized ? 'grantNoContractAuthorization' : 'revokeNoContractAuthorization', 'prospect', prospectId, {}));

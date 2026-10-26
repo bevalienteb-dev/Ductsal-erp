@@ -48,9 +48,9 @@ test('the manager can remove a document; the others stay', async () => {
 test('an editor who keeps every document, replaces one or adds one is not blocked', async () => {
   const keep = await service.update({ caller: OWNER, id: 'C1', client: { ...base, telefono: '7000-9999', documentos: { dui: DUI, nit: NIT } } });
   expect(keep.status).toBe('updated');
-  const replaced = await service.update({ caller: OWNER, id: 'C1', client: { ...base, documentos: { dui: { name: 'nuevo.pdf', url: 'https://files.example/nuevo.pdf' }, nit: NIT } } });
+  const replaced = await service.update({ caller: OWNER, id: 'C1', client: { ...base, documentos: { dui: { name: 'nuevo.pdf', url: 'https://files.example/nuevo.pdf', motivoSustitucion: 'Actualización de DUI' }, nit: NIT } } });
   expect(replaced.status).toBe('updated');
-  const added = await service.update({ caller: OWNER, id: 'C1', client: { ...base, documentos: { dui: DUI, nit: NIT, credencial: 'https://files.example/cred.pdf' } } });
+  const added = await service.update({ caller: OWNER, id: 'C1', client: { ...base, documentos: { dui: { ...DUI, motivoSustitucion: 'Restitución de DUI' }, nit: NIT, credencial: 'https://files.example/cred.pdf' } } });
   expect(added.status).toBe('updated');
   expect(Object.keys(docsNow()).sort()).toEqual(['credencial', 'dui', 'nit']);
 });

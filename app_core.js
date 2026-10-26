@@ -1437,14 +1437,24 @@ function viewStoredClientDoc(storeId) {
     const store = getDocStore();
     const item = store ? store.get(storeId) : null;
     if (!item) return;
-    return viewSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });
+    const options = {};
+    if (item.clientId) options.clientId = item.clientId;
+    if (item.prospectId) options.prospectId = item.prospectId;
+    if (item.entityType) options.entityType = item.entityType;
+    if (item.entityId) options.entityId = item.entityId;
+    return viewSecureDocument(item.docRef, item.fileName, options);
 }
 
 function downloadStoredClientDoc(storeId) {
     const store = getDocStore();
     const item = store ? store.get(storeId) : null;
     if (!item) return;
-    return downloadSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });
+    const options = {};
+    if (item.clientId) options.clientId = item.clientId;
+    if (item.prospectId) options.prospectId = item.prospectId;
+    if (item.entityType) options.entityType = item.entityType;
+    if (item.entityId) options.entityId = item.entityId;
+    return downloadSecureDocument(item.docRef, item.fileName, options);
 }
 
 function deleteStoredClientDoc(storeId) {
@@ -1496,6 +1506,154 @@ function renderClientDocItem(docRef, label, clientId, docKey, itemIndex = null) 
     return `<span style="display:inline-block; margin-right:6px; margin-bottom:4px;">${viewHtml}${dlBtn}${delBtn}</span>`;
 }
 
+async function showDocumentVersionHistory(entityType, entityId, docKey, label) {
+    let modal = document.getElementById('docVersionHistoryModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'docVersionHistoryModal';
+        modal.className = 'modal';
+        modal.style.zIndex = '160';
+        modal.style.display = 'none';
+        modal.style.position = 'fixed';
+        modal.style.top = '0';
+        modal.style.left = '0';
+        modal.style.width = '100vw';
+        modal.style.height = '100vh';
+        modal.style.background = 'rgba(0, 0, 0, 0.7)';
+        modal.style.alignItems = 'center';
+        modal.style.justifyContent = 'center';
+        modal.innerHTML = `
+            <div class="modal-content glass-panel" style="width: 90vw; max-width: 850px; max-height: 85vh; overflow-y: auto; padding: 1.5rem; background: var(--panel-bg, #1e293b); border: 1px solid var(--panel-border, #334155); border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border, #334155); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+                    <h3 id="docVersionHistoryTitle" style="margin: 0; color: var(--brand-gold, #d4af37);">📜 Historial de Versiones</h3>
+                    <button type="button" class="btn-secondary" onclick="closeDocumentVersionHistory()" style="padding: 2px 8px; font-size: 0.85rem; cursor: pointer;">✖️ Cerrar</button>
+                </div>
+                <div id="docVersionHistoryBody"></div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    const titleEl = document.getElementById('docVersionHistoryTitle');
+    const bodyEl = document.getElementById('docVersionHistoryBody');
+    if (titleEl) titleEl.textContent = `📜 Historial de Versiones: ${label}`;
+    if (bodyEl) bodyEl.innerHTML = `<div style="text-align:center; padding: 2rem; color: var(--text-secondary, #94a3b8);">⏳ Consultando historial de versiones...</div>`;
+    modal.style.display = 'flex';
+
+    try {
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        const firestoreInstance = (typeof db !== 'undefined' && db) ? db : (fb && typeof fb.firestore === 'function' ? fb.firestore() : null);
+        if (!firestoreInstance) throw new Error('Instancia de Firestore no disponible');
+
+        const entityCollection = entityType === 'client' ? `clients${DB_SUFFIX}` : `prospects${DB_SUFFIX}`;
+        const subCollectionKey = 'document_versions';
+        const snap = await firestoreInstance.collection(entityCollection).doc(entityId).collection(subCollectionKey).get();
+        const allVersions = [];
+        if (snap && typeof snap.forEach === 'function') {
+            snap.forEach(docSnap => {
+                const data = docSnap.data();
+                if (!docKey || data.docKey === docKey) {
+                    allVersions.push(data);
+                }
+            });
+        }
+
+        allVersions.sort((a, b) => {
+            const vA = Number(a.versionNumber) || 0;
+            const vB = Number(b.versionNumber) || 0;
+            if (vB !== vA) return vB - vA;
+            const tA = a.creadoEn || '';
+            const tB = b.creadoEn || '';
+            return tB.localeCompare(tA);
+        });
+
+        if (allVersions.length === 0) {
+            bodyEl.innerHTML = `
+                <div style="text-align: center; padding: 2rem; color: var(--text-secondary); background: rgba(255, 255, 255, 0.02); border-radius: 6px; border: 1px dashed var(--panel-border);">
+                    <p style="margin: 0; font-size: 0.9rem;">ℹ️ No se registran versiones anteriores archivadas para este documento.</p>
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">El documento actual corresponde a la versión inicial o a un registro previo a la activación del versionado.</small>
+                </div>
+            `;
+            return;
+        }
+
+        let tableHtml = `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--panel-border, #334155); color: var(--text-secondary, #94a3b8);">
+                            <th style="padding: 8px;">Versión</th>
+                            <th style="padding: 8px;">Estado</th>
+                            <th style="padding: 8px;">Archivo</th>
+                            <th style="padding: 8px;">Fecha</th>
+                            <th style="padding: 8px;">Responsable</th>
+                            <th style="padding: 8px;">Motivo de Sustitución</th>
+                            <th style="padding: 8px; text-align: center;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        for (const v of allVersions) {
+            const isVigente = v.estado === 'vigente';
+            const statusBadge = isVigente
+                ? `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success, #10b981); border: 1px solid var(--success, #10b981); padding: 2px 6px; border-radius: 4px;">Vigente</span>`
+                : `<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #64748b; padding: 2px 6px; border-radius: 4px;">Histórica</span>`;
+
+            const fileName = escapeHtmlDoc(v.name || 'Documento');
+            const dateStr = v.creadoEn ? v.creadoEn.replace('T', ' ').slice(0, 16) : '-';
+            const userStr = escapeHtmlDoc(v.subidoPorNombre || v.actualizadoPor || (v.esHeredado ? 'Registro anterior' : 'Comercial'));
+            const motivoStr = escapeHtmlDoc(v.motivoSustitucion || (v.esHeredado ? 'Documento heredado de versiones anteriores' : 'Carga inicial'));
+
+            const storeId = 'vdoc_' + Math.random().toString(36).substring(2, 9);
+            getDocStore().set(storeId, {
+                docRef: v,
+                fileName: v.name || 'Documento',
+                clientId: entityType === 'client' ? entityId : (v.clientId || undefined),
+                prospectId: entityType === 'prospect' ? entityId : (v.prospectId || undefined),
+                entityType: entityType,
+                entityId: entityId
+            });
+
+            tableHtml += `
+                <tr style="border-bottom: 1px solid var(--panel-border, #334155); background: ${isVigente ? 'rgba(16, 185, 129, 0.04)' : 'transparent'};">
+                    <td style="padding: 8px; font-weight: bold; color: ${isVigente ? 'var(--brand-gold, #d4af37)' : 'var(--text-secondary, #94a3b8)'};">v${v.versionNumber || 1}</td>
+                    <td style="padding: 8px;">${statusBadge}</td>
+                    <td style="padding: 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${fileName}">${fileName}</td>
+                    <td style="padding: 8px; white-space: nowrap; color: var(--text-muted, #64748b);">${dateStr}</td>
+                    <td style="padding: 8px; color: var(--text-secondary, #94a3b8);">${userStr}</td>
+                    <td style="padding: 8px; font-style: ${v.motivoSustitucion ? 'normal' : 'italic'}; color: ${v.motivoSustitucion ? 'var(--text-primary, white)' : 'var(--text-muted, #64748b)'};">${motivoStr}</td>
+                    <td style="padding: 8px; text-align: center; white-space: nowrap;">
+                        <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.75rem; margin-right: 4px; cursor: pointer;" onclick="viewStoredClientDoc('${storeId}')" title="Ver archivo">👁️</button>
+                        <button type="button" class="btn-secondary" style="padding: 2px 6px; font-size: 0.75rem; cursor: pointer;" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar archivo">⬇️</button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        tableHtml += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        bodyEl.innerHTML = tableHtml;
+
+    } catch (err) {
+        console.error('Error al cargar historial de versiones:', err);
+        bodyEl.innerHTML = `
+            <div style="color: var(--danger, #ef4444); padding: 1.5rem; text-align: center;">
+                ❌ No se pudo cargar el historial de versiones: ${escapeHtmlDoc(err.message || 'Error de permisos o conexión')}.
+            </div>
+        `;
+    }
+}
+
+function closeDocumentVersionHistory() {
+    const modal = document.getElementById('docVersionHistoryModal');
+    if (modal) modal.style.display = 'none';
+}
+
 if (typeof window !== 'undefined') {
     window.resolveStoragePath = resolveStoragePath;
     window.viewSecureDocument = viewSecureDocument;
@@ -1525,6 +1683,8 @@ if (typeof window !== 'undefined') {
     if (typeof setSellerFilterMode !== 'undefined') window.setSellerFilterMode = setSellerFilterMode;
     if (typeof getSellerFilterMode !== 'undefined') window.getSellerFilterMode = getSellerFilterMode;
     if (typeof renderList !== 'undefined') window.renderList = renderList;
+    if (typeof showDocumentVersionHistory !== 'undefined') window.showDocumentVersionHistory = showDocumentVersionHistory;
+    if (typeof closeDocumentVersionHistory !== 'undefined') window.closeDocumentVersionHistory = closeDocumentVersionHistory;
 }
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -1555,7 +1715,9 @@ if (typeof module !== 'undefined' && module.exports) {
         formatProspectDate: typeof formatProspectDate !== 'undefined' ? formatProspectDate : undefined,
         clearOppDateFilter: typeof clearOppDateFilter !== 'undefined' ? clearOppDateFilter : undefined,
         toggleOppSort: typeof toggleOppSort !== 'undefined' ? toggleOppSort : undefined,
-        updateOppSortIcons: typeof updateOppSortIcons !== 'undefined' ? updateOppSortIcons : undefined
+        updateOppSortIcons: typeof updateOppSortIcons !== 'undefined' ? updateOppSortIcons : undefined,
+        showDocumentVersionHistory: typeof showDocumentVersionHistory !== 'undefined' ? showDocumentVersionHistory : undefined,
+        closeDocumentVersionHistory: typeof closeDocumentVersionHistory !== 'undefined' ? closeDocumentVersionHistory : undefined
     };
 }
 
@@ -5174,6 +5336,10 @@ function renderInfo(p) {
         else if (ext === 'XLSX' || ext === 'XLS') icon = '📊';
         else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].includes(ext)) icon = '🖼️';
 
+        const histBtn = docKey
+            ? `<a href="javascript:void(0)" onclick="showDocumentVersionHistory('prospect', '${pId}', '${docKey}', '${escapeHtmlDoc(category)}')" class="btn-doc-dl" style="color:var(--brand-gold); margin-left:4px;" title="Ver historial de versiones">📜 Historial</a>`
+            : '';
+
         if (previewable) {
             return `<li class="doc-card-row">` +
                    `<div class="doc-card-info">` +
@@ -5183,6 +5349,7 @@ function renderInfo(p) {
                    `<div class="doc-card-actions">` +
                    `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>` +
                    `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
+                   histBtn +
                    `</div>` +
                    `</li>`;
         } else {
@@ -5193,33 +5360,37 @@ function renderInfo(p) {
                    `</div>` +
                    `<div class="doc-card-actions">` +
                    `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
+                   histBtn +
                    `</div>` +
                    `</li>`;
         }
     }
 
-    function addDoc(field, category) {
+    function addDoc(field, category, docKey = null) {
         if (!field) return;
         if (Array.isArray(field)) {
             field.forEach(d => {
                 if (d) {
-                    docsList.innerHTML += dlCard(d, category);
+                    docsList.innerHTML += dlCard(d, category, docKey);
                     docCount++;
                     hasDocs = true;
                 }
             });
         } else {
-            docsList.innerHTML += dlCard(field, category);
+            docsList.innerHTML += dlCard(field, category, docKey);
             docCount++;
             hasDocs = true;
         }
     }
 
-    addDoc(p.datos.doc_levantamiento, 'Planos / Notas');
-    addDoc(p.datos.doc_oferta, 'Oferta / Cotización');
-    addDoc(p.datos.doc_costos, 'Cuadro de Costos');
-    addDoc(p.datos.doc_oferta_firmada, 'Oferta Firmada');
-    addDoc(p.datos.doc_contrato, 'Contrato');
+    addDoc(p.datos.doc_levantamiento, 'Planos / Notas', 'doc_levantamiento');
+    addDoc(p.datos.doc_oferta, 'Oferta / Cotización', 'doc_oferta');
+    addDoc(p.datos.doc_costos, 'Cuadro de Costos', 'doc_costos');
+    addDoc(p.datos.doc_oferta_firmada, 'Oferta Firmada', 'doc_oferta_firmada');
+    addDoc(p.datos.doc_contrato, 'Contrato', 'doc_contrato');
+    if (p.datos.oferta_sustento_cierre) {
+        addDoc(p.datos.oferta_sustento_cierre, 'Oferta Sustento de Cierre (Definitiva)', 'doc_oferta');
+    }
 
     if (p.facturas && p.facturas.length > 0) {
         p.facturas.forEach(f => {
@@ -5783,21 +5954,34 @@ function renderClosingDocumentationPanel(p) {
     const container = document.getElementById('advance-form-container');
     if (!container) return;
 
-    const c = (typeof clients !== 'undefined' && Array.isArray(clients)) ? (clients.find(x => x.id === p.clientId) || {}) : {};
-    const clientDocs = c.documentos || {};
-    const datos = p.datos || {};
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof window !== 'undefined' && Array.isArray(window.clients)) ? window.clients : []);
+    const c = clientList.find(x => x.id === p.clientId) || {};
+    const clientDocs = (c && c.documentos && typeof c.documentos === 'object') ? c.documentos : {};
+    const datos = (p && p.datos && typeof p.datos === 'object') ? p.datos : {};
+    const isWon = p.estado === 'ganado';
 
     const sla = typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateStageSla === 'function'
         ? CrmFollowUpCalc.calculateStageSla(p, new Date())
         : { elapsedBusinessDays: 0, limitBusinessDays: 5, diasAtraso: 0, isOverdue: false, fechaInicio: p.fecha_inicio_cierre || null, fechaLimite: p.fecha_limite_cierre || null };
 
     const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-    const isAuthorized = datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada');
+
+    // Evaluación estricta de autorización sin contrato (Fase 4B.3 / 4B.4)
+    const aprobacionSinContrato = p.aprobacion_sin_contrato || (datos && datos.aprobacion_sin_contrato) || null;
+    const isApprovalInvalidated = (aprobacionSinContrato && aprobacionSinContrato.estado === 'invalidada_por_sustitucion');
+    const isApprovalActive = !isApprovalInvalidated && (
+        datos.autorizado_sin_contrato === true ||
+        (aprobacionSinContrato && aprobacionSinContrato.estado === 'aprobada') ||
+        (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada')
+    );
 
     // Evaluaciones documentales
     const hasDui = !!clientDocs.dui;
-    const hasCompanyDocs = !isBigInstalacion || isAuthorized || (c.tipo !== 'juridica') || (clientDocs.escritura && clientDocs.credencial && clientDocs.nit && clientDocs.nrc);
-    const hasDocFirmado = !!(datos.doc_firmado || datos.doc_contrato || datos.doc_oferta_firmada);
+    const hasCompanyDocs = !isBigInstalacion || isApprovalActive || (c.tipo !== 'juridica') || (clientDocs.escritura && clientDocs.credencial && clientDocs.nit && clientDocs.nrc);
+    const activeDocFirmado = datos.doc_firmado || (isBigInstalacion && !isApprovalActive ? (datos.doc_contrato || datos.doc_firmado) : (datos.doc_oferta_firmada || datos.doc_firmado));
+    const hasDocFirmado = !!activeDocFirmado;
     const hasDocComprobante = !!datos.doc_comprobante;
     const hasFacturaAnticipo = !!(p.factura_anticipo || datos.factura_anticipo);
     const hasFormaPago = !!(p.forma_pago || datos.forma_pago);
@@ -5809,19 +5993,19 @@ function renderClosingDocumentationPanel(p) {
     const pendingList = [];
 
     // DUI
-    reqList.push("DUI de identificación (Directorio Clientes)");
+    reqList.push("DUI de identificación (Cliente)");
     if (hasDui) okList.push("DUI de identificación");
-    else pendingList.push("DUI de identificación (subir en Directorio de Clientes)");
+    else pendingList.push("DUI de identificación");
 
     // Jurídica Docs
-    if (isBigInstalacion && !isAuthorized && c.tipo === 'juridica') {
+    if (isBigInstalacion && !isApprovalActive && c.tipo === 'juridica') {
         reqList.push("Documentos legales corporativos (Escritura, Credencial, NIT, NRC)");
         if (hasCompanyDocs) okList.push("Documentos legales corporativos");
-        else pendingList.push("Documentos legales corporativos (subir en Directorio de Clientes)");
+        else pendingList.push("Documentos legales corporativos");
     }
 
     // Contrato u Oferta
-    if (isBigInstalacion && !isAuthorized) {
+    if (isBigInstalacion && !isApprovalActive) {
         reqList.push("Contrato firmado escaneado (Proyecto > $10k)");
         if (hasDocFirmado) okList.push("Contrato firmado escaneado");
         else pendingList.push("Contrato firmado escaneado");
@@ -5865,20 +6049,146 @@ function renderClosingDocumentationPanel(p) {
     const currentFp = p.forma_pago || datos.forma_pago || '';
     const currentFac = p.factura_anticipo || datos.factura_anticipo || '';
 
+    // =========================================================================
+    // Definición de documentos del cliente a mostrar contextualmente
+    // =========================================================================
+    const clientDocSpecs = (c.tipo === 'juridica') ? [
+        { key: 'dui', label: 'DUI Rep. Legal', isLegal: false, required: true },
+        { key: 'escritura', label: 'Escritura de Constitución', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'credencial', label: 'Credencial Rep. Legal', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'nit', label: 'NIT Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'nrc', label: 'NRC Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'mods_escritura', label: 'Mods. Escritura', isLegal: true, required: false }
+    ] : [
+        { key: 'dui', label: 'DUI de Identificación', isLegal: false, required: true },
+        { key: 'nit', label: 'NIT Personal', isLegal: true, required: false }
+    ];
+
+    let clientDocsRowsHtml = '';
+    for (const spec of clientDocSpecs) {
+        const doc = clientDocs[spec.key];
+        const isPresent = !!doc;
+        const reqBadge = spec.required
+            ? `<span style="font-size:0.7rem; color:#f87171; font-weight:600; margin-left:4px;">[Obligatorio]</span>`
+            : `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:4px;">[Opcional]</span>`;
+
+        let docMeta = '';
+        let fileActions = '';
+        const fileName = isPresent ? ((typeof doc === 'object' && doc.name) ? doc.name : (typeof doc === 'string' ? doc.split('?')[0].split('/').pop() : spec.label)) : '';
+        if (isPresent) {
+            const dateStr = (typeof doc === 'object' && doc.actualizadoEn) ? doc.actualizadoEn.replace('T', ' ').slice(0, 16) : '';
+            docMeta = `
+                <div style="font-size:0.8rem; color:var(--success); display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:2px;">
+                    <span>✅ <strong>${escapeHtmlDoc(fileName)}</strong></span>
+                    ${dateStr ? `<span style="font-size:0.72rem; color:var(--text-muted);">(${dateStr})</span>` : ''}
+                </div>
+            `;
+            fileActions = `
+                <div style="display:flex; gap:4px; align-items:center;">
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="viewSecureDocument(clients.find(x => x.id === '${c.id}')?.documentos?.${spec.key}, '${escapeHtmlDoc(fileName)}', { clientId: '${c.id}' })" title="Ver documento">👁️ Ver</button>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="downloadSecureDocument(clients.find(x => x.id === '${c.id}')?.documentos?.${spec.key}, '${escapeHtmlDoc(fileName)}', { clientId: '${c.id}' })" title="Descargar documento">⬇️</button>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="showDocumentVersionHistory('client', '${c.id}', '${spec.key}', '${escapeHtmlDoc(spec.label)}')" title="Consultar historial de versiones">📜 Historial</button>
+                    ${!isWon ? `<button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem; border-color:var(--brand-gold); color:var(--brand-gold);" onclick="toggleClientDocSubstForm('${spec.key}')" title="Sustituir por nueva versión">🔄 Sustituir</button>` : ''}
+                </div>
+            `;
+        } else {
+            docMeta = `<div style="font-size:0.78rem; color:#fca5a5; margin-top:2px;">⚠️ No adjunto en el expediente</div>`;
+            if (!isWon) {
+                fileActions = `
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="file" id="closing-client-file-${spec.key}" style="font-size:0.75rem; max-width:210px;">
+                        <button type="button" class="btn-primary" style="padding:3px 10px; font-size:0.75rem;" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${spec.key}', false)" title="Subir primera versión">📤 Subir</button>
+                    </div>
+                `;
+            }
+        }
+
+        const substFormHtml = (isPresent && !isWon) ? `
+            <div id="subst-container-client-${spec.key}" class="subst-form-panel" style="display:none; margin-top:10px; padding:14px; background:rgba(15, 23, 42, 0.95); border:1px solid var(--brand-gold); border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                    <div>
+                        <div style="font-size:0.85rem; font-weight:700; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                            <span>🔄 Sustituir Versión:</span> <span>${escapeHtmlDoc(spec.label)}</span>
+                        </div>
+                        <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">
+                            Archivo vigente: <strong style="color:white;">${escapeHtmlDoc(fileName)}</strong>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="cancelClientDocSubstForm('${spec.key}')" title="Cancelar">✖️</button>
+                </div>
+
+                <div style="background:rgba(245, 158, 11, 0.12); border-left:3px solid #f59e0b; padding:8px 10px; border-radius:4px; font-size:0.75rem; color:#fde68a; margin-bottom:10px;">
+                    ⚠️ <strong>Aviso de Versionado:</strong> El archivo actual se archivará de forma inmutable en el historial con su sello de tiempo y responsable. Debe justificar el reemplazo.
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div>
+                        <label for="closing-client-subst-file-${spec.key}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                            Nuevo archivo (PDF, JPG, PNG) <span style="color:#ef4444;">*</span>
+                        </label>
+                        <input type="file" id="closing-client-subst-file-${spec.key}" accept=".pdf,.png,.jpg,.jpeg,.webp" style="font-size:0.78rem; width:100%; color:var(--text-secondary);">
+                    </div>
+
+                    <div>
+                        <label for="closing-client-motivo-${spec.key}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                            Motivo obligatorio de sustitución <span style="color:#ef4444;">*</span>
+                        </label>
+                        <textarea id="closing-client-motivo-${spec.key}" rows="2" placeholder="Describa el motivo por el cual se reemplaza este documento..." style="width:100%; box-sizing:border-box; font-size:0.78rem; padding:6px 10px; background:rgba(255,255,255,0.07); border:1px solid var(--panel-border); border-radius:4px; color:white; resize:vertical;"></textarea>
+                        <small style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:2px;">Mínimo 3 caracteres requeridos para auditoría.</small>
+                    </div>
+
+                    <div id="closing-client-subst-feedback-${spec.key}" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:4px;"></div>
+
+                    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
+                        <button type="button" class="btn-secondary" id="btn-cancel-subst-${spec.key}" onclick="cancelClientDocSubstForm('${spec.key}')" style="padding:5px 12px; font-size:0.78rem;">Cancelar</button>
+                        <button type="button" class="btn-primary" id="btn-confirm-client-subst-${spec.key}" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${spec.key}', true)" style="padding:5px 14px; font-size:0.78rem; background:var(--brand-gold); color:black; font-weight:600;">Confirmar Reemplazo</button>
+                    </div>
+                </div>
+            </div>
+        ` : '';
+
+        clientDocsRowsHtml += `
+            <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                    <div>
+                        <strong style="font-size:0.85rem; color:var(--text-primary);">${escapeHtmlDoc(spec.label)}</strong>
+                        ${reqBadge}
+                        ${docMeta}
+                    </div>
+                    <div>
+                        ${fileActions}
+                    </div>
+                </div>
+                ${substFormHtml}
+            </div>
+        `;
+    }
+
+    // Nombre y metadata de documentos propios del cierre
+    const firmadoName = (activeDocFirmado && typeof activeDocFirmado === 'object' && activeDocFirmado.name)
+        ? activeDocFirmado.name
+        : (typeof activeDocFirmado === 'string' ? activeDocFirmado.split('?')[0].split('/').pop() : 'Oferta / Contrato');
+
+    const comprobanteName = (datos.doc_comprobante && typeof datos.doc_comprobante === 'object' && datos.doc_comprobante.name)
+        ? datos.doc_comprobante.name
+        : (typeof datos.doc_comprobante === 'string' ? datos.doc_comprobante.split('?')[0].split('/').pop() : 'Comprobante Anticipo');
+
     let html = `
     <div class="closing-panel glass-panel" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 8px; padding: 1.5rem; margin-top: 1rem;">
         <!-- Cabecera de SLA y Estado -->
         <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
             <div>
                 <h4 style="margin: 0; color: var(--brand-gold); display: flex; align-items: center; gap: 8px;">
-                    <span>📁 Cierre Comercial: Pendiente de Documentación</span>
+                    <span>📁 Cierre Comercial: Documentación y Validación</span>
                 </h4>
                 <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: var(--text-secondary);">
                     Responsable de cierre: <strong style="color: white;">${escapeHtmlDoc(respName)}</strong>
                 </p>
             </div>
             <div style="text-align: right;">
-                ${sla.isOverdue
+                ${isWon ? `
+                    <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid var(--success); font-size: 0.85rem; padding: 4px 10px;">🏆 Oportunidad Ganada (Cerrada)</span>
+                ` : sla.isOverdue
                     ? `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); font-size: 0.85rem; padding: 4px 10px;">🚨 Plazo Vencido (+${sla.diasAtraso} días hábiles de atraso)</span>`
                     : `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid var(--success); font-size: 0.85rem; padding: 4px 10px;">⏱️ Dentro del Plazo (${Math.max(0, 5 - sla.elapsedBusinessDays)} días hábiles restantes)</span>`
                 }
@@ -5920,29 +6230,21 @@ function renderClosingDocumentationPanel(p) {
             </div>
         </div>
 
-        <!-- Alertas de Cliente / Directorio si faltan documentos del cliente -->
-        ${!hasDui ? `
-            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; color: #fca5a5;">
-                ❌ <strong>Obligatorio:</strong> Falta el <strong>DUI del cliente o representante legal</strong> en su ficha de cliente.
-                <button type="button" class="btn-primary" style="margin-left: 10px; padding: 2px 8px; font-size: 0.75rem;" onclick="openClientModal('${c.id}')">Editar Cliente en Directorio</button>
-            </div>
-        ` : ''}
-
-        ${(isBigInstalacion && !isAuthorized && c.tipo === 'juridica' && !hasCompanyDocs) ? `
-            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; color: #fca5a5;">
-                ❌ <strong>Obligatorio:</strong> Venta con contrato (> $10k e instalación). Faltan documentos legales de la Empresa (Escritura, Credencial, NIT, NRC).
-                <button type="button" class="btn-primary" style="margin-left: 10px; padding: 2px 8px; font-size: 0.75rem;" onclick="openClientModal('${c.id}')">Completar en Directorio</button>
+        <!-- Alerta de Autorización Invalidada por sustitución de oferta previa -->
+        ${isApprovalInvalidated ? `
+            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.85rem; color: #fca5a5;">
+                🚨 <strong>AUTORIZACIÓN INVALIDADA POR SUSTITUCIÓN DE OFERTA:</strong> La autorización previa para cerrar sin contrato fue invalidada automáticamente porque se sustituyó la oferta firmada (${escapeHtmlDoc(aprobacionSinContrato.motivo_invalidacion || 'Sustitución de oferta')}). Se requiere que un Gerente reautorice la nueva oferta antes de poder finalizar el cierre.
             </div>
         ` : ''}
 
         <!-- Autorización de Contrato (si aplica para proyectos grandes) -->
         ${isBigInstalacion ? `
-            <div style="margin-bottom: 1rem;">
-                ${isAuthorized ? `
+            <div style="margin-bottom: 1.25rem;">
+                ${isApprovalActive ? `
                     <div style="background: rgba(46, 204, 113, 0.1); border: 1px solid var(--success); padding: 0.75rem; border-radius: 6px;">
                         <span style="color: var(--success); font-weight: bold;">✔️ Cierre Sin Contrato Autorizado</span>
                         <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 4px 0 0 0;">
-                            Autorizado por: <strong>${datos.autorizado_por || 'Gerencia'}</strong>
+                            Autorizado por: <strong>${escapeHtmlDoc(datos.autorizado_por || (aprobacionSinContrato && aprobacionSinContrato.autorizado_por) || 'Gerencia')}</strong>
                         </p>
                     </div>
                 ` : `
@@ -5963,69 +6265,186 @@ function renderClosingDocumentationPanel(p) {
             </div>
         ` : ''}
 
-        <!-- Formulario de Configuración y Carga de Archivos -->
-        <div class="form-grid" style="margin-bottom: 1.25rem;">
-            <div class="form-group">
-                <label>Forma de Pago Pactada</label>
-                <select id="closing-forma-pago" required>
-                    <option value="">-- Seleccione --</option>
-                    <option value="100% anticipado" ${currentFp === '100% anticipado' ? 'selected' : ''}>100% Anticipado</option>
-                    <option value="70/30" ${currentFp === '70/30' ? 'selected' : ''}>70% Anticipo / 30% Cierre</option>
-                    <option value="50/50" ${currentFp === '50/50' ? 'selected' : ''}>50% Anticipo / 50% Cierre</option>
-                </select>
+        <!-- SECCIÓN 1: EXPEDIENTE DOCUMENTAL DEL CLIENTE (Contextual 4B.4) -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+                <div>
+                    <h5 style="margin: 0; color: var(--brand-gold); font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
+                        <span>📇 Documentación del Cliente</span>
+                    </h5>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+                        Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel.
+                    </div>
+                </div>
             </div>
 
-            <div class="form-group">
-                <label>Número Factura de Anticipo</label>
-                <input type="text" id="closing-fac-anticipo" value="${escapeHtmlDoc(currentFac)}" placeholder="Ej. FCF-001" required>
+            <!-- Listado de documentos del cliente con estado, consulta e inline upload/substitution -->
+            <div style="display: flex; flex-direction: column;">
+                ${clientDocsRowsHtml}
             </div>
+        </div>
 
-            ${p.tipo_proyecto === 'Fabricación e instalación' ? `
+        <!-- SECCIÓN 2: DOCUMENTOS PROPIOS DEL CIERRE DE LA OPORTUNIDAD -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+            <h5 style="margin: 0 0 0.75rem 0; color: var(--brand-gold); font-size: 0.92rem; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem;">
+                <span>📑 Documentación y Datos de la Oportunidad</span>
+            </h5>
+
+            <div class="form-grid" style="margin-bottom: 1rem;">
                 <div class="form-group">
-                    <label>Encargado de Instalación</label>
-                    <select id="closing-encargado" required>
+                    <label>Forma de Pago Pactada</label>
+                    <select id="closing-forma-pago" required ${isWon ? 'disabled' : ''}>
                         <option value="">-- Seleccione --</option>
-                        ${encOpts}
+                        <option value="100% anticipado" ${currentFp === '100% anticipado' ? 'selected' : ''}>100% Anticipado</option>
+                        <option value="70/30" ${currentFp === '70/30' ? 'selected' : ''}>70% Anticipo / 30% Cierre</option>
+                        <option value="50/50" ${currentFp === '50/50' ? 'selected' : ''}>50% Anticipo / 50% Cierre</option>
                     </select>
                 </div>
-            ` : ''}
 
-            <!-- Subida de Oferta / Contrato -->
-            <div class="form-group full-width">
-                <label>${(isBigInstalacion && !isAuthorized) ? 'Contrato Firmado (Proyecto > $10k)' : 'Oferta Firmada por Cliente'}</label>
-                ${(isBigInstalacion && !isAuthorized) ? `
-                    <div style="margin-bottom: 6px;">
-                        <button type="button" class="btn-secondary" style="font-size: 0.78rem; padding: 4px 8px;" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button>
-                    </div>
-                ` : ''}
-                ${datos.doc_firmado ? `
-                    <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
-                        ✔️ Documento actual cargado: <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado, 'Doc Cierre', { prospectId: '${p.id}' })" style="color:var(--brand-gold);">Ver documento</a>
-                    </div>
-                ` : ''}
-                <input type="file" id="closing-file-doc-firmado">
-                <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos aceptados: PDF, JPG, PNG.</small>
-            </div>
+                <div class="form-group">
+                    <label>Número Factura de Anticipo</label>
+                    <input type="text" id="closing-fac-anticipo" value="${escapeHtmlDoc(currentFac)}" placeholder="Ej. FCF-001" required ${isWon ? 'disabled' : ''}>
+                </div>
 
-            <!-- Subida de Factura / Comprobante -->
-            <div class="form-group full-width">
-                <label>Copia de Factura o Comprobante de Anticipo Emitido</label>
-                ${datos.doc_comprobante ? `
-                    <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
-                        ✔️ Comprobante actual cargado: <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" style="color:var(--brand-gold);">Ver comprobante</a>
+                ${p.tipo_proyecto === 'Fabricación e instalación' ? `
+                    <div class="form-group">
+                        <label>Encargado de Instalación</label>
+                        <select id="closing-encargado" required ${isWon ? 'disabled' : ''}>
+                            <option value="">-- Seleccione --</option>
+                            ${encOpts}
+                        </select>
                     </div>
                 ` : ''}
-                <input type="file" id="closing-file-doc-comprobante">
-                <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos aceptados: PDF, JPG, PNG.</small>
+
+                <!-- Subida de Oferta / Contrato -->
+                <div class="form-group full-width" style="padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label style="margin: 0;">${(isBigInstalacion && !isApprovalActive) ? 'Contrato Firmado (Proyecto > $10k)' : 'Oferta Firmada por Cliente'}</label>
+                        ${hasDocFirmado ? `
+                            <div style="display: flex; gap: 4px; align-items: center;">
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado || prospects.find(x => x.id === '${p.id}')?.datos?.doc_oferta_firmada, 'Doc Cierre', { prospectId: '${p.id}' })" title="Ver archivo actual">👁️ Ver</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado || prospects.find(x => x.id === '${p.id}')?.datos?.doc_oferta_firmada, 'Doc Cierre', { prospectId: '${p.id}' })" title="Descargar">⬇️</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="showDocumentVersionHistory('prospect', '${p.id}', 'doc_firmado', 'Oferta Firmada')" title="Historial">📜 Historial</button>
+                                ${!isWon ? `<button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; border-color: var(--brand-gold); color: var(--brand-gold);" onclick="toggleProspectDocSubstForm('doc_firmado')">🔄 Sustituir</button>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    ${(isBigInstalacion && !isApprovalActive) ? `
+                        <div style="margin-bottom: 6px;">
+                            <button type="button" class="btn-secondary" style="font-size: 0.78rem; padding: 4px 8px;" onclick="generarContrato('${p.id}')">📄 Generar Contrato (Imprimible)</button>
+                        </div>
+                    ` : ''}
+
+                    ${hasDocFirmado ? `
+                        <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
+                            ✔️ Archivo vigente cargado: <strong>${escapeHtmlDoc(firmadoName)}</strong>
+                        </div>
+                    ` : ''}
+
+                    <div id="subst-container-prospect-doc_firmado" class="subst-form-panel" style="${hasDocFirmado ? 'display:none;' : 'display:block;'} margin-top: 8px; padding: 12px; background: rgba(15, 23, 42, 0.95); border: 1px solid ${hasDocFirmado ? 'var(--brand-gold)' : 'var(--panel-border)'}; border-radius: 8px;">
+                        ${hasDocFirmado ? `
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                                <div>
+                                    <div style="font-size:0.85rem; font-weight:700; color:var(--brand-gold);">🔄 Sustituir Oferta/Contrato Firmado</div>
+                                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">Archivo vigente: <strong style="color:white;">${escapeHtmlDoc(firmadoName)}</strong></div>
+                                </div>
+                                <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="cancelProspectDocSubstForm('doc_firmado')" title="Cancelar">✖️</button>
+                            </div>
+                            <div style="background:rgba(245, 158, 11, 0.12); border-left:3px solid #f59e0b; padding:8px 10px; border-radius:4px; font-size:0.75rem; color:#fde68a; margin-bottom:10px;">
+                                ⚠️ <strong>Aviso de Versionado:</strong> El archivo actual se archivará en el historial. La nueva versión requerirá justificación obligatoria.
+                            </div>
+                            ${isApprovalActive ? `
+                                <div style="font-size: 0.75rem; color: #fca5a5; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; padding: 8px 10px; border-radius: 4px; margin-bottom: 10px;">
+                                    ⚠️ <strong>Atención crítica:</strong> Sustituir este documento invalidará automáticamente la autorización para cerrar sin contrato. Se requerirá nueva autorización gerencial.
+                                </div>
+                            ` : ''}
+                        ` : `
+                            <label for="closing-file-doc-firmado" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Cargar documento de oferta firmada / contrato:</label>
+                        `}
+                        <div>
+                            <label for="closing-file-doc-firmado" style="display:${hasDocFirmado ? 'block' : 'none'}; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Nuevo archivo (PDF, JPG, PNG) <span style="color:#ef4444;">*</span></label>
+                            <input type="file" id="closing-file-doc-firmado" accept=".pdf,.png,.jpg,.jpeg,.webp" ${isWon ? 'disabled' : ''} style="font-size:0.78rem; width:100%;">
+                            <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos: PDF, JPG, PNG.</small>
+                        </div>
+                        ${hasDocFirmado ? `
+                            <div style="margin-top: 8px;">
+                                <label for="closing-motivo-doc-firmado" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Motivo obligatorio de sustitución <span style="color:#ef4444;">*</span></label>
+                                <textarea id="closing-motivo-doc-firmado" rows="2" placeholder="Motivo obligatorio por el que se sustituye la oferta firmada..." style="font-size: 0.78rem; width: 100%; box-sizing:border-box; padding: 6px 10px; background: rgba(255,255,255,0.07); border: 1px solid var(--panel-border); border-radius: 4px; color: white; resize:vertical;"></textarea>
+                                <small style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:2px;">Mínimo 3 caracteres requeridos para auditoría.</small>
+                            </div>
+                            <div id="closing-prospect-feedback-doc_firmado" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:4px; margin-top:6px;"></div>
+                            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+                                <button type="button" class="btn-secondary" id="btn-cancel-prospect-subst-doc_firmado" onclick="cancelProspectDocSubstForm('doc_firmado')" style="padding:4px 12px; font-size:0.78rem;">Cancelar</button>
+                                <button type="button" class="btn-primary" id="btn-confirm-prospect-subst-doc_firmado" onclick="confirmProspectDocSubstitution('${p.id}', 'doc_firmado')" style="padding:4px 14px; font-size:0.78rem; background:var(--brand-gold); color:black; font-weight:600;">Confirmar Reemplazo</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Subida de Factura / Comprobante -->
+                <div class="form-group full-width" style="padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label style="margin: 0;">Copia de Factura o Comprobante de Anticipo Emitido</label>
+                        ${hasDocComprobante ? `
+                            <div style="display: flex; gap: 4px; align-items: center;">
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" title="Ver archivo actual">👁️ Ver</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" title="Descargar">⬇️</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="showDocumentVersionHistory('prospect', '${p.id}', 'doc_comprobante', 'Comprobante de Anticipo')" title="Historial">📜 Historial</button>
+                                ${!isWon ? `<button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; border-color: var(--brand-gold); color: var(--brand-gold);" onclick="toggleProspectDocSubstForm('doc_comprobante')">🔄 Sustituir</button>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    ${hasDocComprobante ? `
+                        <div style="font-size: 0.8rem; color: var(--success); margin-bottom: 4px;">
+                            ✔️ Archivo vigente cargado: <strong>${escapeHtmlDoc(comprobanteName)}</strong>
+                        </div>
+                    ` : ''}
+
+                    <div id="subst-container-prospect-doc_comprobante" class="subst-form-panel" style="${hasDocComprobante ? 'display:none;' : 'display:block;'} margin-top: 8px; padding: 12px; background: rgba(15, 23, 42, 0.95); border: 1px solid ${hasDocComprobante ? 'var(--brand-gold)' : 'var(--panel-border)'}; border-radius: 8px;">
+                        ${hasDocComprobante ? `
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                                <div>
+                                    <div style="font-size:0.85rem; font-weight:700; color:var(--brand-gold);">🔄 Sustituir Comprobante de Anticipo</div>
+                                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">Archivo vigente: <strong style="color:white;">${escapeHtmlDoc(comprobanteName)}</strong></div>
+                                </div>
+                                <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="cancelProspectDocSubstForm('doc_comprobante')" title="Cancelar">✖️</button>
+                            </div>
+                            <div style="background:rgba(245, 158, 11, 0.12); border-left:3px solid #f59e0b; padding:8px 10px; border-radius:4px; font-size:0.75rem; color:#fde68a; margin-bottom:10px;">
+                                ⚠️ <strong>Aviso de Versionado:</strong> El comprobante actual se archivará en el historial. La nueva versión requerirá justificación obligatoria.
+                            </div>
+                        ` : `
+                            <label for="closing-file-doc-comprobante" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Cargar copia de factura o comprobante de anticipo:</label>
+                        `}
+                        <div>
+                            <label for="closing-file-doc-comprobante" style="display:${hasDocComprobante ? 'block' : 'none'}; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Nuevo archivo (PDF, JPG, PNG) <span style="color:#ef4444;">*</span></label>
+                            <input type="file" id="closing-file-doc-comprobante" accept=".pdf,.png,.jpg,.jpeg,.webp" ${isWon ? 'disabled' : ''} style="font-size:0.78rem; width:100%;">
+                            <small style="color:var(--text-secondary); display:block; margin-top:2px;">Formatos: PDF, JPG, PNG.</small>
+                        </div>
+                        ${hasDocComprobante ? `
+                            <div style="margin-top: 8px;">
+                                <label for="closing-motivo-doc-comprobante" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">Motivo obligatorio de sustitución <span style="color:#ef4444;">*</span></label>
+                                <textarea id="closing-motivo-doc-comprobante" rows="2" placeholder="Motivo obligatorio por el que se sustituye el comprobante..." style="font-size: 0.78rem; width: 100%; box-sizing:border-box; padding: 6px 10px; background: rgba(255,255,255,0.07); border: 1px solid var(--panel-border); border-radius: 4px; color: white; resize:vertical;"></textarea>
+                                <small style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:2px;">Mínimo 3 caracteres requeridos para auditoría.</small>
+                            </div>
+                            <div id="closing-prospect-feedback-doc_comprobante" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:4px; margin-top:6px;"></div>
+                            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+                                <button type="button" class="btn-secondary" id="btn-cancel-prospect-subst-doc_comprobante" onclick="cancelProspectDocSubstForm('doc_comprobante')" style="padding:4px 12px; font-size:0.78rem;">Cancelar</button>
+                                <button type="button" class="btn-primary" id="btn-confirm-prospect-subst-doc_comprobante" onclick="confirmProspectDocSubstitution('${p.id}', 'doc_comprobante')" style="padding:4px 14px; font-size:0.78rem; background:var(--brand-gold); color:black; font-weight:600;">Confirmar Reemplazo</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- Botones de Acción: Guardar Avances vs Finalizar Oportunidad -->
         <div style="display: flex; gap: 1rem; align-items: center; border-top: 1px solid var(--panel-border); padding-top: 1rem; flex-wrap: wrap;">
-            <button type="button" class="btn-secondary" onclick="saveClosingProgress('${p.id}')" style="display: flex; align-items: center; gap: 6px;">
+            <button type="button" class="btn-secondary" onclick="saveClosingProgress('${p.id}')" style="display: flex; align-items: center; gap: 6px;" ${isWon ? 'disabled' : ''}>
                 <span>💾</span> Guardar Avances Documentales
             </button>
-            <button type="button" class="btn-primary" onclick="finalizeOpportunity('${p.id}')" style="background: #10b981; border-color: #10b981; color: white; font-weight: 600; display: flex; align-items: center; gap: 6px; margin-left: auto;">
+            <button type="button" class="btn-primary" onclick="finalizeOpportunity('${p.id}')" style="background: #10b981; border-color: #10b981; color: white; font-weight: 600; display: flex; align-items: center; gap: 6px; margin-left: auto;" ${isWon ? 'disabled' : ''}>
                 <span>🏁</span> Finalizar Oportunidad (Ganada)
             </button>
         </div>
@@ -6037,27 +6456,295 @@ function renderClosingDocumentationPanel(p) {
     container.innerHTML = html;
 }
 
+function toggleClientDocSubstForm(docKey) {
+    const el = document.getElementById(`subst-container-client-${docKey}`);
+    if (el) {
+        el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+    }
+}
+
+function cancelClientDocSubstForm(docKey) {
+    const fileEl = document.getElementById(`closing-client-subst-file-${docKey}`);
+    if (fileEl) fileEl.value = '';
+    const motivoEl = document.getElementById(`closing-client-motivo-${docKey}`);
+    if (motivoEl) motivoEl.value = '';
+    const feedbackEl = document.getElementById(`closing-client-subst-feedback-${docKey}`);
+    if (feedbackEl) {
+        feedbackEl.style.display = 'none';
+        feedbackEl.innerHTML = '';
+    }
+    const container = document.getElementById(`subst-container-client-${docKey}`);
+    if (container) container.style.display = 'none';
+}
+
+function toggleProspectDocSubstForm(docKey) {
+    const el = document.getElementById(`subst-container-prospect-${docKey}`);
+    if (el) {
+        el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+    }
+}
+
+function cancelProspectDocSubstForm(docKey) {
+    const fileEl = document.getElementById(`closing-file-${docKey}`);
+    if (fileEl) fileEl.value = '';
+    const motivoEl = document.getElementById(`closing-motivo-${docKey}`);
+    if (motivoEl) motivoEl.value = '';
+    const feedbackEl = document.getElementById(`closing-prospect-feedback-${docKey}`);
+    if (feedbackEl) {
+        feedbackEl.style.display = 'none';
+        feedbackEl.innerHTML = '';
+    }
+    const container = document.getElementById(`subst-container-prospect-${docKey}`);
+    if (container) container.style.display = 'none';
+}
+
+async function confirmProspectDocSubstitution(prospectId, docKey) {
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x.id === prospectId) || null;
+    if (!p) return alert('Oportunidad no encontrada');
+    if (p.estado === 'ganado') return alert('No se pueden modificar documentos de una oportunidad ya ganada.');
+
+    const fileInput = document.getElementById(`closing-file-${docKey}`);
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        return alert('Debe seleccionar un archivo para sustituir el documento actual.');
+    }
+
+    const motivoInput = document.getElementById(`closing-motivo-${docKey}`);
+    const motivo = motivoInput ? motivoInput.value.trim() : '';
+    if (!motivo || motivo.length < 3) {
+        return alert('Toda sustitución de un documento existente requiere un motivo obligatorio (mínimo 3 caracteres).');
+    }
+
+    const confirmBtn = document.getElementById(`btn-confirm-prospect-subst-${docKey}`);
+    const feedbackEl = document.getElementById(`closing-prospect-feedback-${docKey}`);
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '⏳ Subiendo a Storage...';
+    }
+    if (feedbackEl) {
+        feedbackEl.style.display = 'block';
+        feedbackEl.style.background = 'rgba(59, 130, 246, 0.15)';
+        feedbackEl.style.color = '#93c5fd';
+        feedbackEl.innerHTML = '⏳ Subiendo nuevo archivo a Storage seguro...';
+    }
+
+    try {
+        const uploader = (typeof window !== 'undefined' && typeof window.uploadFileToStorage === 'function')
+            ? window.uploadFileToStorage
+            : uploadFileToStorage;
+        const folder = docKey === 'doc_comprobante' ? 'facturas' : 'proyectos';
+        const docRef = await uploader(fileInput.files[0], folder, { prospectId: p.id });
+        docRef.motivoSustitucion = motivo;
+
+        if (confirmBtn) confirmBtn.innerHTML = '⏳ Registrando versión...';
+        if (feedbackEl) feedbackEl.innerHTML = '⏳ Registrando nueva versión y archivando anterior...';
+
+        const data = {};
+        if (docKey === 'doc_firmado') {
+            data.doc_firmado = docRef;
+            data.motivo_doc_firmado = motivo;
+        } else if (docKey === 'doc_comprobante') {
+            data.doc_comprobante = docRef;
+            data.motivo_doc_comprobante = motivo;
+        }
+
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        await CrmCommercial.saveClosingDocuments(fb, {
+            prospectId: p.id,
+            data,
+            dbSuffix: DB_SUFFIX
+        });
+
+        if (feedbackEl) {
+            feedbackEl.style.background = 'rgba(16, 185, 129, 0.15)';
+            feedbackEl.style.color = '#6ee7b7';
+            feedbackEl.innerHTML = '✅ Documento sustituido exitosamente.';
+        }
+
+        alert(`Documento sustituido y archivado exitosamente.`);
+        openDetail(p.id);
+    } catch (err) {
+        console.error('Error al sustituir documento del prospecto:', err);
+        if (feedbackEl) {
+            feedbackEl.style.background = 'rgba(239, 68, 68, 0.15)';
+            feedbackEl.style.color = '#fca5a5';
+            feedbackEl.innerHTML = '❌ Error: ' + escapeHtmlDoc(err.message || 'Error al guardar');
+        }
+        alert('Error al sustituir documento: ' + (err.message || 'Error desconocido') + '. La versión anterior se conservó intacta.');
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = 'Confirmar Reemplazo';
+        }
+    }
+}
+
+async function uploadClientDocumentFromClosing(clientId, prospectId, docKey, isSubstitution) {
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x.id === prospectId) || null;
+    if (!p) return alert('Oportunidad no encontrada');
+    if (p.estado === 'ganado') return alert('No se pueden modificar documentos de una oportunidad ya ganada.');
+
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof window !== 'undefined' && Array.isArray(window.clients)) ? window.clients : []);
+    const c = clientList.find(x => x.id === clientId) || null;
+    if (!c) return alert('Cliente no encontrado en el sistema.');
+
+    const fileInput = document.getElementById(isSubstitution ? `closing-client-subst-file-${docKey}` : `closing-client-file-${docKey}`)
+        || document.getElementById(`closing-client-file-${docKey}`);
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        return alert('Debe seleccionar un archivo para cargar.');
+    }
+
+    const file = fileInput.files[0];
+    let motivo = '';
+    if (isSubstitution) {
+        const motivoInput = document.getElementById(`closing-client-motivo-${docKey}`);
+        motivo = motivoInput ? motivoInput.value.trim() : '';
+        if (!motivo) {
+            return alert('Toda sustitución de un documento existente requiere un motivo no vacío.');
+        }
+    }
+
+    const btn = document.activeElement;
+    const origText = (btn && btn.tagName === 'BUTTON') ? btn.innerHTML : '';
+    if (btn && btn.tagName === 'BUTTON') {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Subiendo a Storage...';
+    }
+
+    try {
+        const isLegal = ['escritura', 'credencial', 'nit', 'nrc', 'mods_escritura'].includes(docKey);
+
+        let docRef;
+        try {
+            const uploader = (typeof window !== 'undefined' && typeof window.uploadFileToStorage === 'function')
+                ? window.uploadFileToStorage
+                : uploadFileToStorage;
+            docRef = await uploader(file, 'clientes', { clientId: c.id, isLegal });
+        } catch (uploadErr) {
+            alert('Error al subir archivo a Storage: ' + (uploadErr.message || 'Error de red'));
+            return;
+        }
+
+        if (btn && btn.tagName === 'BUTTON') {
+            btn.innerHTML = '⏳ Registrando versión...';
+        }
+
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        const clientsModule = (typeof CrmClients !== 'undefined')
+            ? CrmClients
+            : ((typeof window !== 'undefined' && window.CrmClients) ? window.CrmClients : null);
+        if (!clientsModule || !clientsModule.hasSessionSync(fb)) {
+            alert(clientsModule ? clientsModule.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+            return;
+        }
+
+        const clientUpdate = JSON.parse(JSON.stringify(c));
+        clientUpdate.baseDocumentos = (c.documentos && typeof c.documentos === 'object')
+            ? JSON.parse(JSON.stringify(c.documentos))
+            : {};
+        if (!clientUpdate.documentos) clientUpdate.documentos = {};
+
+        const stampedDoc = Object.assign({}, docRef);
+        if (isSubstitution && motivo) {
+            stampedDoc.motivoSustitucion = motivo;
+            clientUpdate.motivosSustitucion = { [docKey]: motivo };
+        }
+        clientUpdate.documentos[docKey] = stampedDoc;
+
+        const res = await clientsModule.updateClient(fb, {
+            id: c.id,
+            client: clientUpdate,
+            dbSuffix: DB_SUFFIX,
+            confirmReview: false
+        });
+
+        if (res.status === 'updated') {
+            if (res.client && res.client.documentos) {
+                c.documentos = res.client.documentos;
+            } else {
+                c.documentos[docKey] = stampedDoc;
+            }
+            renderClosingDocumentationPanel(p);
+            alert(`Documento [${formatClientDocLabel(docKey)}] ${isSubstitution ? 'sustituido' : 'guardado'} y versionado exitosamente.`);
+        } else {
+            alert('El servidor no confirmó la actualización: ' + (res.status || 'estado desconocido') + '. El archivo en Storage se conservó; puedes reintentar.');
+        }
+    } catch (err) {
+        console.error('Error al actualizar documento del cliente desde panel de cierre:', err);
+        const clientsModule = (typeof CrmClients !== 'undefined')
+            ? CrmClients
+            : ((typeof window !== 'undefined' && window.CrmClients) ? window.CrmClients : null);
+        const errMsg = clientsModule ? clientsModule.errorMessage(err) : (err.message || 'Error desconocido');
+        alert('Error al registrar documento: ' + errMsg + '. El archivo en Storage se conservó; puedes reintentar.');
+    } finally {
+        if (btn && btn.tagName === 'BUTTON') {
+            btn.disabled = false;
+            btn.innerHTML = origText || 'Subir';
+        }
+    }
+}
+
 async function saveClosingProgress(prospectId) {
-    const p = prospects.find(x => x.id === prospectId);
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x.id === prospectId) || null;
     if (!p) return;
+    if (p.estado === 'ganado') {
+        return alert('No se pueden modificar documentos de una oportunidad ya ganada.');
+    }
 
     const fpEl = document.getElementById('closing-forma-pago');
     const facEl = document.getElementById('closing-fac-anticipo');
     const encEl = document.getElementById('closing-encargado');
     const f1El = document.getElementById('closing-file-doc-firmado');
     const f2El = document.getElementById('closing-file-doc-comprobante');
+    const m1El = document.getElementById('closing-motivo-doc-firmado');
+    const m2El = document.getElementById('closing-motivo-doc-comprobante');
+
+    const hasNewF1 = f1El && f1El.files && f1El.files.length > 0;
+    const hasExistingF1 = !!(p.datos && (p.datos.doc_firmado || p.datos.doc_contrato || p.datos.doc_oferta_firmada));
+    if (hasNewF1 && hasExistingF1) {
+        const motivo1 = m1El ? m1El.value.trim() : '';
+        if (!motivo1) {
+            return alert('Toda sustitución de la oferta firmada requiere un motivo obligatorio no vacío.');
+        }
+    }
+
+    const hasNewF2 = f2El && f2El.files && f2El.files.length > 0;
+    const hasExistingF2 = !!(p.datos && p.datos.doc_comprobante);
+    if (hasNewF2 && hasExistingF2) {
+        const motivo2 = m2El ? m2El.value.trim() : '';
+        if (!motivo2) {
+            return alert('Toda sustitución del comprobante de anticipo requiere un motivo obligatorio no vacío.');
+        }
+    }
 
     const data = {};
     if (fpEl && fpEl.value) data.forma_pago = fpEl.value;
     if (facEl && facEl.value.trim()) data.factura_anticipo = facEl.value.trim();
     if (encEl && encEl.value.trim()) data.encargado = encEl.value.trim();
+    if (hasNewF1 && m1El && m1El.value.trim()) data.motivo_doc_firmado = m1El.value.trim();
+    if (hasNewF2 && m2El && m2El.value.trim()) data.motivo_doc_comprobante = m2El.value.trim();
 
     const ok = await runWorkflowOp('Guardando avances documentales...', async fb => {
-        if (f1El && f1El.files && f1El.files.length > 0) {
-            data.doc_firmado = await uploadFileToStorage(f1El.files[0], 'proyectos', { prospectId: p.id });
+        const uploader = (typeof window !== 'undefined' && typeof window.uploadFileToStorage === 'function')
+            ? window.uploadFileToStorage
+            : uploadFileToStorage;
+        if (hasNewF1) {
+            data.doc_firmado = await uploader(f1El.files[0], 'proyectos', { prospectId: p.id });
+            if (data.motivo_doc_firmado) data.doc_firmado.motivoSustitucion = data.motivo_doc_firmado;
         }
-        if (f2El && f2El.files && f2El.files.length > 0) {
-            data.doc_comprobante = await uploadFileToStorage(f2El.files[0], 'facturas', { prospectId: p.id });
+        if (hasNewF2) {
+            data.doc_comprobante = await uploader(f2El.files[0], 'facturas', { prospectId: p.id });
+            if (data.motivo_doc_comprobante) data.doc_comprobante.motivoSustitucion = data.motivo_doc_comprobante;
         }
         return CrmCommercial.saveClosingDocuments(fb, { prospectId: p.id, data, dbSuffix: DB_SUFFIX });
     });
@@ -6069,18 +6756,29 @@ async function saveClosingProgress(prospectId) {
 }
 
 async function finalizeOpportunity(prospectId) {
-    const p = prospects.find(x => x.id === prospectId);
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x.id === prospectId) || null;
     if (!p) return;
+    if (p.estado === 'ganado') {
+        return alert('Esta oportunidad ya fue finalizada previamente.');
+    }
 
     const fpEl = document.getElementById('closing-forma-pago');
     const facEl = document.getElementById('closing-fac-anticipo');
     const encEl = document.getElementById('closing-encargado');
     const f1El = document.getElementById('closing-file-doc-firmado');
     const f2El = document.getElementById('closing-file-doc-comprobante');
+    const m1El = document.getElementById('closing-motivo-doc-firmado');
+    const m2El = document.getElementById('closing-motivo-doc-comprobante');
 
-    const c = (typeof clients !== 'undefined' && Array.isArray(clients)) ? (clients.find(x => x.id === p.clientId) || {}) : {};
-    const clientDocs = c.documentos || {};
-    const datos = p.datos || {};
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof window !== 'undefined' && Array.isArray(window.clients)) ? window.clients : []);
+    const c = clientList.find(x => x.id === p.clientId) || {};
+    const clientDocs = (c && c.documentos && typeof c.documentos === 'object') ? c.documentos : {};
+    const datos = (p && p.datos && typeof p.datos === 'object') ? p.datos : {};
 
     const formaPago = (fpEl && fpEl.value) || p.forma_pago || datos.forma_pago;
     const facAnticipo = (facEl && facEl.value.trim()) || p.factura_anticipo || datos.factura_anticipo;
@@ -6092,14 +6790,39 @@ async function finalizeOpportunity(prospectId) {
     const hasExistingF2 = !!datos.doc_comprobante;
 
     const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-    const isAuthorized = datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada');
+    const aprobacionSinContrato = p.aprobacion_sin_contrato || (datos && datos.aprobacion_sin_contrato) || null;
+    const isApprovalInvalidated = (aprobacionSinContrato && aprobacionSinContrato.estado === 'invalidada_por_sustitucion');
+    const isAuthorized = !isApprovalInvalidated && (
+        datos.autorizado_sin_contrato === true ||
+        (aprobacionSinContrato && aprobacionSinContrato.estado === 'aprobada') ||
+        (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada')
+    );
+
+    // Validación de autorización invalidada
+    if (isBigInstalacion && isApprovalInvalidated) {
+        return alert("❌ No se puede finalizar la oportunidad: La autorización para cerrar sin contrato fue invalidada por una sustitución previa de la oferta.\n\nSe requiere una nueva autorización de gerencia antes de poder finalizar.");
+    }
+
+    if (hasNewF1 && hasExistingF1) {
+        const motivo1 = m1El ? m1El.value.trim() : '';
+        if (!motivo1) {
+            return alert('Toda sustitución de la oferta firmada requiere un motivo obligatorio no vacío.');
+        }
+    }
+
+    if (hasNewF2 && hasExistingF2) {
+        const motivo2 = m2El ? m2El.value.trim() : '';
+        if (!motivo2) {
+            return alert('Toda sustitución del comprobante de anticipo requiere un motivo obligatorio no vacío.');
+        }
+    }
 
     // Validación preventiva en cliente con reporte claro de requisitos faltantes
     const missing = [];
-    if (!clientDocs.dui) missing.push("DUI del cliente (en Directorio de Clientes)");
+    if (!clientDocs.dui) missing.push("DUI del cliente o representante (en sección Documentación del Cliente)");
     if (isBigInstalacion && !isAuthorized && c.tipo === 'juridica') {
         if (!clientDocs.escritura || !clientDocs.credencial || !clientDocs.nit || !clientDocs.nrc) {
-            missing.push("Documentos legales corporativos (Escritura, Credencial, NIT, NRC en Directorio)");
+            missing.push("Documentos legales corporativos (Escritura, Credencial, NIT, NRC en Documentación del Cliente)");
         }
     }
     if (!formaPago) missing.push("Forma de pago pactada");
@@ -6123,13 +6846,17 @@ async function finalizeOpportunity(prospectId) {
         factura_anticipo: facAnticipo
     };
     if (encargado) data.encargado = encargado;
+    if (hasNewF1 && m1El && m1El.value.trim()) data.motivo_doc_firmado = m1El.value.trim();
+    if (hasNewF2 && m2El && m2El.value.trim()) data.motivo_doc_comprobante = m2El.value.trim();
 
     const ok = await runWorkflowOp('Finalizando oportunidad y transfiriendo a Proyectos y Cobros...', async fb => {
         if (hasNewF1) {
             data.doc_firmado = await uploadFileToStorage(f1El.files[0], 'proyectos', { prospectId: p.id });
+            if (data.motivo_doc_firmado) data.doc_firmado.motivoSustitucion = data.motivo_doc_firmado;
         }
         if (hasNewF2) {
             data.doc_comprobante = await uploadFileToStorage(f2El.files[0], 'facturas', { prospectId: p.id });
+            if (data.motivo_doc_comprobante) data.doc_comprobante.motivoSustitucion = data.motivo_doc_comprobante;
         }
         return CrmCommercial.finalizeProspect(fb, { prospectId: p.id, data, dbSuffix: DB_SUFFIX });
     });
@@ -6145,6 +6872,24 @@ if (typeof window !== 'undefined') {
     window.saveClosingProgress = saveClosingProgress;
     window.finalizeOpportunity = finalizeOpportunity;
     window.confirmAdvanceToCierre = confirmAdvanceToCierre;
+    window.uploadClientDocumentFromClosing = uploadClientDocumentFromClosing;
+    window.toggleClientDocSubstForm = toggleClientDocSubstForm;
+    window.cancelClientDocSubstForm = cancelClientDocSubstForm;
+    window.toggleProspectDocSubstForm = toggleProspectDocSubstForm;
+    window.cancelProspectDocSubstForm = cancelProspectDocSubstForm;
+    window.confirmProspectDocSubstitution = confirmProspectDocSubstitution;
+}
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports.renderClosingDocumentationPanel = renderClosingDocumentationPanel;
+    module.exports.saveClosingProgress = saveClosingProgress;
+    module.exports.finalizeOpportunity = finalizeOpportunity;
+    module.exports.confirmAdvanceToCierre = confirmAdvanceToCierre;
+    module.exports.uploadClientDocumentFromClosing = uploadClientDocumentFromClosing;
+    module.exports.toggleClientDocSubstForm = toggleClientDocSubstForm;
+    module.exports.cancelClientDocSubstForm = cancelClientDocSubstForm;
+    module.exports.toggleProspectDocSubstForm = toggleProspectDocSubstForm;
+    module.exports.cancelProspectDocSubstForm = cancelProspectDocSubstForm;
+    module.exports.confirmProspectDocSubstitution = confirmProspectDocSubstitution;
 }
 
 function showLoseForm() {

@@ -13,6 +13,7 @@
 
 const crypto = require('crypto');
 const id = require('./clientIdentity');
+const { applyDocumentVersionsTx, applyDocumentVersionTx, isSameDocument, toCanonicalDocPointer } = require('./documentVersioningService');
 
 class ServiceError extends Error {
   constructor(code, message) { super(message); this.name = 'ServiceError'; this.code = code; }
@@ -66,6 +67,10 @@ function sanitizeDocumento(v) {
     if (typeof v.bucket === 'string' && v.bucket.length <= 200) doc.bucket = str(v.bucket);
     if (typeof v.size === 'number' && Number.isFinite(v.size)) doc.size = v.size;
     if (typeof v.contentType === 'string' && v.contentType.length <= 100) doc.contentType = str(v.contentType);
+    if (typeof v.versionId === 'string' && v.versionId.length <= 120) doc.versionId = str(v.versionId);
+    if (typeof v.versionNumber === 'number' && Number.isFinite(v.versionNumber)) doc.versionNumber = v.versionNumber;
+    if (typeof v.actualizadoEn === 'string' && v.actualizadoEn.length <= 50) doc.actualizadoEn = str(v.actualizadoEn);
+    if (typeof v.motivoSustitucion === 'string' && v.motivoSustitucion.length <= 500) doc.motivoSustitucion = str(v.motivoSustitucion);
     return doc;
   }
   return null;
@@ -77,6 +82,14 @@ function sanitizeClient(raw) {
   const c = {};
   for (const k of STRING_FIELDS) if (raw[k] !== undefined) c[k] = str(raw[k]).slice(0, MAX_STR);
   for (const k of BOOLEAN_FIELDS) if (typeof raw[k] === 'boolean') c[k] = raw[k];
+  if (raw.motivosSustitucion && typeof raw.motivosSustitucion === 'object' && !Array.isArray(raw.motivosSustitucion)) {
+    c.motivosSustitucion = {};
+    for (const k of Object.keys(raw.motivosSustitucion)) {
+      if (/^[a-zA-Z0-9_-]{1,64}$/.test(k) && typeof raw.motivosSustitucion[k] === 'string') {
+        c.motivosSustitucion[k] = str(raw.motivosSustitucion[k]).slice(0, 500);
+      }
+    }
+  }
   if (raw.documentos && typeof raw.documentos === 'object' && !Array.isArray(raw.documentos)) {
     c.documentos = {};
     for (const k of Object.keys(raw.documentos)) {
@@ -171,7 +184,7 @@ function assertDocumentRemovalAllowed(caller, existingDocs, incomingDocs) {
   }
 }
 
-function resolveDocumentsForUpdate(caller, existingDocs, rawDocs, baseDocs) {
+function resolveDocumentsForUpdate(caller, existingDocs, rawDocs, baseDocs, motivosSustitucion) {
   if (rawDocs === undefined) return existingDocs ? { ...existingDocs } : undefined;
   if (!rawDocs || typeof rawDocs !== 'object' || Array.isArray(rawDocs)) {
     throw new ServiceError('invalid-argument', 'Formato de documentos inválido');
@@ -282,6 +295,19 @@ function resolveDocumentsForUpdate(caller, existingDocs, rawDocs, baseDocs) {
     if (!sanitized) {
       throw new ServiceError('invalid-argument', `Documento o ruta de almacenamiento inválida en '${k}'`);
     }
+
+    // Check if replacing an existing valid document
+    if (inCur && sanitizeDocumento(curVal) && !isSameDocument(curVal, sanitized)) {
+      const motivo = (sanitized && sanitized.motivoSustitucion)
+        || (motivosSustitucion && motivosSustitucion[k])
+        || (rawDocs && rawDocs.motivosSustitucion && rawDocs.motivosSustitucion[k])
+        || '';
+      if (!motivo || !motivo.trim()) {
+        throw new ServiceError('invalid-argument', `Toda sustitución de un documento existente requiere un motivo no vacío (documento: '${k}')`);
+      }
+      sanitized.motivoSustitucion = motivo.trim();
+    }
+
     resolved[k] = sanitized;
   }
 
@@ -423,7 +449,35 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
         createdBy: caller.cid,
         fecha_creacion: now().toISOString()
       };
-      if (!doc.documentos) doc.documentos = {};
+      if (!doc.documentos) {
+        doc.documentos = {};
+      } else {
+        const initialDocs = {};
+        for (const k of Object.keys(doc.documentos)) {
+          const item = doc.documentos[k];
+          if (Array.isArray(item) || typeof item === 'string') {
+            initialDocs[k] = item;
+          } else if (item && typeof item === 'object') {
+            await applyDocumentVersionTx({
+              tx,
+              db,
+              entityType: 'client',
+              entityId: clientId,
+              parentColName: names.clients,
+              docKey: k,
+              existingDoc: null,
+              incomingDoc: item,
+              caller,
+              motivoSustitucion: null,
+              opId: null,
+              FieldValue,
+              now
+            });
+            initialDocs[k] = item;
+          }
+        }
+        doc.documentos = initialDocs;
+      }
       tx.create(col('clients').doc(clientId), doc);
       for (const k of keys) {
         tx.set(col('identifiers').doc(k), { key: k, kind: k.split('_')[0], clientId, createdBy: caller.cid, createdAt: FieldValue.serverTimestamp() });
@@ -605,7 +659,35 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
         visibleTo: [caller.cid],
         closingVendors: []
       };
-      if (!doc.documentos) doc.documentos = {};
+      if (!doc.documentos) {
+        doc.documentos = {};
+      } else {
+        const initialDocs = {};
+        for (const k of Object.keys(doc.documentos)) {
+          const item = doc.documentos[k];
+          if (Array.isArray(item) || typeof item === 'string') {
+            initialDocs[k] = item;
+          } else if (item && typeof item === 'object') {
+            await applyDocumentVersionTx({
+              tx,
+              db,
+              entityType: 'client',
+              entityId: reservationId,
+              parentColName: names.clients,
+              docKey: k,
+              existingDoc: null,
+              incomingDoc: item,
+              caller,
+              motivoSustitucion: null,
+              opId: null,
+              FieldValue,
+              now
+            });
+            initialDocs[k] = item;
+          }
+        }
+        doc.documentos = initialDocs;
+      }
 
       tx.create(col('clients').doc(reservationId), doc);
       for (const k of keys) {
@@ -638,7 +720,7 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
     return portfolio === null || portfolio.has(clientId);
   }
 
-  async function update({ caller, id: clientId, client: raw, confirmReview = false, dryRun = false }) {
+  async function update({ caller, id: clientId, client: raw, confirmReview = false, dryRun = false, opId = null, motivosSustitucion = null }) {
     if (typeof clientId !== 'string' || !clientId) throw new ServiceError('invalid-argument', 'id requerido');
     const incoming = sanitizeClient({ ...raw, documentos: undefined });
     const ref = col('clients').doc(clientId);
@@ -648,7 +730,8 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
     if (!PRIVILEGED.includes(caller.role) && existing.createdBy !== caller.cid && !(await isRelated(caller, clientId))) {
       throw new ServiceError('permission-denied', 'No tienes acceso a este cliente');
     }
-    const incomingDocs = resolveDocumentsForUpdate(caller, existing.documentos, raw ? raw.documentos : undefined, raw ? raw.baseDocumentos : undefined);
+    const activeMotivos = raw ? (raw.motivosSustitucion || motivosSustitucion) : motivosSustitucion;
+    const incomingDocs = resolveDocumentsForUpdate(caller, existing.documentos, raw ? raw.documentos : undefined, raw ? raw.baseDocumentos : undefined, activeMotivos);
     if (incomingDocs !== undefined) incoming.documentos = incomingDocs;
 
     const merged = { ...existing, ...incoming };
@@ -673,7 +756,7 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
       const cur = await tx.get(ref);
       if (!cur.exists) throw new ServiceError('not-found', 'Cliente no encontrado');
       const curData = cur.data();
-      const txDocs = resolveDocumentsForUpdate(caller, curData.documentos, raw ? raw.documentos : undefined, raw ? raw.baseDocumentos : undefined);
+      const txDocs = resolveDocumentsForUpdate(caller, curData.documentos, raw ? raw.documentos : undefined, raw ? raw.baseDocumentos : undefined, activeMotivos);
       const claims = [];
       for (const k of toClaim) {
         const idx = await tx.get(col('identifiers').doc(k));
@@ -689,8 +772,47 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
         if (idx.exists && idx.data().clientId === clientId) releases.push(k);
       }
       const doc = { ...curData, ...incoming, id: clientId, createdBy: curData.createdBy };
-      if (txDocs !== undefined) doc.documentos = txDocs;
-      else if (curData.documentos !== undefined) doc.documentos = curData.documentos;
+      if (txDocs !== undefined) {
+        const finalDocs = { ...txDocs };
+        const itemsToVersion = [];
+        for (const k of Object.keys(txDocs)) {
+          const curDoc = curData.documentos ? curData.documentos[k] : null;
+          const incDoc = txDocs[k];
+          if (Array.isArray(incDoc)) {
+            finalDocs[k] = incDoc;
+          } else if (incDoc && typeof incDoc === 'object') {
+            const motivo = (incDoc && incDoc.motivoSustitucion)
+              || (raw && raw.motivosSustitucion && raw.motivosSustitucion[k])
+              || (motivosSustitucion && motivosSustitucion[k])
+              || null;
+            const opKey = (raw && raw.opId) || opId;
+            itemsToVersion.push({
+              docKey: k,
+              existingDoc: curDoc,
+              incomingDoc: incDoc,
+              motivoSustitucion: motivo,
+              opId: opKey ? `${opKey}_${k}` : null
+            });
+            finalDocs[k] = incDoc;
+          }
+        }
+        if (itemsToVersion.length > 0) {
+          await applyDocumentVersionsTx({
+            tx,
+            db,
+            entityType: 'client',
+            entityId: clientId,
+            parentColName: names.clients,
+            items: itemsToVersion,
+            caller,
+            FieldValue,
+            now
+          });
+        }
+        doc.documentos = finalDocs;
+      } else if (curData.documentos !== undefined) {
+        doc.documentos = curData.documentos;
+      }
       if (curData.fecha_creacion !== undefined) doc.fecha_creacion = curData.fecha_creacion;
       if (curData.visibleTo !== undefined) doc.visibleTo = curData.visibleTo;
       tx.set(ref, doc);

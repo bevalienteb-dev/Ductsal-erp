@@ -279,6 +279,9 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
 
     // Commercial seller (vendedor) checks:
     if (folder === 'clients' && entityId) {
+      if (context.clientId && context.clientId !== entityId) {
+        throw new ServiceError('permission-denied', 'Contexto de cliente contradictorio con la ruta solicitada');
+      }
       // Entity-scoped client path: prod_files/clients/{clientId}/...
       const clientSnap = await db.collection(names.clients).doc(entityId).get();
       if (!clientSnap.exists) {
@@ -298,6 +301,9 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     }
 
     if (folder === 'prospects' && entityId) {
+      if (context.prospectId && context.prospectId !== entityId) {
+        throw new ServiceError('permission-denied', 'Contexto de oportunidad contradictorio con la ruta solicitada');
+      }
       // Entity-scoped prospect path: prod_files/prospects/{prospectId}/...
       const prospectSnap = await db.collection(names.prospects).doc(entityId).get();
       if (!prospectSnap.exists) {
@@ -327,6 +333,16 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     let prospectCheck = null;
     let clientCheck = null;
 
+    if (context.prospectId && context.clientId) {
+      const pSnapCheck = await db.collection(names.prospects).doc(context.prospectId).get();
+      if (pSnapCheck.exists) {
+        const pData = pSnapCheck.data();
+        if (pData.clientId && pData.clientId !== context.clientId) {
+          throw new ServiceError('permission-denied', 'Contexto contradictorio: la oportunidad no corresponde al cliente indicado');
+        }
+      }
+    }
+
     if (context.prospectId) {
       const pSnap = await db.collection(names.prospects).doc(context.prospectId).get();
       if (pSnap.exists) {
@@ -343,7 +359,16 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
             hasAccess = p.vendedorId === caller.cid || (!p.vendedorId && p.createdBy === caller.cid);
           }
           if (hasAccess) {
-            if (objectReferencesStoragePath(p, storagePath)) {
+            let isReferenced = objectReferencesStoragePath(p, storagePath);
+            if (!isReferenced) {
+              try {
+                const verSnap = await db.collection(names.prospects).doc(context.prospectId).collection('document_versions').where('storagePath', '==', storagePath).limit(1).get();
+                if (verSnap && !verSnap.empty) isReferenced = true;
+              } catch (e) {
+                // ignore
+              }
+            }
+            if (isReferenced) {
               return true;
             }
             prospectCheck = { error: new ServiceError('permission-denied', 'El archivo no está vinculado a la oportunidad indicada') };
@@ -363,7 +388,16 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         const hasAccess = caller.role === 'manager' || caller.role === 'gestor'
           || (c.createdBy === caller.cid || (Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid)) || (Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid)));
         if (hasAccess) {
-          if (objectReferencesStoragePath(c, storagePath)) {
+          let isReferenced = objectReferencesStoragePath(c, storagePath);
+          if (!isReferenced) {
+            try {
+              const verSnap = await db.collection(names.clients).doc(context.clientId).collection('document_versions').where('storagePath', '==', storagePath).limit(1).get();
+              if (verSnap && !verSnap.empty) isReferenced = true;
+            } catch (e) {
+              // ignore
+            }
+          }
+          if (isReferenced) {
             return true;
           }
           clientCheck = { error: new ServiceError('permission-denied', 'El archivo no está vinculado al cliente indicado') };

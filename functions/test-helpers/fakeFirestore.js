@@ -102,9 +102,11 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
 
   function refOf(col, id) {
     const realId = id === undefined ? `auto${String(++autoId).padStart(6, '0')}` : String(id);
+    const p = pathOf(col, realId);
     return {
-      id: realId, path: pathOf(col, realId), col,
-      async get() { await tick(); if (state.hooks.beforeGet) state.hooks.beforeGet(pathOf(col, realId)); return snapshotOf(col, realId); },
+      id: realId, path: p, col,
+      collection(subName) { return queryOf(`${p}/${subName}`); },
+      async get() { await tick(); if (state.hooks.beforeGet) state.hooks.beforeGet(p); return snapshotOf(col, realId); },
       async set(data, opts = {}) { await tick(); commit([{ op: 'set', col, id: realId, data, merge: !!opts.merge }]); },
       async create(data) { await tick(); commit([{ op: 'create', col, id: realId, data }]); },
       async update(data) { await tick(); commit([{ op: 'update', col, id: realId, data }]); },
@@ -114,7 +116,7 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
 
   function queryOf(col, filters = [], max = null, projection = null) {
     const q = {
-      __query: true, col,
+      __query: true, col, id: col,
       where(field, op, value) { return queryOf(col, filters.concat([{ field, op, value }]), max, projection); },
       limit(n) { return queryOf(col, filters, n, projection); },
       select(...fields) { return queryOf(col, filters, max, fields); },
@@ -123,7 +125,9 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
     };
     const run = () => {
       const prefix = `${col}/`;
-      let list = [...docs.keys()].filter(k => k.startsWith(prefix)).map(k => ({ id: k.slice(prefix.length), data: docs.get(k).data }));
+      let list = [...docs.keys()]
+        .filter(k => k.startsWith(prefix) && (!col.includes('/document_versions') ? !k.slice(prefix.length).includes('/document_versions/') : true))
+        .map(k => ({ id: k.slice(prefix.length), data: docs.get(k).data }));
       const test = (v, f) => {
         switch (f.op) {
           case '==': return JSON.stringify(v) === JSON.stringify(f.value);
@@ -227,10 +231,31 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
       seq = 0;
       autoId = 0;
     },
-    seed(path, data) { const [col, id] = path.split('/'); docs.set(path, { data: materialize(data), version: ++seq }); colVersion.set(col, ++seq); return id; },
+    seed(path, data) {
+      let col, id;
+      const parts = path.split('/');
+      if (parts.length === 4 && parts[2] === 'document_versions') {
+        col = `${parts[0]}/${parts[1]}/${parts[2]}`;
+        id = parts[3];
+      } else {
+        col = parts[0];
+        id = parts.slice(1).join('/');
+      }
+      docs.set(path, { data: materialize(data), version: ++seq });
+      colVersion.set(col, ++seq);
+      return id;
+    },
     data(path) { return docs.has(path) ? copy(docs.get(path).data) : undefined; },
-    list(col) { const prefix = `${col}/`; return [...docs.keys()].filter(k => k.startsWith(prefix)).map(k => ({ id: k.slice(prefix.length), ...copy(docs.get(k).data) })); },
-    count(col) { const prefix = `${col}/`; return [...docs.keys()].filter(k => k.startsWith(prefix)).length; },
+    list(col) {
+      const prefix = `${col}/`;
+      return [...docs.keys()]
+        .filter(k => k.startsWith(prefix) && (!k.slice(prefix.length).includes('/') || k.includes('/document_versions/')))
+        .map(k => ({ id: k.slice(prefix.length), ...copy(docs.get(k).data) }));
+    },
+    count(col) {
+      const prefix = `${col}/`;
+      return [...docs.keys()].filter(k => k.startsWith(prefix) && (!k.slice(prefix.length).includes('/') || k.includes('/document_versions/'))).length;
+    },
     FieldValue: {
       serverTimestamp: () => SERVER_TS,
       delete: () => '__FIELD_DELETE__',

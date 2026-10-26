@@ -41,6 +41,8 @@ beforeAll(async () => {
   await fsApi.seed('config', 'maquinas', { a: 1 });
   await fsApi.seed('config', 'estado_equipos', { m1: 'ok' });
   await fsApi.seed('alertas_maquinas', 'AL1', { id: 'AL1', estado: 'abierta' });
+  await fsApi.seed('clients_prod/C1/document_versions', 'V_C1_1', { versionId: 'V_C1_1', docKey: 'dui', estado: 'vigente', versionNumber: 1 });
+  await fsApi.seed('prospects_prod/P1/document_versions', 'V_P1_1', { versionId: 'V_P1_1', docKey: 'doc_oferta', estado: 'vigente', versionNumber: 1 });
 });
 
 describe('A. unauthenticated / unlinked / inactive identities', () => {
@@ -255,4 +257,16 @@ describe('G. fabricacion: unauthenticated, inactive, spoofed', () => {
   deny('vendedor writes a task', () => fsApi.set('fabricacion_tasks_prod', 'TK1', { id: 'TK1', estado: 'x' }, T.v1));
   deny('gestor writes machine configuration', () => fsApi.set('config', 'maquinas', { a: 9 }, T.ges));
   deny('vendedor reads the welding coils', () => fsApi.get('bobinas_soldadura_prod', 'B1', T.v1));
+});
+
+describe('H. document_versions: auditable version history (read-only for clients, forbidden direct writes)', () => {
+  allow('V1 reads document_versions of assigned prospect P1', () => fsApi.get('prospects_prod/P1/document_versions', 'V_P1_1', T.v1));
+  deny('V3 (unrelated) reads document_versions of prospect P1', () => fsApi.get('prospects_prod/P1/document_versions', 'V_P1_1', T.v3));
+  allow('Manager reads document_versions of prospect P1', () => fsApi.get('prospects_prod/P1/document_versions', 'V_P1_1', T.mgr));
+  allow('V1 reads document_versions of visible client C1', () => fsApi.get('clients_prod/C1/document_versions', 'V_C1_1', T.v1));
+  deny('V3 (unrelated) reads document_versions of client C1', () => fsApi.get('clients_prod/C1/document_versions', 'V_C1_1', T.v3));
+  deny('V1 writes directly to document_versions on prospect P1 (Functions only)', () => fsApi.set('prospects_prod/P1/document_versions', 'V_P1_EVIL', { versionId: 'V_P1_EVIL', estado: 'vigente' }, T.v1));
+  deny('Manager writes directly to document_versions on prospect P1 (Functions only)', () => fsApi.set('prospects_prod/P1/document_versions', 'V_P1_EVIL', { versionId: 'V_P1_EVIL', estado: 'vigente' }, T.mgr));
+  deny('V1 deletes document_versions on client C1', () => fsApi.del('clients_prod/C1/document_versions', 'V_C1_1', T.v1));
+  deny('Manager deletes document_versions on client C1', () => fsApi.del('clients_prod/C1/document_versions', 'V_C1_1', T.mgr));
 });
