@@ -362,14 +362,12 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
     test('viewStoredClientDoc and downloadStoredClientDoc isolate client documents', () => {
       const appCoreFunctionsSrc = fs.readFileSync(appCorePath, 'utf8');
 
-      // Check viewStoredClientDoc implementation
-      expect(appCoreFunctionsSrc).toContain(
-        "return viewSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });"
-      );
-      // Check downloadStoredClientDoc implementation
-      expect(appCoreFunctionsSrc).toContain(
-        "return downloadSecureDocument(item.docRef, item.fileName, { clientId: item.clientId });"
-      );
+      // Check viewStoredClientDoc and downloadStoredClientDoc pass full entity context
+      expect(appCoreFunctionsSrc).toContain("viewStoredClientDoc(storeId)");
+      expect(appCoreFunctionsSrc).toContain("if (item.clientId) options.clientId = item.clientId;");
+      expect(appCoreFunctionsSrc).toContain("if (item.prospectId) options.prospectId = item.prospectId;");
+      expect(appCoreFunctionsSrc).toContain("return viewSecureDocument(item.docRef, item.fileName, options);");
+      expect(appCoreFunctionsSrc).toContain("return downloadSecureDocument(item.docRef, item.fileName, options);");
       // Check that viewSecureDocument does NOT leak currentProspectId when clientId is provided
       expect(appCoreFunctionsSrc).toContain(
         "const reqProspectId = (options.prospectId !== undefined && options.prospectId !== null)"

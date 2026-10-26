@@ -81,6 +81,11 @@ service cloud.firestore {
         && request.resource.data.get('visibleTo', null) == resource.data.get('visibleTo', null)
         && identityKept();
       allow delete: if false;         // SEC-06: Direct deletion disabled; must go exclusively through deleteClientAdmin (atomic index release & audit)
+
+      match /document_versions/{versionId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
     }
 
     // ---------- prospects (opportunities / projects) ----------
@@ -94,6 +99,11 @@ service cloud.firestore {
         || d.get('stage_timestamps', {}).get('cierre', '') != ''
         || d.get('facturas', []).size() > 0;
     }
+    function prospectVisible(d) {
+      return isManager()
+        || (isGestor() && (d.get('vendedorId', '') == me() || d.createdBy == me() || isPostclosing(d)))
+        || (isVendedor() && prospectMine(d));
+    }
     function flag(d, k) { return d.get('datos', {}).get(k, null); }
     // "Sale authorised without contract" is a manager decision: nobody else may change it.
     function noContractFlagsKept() {
@@ -101,12 +111,7 @@ service cloud.firestore {
         && flag(request.resource.data, 'autorizado_por') == flag(resource.data, 'autorizado_por');
     }
     match /prospects_prod/{prospectId} {
-      allow get: if isManager()
-        || (isGestor() && (resource.data.get('vendedorId', '') == me() || resource.data.createdBy == me() || isPostclosing(resource.data)))
-        || (isVendedor() && prospectMine(resource.data));
-      allow list: if isManager()
-        || (isGestor() && (resource.data.get('vendedorId', '') == me() || resource.data.createdBy == me() || isPostclosing(resource.data)))
-        || (isVendedor() && prospectMine(resource.data));
+      allow get, list: if prospectVisible(resource.data);
       // Any existing client may be chosen (catalogue). Choosing a client never changes the client's createdBy.
       allow create: if (isManager() || isGestor() || isVendedor())
         && request.resource.data.id == prospectId
@@ -119,6 +124,11 @@ service cloud.firestore {
       allow update: if false;
       // SEC-04 / SEC-06: Direct physical deletion is disabled. Logical deletion goes through deleteProspectAdmin (motivo, audit log, manufacturing preservation).
       allow delete: if false;
+
+      match /document_versions/{versionId} {
+        allow get, list: if prospectVisible(get(/databases/$(database)/documents/prospects_prod/$(prospectId)).data);
+        allow write: if false;
+      }
     }
 
     // ---------- settings / audit ----------

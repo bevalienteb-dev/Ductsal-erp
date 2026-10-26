@@ -734,8 +734,8 @@ describe('SEC-REV-02: Concurrency, 3-Way Merge, and Snapshot Preservation', () =
   test('two users modify different documents of the same client concurrently and neither loses changes', async () => {
     const baseDocs = { dui: docDui, nit: docNit, escritura: docEscritura };
 
-    const newNit = { name: 'nit_updated.pdf', storagePath: 'prod_files/clients/C_CONC/legal/nit_v2.pdf' };
-    const newEscritura = { name: 'escritura_updated.pdf', storagePath: 'prod_files/clients/C_CONC/legal/escritura_v2.pdf' };
+    const newNit = { name: 'nit_updated.pdf', storagePath: 'prod_files/clients/C_CONC/legal/nit_v2.pdf', motivoSustitucion: 'Actualización de NIT' };
+    const newEscritura = { name: 'escritura_updated.pdf', storagePath: 'prod_files/clients/C_CONC/legal/escritura_v2.pdf', motivoSustitucion: 'Actualización de Escritura' };
 
     // User 1 updates NIT
     const u1Res = await service.update({

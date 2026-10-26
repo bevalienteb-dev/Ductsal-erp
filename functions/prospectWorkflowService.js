@@ -22,6 +22,13 @@
 const identity = require('./clientIdentity');
 const { ServiceError } = require('./clientsService');
 const { validators } = require('./commercialService');
+const {
+  applyDocumentVersionsTx,
+  extractDocPath,
+  toCanonicalDocPointer,
+  checkAndInvalidateOfferApproval,
+  isNoContractApprovalValid
+} = require('./documentVersioningService');
 
 let CrmFollowUpCalc = null;
 try {
@@ -152,6 +159,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (url && fileUrlPrefixes.some(p => url.startsWith(p))) res.url = url;
       if (typeof o.size === 'number' && Number.isFinite(o.size)) res.size = o.size;
       if (typeof o.contentType === 'string' && o.contentType.length <= 100) res.contentType = o.contentType.trim();
+      if (typeof o.motivoSustitucion === 'string' && o.motivoSustitucion.trim()) res.motivoSustitucion = o.motivoSustitucion.trim();
       return res;
     }
 
@@ -235,28 +243,30 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   //   levantamiento: { visitante*, fecha_inicio, ubicacion, distancia*, fecha_visita, doc_levantamiento[] }  (* = required, distancia only if tipo_proyecto != 'Fabricación')
   //   cotizacion | negociacion: { costo_venta*, precio_cotizado*, probabilidad* (alta|media|baja|improbable), doc_oferta[], doc_costos[] } (an offer and a cost sheet must exist, new or previous)
   //   cierre: { forma_pago*, factura_anticipo*, encargado (required for 'Fabricación e instalación'), doc_firmado*, doc_comprobante* }
-  async function advanceStage({ caller, prospectId, nextStage, data }) {
+  async function advanceStage({ caller, prospectId, nextStage: nextStageParam, stage, data }) {
     authorize(caller, 'advanceStage');
     reqDocId(prospectId, 'prospectId');
+    const nextStage = nextStageParam || stage;
+    const targetStage = nextStage;
     if (!STAGES.includes(nextStage) || nextStage === 'prospecto') throw bad('Etapa inválida');
     data = (data === undefined || data === null) ? {} : asObject(data, 'Datos de la etapa');
 
     // Validation that does not depend on the stored document happens first (no reads wasted on a malformed request).
-    const input = parseStageInput(nextStage, data);
+    const input = parseStageInput(targetStage, data);
 
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      if (p.etapa === nextStage) return { status: 'unchanged', etapa: p.etapa, estado: p.estado }; // retry / double click
       if (p.estado !== 'activo') throw precondition('Solo las oportunidades activas pueden avanzar de etapa');
+      if (p.etapa === targetStage) return { status: 'unchanged', etapa: p.etapa, estado: p.estado }; // retry / double click
       const idx = STAGES.indexOf(p.etapa);
-      if (idx === -1 || STAGES[idx + 1] !== nextStage) throw precondition(`No se puede pasar de "${p.etapa}" a "${nextStage}": las etapas se avanzan de una en una`);
-      const client = nextStage === 'cierre' ? await loadClient(tx, p) : null;
-      if (nextStage === 'cierre' && !client) throw notFound('Cliente de la oportunidad');
+      if (idx === -1 || STAGES[idx + 1] !== targetStage) throw precondition(`No se puede pasar de "${p.etapa}" a "${targetStage}": las etapas se avanzan de una en una`);
+      const client = targetStage === 'cierre' ? await loadClient(tx, p) : null;
+      if (targetStage === 'cierre' && !client) throw notFound('Cliente de la oportunidad');
 
       const at = iso();
       const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
       const patch = {};
-      let logMsg = `Avanzó a etapa: ${nextStage}.`;
+      let logMsg = `Avanzó a etapa: ${targetStage}.`;
 
       if (nextStage === 'levantamiento') {
         datos.visitante = input.visitante; datos.fecha_inicio = input.fecha_inicio;
@@ -270,6 +280,48 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           throw bad('Es obligatorio adjuntar tanto la Oferta como el Cuadro de Costos');
         }
         patch.costo_venta = input.costo_venta; patch.precio_cotizado = input.precio_cotizado; patch.probabilidad = input.probabilidad;
+
+        const quoteItems = [];
+        if (input.doc_oferta.length > 0) {
+          const incomingOf = input.doc_oferta[0];
+          const existingOf = Array.isArray(datos.doc_oferta) && datos.doc_oferta.length > 0 ? datos.doc_oferta[0] : (datos.doc_oferta || null);
+          quoteItems.push({
+            docKey: 'doc_oferta',
+            existingDoc: existingOf,
+            incomingDoc: incomingOf,
+            motivoSustitucion: existingOf ? `Actualización de oferta al avanzar a etapa ${nextStage}` : null,
+            tipoArtefacto: 'oferta_comercial',
+            precioAsociado: input.precio_cotizado,
+            costoAsociado: input.costo_venta
+          });
+        }
+        if (input.doc_costos.length > 0) {
+          const incomingCo = input.doc_costos[0];
+          const existingCo = Array.isArray(datos.doc_costos) && datos.doc_costos.length > 0 ? datos.doc_costos[0] : (datos.doc_costos || null);
+          quoteItems.push({
+            docKey: 'doc_costos',
+            existingDoc: existingCo,
+            incomingDoc: incomingCo,
+            motivoSustitucion: existingCo ? `Actualización de cuadro de costos al avanzar a etapa ${nextStage}` : null,
+            tipoArtefacto: 'cuadro_costos_interno',
+            precioAsociado: input.precio_cotizado,
+            costoAsociado: input.costo_venta
+          });
+        }
+        if (quoteItems.length > 0) {
+          await applyDocumentVersionsTx({
+            tx,
+            db,
+            entityType: 'prospect',
+            entityId: prospectId,
+            parentColName: col('prospects').id,
+            items: quoteItems,
+            caller,
+            FieldValue,
+            now: () => new Date()
+          });
+        }
+
         if (input.doc_oferta.length > 0) datos.doc_oferta = input.doc_oferta;
         if (input.doc_costos.length > 0) datos.doc_costos = input.doc_costos;
         logMsg += ` (Cotizado: ${fmtMoney(input.precio_cotizado)}, Costo: ${fmtMoney(input.costo_venta)})`;
@@ -352,10 +404,75 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         if (input.forma_pago) patch.forma_pago = input.forma_pago;
         if (input.encargado) patch.encargado = input.encargado;
         if (input.factura_anticipo) datos.factura_anticipo = input.factura_anticipo;
-        if (input.doc_firmado) datos.doc_firmado = input.doc_firmado;
-        if (input.doc_comprobante) datos.doc_comprobante = input.doc_comprobante;
+        const itemsToVersion = [];
+        if (input.doc_firmado) {
+          const motivoFirmado = (input.doc_firmado && input.doc_firmado.motivoSustitucion)
+            || (data && data.motivo_doc_firmado)
+            || (data && data.motivoSustitucion)
+            || null;
+          itemsToVersion.push({
+            docKey: 'doc_firmado',
+            existingDoc: datos.doc_firmado,
+            incomingDoc: input.doc_firmado,
+            motivoSustitucion: motivoFirmado,
+            opId: (data && data.opId) ? `${data.opId}_doc_firmado` : null
+          });
+        }
+
+        if (input.doc_comprobante) {
+          const motivoComprobante = (input.doc_comprobante && input.doc_comprobante.motivoSustitucion)
+            || (data && data.motivo_doc_comprobante)
+            || (data && data.motivoSustitucion)
+            || null;
+          itemsToVersion.push({
+            docKey: 'doc_comprobante',
+            existingDoc: datos.doc_comprobante,
+            incomingDoc: input.doc_comprobante,
+            motivoSustitucion: motivoComprobante,
+            opId: (data && data.opId) ? `${data.opId}_doc_comprobante` : null
+          });
+        }
+
+        let approvalInvalidation = null;
+        if (itemsToVersion.length > 0) {
+          const verResults = await applyDocumentVersionsTx({
+            tx,
+            db,
+            entityType: 'prospect',
+            entityId: prospectId,
+            parentColName: col('prospects').id,
+            items: itemsToVersion,
+            caller,
+            FieldValue,
+            now: () => new Date()
+          });
+
+          for (let i = 0; i < itemsToVersion.length; i++) {
+            const itemKey = itemsToVersion[i].docKey;
+            const res = verResults[i];
+            if (itemKey === 'doc_firmado') {
+              datos.doc_firmado = res.doc;
+              if (res.substituted) {
+                approvalInvalidation = checkAndInvalidateOfferApproval({
+                  prospect: p,
+                  datos,
+                  caller,
+                  prospectId,
+                  isoStamp: at,
+                  motivoSustitucion: itemsToVersion[i].motivoSustitucion
+                });
+              }
+            } else if (itemKey === 'doc_comprobante') {
+              datos.doc_comprobante = res.doc;
+            }
+          }
+        }
 
         logMsg = `Avanzó a CIERRE. Oportunidad en proceso pendiente de documentación reglamentaria (plazo: 5 días hábiles, límite: ${deadlineYMD || '5 días'}).`;
+        if (approvalInvalidation && approvalInvalidation.invalidated) {
+          logMsg += ` ${approvalInvalidation.logMsg}`;
+          patch.aprobacion_sin_contrato = approvalInvalidation.aprobacionRecord;
+        }
       }
 
       if (nextStage === 'cierre' && p.clientId) {
@@ -403,7 +520,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // =====================================================================================================
   // Save Closing Documents (sin finalizar oportunidad)
   // =====================================================================================================
-  async function saveClosingDocuments({ caller, prospectId, data = {} }) {
+  async function saveClosingDocuments({ caller, prospectId, data = {}, opId = null }) {
     authorize(caller, 'saveClosingDocuments');
     reqDocId(prospectId, 'prospectId');
 
@@ -414,6 +531,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       const datos = (p.datos && typeof p.datos === 'object') ? { ...p.datos } : {};
       const patch = {};
+      const parentColName = col('prospects').id;
+      let approvalInvalidation = null;
 
       if (data.forma_pago && Object.prototype.hasOwnProperty.call(FORMAS_PAGO, data.forma_pago)) {
         patch.forma_pago = data.forma_pago;
@@ -424,17 +543,95 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (data.factura_anticipo) {
         datos.factura_anticipo = reqString(data.factura_anticipo, 'El número de factura de anticipo', 60);
       }
-      if (data.doc_firmado) {
-        datos.doc_firmado = fileRef(data.doc_firmado, 'Contrato u oferta firmada');
-      }
-      if (data.doc_comprobante) {
-        datos.doc_comprobante = fileRef(data.doc_comprobante, 'Factura o comprobante de anticipo');
-      }
       if (data.notas_cierre) {
         datos.notas_cierre = optString(data.notas_cierre, 'Notas de cierre', 500);
       }
 
-      const logMsg = `Avance documental guardado en Cierre por ${caller.name || 'Comercial'}.`;
+      const itemsToVersion = [];
+      if (data.doc_firmado) {
+        const incomingFirmado = fileRef(data.doc_firmado, 'Contrato u oferta firmada');
+        const motivoFirmado = data.motivo_doc_firmado
+          || (typeof data.doc_firmado === 'object' ? data.doc_firmado.motivoSustitucion : null)
+          || data.motivoSustitucion
+          || null;
+        itemsToVersion.push({
+          docKey: 'doc_firmado',
+          existingDoc: datos.doc_firmado,
+          incomingDoc: incomingFirmado,
+          motivoSustitucion: motivoFirmado,
+          opId: (data.opId || opId) ? `${data.opId || opId}_doc_firmado` : null
+        });
+      }
+
+      if (data.doc_comprobante) {
+        const incomingComprobante = fileRef(data.doc_comprobante, 'Factura o comprobante de anticipo');
+        const motivoComprobante = data.motivo_doc_comprobante
+          || (typeof data.doc_comprobante === 'object' ? data.doc_comprobante.motivoSustitucion : null)
+          || data.motivoSustitucion
+          || null;
+        itemsToVersion.push({
+          docKey: 'doc_comprobante',
+          existingDoc: datos.doc_comprobante,
+          incomingDoc: incomingComprobante,
+          motivoSustitucion: motivoComprobante,
+          opId: (data.opId || opId) ? `${data.opId || opId}_doc_comprobante` : null
+        });
+      }
+
+      if (itemsToVersion.length > 0) {
+        const verResults = await applyDocumentVersionsTx({
+          tx,
+          db,
+          entityType: 'prospect',
+          entityId: prospectId,
+          parentColName,
+          items: itemsToVersion,
+          caller,
+          FieldValue,
+          now: () => new Date()
+        });
+
+        for (let i = 0; i < itemsToVersion.length; i++) {
+          const itemKey = itemsToVersion[i].docKey;
+          const res = verResults[i];
+          if (itemKey === 'doc_firmado') {
+            datos.doc_firmado = {
+              name: res.doc.name,
+              ...(res.doc.storagePath ? { storagePath: res.doc.storagePath } : {}),
+              ...(res.doc.url ? { url: res.doc.url } : {}),
+              ...(res.versionId ? { versionId: res.versionId } : {}),
+              ...(res.versionNumber !== undefined && res.versionNumber !== null ? { versionNumber: res.versionNumber } : {})
+            };
+            if (res.substituted) {
+              approvalInvalidation = checkAndInvalidateOfferApproval({
+                prospect: p,
+                datos,
+                caller,
+                prospectId,
+                isoStamp: iso(),
+                motivoSustitucion: itemsToVersion[i].motivoSustitucion
+              });
+            }
+          } else if (itemKey === 'doc_comprobante') {
+            datos.doc_comprobante = {
+              name: res.doc.name,
+              ...(res.doc.storagePath ? { storagePath: res.doc.storagePath } : {}),
+              ...(res.doc.url ? { url: res.doc.url } : {}),
+              ...(res.versionId ? { versionId: res.versionId } : {}),
+              ...(res.versionNumber !== undefined && res.versionNumber !== null ? { versionNumber: res.versionNumber } : {})
+            };
+          }
+        }
+      }
+
+      let logMsg = `Avance documental guardado en Cierre por ${caller.name || 'Comercial'}.`;
+      if (approvalInvalidation && approvalInvalidation.invalidated) {
+        logMsg += ` ${approvalInvalidation.logMsg}`;
+        patch.aprobacion_sin_contrato = approvalInvalidation.aprobacionRecord;
+        patch.autorizado_sin_contrato = false;
+        datos.autorizado_sin_contrato = false;
+      }
+
       tx.update(ref, {
         ...patch,
         datos,
@@ -444,7 +641,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       addAudit(tx, caller, 'saveClosingDocuments', prospectId, {
         hasDocFirmado: !!datos.doc_firmado,
         hasDocComprobante: !!datos.doc_comprobante,
-        forma_pago: patch.forma_pago || p.forma_pago
+        forma_pago: patch.forma_pago || p.forma_pago || null,
+        ...(approvalInvalidation ? { approvalInvalidation: approvalInvalidation.auditDetail } : {})
       });
 
       return { status: 'saved', prospectId };
@@ -480,26 +678,130 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000;
       const datos = (p.datos && typeof p.datos === 'object') ? { ...p.datos } : {};
-      const bypass = isBig && (datos.autorizado_sin_contrato === true || (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada'));
+      if (datos.autorizado_sin_contrato === undefined && p.autorizado_sin_contrato === true) {
+        datos.autorizado_sin_contrato = true;
+      }
+      const parentColName = col('prospects').id;
+      const input = data || {};
+      let approvalInvalidation = null;
 
-      if (isBig && !bypass && client && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
-        throw precondition('Para cerrar con contrato hay que adjuntar antes los documentos legales de la empresa (Escritura, Credencial, NIT, NRC)');
+      const itemsToVersion = [];
+      if (input.doc_firmado) {
+        const incomingFirmado = fileRef(input.doc_firmado, 'Contrato u oferta firmada');
+        const motivoFirmado = input.motivo_doc_firmado
+          || (typeof input.doc_firmado === 'object' ? input.doc_firmado.motivoSustitucion : null)
+          || input.motivoSustitucion
+          || null;
+        itemsToVersion.push({
+          docKey: 'doc_firmado',
+          existingDoc: datos.doc_firmado || (isBig ? datos.doc_contrato : datos.doc_oferta_firmada),
+          incomingDoc: incomingFirmado,
+          motivoSustitucion: motivoFirmado,
+          opId: (input.opId || opId) ? `${input.opId || opId}_doc_firmado` : null
+        });
       }
 
-      const input = data || {};
+      if (input.doc_comprobante) {
+        const incomingComprobante = fileRef(input.doc_comprobante, 'Factura o comprobante de anticipo');
+        const motivoComprobante = input.motivo_doc_comprobante
+          || (typeof input.doc_comprobante === 'object' ? input.doc_comprobante.motivoSustitucion : null)
+          || input.motivoSustitucion
+          || null;
+        itemsToVersion.push({
+          docKey: 'doc_comprobante',
+          existingDoc: datos.doc_comprobante,
+          incomingDoc: incomingComprobante,
+          motivoSustitucion: motivoComprobante,
+          opId: (input.opId || opId) ? `${input.opId || opId}_doc_comprobante` : null
+        });
+      }
+
+      let docFirmado = null;
+      let docComprobante = null;
+
+      if (itemsToVersion.length > 0) {
+        const verResults = await applyDocumentVersionsTx({
+          tx,
+          db,
+          entityType: 'prospect',
+          entityId: prospectId,
+          parentColName,
+          items: itemsToVersion,
+          caller,
+          FieldValue,
+          now: () => new Date()
+        });
+
+        for (let i = 0; i < itemsToVersion.length; i++) {
+          const itemKey = itemsToVersion[i].docKey;
+          const res = verResults[i];
+          if (itemKey === 'doc_firmado') {
+            docFirmado = {
+              name: res.doc.name,
+              ...(res.doc.storagePath ? { storagePath: res.doc.storagePath } : {}),
+              ...(res.doc.url ? { url: res.doc.url } : {}),
+              ...(res.versionId ? { versionId: res.versionId } : {}),
+              ...(res.versionNumber !== undefined && res.versionNumber !== null ? { versionNumber: res.versionNumber } : {})
+            };
+            datos.doc_firmado = docFirmado;
+            if (res.substituted) {
+              approvalInvalidation = checkAndInvalidateOfferApproval({
+                prospect: p,
+                datos,
+                caller,
+                prospectId,
+                isoStamp: iso(),
+                motivoSustitucion: itemsToVersion[i].motivoSustitucion
+              });
+            }
+          } else if (itemKey === 'doc_comprobante') {
+            docComprobante = {
+              name: res.doc.name,
+              ...(res.doc.storagePath ? { storagePath: res.doc.storagePath } : {}),
+              ...(res.doc.url ? { url: res.doc.url } : {}),
+              ...(res.versionId ? { versionId: res.versionId } : {}),
+              ...(res.versionNumber !== undefined && res.versionNumber !== null ? { versionNumber: res.versionNumber } : {})
+            };
+            datos.doc_comprobante = docComprobante;
+          }
+        }
+      }
+
+      if (!docFirmado) {
+        docFirmado = datos.doc_firmado || (isBig ? (datos.doc_contrato || datos.doc_firmado) : (datos.doc_oferta_firmada || datos.doc_firmado)) || null;
+      }
+      if (!docComprobante) {
+        docComprobante = datos.doc_comprobante || null;
+      }
+
+      const aprobacion = (p.aprobacion_sin_contrato || (datos && datos.aprobacion_sin_contrato));
+      if (isBig) {
+        if (aprobacion && aprobacion.estado === 'invalidada_por_sustitucion') {
+          throw precondition('La autorización para cerrar sin contrato fue invalidada por sustitución de la oferta. Se requiere nueva autorización de gerencia.');
+        }
+      }
+
+      const isApprovalValid = isNoContractApprovalValid({ prospect: p, datos, activeDocFirmado: docFirmado });
+      const bypass = isBig && isApprovalValid;
+
+      if (isBig && !bypass) {
+        if (datos.autorizado_sin_contrato === true && !isApprovalValid) {
+          throw precondition('La autorización para cerrar sin contrato no coincide con la versión de la oferta actualmente adjunta.');
+        }
+        if (client && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
+          throw precondition('Para cerrar con contrato hay que adjuntar antes los documentos legales de la empresa (Escritura, Credencial, NIT, NRC)');
+        }
+      }
+
       const encargado = input.encargado || p.encargado || datos.encargado;
       if (p.tipo_proyecto === 'Fabricación e instalación' && !encargado) {
         throw bad('Debe asignar un Encargado de Instalación');
       }
 
-      const docFirmado = (input.doc_firmado ? fileRef(input.doc_firmado, 'Contrato u oferta firmada') : null)
-        || (isBig && !bypass ? (datos.doc_contrato || datos.doc_firmado) : (datos.doc_oferta_firmada || datos.doc_firmado));
       if (!docFirmado) {
         throw precondition(isBig && !bypass ? 'Debe adjuntar el contrato firmado para finalizar' : 'Debe adjuntar la oferta firmada para finalizar');
       }
 
-      const docComprobante = (input.doc_comprobante ? fileRef(input.doc_comprobante, 'Factura o comprobante de anticipo') : null)
-        || datos.doc_comprobante;
       if (!docComprobante) {
         throw precondition('Debe adjuntar el comprobante o factura de anticipo para finalizar');
       }
@@ -517,10 +819,22 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       const at = iso();
       const patch = {};
+      if (approvalInvalidation && approvalInvalidation.invalidated) {
+        patch.aprobacion_sin_contrato = approvalInvalidation.aprobacionRecord;
+      }
 
-      if (isBig && !bypass) datos.doc_contrato = docFirmado; else datos.doc_oferta_firmada = docFirmado;
-      datos.doc_comprobante = docComprobante;
+      const canonicalFirmado = toCanonicalDocPointer(docFirmado);
+      const canonicalComprobante = toCanonicalDocPointer(docComprobante);
+
+      if (isBig && !bypass) datos.doc_contrato = canonicalFirmado; else datos.doc_oferta_firmada = canonicalFirmado;
+      datos.doc_firmado = canonicalFirmado;
+      datos.doc_comprobante = canonicalComprobante;
       datos.factura_anticipo = facturaAnticipo;
+      if (datos.doc_oferta) {
+        datos.oferta_sustento_cierre = Array.isArray(datos.doc_oferta) && datos.doc_oferta.length > 0
+          ? toCanonicalDocPointer(datos.doc_oferta[0])
+          : toCanonicalDocPointer(datos.doc_oferta);
+      }
 
       if (encargado) patch.encargado = encargado;
       patch.forma_pago = formaPago;
@@ -543,7 +857,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           id: uniqueId([], Date.now()),
           numero: facturaAnticipo,
           monto: advanceAmount,
-          doc_factura: docComprobante,
+          doc_factura: canonicalComprobante,
           pagos: [],
           fecha: at,
           opId: opId || null
@@ -697,6 +1011,50 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (p.costo_venta === costo && p.precio_cotizado === precio && JSON.stringify(datos.doc_oferta) === JSON.stringify(oferta) && JSON.stringify(datos.doc_costos) === JSON.stringify(costos)) {
         return { status: 'unchanged' }; // retry of an applied request
       }
+
+      const quoteItems = [];
+      const incomingOf = Array.isArray(oferta) && oferta.length > 0 ? oferta[0] : oferta;
+      const existingOf = Array.isArray(datos.doc_oferta) && datos.doc_oferta.length > 0 ? datos.doc_oferta[0] : (datos.doc_oferta || null);
+      if (incomingOf) {
+        quoteItems.push({
+          docKey: 'doc_oferta',
+          existingDoc: existingOf,
+          incomingDoc: incomingOf,
+          motivoSustitucion: `Nueva propuesta: Precio ${fmtMoney(precio)}, Costo ${fmtMoney(costo)}`,
+          tipoArtefacto: 'oferta_comercial',
+          precioAsociado: precio,
+          costoAsociado: costo
+        });
+      }
+
+      const incomingCo = Array.isArray(costos) && costos.length > 0 ? costos[0] : costos;
+      const existingCo = Array.isArray(datos.doc_costos) && datos.doc_costos.length > 0 ? datos.doc_costos[0] : (datos.doc_costos || null);
+      if (incomingCo) {
+        quoteItems.push({
+          docKey: 'doc_costos',
+          existingDoc: existingCo,
+          incomingDoc: incomingCo,
+          motivoSustitucion: `Nuevo cuadro de costos: Costo ${fmtMoney(costo)}`,
+          tipoArtefacto: 'cuadro_costos_interno',
+          precioAsociado: precio,
+          costoAsociado: costo
+        });
+      }
+
+      if (quoteItems.length > 0) {
+        await applyDocumentVersionsTx({
+          tx,
+          db,
+          entityType: 'prospect',
+          entityId: prospectId,
+          parentColName: col('prospects').id,
+          items: quoteItems,
+          caller,
+          FieldValue,
+          now: () => new Date()
+        });
+      }
+
       datos.doc_oferta = oferta; datos.doc_costos = costos;
       const text = `NUEVA PROPUESTA: Precio ${fmtMoney(precio)}, Costo ${fmtMoney(costo)}. Docs: ${oferta.map(f => f.name).join(', ')}, ${costos.map(f => f.name).join(', ')}`;
       tx.update(ref, { costo_venta: costo, precio_cotizado: precio, datos, logs: withLog(p, caller, text) });

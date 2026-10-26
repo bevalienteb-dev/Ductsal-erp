@@ -141,7 +141,7 @@ service firebase.storage {
         );
     }
     function isAuthorizedClientUpload(cid) {
-      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isReservationValid(cid) || cid == me()));
+      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid) || cid == me()));
     }
     function isAuthorizedLegalUpload(cid) {
       return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid)));
