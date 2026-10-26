@@ -5320,7 +5320,7 @@ function renderInfo(p) {
     let hasDocs = false;
     let docCount = 0;
 
-    function dlCard(doc, category) {
+    function dlCard(doc, category, docKey = null) {
         if (!doc) return '';
         let name = typeof doc === 'object' ? (doc.name || 'Documento') : doc;
         let id = 'doc_' + Math.random().toString(36).substring(2, 9);
@@ -5328,7 +5328,8 @@ function renderInfo(p) {
             if (!window._docStore) window._docStore = new Map();
             window._docStore.set(id, doc);
         }
-        const previewable = isFormatPreviewable(name);
+        const hasStorageRef = !!resolveStoragePath(doc);
+        const previewable = hasStorageRef && isFormatPreviewable(name);
         const pId = (p && p.id) ? p.id : '';
         const ext = String(name || '').split('.').pop().toUpperCase() || 'DOC';
         let icon = '📁';
@@ -5340,30 +5341,26 @@ function renderInfo(p) {
             ? `<a href="javascript:void(0)" onclick="showDocumentVersionHistory('prospect', '${pId}', '${docKey}', '${escapeHtmlDoc(category)}')" class="btn-doc-dl" style="color:var(--brand-gold); margin-left:4px;" title="Ver historial de versiones">📜 Historial</a>`
             : '';
 
-        if (previewable) {
-            return `<li class="doc-card-row">` +
-                   `<div class="doc-card-info">` +
-                   `<span class="doc-card-category">${escapeHtmlDoc(category)}</span>` +
-                   `<span class="doc-card-name" title="${escapeHtmlDoc(name)}">${icon} ${escapeHtmlDoc(name)}</span>` +
-                   `</div>` +
-                   `<div class="doc-card-actions">` +
-                   `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>` +
-                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
-                   histBtn +
-                   `</div>` +
-                   `</li>`;
+        let actionsHtml = '';
+        if (hasStorageRef) {
+            const viewBtn = previewable
+                ? `<a href="javascript:void(0)" onclick="viewSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>`
+                : '';
+            const dlBtn = `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>`;
+            actionsHtml = `${viewBtn}${dlBtn}${histBtn}`;
         } else {
-            return `<li class="doc-card-row">` +
-                   `<div class="doc-card-info">` +
-                   `<span class="doc-card-category">${escapeHtmlDoc(category)}</span>` +
-                   `<span class="doc-card-name" title="${escapeHtmlDoc(name)}">${icon} ${escapeHtmlDoc(name)}</span>` +
-                   `</div>` +
-                   `<div class="doc-card-actions">` +
-                   `<a href="javascript:void(0)" onclick="downloadSecureDocument(window._docStore ? window._docStore.get('${id}') : null, '${escapeHtmlDoc(name)}', { prospectId: '${pId}' })" class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>` +
-                   histBtn +
-                   `</div>` +
-                   `</li>`;
+            actionsHtml = `<span style="font-size:0.75rem; color:var(--text-muted); font-style:italic; margin-right:4px;">(Registro histórico)</span>${histBtn}`;
         }
+
+        return `<li class="doc-card-row">` +
+               `<div class="doc-card-info">` +
+               `<span class="doc-card-category">${escapeHtmlDoc(category)}</span>` +
+               `<span class="doc-card-name" title="${escapeHtmlDoc(name)}">${icon} ${escapeHtmlDoc(name)}</span>` +
+               `</div>` +
+               `<div class="doc-card-actions">` +
+               actionsHtml +
+               `</div>` +
+               `</li>`;
     }
 
     function addDoc(field, category, docKey = null) {
@@ -5386,8 +5383,11 @@ function renderInfo(p) {
     addDoc(p.datos.doc_levantamiento, 'Planos / Notas', 'doc_levantamiento');
     addDoc(p.datos.doc_oferta, 'Oferta / Cotización', 'doc_oferta');
     addDoc(p.datos.doc_costos, 'Cuadro de Costos', 'doc_costos');
-    addDoc(p.datos.doc_oferta_firmada, 'Oferta Firmada', 'doc_oferta_firmada');
+    addDoc(p.datos.doc_oferta_firmada || p.datos.doc_firmado, 'Oferta Firmada', 'doc_oferta_firmada');
     addDoc(p.datos.doc_contrato, 'Contrato', 'doc_contrato');
+    if (p.datos.doc_comprobante) {
+        addDoc(p.datos.doc_comprobante, 'Comprobante Anticipo', 'doc_comprobante');
+    }
     if (p.datos.oferta_sustento_cierre) {
         addDoc(p.datos.oferta_sustento_cierre, 'Oferta Sustento de Cierre (Definitiva)', 'doc_oferta');
     }
@@ -5977,9 +5977,13 @@ function renderClosingDocumentationPanel(p) {
         (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada')
     );
 
-    // Evaluaciones documentales
-    const hasDui = !!clientDocs.dui;
-    const hasCompanyDocs = !isBigInstalacion || isApprovalActive || (c.tipo !== 'juridica') || (clientDocs.escritura && clientDocs.credencial && clientDocs.nit && clientDocs.nrc);
+    // Evaluaciones documentales con soporte de alias históricos
+    const hasDui = !!(clientDocs.dui || clientDocs.dui_rep);
+    const hasEscritura = !!(clientDocs.escritura || clientDocs.escritura_constitucion);
+    const hasCredencial = !!(clientDocs.credencial || clientDocs.credencial_rep);
+    const hasNit = !!(clientDocs.nit || clientDocs.nit_empresa || clientDocs.nit_rep);
+    const hasNrc = !!(clientDocs.nrc || clientDocs.nrc_empresa);
+    const hasCompanyDocs = !isBigInstalacion || isApprovalActive || (c.tipo !== 'juridica') || (hasEscritura && hasCredencial && hasNit && hasNrc);
     const activeDocFirmado = datos.doc_firmado || (isBigInstalacion && !isApprovalActive ? (datos.doc_contrato || datos.doc_firmado) : (datos.doc_oferta_firmada || datos.doc_firmado));
     const hasDocFirmado = !!activeDocFirmado;
     const hasDocComprobante = !!datos.doc_comprobante;
@@ -6053,20 +6057,30 @@ function renderClosingDocumentationPanel(p) {
     // Definición de documentos del cliente a mostrar contextualmente
     // =========================================================================
     const clientDocSpecs = (c.tipo === 'juridica') ? [
-        { key: 'dui', label: 'DUI Rep. Legal', isLegal: false, required: true },
-        { key: 'escritura', label: 'Escritura de Constitución', isLegal: true, required: isBigInstalacion && !isApprovalActive },
-        { key: 'credencial', label: 'Credencial Rep. Legal', isLegal: true, required: isBigInstalacion && !isApprovalActive },
-        { key: 'nit', label: 'NIT Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
-        { key: 'nrc', label: 'NRC Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
-        { key: 'mods_escritura', label: 'Mods. Escritura', isLegal: true, required: false }
+        { key: 'dui', aliases: ['dui_rep'], label: 'DUI Rep. Legal', isLegal: false, required: true },
+        { key: 'escritura', aliases: ['escritura_constitucion'], label: 'Escritura de Constitución', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'credencial', aliases: ['credencial_rep'], label: 'Credencial Rep. Legal', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'nit', aliases: ['nit_empresa', 'nit_rep'], label: 'NIT Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'nrc', aliases: ['nrc_empresa'], label: 'NRC Empresa', isLegal: true, required: isBigInstalacion && !isApprovalActive },
+        { key: 'mods_escritura', aliases: ['mods'], label: 'Mods. Escritura', isLegal: true, required: false }
     ] : [
-        { key: 'dui', label: 'DUI de Identificación', isLegal: false, required: true },
-        { key: 'nit', label: 'NIT Personal', isLegal: true, required: false }
+        { key: 'dui', aliases: ['dui_rep'], label: 'DUI de Identificación', isLegal: false, required: true },
+        { key: 'nit', aliases: ['nit_rep', 'nit_empresa'], label: 'NIT Personal', isLegal: true, required: false }
     ];
 
     let clientDocsRowsHtml = '';
     for (const spec of clientDocSpecs) {
-        const doc = clientDocs[spec.key];
+        let doc = clientDocs[spec.key];
+        let actualKey = spec.key;
+        if (!doc && spec.aliases) {
+            for (const alias of spec.aliases) {
+                if (clientDocs[alias]) {
+                    doc = clientDocs[alias];
+                    actualKey = alias;
+                    break;
+                }
+            }
+        }
         const isPresent = !!doc;
         const reqBadge = spec.required
             ? `<span style="font-size:0.7rem; color:#f87171; font-weight:600; margin-left:4px;">[Obligatorio]</span>`
@@ -6083,12 +6097,20 @@ function renderClosingDocumentationPanel(p) {
                     ${dateStr ? `<span style="font-size:0.72rem; color:var(--text-muted);">(${dateStr})</span>` : ''}
                 </div>
             `;
+            const storeId = 'cdoc_cierre_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+            getDocStore().set(storeId, {
+                docRef: doc,
+                fileName: fileName,
+                label: spec.label,
+                clientId: c.id,
+                docKey: actualKey
+            });
             fileActions = `
                 <div style="display:flex; gap:4px; align-items:center;">
-                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="viewSecureDocument(clients.find(x => x.id === '${c.id}')?.documentos?.${spec.key}, '${escapeHtmlDoc(fileName)}', { clientId: '${c.id}' })" title="Ver documento">👁️ Ver</button>
-                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="downloadSecureDocument(clients.find(x => x.id === '${c.id}')?.documentos?.${spec.key}, '${escapeHtmlDoc(fileName)}', { clientId: '${c.id}' })" title="Descargar documento">⬇️</button>
-                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="showDocumentVersionHistory('client', '${c.id}', '${spec.key}', '${escapeHtmlDoc(spec.label)}')" title="Consultar historial de versiones">📜 Historial</button>
-                    ${!isWon ? `<button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem; border-color:var(--brand-gold); color:var(--brand-gold);" onclick="toggleClientDocSubstForm('${spec.key}')" title="Sustituir por nueva versión">🔄 Sustituir</button>` : ''}
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="viewStoredClientDoc('${storeId}')" title="Ver documento">👁️ Ver</button>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar documento">⬇️</button>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="showDocumentVersionHistory('client', '${c.id}', '${actualKey}', '${escapeHtmlDoc(spec.label)}')" title="Consultar historial de versiones">📜 Historial</button>
+                    ${!isWon ? `<button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem; border-color:var(--brand-gold); color:var(--brand-gold);" onclick="toggleClientDocSubstForm('${actualKey}')" title="Sustituir por nueva versión">🔄 Sustituir</button>` : ''}
                 </div>
             `;
         } else {
@@ -6096,15 +6118,15 @@ function renderClosingDocumentationPanel(p) {
             if (!isWon) {
                 fileActions = `
                     <div style="display:flex; gap:6px; align-items:center;">
-                        <input type="file" id="closing-client-file-${spec.key}" style="font-size:0.75rem; max-width:210px;">
-                        <button type="button" class="btn-primary" style="padding:3px 10px; font-size:0.75rem;" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${spec.key}', false)" title="Subir primera versión">📤 Subir</button>
+                        <input type="file" id="closing-client-file-${actualKey}" style="font-size:0.75rem; max-width:210px;">
+                        <button type="button" class="btn-primary" style="padding:3px 10px; font-size:0.75rem;" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${actualKey}', false)" title="Subir primera versión">📤 Subir</button>
                     </div>
                 `;
             }
         }
 
         const substFormHtml = (isPresent && !isWon) ? `
-            <div id="subst-container-client-${spec.key}" class="subst-form-panel" style="display:none; margin-top:10px; padding:14px; background:rgba(15, 23, 42, 0.95); border:1px solid var(--brand-gold); border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+            <div id="subst-container-client-${actualKey}" class="subst-form-panel" style="display:none; margin-top:10px; padding:14px; background:rgba(15, 23, 42, 0.95); border:1px solid var(--brand-gold); border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
                     <div>
                         <div style="font-size:0.85rem; font-weight:700; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
@@ -6114,7 +6136,7 @@ function renderClosingDocumentationPanel(p) {
                             Archivo vigente: <strong style="color:white;">${escapeHtmlDoc(fileName)}</strong>
                         </div>
                     </div>
-                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="cancelClientDocSubstForm('${spec.key}')" title="Cancelar">✖️</button>
+                    <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="cancelClientDocSubstForm('${actualKey}')" title="Cancelar">✖️</button>
                 </div>
 
                 <div style="background:rgba(245, 158, 11, 0.12); border-left:3px solid #f59e0b; padding:8px 10px; border-radius:4px; font-size:0.75rem; color:#fde68a; margin-bottom:10px;">
@@ -6123,25 +6145,25 @@ function renderClosingDocumentationPanel(p) {
 
                 <div style="display:flex; flex-direction:column; gap:10px;">
                     <div>
-                        <label for="closing-client-subst-file-${spec.key}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                        <label for="closing-client-subst-file-${actualKey}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
                             Nuevo archivo (PDF, JPG, PNG) <span style="color:#ef4444;">*</span>
                         </label>
-                        <input type="file" id="closing-client-subst-file-${spec.key}" accept=".pdf,.png,.jpg,.jpeg,.webp" style="font-size:0.78rem; width:100%; color:var(--text-secondary);">
+                        <input type="file" id="closing-client-subst-file-${actualKey}" accept=".pdf,.png,.jpg,.jpeg,.webp" style="font-size:0.78rem; width:100%; color:var(--text-secondary);">
                     </div>
 
                     <div>
-                        <label for="closing-client-motivo-${spec.key}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                        <label for="closing-client-motivo-${actualKey}" style="display:block; font-size:0.75rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
                             Motivo obligatorio de sustitución <span style="color:#ef4444;">*</span>
                         </label>
-                        <textarea id="closing-client-motivo-${spec.key}" rows="2" placeholder="Describa el motivo por el cual se reemplaza este documento..." style="width:100%; box-sizing:border-box; font-size:0.78rem; padding:6px 10px; background:rgba(255,255,255,0.07); border:1px solid var(--panel-border); border-radius:4px; color:white; resize:vertical;"></textarea>
+                        <textarea id="closing-client-motivo-${actualKey}" rows="2" placeholder="Describa el motivo por el cual se reemplaza este documento..." style="width:100%; box-sizing:border-box; font-size:0.78rem; padding:6px 10px; background:rgba(255,255,255,0.07); border:1px solid var(--panel-border); border-radius:4px; color:white; resize:vertical;"></textarea>
                         <small style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:2px;">Mínimo 3 caracteres requeridos para auditoría.</small>
                     </div>
 
-                    <div id="closing-client-subst-feedback-${spec.key}" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:4px;"></div>
+                    <div id="closing-client-subst-feedback-${actualKey}" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:4px;"></div>
 
                     <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
-                        <button type="button" class="btn-secondary" id="btn-cancel-subst-${spec.key}" onclick="cancelClientDocSubstForm('${spec.key}')" style="padding:5px 12px; font-size:0.78rem;">Cancelar</button>
-                        <button type="button" class="btn-primary" id="btn-confirm-client-subst-${spec.key}" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${spec.key}', true)" style="padding:5px 14px; font-size:0.78rem; background:var(--brand-gold); color:black; font-weight:600;">Confirmar Reemplazo</button>
+                        <button type="button" class="btn-secondary" id="btn-cancel-subst-${actualKey}" onclick="cancelClientDocSubstForm('${actualKey}')" style="padding:5px 12px; font-size:0.78rem;">Cancelar</button>
+                        <button type="button" class="btn-primary" id="btn-confirm-client-subst-${actualKey}" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${actualKey}', true)" style="padding:5px 14px; font-size:0.78rem; background:var(--brand-gold); color:black; font-weight:600;">Confirmar Reemplazo</button>
                     </div>
                 </div>
             </div>
@@ -6172,6 +6194,26 @@ function renderClosingDocumentationPanel(p) {
     const comprobanteName = (datos.doc_comprobante && typeof datos.doc_comprobante === 'object' && datos.doc_comprobante.name)
         ? datos.doc_comprobante.name
         : (typeof datos.doc_comprobante === 'string' ? datos.doc_comprobante.split('?')[0].split('/').pop() : 'Comprobante Anticipo');
+
+    let firmadoDocStoreId = '';
+    if (hasDocFirmado) {
+        firmadoDocStoreId = 'pdoc_firmado_' + Math.random().toString(36).substring(2, 9);
+        getDocStore().set(firmadoDocStoreId, {
+            docRef: activeDocFirmado,
+            fileName: firmadoName,
+            prospectId: p.id
+        });
+    }
+
+    let compDocStoreId = '';
+    if (hasDocComprobante) {
+        compDocStoreId = 'pdoc_comp_' + Math.random().toString(36).substring(2, 9);
+        getDocStore().set(compDocStoreId, {
+            docRef: datos.doc_comprobante,
+            fileName: comprobanteName,
+            prospectId: p.id
+        });
+    }
 
     let html = `
     <div class="closing-panel glass-panel" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 8px; padding: 1.5rem; margin-top: 1rem;">
@@ -6322,8 +6364,8 @@ function renderClosingDocumentationPanel(p) {
                         <label style="margin: 0;">${(isBigInstalacion && !isApprovalActive) ? 'Contrato Firmado (Proyecto > $10k)' : 'Oferta Firmada por Cliente'}</label>
                         ${hasDocFirmado ? `
                             <div style="display: flex; gap: 4px; align-items: center;">
-                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado || prospects.find(x => x.id === '${p.id}')?.datos?.doc_oferta_firmada, 'Doc Cierre', { prospectId: '${p.id}' })" title="Ver archivo actual">👁️ Ver</button>
-                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_firmado || prospects.find(x => x.id === '${p.id}')?.datos?.doc_oferta_firmada, 'Doc Cierre', { prospectId: '${p.id}' })" title="Descargar">⬇️</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewStoredClientDoc('${firmadoDocStoreId}')" title="Ver archivo actual">👁️ Ver</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadStoredClientDoc('${firmadoDocStoreId}')" title="Descargar">⬇️</button>
                                 <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="showDocumentVersionHistory('prospect', '${p.id}', 'doc_firmado', 'Oferta Firmada')" title="Historial">📜 Historial</button>
                                 ${!isWon ? `<button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; border-color: var(--brand-gold); color: var(--brand-gold);" onclick="toggleProspectDocSubstForm('doc_firmado')">🔄 Sustituir</button>` : ''}
                             </div>
@@ -6388,8 +6430,8 @@ function renderClosingDocumentationPanel(p) {
                         <label style="margin: 0;">Copia de Factura o Comprobante de Anticipo Emitido</label>
                         ${hasDocComprobante ? `
                             <div style="display: flex; gap: 4px; align-items: center;">
-                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" title="Ver archivo actual">👁️ Ver</button>
-                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.datos?.doc_comprobante, 'Comprobante Anticipo', { prospectId: '${p.id}' })" title="Descargar">⬇️</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewStoredClientDoc('${compDocStoreId}')" title="Ver archivo actual">👁️ Ver</button>
+                                <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="downloadStoredClientDoc('${compDocStoreId}')" title="Descargar">⬇️</button>
                                 <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="showDocumentVersionHistory('prospect', '${p.id}', 'doc_comprobante', 'Comprobante de Anticipo')" title="Historial">📜 Historial</button>
                                 ${!isWon ? `<button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem; border-color: var(--brand-gold); color: var(--brand-gold);" onclick="toggleProspectDocSubstForm('doc_comprobante')">🔄 Sustituir</button>` : ''}
                             </div>
@@ -6890,6 +6932,9 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.toggleProspectDocSubstForm = toggleProspectDocSubstForm;
     module.exports.cancelProspectDocSubstForm = cancelProspectDocSubstForm;
     module.exports.confirmProspectDocSubstitution = confirmProspectDocSubstitution;
+    module.exports.renderInfo = renderInfo;
+    module.exports.renderClientExpedienteSection = renderClientExpedienteSection;
+    module.exports.getDocStore = getDocStore;
 }
 
 function showLoseForm() {
