@@ -5202,7 +5202,8 @@ function renderInfo(p) {
     const dateFormatted = formatProspectDate(p.fecha_creacion);
 
     const isAssignedBase = currentUser && (p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
-    const canEditBase = !!currentUser && (currentUser.role === 'manager' || isAssignedBase) && p.estado === 'activo';
+    const isEditableStage = p.etapa === 'cotizacion' || p.etapa === 'negociacion';
+    const canEditBase = !!currentUser && (currentUser.role === 'manager' || isAssignedBase || (currentUser.role === 'gestor' && (p.vendedorId === currentUser.id || p.createdBy === currentUser.id))) && p.estado === 'activo' && isEditableStage;
     const editBaseLink = canEditBase ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold); text-decoration:underline;" onclick="openEditBasePriceModal()">[Editar Costo/Precio]</span>` : '';
 
     // 1. Resumen Comercial / KPI Hero (Prioridad 2)
@@ -5285,24 +5286,12 @@ function renderInfo(p) {
         if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
 
         const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
-        if (isBigInstalacionInfo && p.estado === 'activo') {
+        if (isBigInstalacionInfo && p.estado === 'activo' && p.etapa === 'cierre') {
             const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
-            const isManager = currentUser && currentUser.role === 'manager';
-            if (isManager) {
-                list.innerHTML += `<li>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--brand-gold); font-weight: bold; margin-top: 4px; margin-bottom: 4px;">
-                        <input type="checkbox" id="info-auth-no-contract" ${isAuthorized ? 'checked' : ''} onchange="toggleManagerApproval(this.checked)">
-                        <span>Autorizar sin Contrato</span>
-                    </label>
-                </li>`;
-                if (!isAuthorized && noContractRequestsOf(p).some(r => r.estado === 'pendiente')) list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
+            if (isAuthorized) {
+                list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
             } else {
-                if (isAuthorized) {
-                    list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
-                } else {
-                    list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato (> $10k)</strong></li>`;
-                    list.innerHTML += `<li>${renderNoContractRequestHTML(p)}</li>`;
-                }
+                list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato o Autorización en Cierre (> $10k)</strong></li>`;
             }
         }
 
@@ -5968,10 +5957,19 @@ function renderClosingDocumentationPanel(p) {
 
     const isBigInstalacion = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
 
-    // Evaluación estricta de autorización sin contrato (Fase 4B.3 / 4B.4)
+    // Evaluación estricta de autorización sin contrato (Fase 4B.3 / 4B.4 / 4C)
     const aprobacionSinContrato = p.aprobacion_sin_contrato || (datos && datos.aprobacion_sin_contrato) || null;
     const isApprovalInvalidated = (aprobacionSinContrato && aprobacionSinContrato.estado === 'invalidada_por_sustitucion');
-    const isApprovalActive = !isApprovalInvalidated && (
+    
+    // H-01: Si hay monto autorizado registrado, debe coincidir exactamente a centavos con precio_cotizado
+    let approvalAmountValid = true;
+    if (isBigInstalacion && p.estado === 'activo' && aprobacionSinContrato && typeof aprobacionSinContrato.montoAutorizado === 'number') {
+        const curP = parseFloat(p.precio_cotizado) || 0;
+        const autP = aprobacionSinContrato.montoAutorizado;
+        approvalAmountValid = (Math.round(curP * 100) === Math.round(autP * 100));
+    }
+
+    const isApprovalActive = !isApprovalInvalidated && approvalAmountValid && (
         datos.autorizado_sin_contrato === true ||
         (aprobacionSinContrato && aprobacionSinContrato.estado === 'aprobada') ||
         (p.solicitud_sin_contrato && p.solicitud_sin_contrato.estado === 'aprobada')
@@ -8482,24 +8480,50 @@ function generarContrato(prospectId) {
 function openEditBasePriceModal() {
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    document.getElementById('eb-precio').value = p.precio_cotizado || 0;
-    document.getElementById('eb-costo').value = p.costo_venta || 0;
+    if (p.etapa !== 'cotizacion' && p.etapa !== 'negociacion') {
+        return alert("Los montos base solo pueden corregirse durante las etapas de cotización y negociación. En cierre quedan congelados.");
+    }
+    const precio = p.precio_cotizado || 0;
+    const costo = p.costo_venta || 0;
+    document.getElementById('eb-precio').value = precio;
+    document.getElementById('eb-costo').value = costo;
     document.getElementById('eb-motivo').value = '';
-    document.getElementById('editBasePriceModal').style.display = 'block';
+    const modal = document.getElementById('editBasePriceModal');
+    if (modal) {
+        modal.setAttribute('data-old-precio', String(precio));
+        modal.setAttribute('data-old-costo', String(costo));
+        modal.style.display = 'block';
+    }
 }
 
 async function processEditBasePrice(e) {
     e.preventDefault();
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
+    if (p.etapa !== 'cotizacion' && p.etapa !== 'negociacion') {
+        return alert("Los montos base solo pueden corregirse durante las etapas de cotización y negociación. En cierre quedan congelados.");
+    }
     const precio = parseFloat(document.getElementById('eb-precio').value);
     const costo = parseFloat(document.getElementById('eb-costo').value);
     const motivo = document.getElementById('eb-motivo').value.trim();
     if (isNaN(precio) || isNaN(costo)) return alert("Ingresa un precio y un costo válidos.");
     if (!motivo) return alert("Indica el motivo de la corrección.");
+    if (motivo.length < 5) return alert("El motivo de la corrección debe tener al menos 5 caracteres.");
 
-    // editProspectBasePriceAdmin: the previous values and the history entry come from the stored document, not from this copy.
-    const res = await runWorkflowOp('Guardando corrección...', fb => CrmCommercial.editBasePrice(fb, { prospectId: p.id, precio, costo, motivo, dbSuffix: DB_SUFFIX }));
+    const modal = document.getElementById('editBasePriceModal');
+    const expectedOldPrice = modal ? parseFloat(modal.getAttribute('data-old-precio') || String(p.precio_cotizado || 0)) : (p.precio_cotizado || 0);
+    const expectedOldCost = modal ? parseFloat(modal.getAttribute('data-old-costo') || String(p.costo_venta || 0)) : (p.costo_venta || 0);
+
+    // editProspectBasePriceAdmin: includes optimistic concurrency control and stage validation
+    const res = await runWorkflowOp('Guardando corrección...', fb => CrmCommercial.editBasePrice(fb, {
+        prospectId: p.id,
+        precio,
+        costo,
+        motivo,
+        expectedOldPrice,
+        expectedOldCost,
+        dbSuffix: DB_SUFFIX
+    }));
     if (res) closeModal('editBasePriceModal');
 }
 

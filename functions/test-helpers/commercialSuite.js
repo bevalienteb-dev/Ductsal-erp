@@ -46,9 +46,9 @@ function defineCommercialSuite({ label, makeEnv, makeServiceWithFixedProspectId,
       await env.seed('clientIdentifiers_prod/NIT_06141234561234', { key: 'NIT_06141234561234', kind: 'NIT', clientId: 'C1' });
       await env.seed('clients_prod/C2', { id: 'C2', tipo: 'natural', nombres: 'Maria', apellidos: 'Lopez', dui: '01234567-8', telefono: '7000-0002', createdBy: P.V2.id });
       await env.seed('clientIdentifiers_prod/DUI_012345678', { key: 'DUI_012345678', kind: 'DUI', clientId: 'C2' });
-      // P1: created by and assigned to V1. P2: created by the gestor, assigned to V2 (V1 and V3 are unrelated to it).
-      await env.seed('prospects_prod/P1', { id: 'P1', codigo: '202601001', clientId: 'C1', createdBy: P.V1.id, vendedorId: P.V1.id, vendedorName: 'Vendedor Uno', vendedorRole: 'vendedor', fecha_creacion: '2026-01-01T00:00:00.000Z', estado: 'activo', datos: { nota: 'conservar' }, logs: [AUTO_OLD, MANUAL_OLD], facturas: [] });
-      await env.seed('prospects_prod/P2', { id: 'P2', codigo: '202601002', clientId: 'C2', createdBy: P.GES.id, vendedorId: P.V2.id, vendedorName: 'Vendedor Dos', vendedorRole: 'vendedor', fecha_creacion: '2026-01-02T00:00:00.000Z', estado: 'activo', datos: {}, logs: [AUTO_OLD], facturas: [] });
+      // P1: created by and assigned to V1, in cierre stage (eligible for contract dispensation). P2: created by the gestor, assigned to V2 (V1 and V3 are unrelated to it).
+      await env.seed('prospects_prod/P1', { id: 'P1', codigo: '202601001', clientId: 'C1', createdBy: P.V1.id, vendedorId: P.V1.id, vendedorName: 'Vendedor Uno', vendedorRole: 'vendedor', fecha_creacion: '2026-01-01T00:00:00.000Z', estado: 'activo', etapa: 'cierre', tipo_proyecto: 'Fabricación e instalación', precio_cotizado: 15000, costo_venta: 8000, datos: { nota: 'conservar' }, logs: [AUTO_OLD, MANUAL_OLD], facturas: [] });
+      await env.seed('prospects_prod/P2', { id: 'P2', codigo: '202601002', clientId: 'C2', createdBy: P.GES.id, vendedorId: P.V2.id, vendedorName: 'Vendedor Dos', vendedorRole: 'vendedor', fecha_creacion: '2026-01-02T00:00:00.000Z', estado: 'activo', etapa: 'cierre', tipo_proyecto: 'Fabricación e instalación', precio_cotizado: 15000, costo_venta: 8000, datos: {}, logs: [AUTO_OLD], facturas: [] });
     });
 
     // ------------------------------------------------------------------------------------------------

@@ -1303,6 +1303,11 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
   const ncPending = list => list.find(r => r && r.estado === 'pendiente');
   const ncId = taken => { let id = Number(now().getTime()); while (taken.includes(String(id))) id += 1; return String(id); };
   const ncPublic = r => ({ id: r.id, estado: r.estado, solicitante_id: r.solicitante_id, solicitante_nombre: r.solicitante_nombre, fecha_solicitud: r.fecha_solicitud, motivo: r.motivo, resuelto_por: r.resuelto_por || null, fecha_resolucion: r.fecha_resolucion || null, motivo_decision: r.motivo_decision || null });
+  const requiresContractDispensation = p => {
+    if (!p || typeof p !== 'object') return false;
+    return p.tipo_proyecto === 'Fabricación e instalación'
+      && Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000;
+  };
 
   async function requestNoContractAuthorization({ caller, prospectId, motivo, opId }) {
     if (!['vendedor', 'gestor'].includes(caller.role)) {
@@ -1327,6 +1332,10 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const datos = p.datos && typeof p.datos === 'object' ? p.datos : {};
       if (datos.autorizado_sin_contrato === true) throw new ServiceError('failed-precondition', 'La venta ya está autorizada sin contrato');
       if (p.estado !== 'activo') throw new ServiceError('failed-precondition', 'Solo una oportunidad activa puede solicitar la autorización');
+      if (p.etapa !== 'cierre') throw new ServiceError('failed-precondition', 'La autorización de venta sin contrato solo puede solicitarse en la etapa de cierre');
+      if (!requiresContractDispensation(p)) {
+        throw new ServiceError('failed-precondition', 'La autorización de venta sin contrato solo aplica para proyectos de Fabricación e instalación con monto o costo superior a $10,000');
+      }
       const pending = ncPending(list);
       if (pending) {
         // Double click / second tab by the same person with the same reason: the request is already there.
@@ -1368,6 +1377,10 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       if (!snap.exists) throw new ServiceError('not-found', 'Oportunidad no encontrada');
       const p = snap.data() || {};
       requireNotDeleted(p);
+      if (p.etapa !== 'cierre') throw new ServiceError('failed-precondition', 'La autorización de venta sin contrato solo puede resolverse en la etapa de cierre');
+      if (!requiresContractDispensation(p)) {
+        throw new ServiceError('failed-precondition', 'La oportunidad no es elegible para venta sin contrato (requiere Fabricación e instalación con monto o costo superior a $10,000)');
+      }
       const list = ncOf(p);
       const at = list.findIndex(r => r && r.id === requestId);
       if (at === -1) throw new ServiceError('not-found', 'Solicitud no encontrada');
@@ -1417,6 +1430,10 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       const p = snap.data() || {};
       requireNotDeleted(p);
       if (p.estado !== 'activo') throw new ServiceError('failed-precondition', 'Solo una oportunidad activa puede autorizarse sin contrato');
+      if (p.etapa !== 'cierre') throw new ServiceError('failed-precondition', 'La autorización de venta sin contrato solo puede gestionarse en la etapa de cierre');
+      if (authorized && !requiresContractDispensation(p)) {
+        throw new ServiceError('failed-precondition', 'La autorización de venta sin contrato solo aplica para proyectos de Fabricación e instalación con monto o costo superior a $10,000');
+      }
       const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
       const current = datos.autorizado_sin_contrato === true;
       if (current === authorized) return { status: 'unchanged', authorized };

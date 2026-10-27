@@ -1511,9 +1511,9 @@ exports.markProspectLostAdmin = functions.https.onCall((data, context) => runWor
 exports.registerProposalAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.registerProposal({ caller, prospectId: d.prospectId, costo_venta: d.costo_venta, precio_cotizado: d.precio_cotizado, doc_oferta: d.doc_oferta, doc_costos: d.doc_costos })));
 
-/** { prospectId, precio, costo, motivo, dbSuffix? } -> { status: 'updated' | 'unchanged' } */
+/** { prospectId, precio, costo, motivo, expectedOldPrice?, expectedOldCost?, dbSuffix? } -> { status: 'updated' | 'unchanged' } */
 exports.editProspectBasePriceAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
-  (wf, caller, d) => wf.editBasePrice({ caller, prospectId: d.prospectId, precio: d.precio, costo: d.costo, motivo: d.motivo })));
+  (wf, caller, d) => wf.editBasePrice({ caller, prospectId: d.prospectId, precio: d.precio, costo: d.costo, motivo: d.motivo, expectedOldPrice: d.expectedOldPrice, expectedOldCost: d.expectedOldCost })));
 
 /** { prospectId, orderId?, tipo, desc, precio, costo, doc_oferta?, doc_costos?, opId, dbSuffix? } -> { status: 'created' | 'updated' | 'unchanged' } */
 exports.saveChangeOrderAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
