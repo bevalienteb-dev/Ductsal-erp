@@ -285,14 +285,14 @@ describe('proposal and base price', () => {
     expect(t.calls).toEqual([]);
   });
   test('base price: requires a reason; sends the new values and the reason, not the previous values', async () => {
-    const t = build({ handler: ok });
+    const t = build({ handler: ok, prospect: { id: 'P1', clientId: 'C1', proyecto: 'Nave', tipo_proyecto: 'Fabricación', estado: 'activo', etapa: 'negociacion', datos: {}, precio_cotizado: 1000, costo_venta: 500 } });
     t.el('eb-precio', '1200'); t.el('eb-costo', '700'); t.el('eb-motivo', '   ');
     await t.api.processEditBasePrice({ preventDefault() {} });
     expect(t.calls).toEqual([]);
     t.el('eb-motivo').value = 'Error de captura';
     await t.api.processEditBasePrice({ preventDefault() {} });
     expect(t.calls[0].name).toBe('editProspectBasePriceAdmin');
-    expect(t.calls[0].payload).toEqual({ prospectId: 'P1', precio: 1200, costo: 700, motivo: 'Error de captura', dbSuffix: '_prod' });
+    expect(t.calls[0].payload).toEqual({ prospectId: 'P1', precio: 1200, costo: 700, motivo: 'Error de captura', expectedOldPrice: 1000, expectedOldCost: 500, dbSuffix: '_prod' });
     expect(t.ui.closed).toEqual(['editBasePriceModal']);
   });
 });

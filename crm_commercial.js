@@ -190,8 +190,8 @@
         return call(fb, 'registerProposalAdmin', { prospectId, costo_venta, precio_cotizado, doc_oferta, doc_costos, dbSuffix });
     }
 
-    function editBasePrice(fb, { prospectId, precio, costo, motivo, dbSuffix }) {
-        return call(fb, 'editProspectBasePriceAdmin', { prospectId, precio, costo, motivo, dbSuffix });
+    function editBasePrice(fb, { prospectId, precio, costo, motivo, expectedOldPrice, expectedOldCost, dbSuffix }) {
+        return call(fb, 'editProspectBasePriceAdmin', { prospectId, precio, costo, motivo, expectedOldPrice, expectedOldCost, dbSuffix });
     }
 
     // Invoked with orderId to edit; without it, creates (idempotent).

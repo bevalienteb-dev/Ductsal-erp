@@ -436,6 +436,7 @@ function bindNoContractApproval({
     || null;
   const offerPath = extractDocPath(currentOffer) || null;
   const offerVerId = currentOffer ? (currentOffer.versionId || null) : null;
+  const currentPrice = Number((prospect && prospect.precio_cotizado) || (datos && datos.precio_cotizado) || 0);
 
   if (datos) {
     datos.autorizado_sin_contrato = true;
@@ -449,6 +450,7 @@ function bindNoContractApproval({
     autorizado_por_id: caller.cid,
     fecha_aprobacion: isoStamp,
     motivo_decision: why || null,
+    montoAutorizado: currentPrice,
     storagePathAprobado: offerPath,
     versionIdAprobada: offerVerId,
     docKey: 'doc_firmado'
@@ -524,12 +526,39 @@ function isNoContractApprovalValid({ prospect, datos, activeDocFirmado }) {
     || (datos && datos.aprobacion_sin_contrato)
     || (prospect && prospect.datos && prospect.datos.aprobacion_sin_contrato);
 
-  if (!aprobacion) return true; // legacy approval before 4B.3
+  // Preserve consultation and historical validity for projects already won
+  const isWon = (prospect && prospect.estado === 'ganado') || (datos && datos.estado === 'ganado');
+  if (isWon) {
+    if (!aprobacion) return true;
+    if (aprobacion.estado === 'invalidada_por_sustitucion') return false;
+    return true;
+  }
+
+  // H-02: Active opportunities require an explicit approval record
+  if (!aprobacion) return false;
   if (aprobacion.estado !== 'aprobada') return false;
+
   if (aprobacion.storagePathAprobado) {
     const activePath = extractDocPath(activeDocFirmado);
     if (!activePath || activePath !== aprobacion.storagePathAprobado) return false;
+  } else {
+    // Legacy approval without storagePathAprobado in an active prospect:
+    // Requires an active signed document to be attached
+    if (!activeDocFirmado) return false;
   }
+
+  // H-02: For an active opportunity, approval must have a registered montoAutorizado
+  if (typeof aprobacion.montoAutorizado !== 'number' || !Number.isFinite(aprobacion.montoAutorizado)) {
+    return false;
+  }
+
+  // H-01: Exact comparison to cents (rejects both higher and lower prices, no arbitrary tolerance)
+  const curP = Number((prospect && prospect.precio_cotizado) || (datos && datos.precio_cotizado) || 0);
+  const autP = Number(aprobacion.montoAutorizado);
+  if (Math.round(curP * 100) !== Math.round(autP * 100)) {
+    return false;
+  }
+
   return true;
 }
 

@@ -40,7 +40,7 @@ describe('policy and construction', () => {
     ]);
     expect(POLICY.deleteProspect).toEqual(['manager-live']);
     expect(POLICY.reactivateProspect).toEqual(['manager-live']);
-    expect(POLICY.editBasePrice).toEqual(['manager', 'gestor']);
+    expect(POLICY.editBasePrice).toEqual(['manager', 'gestor', 'vendedor']);
     const postclosingOps = ['saveChangeOrder', 'deleteChangeOrder', 'saveInvoice', 'deleteInvoice', 'savePayment', 'deletePayment'];
     for (const op of postclosingOps) {
       expect(POLICY[op]).toEqual(['manager', 'gestor']);

@@ -66,8 +66,8 @@ const POLICY = {
   deleteInvoice: ['manager', 'gestor'],
   savePayment: ['manager', 'gestor'],
   deletePayment: ['manager', 'gestor'],
-  // Approved decision: only manager / gestor, and only BEFORE the opportunity is closed (checked against the stored state).
-  editBasePrice: ['manager', 'gestor'],
+  // Approved decision: manager, gestor, and assigned vendedor before closing, only during cotizacion and negociacion.
+  editBasePrice: ['manager', 'gestor', 'vendedor'],
   deleteProspect: ['manager-live'],
   reactivateProspect: ['manager-live']
 };
@@ -786,6 +786,20 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       if (isBig && !bypass) {
         if (datos.autorizado_sin_contrato === true && !isApprovalValid) {
+          const curP = Number(p.precio_cotizado || 0);
+          const autP = aprobacion && typeof aprobacion.montoAutorizado === 'number' ? aprobacion.montoAutorizado : null;
+          if (!aprobacion || autP === null) {
+            throw precondition('La autorización para cerrar sin contrato no tiene un monto registrado. Se requiere una nueva resolución gerencial durante la etapa de cierre.');
+          }
+          if (Math.round(curP * 100) !== Math.round(autP * 100)) {
+            throw precondition(`La autorización para cerrar sin contrato fue otorgada para un monto de ${fmtMoney(autP)}, pero el monto actual es ${fmtMoney(curP)}. Se requiere una nueva resolución gerencial.`);
+          }
+          if (aprobacion.storagePathAprobado) {
+            const activePath = extractDocPath(docFirmado);
+            if (!activePath || activePath !== aprobacion.storagePathAprobado) {
+              throw precondition('La autorización para cerrar sin contrato no coincide con la versión de la oferta actualmente adjunta.');
+            }
+          }
           throw precondition('La autorización para cerrar sin contrato no coincide con la versión de la oferta actualmente adjunta.');
         }
         if (client && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
@@ -1063,24 +1077,57 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  async function editBasePrice({ caller, prospectId, precio, costo, motivo }) {
+  async function editBasePrice({ caller, prospectId, precio, costo, motivo, expectedOldPrice, expectedOldCost }) {
     authorize(caller, 'editBasePrice');
     reqDocId(prospectId, 'prospectId');
     const newPrice = money(precio, 'El precio');
     const newCost = money(costo, 'El costo');
     const reason = reqString(motivo, 'El motivo de la corrección', 300);
+
+    if (expectedOldPrice === undefined || expectedOldPrice === null) {
+      throw bad('expectedOldPrice es obligatorio para control de concurrencia. La aplicación se ha actualizado; guarde sus notas y recargue la página para continuar.');
+    }
+    if (expectedOldCost === undefined || expectedOldCost === null) {
+      throw bad('expectedOldCost es obligatorio para control de concurrencia. La aplicación se ha actualizado; guarde sus notas y recargue la página para continuar.');
+    }
+    const expPrice = money(expectedOldPrice, 'El precio anterior esperado');
+    const expCost = money(expectedOldCost, 'El costo anterior esperado');
+
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
-      // The STORED state decides, never what the page believes: after the closing (ganado / perdido) the price is frozen,
-      // because the advance invoice was computed from it at closing and the invoices / payments / change orders hang from it.
+      // FASE 4C: The STORED state decides. Once the prospect enters 'cierre', price and cost are strictly frozen.
       if (p.estado !== 'activo') throw precondition('El precio y el costo base solo pueden corregirse antes del cierre de la oportunidad');
+      if (p.etapa === 'cierre') throw precondition('El precio y el costo quedan congelados al entrar en la etapa de cierre');
+      if (p.etapa !== 'cotizacion' && p.etapa !== 'negociacion') {
+        throw precondition('El precio y el costo base solo pueden corregirse durante las etapas de cotización y negociación');
+      }
+
       const oldP = p.precio_cotizado || 0; const oldC = p.costo_venta || 0;
+      const curOldP = money(oldP, 'El precio actual');
+      const curOldC = money(oldC, 'El costo actual');
+
+      // Optimistic Concurrency Control (OCC) - Mandatory and exact to cents
+      if (Math.round(curOldP * 100) !== Math.round(expPrice * 100)) {
+        throw precondition(`Los datos en pantalla no coinciden con los valores actuales en el sistema (Precio actual: ${fmtMoney(oldP)}, visualizado: ${fmtMoney(expPrice)}). Actualice la información antes de continuar.`);
+      }
+      if (Math.round(curOldC * 100) !== Math.round(expCost * 100)) {
+        throw precondition(`Los datos en pantalla no coinciden con los valores actuales en el sistema (Costo actual: ${fmtMoney(oldC)}, visualizado: ${fmtMoney(expCost)}). Actualice la información antes de continuar.`);
+      }
+
       if (oldP === newPrice && oldC === newCost) return { status: 'unchanged' };
       tx.update(ref, {
         precio_cotizado: newPrice, costo_venta: newCost,
         logs: withLog(p, caller, `Corrección de sistema: Precio original modificado de ${fmtMoney(oldP)} a ${fmtMoney(newPrice)} y Costo de ${fmtMoney(oldC)} a ${fmtMoney(newCost)}. Motivo: ${reason}`)
       });
-      addAudit(tx, caller, 'editBasePrice', prospectId, { precioFrom: oldP, precioTo: newPrice, costoFrom: oldC, costoTo: newCost, motivo: reason });
+      addAudit(tx, caller, 'editBasePrice', prospectId, {
+        precioFrom: oldP,
+        precioTo: newPrice,
+        costoFrom: oldC,
+        costoTo: newCost,
+        motivo: reason,
+        expectedOldPrice: expPrice,
+        expectedOldCost: expCost
+      });
       return { status: 'updated', precio_cotizado: newPrice, costo_venta: newCost };
     });
   }

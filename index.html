@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="app-version" content="4c">
     <title>Ductsal - CRM & Operaciones</title>
     <link rel="icon" href="logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css?v=4">
@@ -1259,12 +1260,15 @@
     <div id="editBasePriceModal" class="modal" style="z-index: 110;">
         <div class="modal-content glass-panel" style="width: 400px;">
             <span class="close" onclick="closeModal('editBasePriceModal')">&times;</span>
-            <h2>Editar Montos Base</h2>
+            <h2 style="font-size: 1.15rem; color: var(--brand-gold); margin-bottom: 6px;">Corregir Error de Digitación</h2>
+            <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.35;">
+                Exclusivo para corregir errores de transcripción en cotización o negociación. Los cambios comerciales acordados con el cliente deben registrarse como <strong>Nueva Propuesta</strong> adjuntando la oferta PDF y cuadro de costos Excel.
+            </p>
             <form id="editBasePriceForm" onsubmit="processEditBasePrice(event)">
-                <div class="form-group"><label>Precio Cotizado (Subtotal) *</label><input type="number" step="0.01" id="eb-precio" required></div>
+                <div class="form-group"><label>Precio Cotizado (Subtotal sin IVA) *</label><input type="number" step="0.01" id="eb-precio" required></div>
                 <div class="form-group"><label>Costo Presupuestado *</label><input type="number" step="0.01" id="eb-costo" required></div>
-                <div class="form-group"><label>Motivo de la corrección *</label><input type="text" id="eb-motivo" placeholder="Ej. Corrección de error de tipeo" required></div>
-                <button type="submit" class="btn-primary mt-2" style="width:100%;">Guardar Cambios</button>
+                <div class="form-group"><label>Motivo de la corrección (mín. 5 caracteres) *</label><input type="text" id="eb-motivo" placeholder="Ej. Corrección de error de digitación en subtotal" required minlength="5" maxlength="300"></div>
+                <button type="submit" class="btn-primary mt-2" style="width:100%;">Guardar Corrección</button>
             </form>
         </div>
     </div>
@@ -1605,10 +1609,10 @@
     <script src="crm_env.js?v=1"></script>
     <script src="crm_auth.js?v=3"></script>
     <script src="crm_clients.js?v=1"></script>
-    <script src="crm_commercial.js?v=2"></script>
+    <script src="crm_commercial.js?v=3"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>
     <script src="crm_followup_calc.js?v=1"></script>
-    <script src="app_core.js?v=25"></script>
+    <script src="app_core.js?v=26"></script>
 </body>
 </html>

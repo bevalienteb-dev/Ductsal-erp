@@ -213,36 +213,59 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
       ).rejects.toMatchObject({ code: 'permission-denied' });
     });
 
-    test('vendedor cannot edit base price (only manager and gestor)', async () => {
-      // Vendedor no puede editar precio base ni en su propio prospecto
+    test('vendedor with access can edit base price in cotizacion/negociacion, but not a non-owner, and rejected in cierre', async () => {
+      // P1 en etapa negociacion: v1 tiene acceso -> SÍ puede editar
+      await db.seed('prospects_prod/P1', {
+        ...db.data('prospects_prod/P1'),
+        etapa: 'negociacion',
+        precio_cotizado: 10000,
+        costo_venta: 6000
+      });
+      const resV1 = await wfSvc.editBasePrice({
+        caller: caller('v1'),
+        prospectId: 'P1',
+        precio: 10500,
+        costo: 6200,
+        motivo: 'Ajuste de digitación autorizado por vendedor',
+        expectedOldPrice: 10000,
+        expectedOldCost: 6000
+      });
+      expect(resV1.status).toBe('updated');
+      expect(db.data('prospects_prod/P1').precio_cotizado).toBe(10500);
+
+      // Vendedor ajeno (v2) NO puede editar precio base en P1
       await expect(
         wfSvc.editBasePrice({
-          caller: caller('v1'),
+          caller: caller('v2'),
           prospectId: 'P1',
           precio: 20000,
           costo: 12000,
-          motivo: 'Ajuste no autorizado'
+          motivo: 'Ajuste no autorizado vendedor ajeno',
+          expectedOldPrice: 10500,
+          expectedOldCost: 6200
         })
       ).rejects.toMatchObject({ code: 'permission-denied' });
 
-      // Gestor NO puede editar precio base en un prospecto ingresado por un vendedor
+      // Gestor NO puede editar precio base en un prospecto ingresado por otro si no fue asignado ni creado por él
       await expect(
         wfSvc.editBasePrice({
           caller: caller('ges'),
           prospectId: 'P1',
           precio: 18000,
           costo: 11000,
-          motivo: 'Corrección aprobada de costos'
+          motivo: 'Corrección no autorizada',
+          expectedOldPrice: 10500,
+          expectedOldCost: 6200
         })
       ).rejects.toMatchObject({ code: 'permission-denied' });
 
-      // Gestor SÍ puede editar precio base en un prospecto que ingresó originalmente
+      // Gestor SÍ puede editar precio base en un prospecto que ingresó originalmente (en negociacion)
       await db.seed('prospects_prod/P_GES', {
         id: 'P_GES',
         clientId: 'C1',
         createdBy: USERS.ges.id,
         vendedorId: USERS.v2.id,
-        etapa: 'prospecto',
+        etapa: 'negociacion',
         estado: 'activo',
         precio_cotizado: 10000,
         costo_venta: 6000,
@@ -255,23 +278,42 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
         prospectId: 'P_GES',
         precio: 11000,
         costo: 6500,
-        motivo: 'Ajuste inicial gestor'
+        motivo: 'Ajuste inicial gestor',
+        expectedOldPrice: 10000,
+        expectedOldCost: 6000
       });
       expect(resGes.status).toBe('updated');
       expect(db.data('prospects_prod/P_GES').precio_cotizado).toBe(11000);
 
-      // Gerente sí puede editar precio base en cualquier prospecto activo
+      // Gerente sí puede editar precio base en cualquier prospecto activo en negociacion
       const res = await wfSvc.editBasePrice({
         caller: caller('mgr'),
         prospectId: 'P1',
-        precio: 18000,
-        costo: 11000,
-        motivo: 'Corrección gerencial'
+        precio: 12000,
+        costo: 7000,
+        motivo: 'Ajuste gerencial autorizado',
+        expectedOldPrice: 10500,
+        expectedOldCost: 6200
       });
       expect(res.status).toBe('updated');
-      const p1 = db.data('prospects_prod/P1');
-      expect(p1.precio_cotizado).toBe(18000);
-      expect(p1.costo_venta).toBe(11000);
+      expect(db.data('prospects_prod/P1').precio_cotizado).toBe(12000);
+
+      // En etapa de cierre, ningún rol puede editar precio base
+      await db.seed('prospects_prod/P1', {
+        ...db.data('prospects_prod/P1'),
+        etapa: 'cierre'
+      });
+      await expect(
+        wfSvc.editBasePrice({
+          caller: caller('mgr'),
+          prospectId: 'P1',
+          precio: 13000,
+          costo: 7500,
+          motivo: 'Ajuste tardío en cierre',
+          expectedOldPrice: 12000,
+          expectedOldCost: 7000
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
     });
 
     test('cierre stage atomically synchronizes closingVendors and visibleTo', async () => {
@@ -398,7 +440,22 @@ describe('SEC-04 / SEC-06 Commercial Backend Security Boundary', () => {
   });
 
   describe('No-Contract Authorization Governance', () => {
-    test('seller cannot approve their own no-contract authorization request', async () => {
+    test('requesting no-contract authorization is rejected outside closing stage', async () => {
+      await db.seed('prospects_prod/P1', { ...db.data('prospects_prod/P1'), etapa: 'negociacion' });
+      await expect(
+        commSvc.requestNoContractAuthorization({
+          caller: caller('v1'),
+          prospectId: 'P1',
+          motivo: 'Intento en negociacion',
+          opId: 'op_neg_nocontract'
+        })
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+    });
+
+    test('seller cannot approve their own no-contract authorization request (in closing stage)', async () => {
+      // P1 debe estar en etapa cierre
+      await db.seed('prospects_prod/P1', { ...db.data('prospects_prod/P1'), etapa: 'cierre' });
+
       // V1 solicita autorización
       const reqRes = await commSvc.requestNoContractAuthorization({
         caller: caller('v1'),

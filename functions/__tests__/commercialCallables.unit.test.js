@@ -54,7 +54,7 @@ const CALLS = {
   advanceProspectStageAdmin: { fn: fns.advanceProspectStageAdmin, data: () => ({ prospectId: 'P1', nextStage: 'levantamiento', data: { visitante: 'Ana', fecha_inicio: '2026-03-01' } }) },
   markProspectLostAdmin: { fn: fns.markProspectLostAdmin, data: () => ({ prospectId: 'P1', reason: 'Precio' }) },
   registerProposalAdmin: { fn: fns.registerProposalAdmin, data: () => ({ prospectId: 'P1', costo_venta: 1, precio_cotizado: 2, doc_oferta: [], doc_costos: [] }) },
-  editProspectBasePriceAdmin: { fn: fns.editProspectBasePriceAdmin, data: () => ({ prospectId: 'P1', precio: 2, costo: 1, motivo: 'x' }) },
+  editProspectBasePriceAdmin: { fn: fns.editProspectBasePriceAdmin, data: () => ({ prospectId: 'P1', precio: 2, costo: 1, motivo: 'x', expectedOldPrice: 2, expectedOldCost: 1 }) },
   saveChangeOrderAdmin: { fn: fns.saveChangeOrderAdmin, data: () => ({ prospectId: 'P1', tipo: 'adicional', desc: 'x', precio: 1, costo: 1, opId: op() }) },
   deleteChangeOrderAdmin: { fn: fns.deleteChangeOrderAdmin, data: () => ({ prospectId: 'P1', orderId: 'OC1' }) },
   saveInvoiceAdmin: { fn: fns.saveInvoiceAdmin, data: () => ({ prospectId: 'P1', numero: 'F1', monto: 1, opId: op() }) },
@@ -212,10 +212,21 @@ describe('legitimate calls through the real entry points', () => {
     expect(fdb.data('prospects_prod/P1')).toMatchObject({ createdBy: V1.id, vendedorId: V2.id, vendedorName: 'Vendedor Dos' });
   });
 
-  test('setNoContractAuthorizationAdmin: manager grants; the authoriser is the session profile', async () => {
+  test('setNoContractAuthorizationAdmin: manager grants; the authoriser is the session profile (only in closing, eligible)', async () => {
+    fdb.seed('prospects_prod/P1', { ...fdb.data('prospects_prod/P1'), etapa: 'cierre', tipo_proyecto: 'Fabricación e instalación', precio_cotizado: 15000, costo_venta: 8000 });
     const r = await fns.setNoContractAuthorizationAdmin({ prospectId: 'P1', authorized: true, autorizado_por: 'Otra Persona' }, ctx(MGR));
     expect(r.status).toBe('updated');
     expect(fdb.data('prospects_prod/P1').datos).toMatchObject({ autorizado_sin_contrato: true, autorizado_por: 'Gerente Alfa', autorizado_por_id: MGR.id });
+  });
+
+  test('setNoContractAuthorizationAdmin: rejected when prospect is in negociacion or earlier', async () => {
+    fdb.seed('prospects_prod/P1', { ...fdb.data('prospects_prod/P1'), etapa: 'negociacion', tipo_proyecto: 'Fabricación e instalación', precio_cotizado: 15000, costo_venta: 8000 });
+    await expect(fns.setNoContractAuthorizationAdmin({ prospectId: 'P1', authorized: true }, ctx(MGR))).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  test('setNoContractAuthorizationAdmin: rejected when prospect is not eligible (> $10k e instalación)', async () => {
+    fdb.seed('prospects_prod/P1', { ...fdb.data('prospects_prod/P1'), etapa: 'cierre', tipo_proyecto: 'Solo suministro', precio_cotizado: 5000, costo_venta: 3000 });
+    await expect(fns.setNoContractAuthorizationAdmin({ prospectId: 'P1', authorized: true }, ctx(MGR))).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
   test('updateSettingsAdmin: manager adds a visitor', async () => {

@@ -57,7 +57,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
       const OPS = {
         advanceStage: () => wf.advanceStage({ caller: caller('V2'), prospectId: 'W1', nextStage: 'levantamiento', data: { visitante: 'x', distancia: 1 } }),
         markLost: () => wf.markLost({ caller: caller('V2'), prospectId: 'W1', reason: 'Precio' }),
-        editBasePrice: () => wf.editBasePrice({ caller: caller('V2'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x' }),
+        editBasePrice: () => wf.editBasePrice({ caller: caller('V2'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x', expectedOldPrice: 1, expectedOldCost: 1 }),
         saveInvoice: () => wf.saveInvoice({ caller: caller('V2'), prospectId: 'W1', numero: 'B', monto: 1, doc_factura: file('f.pdf'), opId: op() }),
         savePayment: () => wf.savePayment({ caller: caller('V2'), prospectId: 'W1', invoiceId: 'F1', monto: 1, metodo: 'cheque', ref: 'r', doc_comprobante: file('c.pdf'), opId: op() }),
         saveChangeOrder: () => wf.saveChangeOrder({ caller: caller('V2'), prospectId: 'W1', tipo: 'aumento', desc: 'd', precio: 1, costo: 1, opId: op() }),
@@ -86,18 +86,28 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('a plant role (operario) cannot use the commercial workflow, even if it is the creator', async () => {
         await put(won({ createdBy: P.PLANT.id }));
-        await rejects(wf.editBasePrice({ caller: caller('PLANT'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x' }), 'permission-denied');
+        await rejects(wf.editBasePrice({ caller: caller('PLANT'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x', expectedOldPrice: 1, expectedOldCost: 1 }), 'permission-denied');
         await rejects(wf.markLost({ caller: caller('PLANT'), prospectId: 'W1', reason: 'Precio' }), 'permission-denied');
       });
-      test('creator, assignee, gestor and manager are accepted where the policy allows them (the base price is NOT one of them for a vendedor)', async () => {
-        await put(opp({ createdBy: P.GES.id, vendedorId: P.V2.id }));
+      test('creator, assignee, gestor and manager are accepted where the policy allows them (base price allowed for owner vendedor in cotizacion/negociacion)', async () => {
+        await put(opp({ etapa: 'negociacion', createdBy: P.GES.id, vendedorId: P.V2.id }));
+        let curP = 10000;
+        let curC = 6000;
         for (const who of ['GES', 'MGR']) {
-          const r = await wf.editBasePrice({ caller: caller(who), prospectId: 'W1', precio: 10000 + audit.length, costo: 6000 + (who === 'GES' ? 2 : 3), motivo: 'ok' });
+          const newP = 10000 + audit.length;
+          const newC = 6000 + (who === 'GES' ? 2 : 3);
+          const r = await wf.editBasePrice({ caller: caller(who), prospectId: 'W1', precio: newP, costo: newC, motivo: 'ok', expectedOldPrice: curP, expectedOldCost: curC });
           expect(['updated', 'unchanged']).toContain(r.status);
+          curP = newP;
+          curC = newC;
         }
-        await rejects(wf.editBasePrice({ caller: caller('V2'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x' }), 'permission-denied');
+        // V2 is assigned -> accepted in negociacion
+        const rV2 = await wf.editBasePrice({ caller: caller('V2'), prospectId: 'W1', precio: 10050, costo: 6050, motivo: 'ok', expectedOldPrice: curP, expectedOldCost: curC });
+        expect(rV2.status).toBe('updated');
+        // V3 is another vendedor without access -> permission-denied
+        await rejects(wf.editBasePrice({ caller: caller('V3'), prospectId: 'W1', precio: 1, costo: 1, motivo: 'x', expectedOldPrice: 10050, expectedOldCost: 6050 }), 'permission-denied');
         // The assignee keeps the rest of the workflow.
-        const adv = await wf.advanceStage({ caller: caller('V2'), prospectId: 'W1', nextStage: 'levantamiento', data: { visitante: 'x', distancia: 1 } });
+        const adv = await wf.advanceStage({ caller: caller('V2'), prospectId: 'W1', nextStage: 'cierre', data: { forma_pago: '100% anticipado', factura_anticipo: 'A-1', doc_firmado: file('f.pdf'), doc_comprobante: file('c.pdf') } });
         expect(adv.status).toBe('advanced');
         expect((await prospect('W1')).logs.length).toBeGreaterThan(2);
       });
@@ -269,7 +279,16 @@ function defineWorkflowSuite({ label, makeEnv }) {
           await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
           await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, autorizado_sin_contrato: true, datos: { autorizado_sin_contrato: true } } }), 'failed-precondition');
           // The authorization is a stored fact written by setNoContractAuthorization.
-          await put(negociacion({ precio_cotizado: 20000, datos: { doc_oferta: [file('of.pdf')], doc_costos: [file('co.pdf')], autorizado_sin_contrato: true, autorizado_por: 'Gerente Alfa' } }));
+          await put(negociacion({
+            precio_cotizado: 20000,
+            datos: { doc_oferta: [file('of.pdf')], doc_costos: [file('co.pdf')], autorizado_sin_contrato: true, autorizado_por: 'Gerente Alfa' },
+            aprobacion_sin_contrato: {
+              estado: 'aprobada',
+              montoAutorizado: 20000,
+              autorizado_por: 'Gerente Alfa',
+              storagePathAprobado: file('firmado.pdf').url
+            }
+          }));
           await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
           await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: CIE });
           const p = await prospect('W1');
@@ -374,7 +393,11 @@ function defineWorkflowSuite({ label, makeEnv }) {
         await rejects(wf.registerProposal({ caller: caller('V1'), prospectId: 'W1', ...ok, precio_cotizado: 2e9 }), 'invalid-argument');
       });
       // ---- Base price / cost: approved decision (manager and gestor only, only before the closing) ----
-      const editBase = (who, o = {}) => wf.editBasePrice({ caller: caller(who), prospectId: 'W1', precio: 9000, costo: 5000, motivo: 'Error de captura', ...o });
+      const editBase = (who, o = {}) => {
+        const expP = o.expectedOldPrice !== undefined ? o.expectedOldPrice : 10000;
+        const expC = o.expectedOldCost !== undefined ? o.expectedOldCost : 6000;
+        return wf.editBasePrice({ caller: caller(who), prospectId: 'W1', precio: 9000, costo: 5000, motivo: 'Error de captura', expectedOldPrice: expP, expectedOldCost: expC, ...o });
+      };
       const CIE_BASE = { forma_pago: '70/30', factura_anticipo: 'FAC-1', encargado: 'Pedro', doc_firmado: file('firmado.pdf'), doc_comprobante: file('comp.pdf') };
       const toClose = (o = {}) => opp({ etapa: 'negociacion', tipo_proyecto: 'Fabricación e instalación', datos: { doc_oferta: [file('of.pdf')], doc_costos: [file('co.pdf')] }, ...o });
 
@@ -388,18 +411,58 @@ function defineWorkflowSuite({ label, makeEnv }) {
         expect(p).toMatchObject({ precio_cotizado: 9000, costo_venta: 5000 });
         expect(p.logs[p.logs.length - 1].text).toContain('Error de captura');
         expect((await audit('editBasePrice')).find(a => a.actorRole === 'gestor')).toMatchObject({ actorCid: P.GES.id, actorRole: 'gestor', detail: { precioFrom: 10000, precioTo: 9000, costoFrom: 6000, costoTo: 5000, motivo: 'Error de captura' } });
-        expect((await editBase('GES')).status).toBe('unchanged');
-        expect((await editBase('MGR', { precio: 9500, costo: 5200 })).status).toBe('updated');
+        expect((await editBase('GES', { expectedOldPrice: 9000, expectedOldCost: 5000 })).status).toBe('unchanged');
+        expect((await editBase('MGR', { precio: 9500, costo: 5200, expectedOldPrice: 9000, expectedOldCost: 5000 })).status).toBe('updated');
         expect((await audit('editBasePrice')).find(a => a.actorRole === 'manager')).toMatchObject({ actorCid: P.MGR.id, actorRole: 'manager' });
       });
 
-      test('a vendedor cannot edit the base price, not even on an opportunity they created and own; nothing is written', async () => {
-        await put(opp());
+      test('a vendedor with access can edit base price in cotizacion/negociacion, but not a non-owner, and rejected in cierre', async () => {
+        await put(opp({ etapa: 'negociacion' })); // W1 owned by V1
         const before = await prospect('W1');
-        await rejects(editBase('V1'), 'permission-denied');
-        await rejects(editBase('PLANT'), 'permission-denied');
-        expect(await prospect('W1')).toEqual(before);
-        expect(await audit()).toHaveLength(0);
+        const rV1 = await editBase('V1', { precio: 9800, costo: 5900, motivo: 'Corrección vendedor', expectedOldPrice: 10000, expectedOldCost: 6000 });
+        expect(rV1.status).toBe('updated');
+        expect((await prospect('W1')).precio_cotizado).toBe(9800);
+        // Non-owner seller is refused
+        await rejects(editBase('V2', { expectedOldPrice: 9800, expectedOldCost: 5900 }), 'permission-denied');
+        // PLANT role is refused
+        await rejects(editBase('PLANT', { expectedOldPrice: 9800, expectedOldCost: 5900 }), 'permission-denied');
+
+        // Refused in cierre (frozen)
+        await put(opp({ etapa: 'cierre', createdBy: P.V1.id }));
+        const eCierre = await rejects(editBase('V1'), 'failed-precondition');
+        expect(eCierre.message).toMatch(/etapa de cierre/);
+
+        // Refused in prospecto (before cotizacion)
+        await put(opp({ etapa: 'prospecto', createdBy: P.V1.id }));
+        const eProsp = await rejects(editBase('V1'), 'failed-precondition');
+        expect(eProsp.message).toMatch(/etapas de cotización y negociación/);
+      });
+
+      test('editBasePrice validates optimistic concurrency (OCC): rejects if expectedOldPrice does not match', async () => {
+        await put(opp({ etapa: 'negociacion', createdBy: P.GES.id, precio_cotizado: 10000, costo_venta: 6000 }));
+        // Successful edit with matching expected values
+        const r = await wf.editBasePrice({
+          caller: caller('GES'),
+          prospectId: 'W1',
+          precio: 9500,
+          costo: 5500,
+          motivo: 'Ajuste inicial',
+          expectedOldPrice: 10000,
+          expectedOldCost: 6000
+        });
+        expect(r.status).toBe('updated');
+
+        // Conflicting edit with outdated expected value
+        const eConf = await rejects(wf.editBasePrice({
+          caller: caller('GES'),
+          prospectId: 'W1',
+          precio: 9200,
+          costo: 5200,
+          motivo: 'Sobrescritura concurrente',
+          expectedOldPrice: 10000, // outdated!
+          expectedOldCost: 5500
+        }), 'failed-precondition');
+        expect(eConf.message).toMatch(/no coinciden con los valores actuales/);
       });
 
       test('refused after the closing or the loss: the STORED state decides, whatever the interface believed or sent', async () => {
@@ -714,7 +777,7 @@ function defineWorkflowSuite({ label, makeEnv }) {
           advanceStage: () => wf.advanceStage({ caller: m, ...base, nextStage: 'levantamiento', data: { visitante: 'x', distancia: 1 } }),
           markLost: () => wf.markLost({ caller: m, ...base, reason: 'Precio' }),
           registerProposal: () => wf.registerProposal({ caller: m, ...base, costo_venta: 1, precio_cotizado: 2, doc_oferta: [file('a.pdf')], doc_costos: [file('b.pdf')] }),
-          editBasePrice: () => wf.editBasePrice({ caller: m, ...base, precio: 1, costo: 1, motivo: 'x' }),
+          editBasePrice: () => wf.editBasePrice({ caller: m, ...base, precio: 1, costo: 1, motivo: 'x', expectedOldPrice: 1, expectedOldCost: 1 }),
           saveChangeOrder: () => wf.saveChangeOrder({ caller: m, ...base, tipo: 'aumento', desc: 'd', precio: 1, costo: 1, opId: op() }),
           deleteChangeOrder: () => wf.deleteChangeOrder({ caller: m, ...base, orderId: 'O1' }),
           saveInvoice: () => wf.saveInvoice({ caller: m, ...base, numero: 'B', monto: 1, doc_factura: file('f.pdf'), opId: op() }),
