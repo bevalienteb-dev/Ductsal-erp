@@ -1085,10 +1085,10 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const reason = reqString(motivo, 'El motivo de la corrección', 300);
 
     if (expectedOldPrice === undefined || expectedOldPrice === null) {
-      throw bad('expectedOldPrice es obligatorio para control de concurrencia');
+      throw bad('expectedOldPrice es obligatorio para control de concurrencia. La aplicación se ha actualizado; guarde sus notas y recargue la página para continuar.');
     }
     if (expectedOldCost === undefined || expectedOldCost === null) {
-      throw bad('expectedOldCost es obligatorio para control de concurrencia');
+      throw bad('expectedOldCost es obligatorio para control de concurrencia. La aplicación se ha actualizado; guarde sus notas y recargue la página para continuar.');
     }
     const expPrice = money(expectedOldPrice, 'El precio anterior esperado');
     const expCost = money(expectedOldCost, 'El costo anterior esperado');

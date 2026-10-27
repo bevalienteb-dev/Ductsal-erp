@@ -855,4 +855,102 @@ describe('Fase 4C: Ajustes Comerciales y Autorización de Cierre', () => {
       })).toBe(true);
     });
   });
+
+  // =========================================================================
+  describe('8. Compatibilidad entre versiones de cliente (cliente antiguo vs cliente actualizado)', () => {
+    beforeEach(async () => {
+      await db.seed('prospects_prod/P_COMPAT', {
+        id: 'P_COMPAT',
+        clientId: CLIENT.id,
+        vendedorId: USERS.v1.id,
+        createdBy: USERS.v1.id,
+        estado: 'activo',
+        etapa: 'cotizacion',
+        precio_cotizado: 10000,
+        costo_venta: 6000,
+        datos: {},
+        logs: [],
+        facturas: []
+      });
+    });
+
+    test('8.1. Cliente antiguo (pestaña abierta previa al release que omite expectedOldPrice/Cost) es bloqueado', async () => {
+      // Simula exactamente el payload emitido por el frontend de Phase 4B en origin/main
+      const oldPayload = {
+        caller: caller('v1'),
+        prospectId: 'P_COMPAT',
+        precio: 9500,
+        costo: 5500,
+        motivo: 'Corrección desde pestaña antigua'
+        // expectedOldPrice: undefined,
+        // expectedOldCost: undefined
+      };
+
+      await expect(wfSvc.editBasePrice(oldPayload)).rejects.toMatchObject({
+        code: 'invalid-argument',
+        message: expect.stringMatching(/expectedOldPrice es obligatorio.*actualizado/)
+      });
+
+      // Garantía estricta de seguridad: la base de datos Firestore NO sufrió mutación alguna
+      const stored = (await db.collection('prospects_prod').doc('P_COMPAT').get()).data();
+      expect(stored.precio_cotizado).toBe(10000);
+      expect(stored.costo_venta).toBe(6000);
+      expect(stored.logs).toHaveLength(0);
+
+      // Cero auditorías espurias registradas
+      const audits = (await db.collection('commercialAudit_prod').get()).docs;
+      expect(audits).toHaveLength(0);
+    });
+
+    test('8.2. Cliente actualizado (enviando expectedOldPrice y expectedOldCost coincidentes) ejecuta la corrección con éxito', async () => {
+      const newPayload = {
+        caller: caller('v1'),
+        prospectId: 'P_COMPAT',
+        precio: 9500,
+        costo: 5500,
+        motivo: 'Corrección con versión 4C',
+        expectedOldPrice: 10000,
+        expectedOldCost: 6000
+      };
+
+      const res = await wfSvc.editBasePrice(newPayload);
+      expect(res.status).toBe('updated');
+      expect(res.precio_cotizado).toBe(9500);
+      expect(res.costo_venta).toBe(5500);
+
+      const stored = (await db.collection('prospects_prod').doc('P_COMPAT').get()).data();
+      expect(stored.precio_cotizado).toBe(9500);
+      expect(stored.costo_venta).toBe(5500);
+      expect(stored.logs).toHaveLength(1);
+      expect(stored.logs[0].text).toContain('Corrección de sistema');
+
+      const audits = (await db.collection('commercialAudit_prod').get()).docs;
+      expect(audits).toHaveLength(1);
+      expect(audits[0].data().detail).toMatchObject({
+        precioFrom: 10000,
+        precioTo: 9500,
+        expectedOldPrice: 10000
+      });
+    });
+
+    test('8.3. Cliente actualizado con OCC desfasado (datos modificados concurrentemente) es rechazado sin escrituras', async () => {
+      const concurrentPayload = {
+        caller: caller('v1'),
+        prospectId: 'P_COMPAT',
+        precio: 9200,
+        costo: 5200,
+        motivo: 'Edición con precio viejo desfasado',
+        expectedOldPrice: 9999, // Desfasado de 10000
+        expectedOldCost: 6000
+      };
+
+      await expect(wfSvc.editBasePrice(concurrentPayload)).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringMatching(/no coinciden con los valores actuales en el sistema/)
+      });
+
+      const stored = (await db.collection('prospects_prod').doc('P_COMPAT').get()).data();
+      expect(stored.precio_cotizado).toBe(10000);
+    });
+  });
 });
