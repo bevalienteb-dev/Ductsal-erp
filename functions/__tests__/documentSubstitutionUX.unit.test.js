@@ -80,6 +80,7 @@ global.localStorage = {
 };
 
 const mockFirestore = {
+  settings: () => {},
   collection: () => ({
     doc: () => ({
       collection: () => ({

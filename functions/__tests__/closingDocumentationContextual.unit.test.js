@@ -89,6 +89,7 @@ global.localStorage = {
 
 const mockSubcollections = {};
 const mockFirestore = {
+  settings: () => {},
   collection: (colName) => ({
     doc: (docId) => ({
       collection: (subCol) => ({
