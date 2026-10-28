@@ -2970,6 +2970,10 @@ function renderClientExpedienteSection(c) {
 
 function openClientModal(clientId = null) {
     document.getElementById('clientForm').reset(); document.getElementById('client-id-edit').value = '';
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        const errs = document.querySelectorAll('#clientForm .input-error');
+        if (errs && errs.forEach) errs.forEach(el => el.classList.remove('input-error'));
+    }
     if (clientId) {
         document.getElementById('client-modal-title').textContent = 'Editar Cliente'; const c = clients.find(x => x.id === clientId);
         if (c) {
@@ -3111,16 +3115,35 @@ async function uploadClientStagedFiles(targetId, type, existingDocs = {}) {
     return docs;
 }
 
+function setClientFieldError(elementId, hasError) {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (el.classList && typeof el.classList.toggle === 'function') {
+        el.classList.toggle('input-error', !!hasError);
+    }
+}
+
 async function saveClient(e) {
     e.preventDefault();
     try {
         const editId = document.getElementById('client-id-edit').value;
         const type = document.getElementById('client-tipo').value;
-        if (!type) return alert("Debes seleccionar el Tipo de Persona obligatoriamente.");
+        if (!type) {
+            setClientFieldError('client-tipo', true);
+            return alert("Debes seleccionar el Tipo de Persona obligatoriamente.");
+        }
+        setClientFieldError('client-tipo', false);
 
         const tel = document.getElementById('cli-telefono').value.trim();
         const email = document.getElementById('cli-correo').value.trim();
-        if (!tel && !email) return alert("Debe ingresar obligatoriamente un teléfono o correo.");
+        if (!tel && !email) {
+            setClientFieldError('cli-telefono', true);
+            setClientFieldError('cli-correo', true);
+            return alert("Debe ingresar obligatoriamente un teléfono o correo.");
+        }
+        setClientFieldError('cli-telefono', false);
+        setClientFieldError('cli-correo', false);
 
         let c = {};
         if (editId) {
@@ -3132,16 +3155,30 @@ async function saveClient(e) {
         if (type === 'natural') {
             c.nombres = document.getElementById('nat-nombres').value.trim();
             c.apellidos = document.getElementById('nat-apellidos').value.trim();
-            if (!c.nombres || !c.apellidos) return alert("Nombres y Apellidos obligatorios.");
+            if (!c.nombres || !c.apellidos) {
+                if (!c.nombres) setClientFieldError('nat-nombres', true);
+                if (!c.apellidos) setClientFieldError('nat-apellidos', true);
+                return alert("Nombres y Apellidos obligatorios.");
+            }
+            setClientFieldError('nat-nombres', false);
+            setClientFieldError('nat-apellidos', false);
             c.dui = document.getElementById('nat-dui').value;
             c.nit = document.getElementById('nat-nit').value;
             c.profesion = document.getElementById('nat-profesion').value;
             c.domicilio = document.getElementById('nat-domicilio').value;
         } else {
             c.empresa = document.getElementById('jur-empresa').value.trim();
-            if (!c.empresa) return alert("Nombre de la Empresa obligatorio.");
+            if (!c.empresa) {
+                setClientFieldError('jur-empresa', true);
+                return alert("Nombre de la Empresa obligatorio.");
+            }
+            setClientFieldError('jur-empresa', false);
             c.contacto = document.getElementById('jur-contacto').value.trim();
-            if (!c.contacto) return alert("Nombre del Contacto Principal obligatorio.");
+            if (!c.contacto) {
+                setClientFieldError('jur-contacto', true);
+                return alert("Nombre del Contacto Principal obligatorio.");
+            }
+            setClientFieldError('jur-contacto', false);
             c.nit = document.getElementById('jur-nit').value;
             c.nrc = document.getElementById('jur-nrc').value;
             c.rep_legal = document.getElementById('jur-rep-legal').value.trim();

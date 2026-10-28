@@ -1116,91 +1116,236 @@
 
     <!-- Client Modal (Create & Edit) -->
     <div id="clientModal" class="modal" style="z-index: 110;">
-        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
-            <span class="close" onclick="closeModal('clientModal')">&times;</span>
-            <h2 id="client-modal-title">Registrar Cliente</h2>
+        <div class="modal-content glass-panel client-modal-content">
+            <div class="client-modal-header">
+                <div class="client-modal-title-box">
+                    <span class="client-modal-icon">👥</span>
+                    <div>
+                        <h2 id="client-modal-title" style="margin: 0; font-size: 1.25rem;">Registrar Cliente</h2>
+                        <p class="client-modal-subtitle">Gestión de datos de cliente, régimen fiscal y expediente</p>
+                    </div>
+                </div>
+                <span class="close" onclick="closeModal('clientModal')" title="Cerrar">&times;</span>
+            </div>
+
             <form id="clientForm" onsubmit="saveClient(event)">
                 <input type="hidden" id="client-id-edit">
-                <div class="form-group mt-2">
-                    <label>Tipo de Persona</label>
-                    <select id="client-tipo" onchange="toggleClientFields()" required>
-                        <option value="">-- Selecciona el Tipo --</option>
-                        <option value="natural">Persona Natural</option>
-                        <option value="juridica">Persona Jurídica</option>
-                    </select>
-                </div>
-                <div class="form-group full-width" style="margin-top: 5px; margin-bottom: 10px;">
-                    <label style="display: flex; align-items: center; gap: 10px; color: #64B5F6; cursor: pointer; font-weight: 600;">
-                        <input type="checkbox" id="cli-es-exportacion" style="width: auto;">
-                        ✈️ Cliente de Exportación (Exento de IVA / Facturación Sin IVA)
-                    </label>
-                </div>
-                <div id="fields-natural">
+
+                <!-- Sección 1: Personería y Régimen Fiscal -->
+                <div class="client-form-section">
+                    <div class="client-section-header">
+                        <h3 class="client-section-title"><span>📋</span> Personería y Régimen Fiscal</h3>
+                    </div>
                     <div class="form-grid">
-                        <div class="form-group"><label>Nombres *</label><input type="text" id="nat-nombres"></div>
-                        <div class="form-group"><label>Apellidos *</label><input type="text" id="nat-apellidos"></div>
-                        <div class="form-group"><label>DUI (Opcional)</label><input type="text" id="nat-dui" placeholder="00000000-0"></div>
-                        <div class="form-group"><label>NIT (Opcional)</label><input type="text" id="nat-nit" placeholder="0000-000000-000-0"></div>
-                    </div>
-                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
-                        <div class="form-group full-width"><label>Profesión</label><input type="text" id="nat-profesion" placeholder="Ej. Ingeniero Civil"></div>
-                        <div class="form-group full-width"><label>Domicilio</label><input type="text" id="nat-domicilio" placeholder="Ej. San Salvador"></div>
-                        <div class="form-group full-width"><label>Anexo DUI (PDF/Imagen)</label><input type="file" id="nat-dui-file"></div>
+                        <div class="form-group">
+                            <label for="client-tipo">Tipo de Persona <span class="required-indicator" title="Campo obligatorio">*</span></label>
+                            <select id="client-tipo" onchange="toggleClientFields()" required>
+                                <option value="">-- Selecciona el Tipo --</option>
+                                <option value="natural">Persona Natural</option>
+                                <option value="juridica">Persona Jurídica</option>
+                            </select>
+                            <span class="form-help-text">Define los requisitos legales y fiscales aplicables.</span>
+                        </div>
+                        <div class="form-group">
+                            <label class="client-fiscal-pill" for="cli-es-exportacion">
+                                <input type="checkbox" id="cli-es-exportacion">
+                                <div class="client-fiscal-pill-content">
+                                    <span class="client-fiscal-title">✈️ Cliente de Exportación</span>
+                                    <span class="client-fiscal-subtitle">Exento de IVA / Facturación Sin IVA</span>
+                                </div>
+                            </label>
+                        </div>
                     </div>
                 </div>
-                <div id="fields-juridica" style="display:none;">
-                    <div class="form-group"><label>Nombre de la Empresa *</label><input type="text" id="jur-empresa"></div>
-                    <div class="form-group"><label>Nombre del Contacto Principal *</label><input type="text" id="jur-contacto"></div>
-                    <div class="form-group full-width" style="margin-top: 10px; margin-bottom: 5px;">
-                        <label style="display: flex; align-items: center; gap: 10px; color: var(--brand-gold); cursor: pointer;">
-                            <input type="checkbox" id="jur-gran-contribuyente" style="width: auto;">
-                            Es Gran Contribuyente (Agente de Retención 1% IVA)
+
+                <!-- Sección 2 (A): Datos de la Persona Natural -->
+                <div id="fields-natural" class="client-form-section">
+                    <div class="client-section-header">
+                        <h3 class="client-section-title"><span>👤</span> Datos de la Persona Natural</h3>
+                        <span class="section-tag-badge">Persona Natural</span>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="nat-nombres">Nombres <span class="required-indicator" title="Campo obligatorio">*</span></label>
+                            <input type="text" id="nat-nombres" placeholder="Ej. Juan Carlos">
+                        </div>
+                        <div class="form-group">
+                            <label for="nat-apellidos">Apellidos <span class="required-indicator" title="Campo obligatorio">*</span></label>
+                            <input type="text" id="nat-apellidos" placeholder="Ej. Pérez Ramos">
+                        </div>
+                        <div class="form-group">
+                            <label for="nat-dui">DUI <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="nat-dui" placeholder="00000000-0">
+                            <span class="form-help-text">Documento Único de Identidad salvadoreño</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="nat-nit">NIT <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="nat-nit" placeholder="0000-000000-000-0">
+                            <span class="form-help-text">Número de Identificación Tributaria</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="nat-profesion">Profesión u Oficio</label>
+                            <input type="text" id="nat-profesion" placeholder="Ej. Ingeniero Civil / Arquitecto">
+                        </div>
+                        <div class="form-group">
+                            <label for="nat-domicilio">Domicilio / Dirección</label>
+                            <input type="text" id="nat-domicilio" placeholder="Ej. San Salvador Centro, El Salvador">
+                        </div>
+                    </div>
+
+                    <div class="client-subsection-title"><span>📎</span> Documento de Identidad Adjunto</div>
+                    <div class="form-group full-width client-file-upload-box">
+                        <label for="nat-dui-file">Anexo de DUI (PDF / Imagen)</label>
+                        <input type="file" id="nat-dui-file" accept=".pdf,image/*">
+                        <span class="form-help-text">Copia legible del documento de identidad (PDF, JPG, PNG).</span>
+                    </div>
+                </div>
+
+                <!-- Sección 2 (B): Datos de la Empresa y Representación -->
+                <div id="fields-juridica" class="client-form-section" style="display:none;">
+                    <div class="client-section-header">
+                        <h3 class="client-section-title"><span>🏢</span> Identificación de la Empresa</h3>
+                        <span class="section-tag-badge">Persona Jurídica</span>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="jur-empresa">Nombre de la Empresa o Razón Social <span class="required-indicator" title="Campo obligatorio">*</span></label>
+                            <input type="text" id="jur-empresa" placeholder="Ej. Constructora Moderna S.A. de C.V.">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-contacto">Nombre del Contacto Principal <span class="required-indicator" title="Campo obligatorio">*</span></label>
+                            <input type="text" id="jur-contacto" placeholder="Ej. Arq. Mario Gómez (Director de Proyectos)">
+                        </div>
+                    </div>
+
+                    <div class="form-group full-width mt-2 mb-2">
+                        <label class="client-fiscal-pill" for="jur-gran-contribuyente">
+                            <input type="checkbox" id="jur-gran-contribuyente">
+                            <div class="client-fiscal-pill-content">
+                                <span class="client-fiscal-title">⭐ Es Gran Contribuyente</span>
+                                <span class="client-fiscal-subtitle">Agente de Retención designado por el Ministerio de Hacienda (1% IVA)</span>
+                            </div>
                         </label>
                     </div>
+
                     <div class="form-grid">
-                        <div class="form-group"><label>NIT Empresa (Opcional)</label><input type="text" id="jur-nit"></div>
-                        <div class="form-group"><label>NRC Empresa (Opcional)</label><input type="text" id="jur-nrc"></div>
+                        <div class="form-group">
+                            <label for="jur-nit">NIT de la Empresa <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="jur-nit" placeholder="0000-000000-000-0">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-nrc">NRC de la Empresa <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="jur-nrc" placeholder="000000-0">
+                        </div>
                     </div>
-                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
-                        <div class="form-group full-width"><label>Nombre del Representante Legal</label><input type="text" id="jur-rep-legal" placeholder="Ej. Juan Pérez"></div>
-                        <div class="form-group full-width"><label>Profesión del Representante Legal</label><input type="text" id="jur-profesion-rep" placeholder="Ej. Administrador de Empresas"></div>
-                        <div class="form-group full-width"><label>Domicilio del Representante Legal</label><input type="text" id="jur-domicilio-rep" placeholder="Ej. San Salvador"></div>
-                        <div class="form-group"><label>DUI Representante (Opcional)</label><input type="text" id="jur-dui-rep"></div>
-                        <div class="form-group"><label>NIT Representante (Opcional)</label><input type="text" id="jur-nit-rep"></div>
+
+                    <div class="client-subsection-title"><span>👤</span> Representación Legal de la Sociedad</div>
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <label for="jur-rep-legal">Nombre del Representante Legal</label>
+                            <input type="text" id="jur-rep-legal" placeholder="Ej. Lic. Carlos Alberto Durán">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-profesion-rep">Profesión del Representante Legal</label>
+                            <input type="text" id="jur-profesion-rep" placeholder="Ej. Administrador de Empresas">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-domicilio-rep">Domicilio del Representante Legal</label>
+                            <input type="text" id="jur-domicilio-rep" placeholder="Ej. Antiguo Cuscatlán, La Libertad">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-dui-rep">DUI del Representante <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="jur-dui-rep" placeholder="00000000-0">
+                        </div>
+                        <div class="form-group">
+                            <label for="jur-nit-rep">NIT del Representante <span class="optional-tag">(Opcional)</span></label>
+                            <input type="text" id="jur-nit-rep" placeholder="0000-000000-000-0">
+                        </div>
                     </div>
-                    <div class="form-grid" style="border-top: 1px dashed rgba(255,255,255,0.2); padding-top: 10px; margin-top: 10px;">
-                        <div class="form-group full-width" style="color:var(--brand-gold); margin-bottom:0.5rem; grid-column: 1 / -1;"><strong>Documentación Legal</strong></div>
-                        <div class="form-group"><label>Escritura de Constitución</label><input type="file" id="jur-file-escritura"></div>
-                        <div class="form-group"><label>Modificaciones (Opcional)</label><input type="file" id="jur-file-mods"></div>
-                        <div class="form-group"><label>Credencial de Rep. Legal</label><input type="file" id="jur-file-credencial"></div>
-                        <div class="form-group"><label>NIT Empresa</label><input type="file" id="jur-file-nit"></div>
-                        <div class="form-group"><label>NRC Empresa</label><input type="file" id="jur-file-nrc"></div>
-                        <div class="form-group"><label>DUI Representante Legal</label><input type="file" id="jur-file-dui"></div>
+
+                    <div class="client-subsection-title"><span>📑</span> Documentación Legal de la Sociedad</div>
+                    <p class="form-help-text mb-2">Archivos admisibles en formato PDF o imagen legible para respaldo en el expediente.</p>
+                    <div class="form-grid">
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-escritura">Escritura de Constitución</label>
+                            <input type="file" id="jur-file-escritura" accept=".pdf,image/*">
+                        </div>
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-mods">Modificaciones de Escritura <span class="optional-tag">(Opcional)</span></label>
+                            <input type="file" id="jur-file-mods" accept=".pdf,image/*">
+                        </div>
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-credencial">Credencial de Rep. Legal</label>
+                            <input type="file" id="jur-file-credencial" accept=".pdf,image/*">
+                        </div>
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-nit">NIT de la Empresa</label>
+                            <input type="file" id="jur-file-nit" accept=".pdf,image/*">
+                        </div>
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-nrc">NRC de la Empresa</label>
+                            <input type="file" id="jur-file-nrc" accept=".pdf,image/*">
+                        </div>
+                        <div class="form-group client-file-upload-box">
+                            <label for="jur-file-dui">DUI del Representante Legal</label>
+                            <input type="file" id="jur-file-dui" accept=".pdf,image/*">
+                        </div>
                     </div>
                 </div>
-                <div class="form-grid mt-2" style="border-top: 1px solid var(--panel-border); padding-top: 1rem;">
-                    <div class="form-group"><label>Teléfono (Obligatorio este o Correo)</label><input type="text" id="cli-telefono"></div>
-                    <div class="form-group"><label>Correo Electrónico</label><input type="email" id="cli-correo"></div>
-                    <div class="form-group full-width"><label>Correo para Facturación (Opcional)</label><input type="email" id="cli-correo-fact"></div>
+
+                <!-- Sección 3: Canales de Comunicación y Facturación -->
+                <div class="client-form-section">
+                    <div class="client-section-header">
+                        <h3 class="client-section-title"><span>📞</span> Comunicación y Facturación</h3>
+                    </div>
+
+                    <div class="client-contact-rule-banner">
+                        <span class="rule-icon">ℹ️</span>
+                        <span><strong>Requisito de contacto:</strong> Es obligatorio ingresar al menos un <strong>Teléfono</strong> o un <strong>Correo Electrónico</strong> para registrar al cliente.</span>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="cli-telefono">Teléfono Principal <span class="contact-req-pill">Requerido (Tel. o Correo)</span></label>
+                            <input type="text" id="cli-telefono" placeholder="Ej. 7890-1234">
+                            <span class="form-help-text">Teléfono fijo o móvil para contacto y WhatsApp</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="cli-correo">Correo Electrónico <span class="contact-req-pill">Requerido (Tel. o Correo)</span></label>
+                            <input type="email" id="cli-correo" placeholder="Ej. contacto@empresa.com">
+                            <span class="form-help-text">Correo principal para notificaciones comerciales</span>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="cli-correo-fact">Correo para Facturación / DTE <span class="optional-tag">(Opcional)</span></label>
+                            <input type="email" id="cli-correo-fact" placeholder="Ej. facturacion@empresa.com">
+                            <span class="form-help-text">Destinatario para comprobantes fiscales y facturación electrónica</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Expediente Digital del Cliente -->
-                <div id="client-expediente-section" class="client-expediente-panel" style="display:none; margin-top: 1rem; margin-bottom: 1rem;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.65rem;">
-                        <h4 style="color:var(--brand-gold); font-size: 0.92rem; margin:0; display:flex; align-items:center; gap:6px;">
-                            📁 Expediente Digital del Cliente
-                        </h4>
+                <div id="client-expediente-section" class="client-form-section client-expediente-panel" style="display:none;">
+                    <div class="client-section-header" style="margin-bottom: 0.65rem;">
+                        <h3 class="client-section-title">
+                            <span>📁</span> Expediente Digital del Cliente
+                        </h3>
                         <span id="client-docs-count-badge" class="badge bg-neutral" style="font-size:0.72rem;">0 documentos</span>
                     </div>
-                    <div id="client-docs-list" style="display:flex; flex-direction:column; gap:0.4rem; max-height: 200px; overflow-y:auto; padding-right: 4px;">
+                    <div id="client-docs-list" class="client-docs-scroll-container">
                         <!-- Filled dynamically by JS -->
                     </div>
                 </div>
 
-                <div class="form-group full-width" style="margin-top:-10px;">
-                    <small style="color:var(--text-muted);">* Campos obligatorios según el tipo de persona seleccionada, además de un medio de contacto.</small>
+                <div class="client-form-footer-legend">
+                    <small>* Campos obligatorios según el tipo de persona seleccionada, además de al menos un medio de contacto.</small>
                 </div>
-                <button type="submit" class="btn-primary mt-2" style="width:100%">Guardar Cliente</button>
+
+                <div class="client-modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('clientModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-client">Guardar Cliente</button>
+                </div>
             </form>
         </div>
     </div>
