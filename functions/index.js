@@ -1495,6 +1495,10 @@ const runWorkflowOp = (data, context, op) => runCommercialOp(data, context,
 exports.advanceProspectStageAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.advanceStage({ caller, prospectId: d.prospectId, nextStage: d.nextStage, data: d.data })));
 
+/** { prospectId, currentStage, targetStage, motivo, opId, dbSuffix? } -> { status: 'reverted', replay: boolean, prospectId, etapa, previousStage, version } */
+exports.revertProspectStageAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.revertStage({ caller, prospectId: d.prospectId, currentStage: d.currentStage, targetStage: d.targetStage, motivo: d.motivo, opId: d.opId })));
+
 /** { prospectId, data, dbSuffix? } -> { status: 'saved', prospectId } */
 exports.saveClosingDocumentsAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.saveClosingDocuments({ caller, prospectId: d.prospectId, data: d.data })));
