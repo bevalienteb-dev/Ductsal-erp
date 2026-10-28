@@ -1329,3 +1329,527 @@ body.modal-open {
         grid-template-columns: 1fr;
     }
 }
+
+/* ==========================================================================
+   FASE 5.1: NOTIFICACIONES (TOASTS) Y DIÁLOGOS DE CONFIRMACIÓN (CRM UI)
+   ========================================================================== */
+
+/* Contenedor de Notificaciones */
+.crm-toast-container {
+    position: fixed;
+    top: 1.25rem;
+    right: 1.25rem;
+    z-index: 1060;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    pointer-events: none;
+    max-width: 420px;
+    width: calc(100vw - 2.5rem);
+}
+
+/* Notificación Individual (Toast) */
+.crm-toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem;
+    background: rgba(26, 31, 48, 0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    line-height: 1.4;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    animation: crmToastSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.crm-toast::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+}
+
+.crm-toast-leaving {
+    animation: crmToastSlideOut 0.2s ease-in forwards;
+}
+
+@keyframes crmToastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(30px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes crmToastSlideOut {
+    from {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(30px) scale(0.96);
+    }
+}
+
+/* Variantes por Tipo */
+.crm-toast-success {
+    border-color: rgba(16, 185, 129, 0.35);
+}
+.crm-toast-success::before {
+    background: var(--success);
+}
+.crm-toast-success .crm-toast-icon {
+    color: var(--success);
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.crm-toast-info {
+    border-color: rgba(255, 204, 77, 0.35);
+}
+.crm-toast-info::before {
+    background: var(--brand-gold);
+}
+.crm-toast-info .crm-toast-icon {
+    color: var(--brand-gold);
+    background: rgba(255, 204, 77, 0.15);
+}
+
+.crm-toast-warning {
+    border-color: rgba(245, 158, 11, 0.35);
+}
+.crm-toast-warning::before {
+    background: var(--warning);
+}
+.crm-toast-warning .crm-toast-icon {
+    color: var(--warning);
+    background: rgba(245, 158, 11, 0.15);
+}
+
+.crm-toast-error {
+    border-color: rgba(239, 68, 68, 0.35);
+}
+.crm-toast-error::before {
+    background: var(--danger);
+}
+.crm-toast-error .crm-toast-icon {
+    color: var(--danger);
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.crm-toast-icon {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.82rem;
+    font-weight: 700;
+    margin-top: 1px;
+}
+
+.crm-toast-body {
+    flex: 1;
+    word-break: break-word;
+}
+
+.crm-toast-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.2rem;
+    color: var(--text-primary);
+}
+
+.crm-toast-message {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.crm-toast-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.crm-toast-close:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Diálogo de Confirmación */
+.crm-confirm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 1070;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: crmConfirmFadeIn 0.2s ease-out;
+}
+
+.crm-confirm-card {
+    background: rgba(26, 31, 48, 0.98);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+    width: 460px;
+    max-width: 100%;
+    padding: 1.5rem;
+    animation: crmConfirmZoomIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes crmConfirmFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes crmConfirmZoomIn {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.crm-confirm-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.crm-confirm-header h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.crm-confirm-icon-badge {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.crm-confirm-icon-warning,
+.crm-confirm-icon-danger {
+    background: rgba(245, 158, 11, 0.18);
+    color: var(--warning);
+}
+
+.crm-confirm-icon-info {
+    background: rgba(255, 204, 77, 0.18);
+    color: var(--brand-gold);
+}
+
+.crm-confirm-icon-success {
+    background: rgba(16, 185, 129, 0.18);
+    color: var(--success);
+}
+
+.crm-confirm-body {
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+}
+
+.crm-confirm-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.crm-confirm-footer .btn {
+    min-width: 95px;
+    padding: 0.65rem 1.25rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+/* Responsividad Móvil */
+@media (max-width: 540px) {
+    .crm-toast-container {
+        top: 0.75rem;
+        right: 0.75rem;
+        left: 0.75rem;
+        width: auto;
+        max-width: none;
+    }
+    .crm-confirm-footer {
+        flex-direction: column-reverse;
+    }
+    .crm-confirm-footer .btn {
+        width: 100%;
+        text-align: center;
+    }
+}
+
+/* ==========================================================================
+   Fase 5.1 Bloque 3: Pipeline Comercial (Filtros y Tarjetas de Oportunidades)
+   ========================================================================== */
+.pipeline-filters-primary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.opp-search-box {
+    flex: 1;
+    min-width: 260px;
+}
+
+.opp-search-box .form-control {
+    width: 100%;
+    padding: 0.7rem 0.85rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    outline: none;
+    font-size: 0.85rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.opp-search-box .form-control:focus {
+    border-color: rgba(255, 204, 77, 0.5);
+    box-shadow: 0 0 0 2px rgba(255, 204, 77, 0.15);
+}
+
+.opp-stage-pill {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.opp-counter-badge {
+    padding: 0.55rem 0.85rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.date-filter-box {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+}
+
+/* Responsive Cards Layout (Pantallas <= 768px) */
+@media (max-width: 768px) {
+    .pipeline-filters-primary {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.6rem;
+    }
+    .pipeline-filters-primary .filter-pills-group {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .pipeline-filters-primary .filter-pills-group .filter-pill {
+        flex: 1 1 auto;
+        text-align: center;
+        justify-content: center;
+        padding: 0.45rem 0.5rem;
+        font-size: 0.78rem;
+    }
+    .opp-filters-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.6rem;
+    }
+    .opp-search-box {
+        width: 100%;
+        min-width: 0;
+    }
+    .date-filter-box {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        box-sizing: border-box;
+    }
+    .date-filter-box input[type="date"] {
+        flex: 1 1 110px;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+    .opp-counter-badge {
+        align-self: flex-start;
+    }
+
+    /* Transformación de tabla a tarjetas de oportunidades */
+    #opportunitiesTable thead {
+        display: none !important;
+    }
+    #opportunitiesTable,
+    #opportunitiesTable tbody {
+        display: block !important;
+        width: 100% !important;
+    }
+    #opportunitiesTable tr.cursor-pointer {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "client code"
+            "project project"
+            "stage amount"
+            "vendor date"
+            "status action" !important;
+        gap: 0.5rem 0.75rem !important;
+        background: rgba(22, 27, 46, 0.75) !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 10px !important;
+        padding: 1rem 1.15rem !important;
+        margin-bottom: 0.85rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        transition: transform 0.15s ease, border-color 0.15s ease !important;
+    }
+    #opportunitiesTable tr.cursor-pointer:hover {
+        border-color: rgba(255, 204, 77, 0.4) !important;
+        transform: translateY(-2px) !important;
+    }
+    #opportunitiesTable tr.cursor-pointer > td {
+        display: flex !important;
+        align-items: center !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        min-width: 0 !important;
+    }
+    /* Asignación de áreas de la tarjeta */
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-code {
+        grid-area: code;
+        justify-content: flex-end;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-client {
+        grid-area: client;
+        font-size: 1rem;
+        color: white;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-client strong {
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-project {
+        grid-area: project;
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+        font-size: 0.88rem;
+        color: var(--text-secondary);
+        padding-bottom: 0.4rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-project .opp-project-wrap {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        width: 100%;
+        min-width: 0;
+        word-break: break-word;
+        overflow-wrap: break-word;
+        max-width: 100%;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-stage {
+        grid-area: stage;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-amount {
+        grid-area: amount;
+        justify-content: flex-end;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-vendor {
+        grid-area: vendor;
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-date {
+        grid-area: date;
+        justify-content: flex-end;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-status {
+        grid-area: status;
+        padding-top: 0.4rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-action {
+        grid-area: action;
+        justify-content: flex-end;
+        padding-top: 0.4rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-action button {
+        min-width: 80px;
+        min-height: 36px;
+        padding: 0.4rem 0.85rem !important;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+

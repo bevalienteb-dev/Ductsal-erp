@@ -2385,13 +2385,25 @@ async function saveUser(e) {
     if (id) {
         const u = users.find(x => x.id === id);
         // The email of a Firebase-Auth-linked user is the login identity and cannot be edited here.
-        if (u && u.authUid && u.email !== email) return alert("El correo de un usuario con cuenta de Firebase Authentication no se puede cambiar desde aquí.");
+        if (u && u.authUid && u.email !== email) {
+            if (typeof CrmUI !== 'undefined' && CrmUI.warning) CrmUI.warning("El correo de un usuario con cuenta de Firebase Authentication no se puede cambiar desde aquí.");
+            else if (typeof alert === 'function') alert("El correo de un usuario con cuenta de Firebase Authentication no se puede cambiar desde aquí.");
+            return;
+        }
         // Name and ROLE of an Auth-linked profile are changed ONLY by updateUserAdmin (manager session verified live on the server; it keeps the
         // Auth claims and the profile in step and writes the audit). Nothing is changed locally unless the server confirms it. The email is
         // the login identity and cannot be edited. Only vendedor / gestor can be assigned; `manager` is never granted from here.
         if (u && u.authUid) {
-            if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se guardó ningún cambio. Recarga la página.");
-            if (role !== u.role && !CrmAuth.CREATABLE_ROLES.includes(role)) return alert("Solo se puede asignar el rol de vendedor o gestor desde aquí. Las cuentas de gerente las configura el propietario del sistema. No se guardó ningún cambio.");
+            if (typeof CrmAuth === 'undefined') {
+                if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error("No se pudo cargar el módulo de autenticación. No se guardó ningún cambio. Recarga la página.");
+                else if (typeof alert === 'function') alert("No se pudo cargar el módulo de autenticación. No se guardó ningún cambio. Recarga la página.");
+                return;
+            }
+            if (role !== u.role && !CrmAuth.CREATABLE_ROLES.includes(role)) {
+                if (typeof CrmUI !== 'undefined' && CrmUI.warning) CrmUI.warning("Solo se puede asignar el rol de vendedor o gestor desde aquí. Las cuentas de gerente las configura el propietario del sistema. No se guardó ningún cambio.");
+                else if (typeof alert === 'function') alert("Solo se puede asignar el rol de vendedor o gestor desde aquí. Las cuentas de gerente las configura el propietario del sistema. No se guardó ningún cambio.");
+                return;
+            }
             const change = { id: u.id, dbSuffix: DB_SUFFIX };
             if (nombre !== u.nombre) change.nombre = nombre;
             if (role !== u.role) change.role = role;
@@ -2403,7 +2415,10 @@ async function saveUser(e) {
                 if (outcome !== 'updated') return;
                 if (result && result.nombre !== undefined) u.nombre = result.nombre;
                 if (result && result.role !== undefined) u.role = result.role;
-                if (result && result.sessionsRevoked === false && change.role !== undefined) alert("El rol se cambió, pero no se pudieron cerrar las sesiones abiertas del usuario: aplicará cuando renueve su sesión.");
+                if (result && result.sessionsRevoked === false && change.role !== undefined) {
+                    if (typeof CrmUI !== 'undefined' && CrmUI.warning) CrmUI.warning("El rol se cambió, pero no se pudieron cerrar las sesiones abiertas del usuario: aplicará cuando renueve su sesión.");
+                    else if (typeof alert === 'function') alert("El rol se cambió, pero no se pudieron cerrar las sesiones abiertas del usuario: aplicará cuando renueve su sesión.");
+                }
             } finally {
                 userSaveInFlight = false;
             }
@@ -2415,12 +2430,20 @@ async function saveUser(e) {
         // Historical users (no Auth account) keep the legacy edit until their identity migration (out of scope, pending).
         if (u) { u.nombre = nombre; u.email = email; u.role = role; saveUserToDB(u); }
     } else {
-        if (users.some(x => String(x.email || '').trim().toLowerCase() === email.toLowerCase())) return alert("El correo ya está en uso.");
+        if (users.some(x => String(x.email || '').trim().toLowerCase() === email.toLowerCase())) {
+            if (typeof CrmUI !== 'undefined' && CrmUI.warning) CrmUI.warning("El correo ya está en uso.");
+            else if (typeof alert === 'function') alert("El correo ya está en uso.");
+            return;
+        }
         // New users are ONLY created through the Cloud Function (the server verifies the caller is a
         // manager and Firebase Auth holds the credential). There is deliberately no fallback to the
         // old direct-Firestore creation, which stored a plaintext password: any outcome other than
         // 'created' has already been explained to the user by CrmAuth and the creation stops here.
-        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se creó el usuario. Recarga la página.");
+        if (typeof CrmAuth === 'undefined') {
+            if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error("No se pudo cargar el módulo de autenticación. No se creó el usuario. Recarga la página.");
+            else if (typeof alert === 'function') alert("No se pudo cargar el módulo de autenticación. No se creó el usuario. Recarga la página.");
+            return;
+        }
         if (userSaveInFlight) return;
         userSaveInFlight = true;
         try {
@@ -2466,34 +2489,71 @@ function resetUserPassword(id) {
     if (!target) return;
     // Firebase-Auth-linked users: Firebase emails a password-reset link; nothing is written to Firestore.
     if (target.authUid) {
-        if (!confirm("¿Enviar a este usuario un correo para restablecer su contraseña?")) return;
-        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
-        CrmAuth.sendPasswordSetupEmail(firebase, target.email)
-            .then(() => alert("Correo de restablecimiento enviado."))
-            .catch(() => alert("No se pudo enviar el correo de restablecimiento."));
+        const doReset = async () => {
+            let confirmed = false;
+            if (typeof CrmUI !== 'undefined' && CrmUI.confirm) {
+                confirmed = await CrmUI.confirm({
+                    title: "Restablecer Contraseña",
+                    message: `¿Enviar a ${target.nombre || target.email} un correo para restablecer su contraseña?`,
+                    confirmText: "Enviar correo",
+                    cancelText: "Cancelar",
+                    type: "info"
+                });
+            } else if (typeof confirm === 'function') {
+                confirmed = confirm("¿Enviar a este usuario un correo para restablecer su contraseña?");
+            }
+            if (!confirmed) return;
+
+            if (typeof CrmAuth === 'undefined') {
+                if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error("No se pudo cargar el módulo de autenticación. Recarga la página.");
+                else if (typeof alert === 'function') alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
+                return;
+            }
+            try {
+                await CrmAuth.sendPasswordSetupEmail(firebase, target.email);
+                if (typeof CrmUI !== 'undefined' && CrmUI.success) CrmUI.success("Correo de restablecimiento enviado.");
+                else if (typeof alert === 'function') alert("Correo de restablecimiento enviado.");
+            } catch (_err) {
+                if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error("No se pudo enviar el correo de restablecimiento.");
+                else if (typeof alert === 'function') alert("No se pudo enviar el correo de restablecimiento.");
+            }
+        };
+        doReset();
         return;
     }
-    alert("Este usuario no está vinculado a Firebase Authentication. Debe ser vinculado previamente por un administrador.");
+    if (typeof CrmUI !== 'undefined' && CrmUI.info) CrmUI.info("Este usuario no está vinculado a Firebase Authentication. Debe ser vinculado previamente por un administrador.");
+    else if (typeof alert === 'function') alert("Este usuario no está vinculado a Firebase Authentication. Debe ser vinculado previamente por un administrador.");
 }
 
 async function toggleUserStatus(id) {
     const u = users.find(x => x.id === id);
-    if (u.id === currentUser.id) return alert("No puedes desactivarte a ti mismo.");
+    if (!u) return;
+    if (u.id === currentUser.id) {
+        if (typeof CrmUI !== 'undefined' && CrmUI.warning) CrmUI.warning("No puedes desactivarte a ti mismo.");
+        else if (typeof alert === 'function') alert("No puedes desactivarte a ti mismo.");
+        return;
+    }
     // Auth-linked users: the Cloud Function disables/enables the Firebase Auth account and updates the
     // profile together. Nothing is changed locally unless the server confirms it.
     if (u.authUid) {
-        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. No se cambió el estado. Recarga la página.");
+        if (typeof CrmAuth === 'undefined') {
+            if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error("No se pudo cargar el módulo de autenticación. No se cambió el estado. Recarga la página.");
+            else if (typeof alert === 'function') alert("No se pudo cargar el módulo de autenticación. No se cambió el estado. Recarga la página.");
+            return;
+        }
         const outcome = await CrmAuth.adminSetUserActive(firebase, { id: u.id, activo: !u.activo, dbSuffix: DB_SUFFIX }, alert);
         if (outcome === 'updated') {
             u.activo = !u.activo;
             renderUsersTable();
             if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
+            if (typeof CrmUI !== 'undefined' && CrmUI.success) CrmUI.success(u.activo ? 'Usuario activado exitosamente.' : 'Usuario desactivado exitosamente.');
         }
         return;
     }
     u.activo = !u.activo;
     saveUserToDB(u);
     renderUsersTable();
+    if (typeof CrmUI !== 'undefined' && CrmUI.success) CrmUI.success(u.activo ? 'Usuario activado exitosamente.' : 'Usuario desactivado exitosamente.');
 }
 
 const formatCurrency = (val) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val || 0);
@@ -4152,7 +4212,16 @@ function renderList() {
         const emptyMsg = oppStatusFilter === 'perdidas'
             ? 'No hay oportunidades marcadas como perdidas.'
             : 'No se encontraron oportunidades.';
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">${emptyMsg}</td></tr>`;
+        const emptySub = oppStatusFilter === 'perdidas'
+            ? 'No existen oportunidades marcadas con cierre no exitoso bajo los filtros seleccionados.'
+            : 'Intenta modificar el término de búsqueda, el rango de fechas o los filtros de clasificación.';
+        tbody.innerHTML = `<tr><td colspan="9" style="padding: 2.5rem 1rem; text-align: center; border: none;">
+            <div class="dash-empty-state-box" style="background: transparent; border: none; padding: 0;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.85;">🔍</div>
+                <div style="font-weight: 600; color: white; font-size: 1rem; margin-bottom: 0.35rem;">${emptyMsg}</div>
+                <div style="color: var(--text-secondary); font-size: 0.82rem; max-width: 400px; margin: auto; line-height: 1.4;">${emptySub}</div>
+            </div>
+        </td></tr>`;
         return;
     }
 
@@ -4172,7 +4241,29 @@ function renderList() {
             ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Cotización referencial para presupuesto">📐 Presupuesto</span>`
             : `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Oferta para ejecución comercial">🏗️ Ejecución</span>`;
 
-        tr.innerHTML = `<td>${p.codigo || p.id.substring(p.id.length - 4)}</td><td><strong>${getClientName(p.clientId)}</strong></td><td>${p.proyecto}${clasifBadge}</td><td><strong>${vendor.name}</strong>${vendorBadge}</td><td>${formatProspectDate(p.fecha_creacion)}</td><td style="text-transform: capitalize;">${p.etapa}</td><td>${p.precio_cotizado ? formatCurrency(p.precio_cotizado) : '-'}</td><td><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td><button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size:0.75rem">Ver</button></td>`;
+        // Safe price formatting: strictly prevent NaN, undefined, or format errors
+        const rawPrice = (p.precio_cotizado !== null && p.precio_cotizado !== undefined && p.precio_cotizado !== '') ? Number(p.precio_cotizado) : NaN;
+        const formattedAmount = (!isNaN(rawPrice) && isFinite(rawPrice) && rawPrice > 0)
+            ? formatCurrency(rawPrice)
+            : '-';
+        const amountDisplay = formattedAmount !== '-'
+            ? `<strong class="opp-amount-val" style="color: var(--brand-gold); font-size: 0.92rem;">${formattedAmount}</strong>`
+            : `<span style="color: var(--text-muted);">-</span>`;
+
+        const stageColorMap = {
+            'prospecto': 'background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3);',
+            'levantamiento': 'background: rgba(56, 189, 248, 0.15); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35);',
+            'cotizacion': 'background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35);',
+            'negociacion': 'background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.35);',
+            'cierre': 'background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.35);'
+        };
+        const stageBadgeStyle = stageColorMap[p.etapa] || 'background: rgba(255, 255, 255, 0.1); color: var(--text-primary);';
+        const stageBadge = `<span class="badge opp-stage-pill" style="text-transform: capitalize; ${stageBadgeStyle}">${p.etapa || '-'}</span>`;
+
+        const codeVal = p.codigo || p.id.substring(p.id.length - 4);
+        const clientVal = getClientName(p.clientId);
+
+        tr.innerHTML = `<td class="col-opp-code"><span class="opp-code-badge" style="font-weight:600; color:var(--text-secondary);">${codeVal}</span></td><td class="col-opp-client"><strong>${clientVal}</strong></td><td class="col-opp-project"><div class="opp-project-wrap" style="display:inline-flex; align-items:center; flex-wrap:wrap;">${p.proyecto || '-'}${clasifBadge}</div></td><td class="col-opp-vendor"><strong>${vendor.name}</strong>${vendorBadge}</td><td class="col-opp-date"><span class="opp-date-val">${formatProspectDate(p.fecha_creacion)}</span></td><td class="col-opp-stage">${stageBadge}</td><td class="col-opp-amount">${amountDisplay}</td><td class="col-opp-status"><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td class="col-opp-action"><button class="btn-secondary btn-opp-view" style="padding: 0.25rem 0.55rem; font-size:0.75rem;">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -5527,24 +5618,67 @@ function renderLogs(p) {
 }
 
 function deleteLog(prospectId, idx) {
-    if (!confirm('¿Estás seguro de eliminar esta nota?')) return;
     let pObj = prospects.find(x => x.id === prospectId);
     if (!pObj || !pObj.logs) return;
     const entry = pObj.logs[idx];
     if (!entry) return;
-    const fb = (typeof firebase !== 'undefined') ? firebase : null;
-    if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
-        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+
+    const doDelete = () => {
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
+            const noSessionMsg = typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.';
+            if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error(noSessionMsg);
+            else if (typeof alert === 'function') alert(noSessionMsg);
+            return;
+        }
+
+        // The server identifies the note by date + text (not by array position, which can be stale) and authorizes the author/role.
+        return CrmCommercial.deleteLog(fb, { prospectId, date: entry.date, text: entry.text, dbSuffix: DB_SUFFIX }).then(res => {
+            if (res && (res.status === 'deleted' || res.status === 'absent')) {
+                const at = pObj.logs.findIndex(l => l && l.date === entry.date && l.text === entry.text);
+                if (at !== -1) pObj.logs.splice(at, 1);
+            }
+            renderLogs(pObj);
+            if (typeof CrmUI !== 'undefined' && CrmUI.success) {
+                CrmUI.success('Nota eliminada de la bitácora.');
+            }
+            return res;
+        }).catch(err => {
+            const errMsg = (typeof CrmCommercial !== 'undefined' && CrmCommercial.errorMessage) ? CrmCommercial.errorMessage(err) : (err && err.message ? err.message : String(err));
+            if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error(errMsg);
+            else if (typeof alert === 'function') alert(errMsg);
+        });
+    };
+
+    if (typeof CrmUI !== 'undefined' && CrmUI && CrmUI.confirm) {
+        return CrmUI.confirm({
+            title: 'Eliminar Nota',
+            message: '¿Estás seguro de eliminar esta nota de la bitácora?',
+            confirmText: 'Eliminar',
+            cancelText: 'Cancelar',
+            type: 'danger',
+            danger: true
+        }).then(confirmed => {
+            if (!confirmed) return;
+            return doDelete();
+        }).catch(err => {
+            console.error('Error al solicitar confirmación para eliminar nota:', err);
+            const safeMsg = 'No se pudo confirmar la eliminación. La nota no fue eliminada.';
+            if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error(safeMsg);
+            else if (typeof alert === 'function') alert(safeMsg);
+        });
     }
 
-    // The server identifies the note by date + text (not by array position, which can be stale) and authorizes the author/role.
-    CrmCommercial.deleteLog(fb, { prospectId, date: entry.date, text: entry.text, dbSuffix: DB_SUFFIX }).then(res => {
-        if (res && (res.status === 'deleted' || res.status === 'absent')) {
-            const at = pObj.logs.findIndex(l => l && l.date === entry.date && l.text === entry.text);
-            if (at !== -1) pObj.logs.splice(at, 1);
+    let confirmed = false;
+    if (typeof confirm === 'function') {
+        try {
+            confirmed = confirm('¿Estás seguro de eliminar esta nota?');
+        } catch (_err) {
+            confirmed = false;
         }
-        renderLogs(pObj);
-    }).catch(err => alert(CrmCommercial.errorMessage(err)));
+    }
+    if (!confirmed) return;
+    return doDelete();
 }
 
 function addLogToProspect(p, text, isAuto = false) {
@@ -5616,33 +5750,44 @@ function transferTextToFollowUpModal() {
 }
 
 function addLog() {
-    const textEl = document.getElementById('new-log-text'); const text = textEl.value.trim(); if (!text) return;
-    const btnEl = textEl.nextElementSibling;
+    const textEl = document.getElementById('new-log-text');
+    const text = textEl ? textEl.value.trim() : '';
+    if (!text) return;
+    const btnEl = textEl ? textEl.nextElementSibling : null;
     const bannerEl = document.getElementById('log-commercial-intent-banner');
 
     let pObj = prospects.find(x => x.id === currentProspectId);
     if (!pObj) return;
     const fb = (typeof firebase !== 'undefined') ? firebase : null;
     if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
-        return alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        const noSessionMsg = typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.';
+        if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error(noSessionMsg);
+        else if (typeof alert === 'function') alert(noSessionMsg);
+        return;
     }
     if (btnEl) btnEl.disabled = true;
 
     // The author comes from the Firebase session on the server; a retry after an uncertain failure reuses the same opId.
-    CrmCommercial.addLog(fb, { prospectId: pObj.id, text, dbSuffix: DB_SUFFIX }).then(res => {
+    return CrmCommercial.addLog(fb, { prospectId: pObj.id, text, dbSuffix: DB_SUFFIX }).then(res => {
         if (res && res.entry) {
             if (!Array.isArray(pObj.logs)) pObj.logs = [];
             pObj.logs.push(res.entry);
         }
-        textEl.value = '';
+        if (textEl) textEl.value = '';
         if (bannerEl) {
             bannerEl.style.display = 'none';
             bannerEl.removeAttribute('data-dismissed');
         }
-        window._pendingFollowUpDraft = null;
+        if (typeof window !== 'undefined') window._pendingFollowUpDraft = null;
         renderLogs(pObj);
+        if (typeof CrmUI !== 'undefined' && CrmUI.success) {
+            CrmUI.success('Nota agregada a la bitácora.');
+        }
+        return res;
     }).catch(err => {
-        alert(CrmCommercial.errorMessage(err));
+        const errMsg = (typeof CrmCommercial !== 'undefined' && CrmCommercial.errorMessage) ? CrmCommercial.errorMessage(err) : (err && err.message ? err.message : String(err));
+        if (typeof CrmUI !== 'undefined' && CrmUI.error) CrmUI.error(errMsg);
+        else if (typeof alert === 'function') alert(errMsg);
         console.error(err);
     }).finally(() => { if (btnEl) btnEl.disabled = false; });
 }
