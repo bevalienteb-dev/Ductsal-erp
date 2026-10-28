@@ -894,6 +894,8 @@
             cinco_intentos: 0,
             solicitud_sin_contrato: 0,
             limite_etapa: 0,
+            reversiones_reiteradas: 0,
+            estancamiento_pipeline: 0,
             resueltas: 0
         };
 
@@ -1035,6 +1037,59 @@
                     }
                 }
 
+            // Criterio D (Fase 4D): Dos o más reversiones en la misma oportunidad (alerta no bloqueante)
+            if (p.estado === 'activo') {
+                const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
+                const reversiones = transitions.filter(t => t && t.tipo === 'reversion');
+                if (reversiones.length >= 2) {
+                    motivos.push({
+                        tipo: 'reversion',
+                        subtipo: 'reversiones_reiteradas',
+                        descripcion: `Oportunidad con ${reversiones.length} reversiones de etapa registradas`,
+                        limite: 'Máximo 1 reversión sin advertencia',
+                        esperado: '<= 1 reversión',
+                        observado: `${reversiones.length} reversiones`,
+                        fecha: reversiones[reversiones.length - 1].fecha || null,
+                        reversionesCount: reversiones.length
+                    });
+                    isPending = true;
+                    if (alertState !== 'pendiente') alertState = 'pendiente';
+                    if (!fechaDeteccion) fechaDeteccion = reversiones[reversiones.length - 1].fecha;
+                    if (!limiteIncumplido) limiteIncumplido = 'Reversiones reiteradas de etapa (>= 2)';
+                    if (!valorEsperado) valorEsperado = '<= 1 reversión';
+                    if (!valorObservado) valorObservado = `${reversiones.length} reversiones`;
+                    counts.reversiones_reiteradas = (counts.reversiones_reiteradas || 0) + 1;
+                }
+            }
+
+            // Criterio E (Fase 4D): Permanencia prolongada activa en pipeline (> 45 días hábiles sin cierre)
+            if (p.estado === 'activo' && p.fecha_creacion && p.clasificacion !== 'presupuesto') {
+                const cal = getWorkCalendar();
+                let pipelineBusinessDays = 0;
+                if (cal && typeof cal.getWorkTimeBetween === 'function') {
+                    pipelineBusinessDays = cal.getWorkTimeBetween(p.fecha_creacion, now, { excludeSaturday: true });
+                }
+                if (pipelineBusinessDays > 45) {
+                    motivos.push({
+                        tipo: 'permanencia_pipeline',
+                        subtipo: 'estancamiento_pipeline',
+                        descripcion: `Oportunidad estancada en pipeline (${pipelineBusinessDays} días hábiles sin cierre)`,
+                        limite: 'Máximo 45 días hábiles en pipeline',
+                        esperado: '<= 45 días hábiles',
+                        observado: `${pipelineBusinessDays} días hábiles`,
+                        fecha: (typeof p.fecha_creacion === 'string' ? p.fecha_creacion.slice(0, 10) : getCommercialYMD(p.fecha_creacion)) || null,
+                        diasHabilesPipeline: pipelineBusinessDays
+                    });
+                    isPending = true;
+                    if (alertState !== 'pendiente') alertState = 'pendiente';
+                    if (!fechaDeteccion) fechaDeteccion = p.fecha_creacion;
+                    if (!limiteIncumplido) limiteIncumplido = 'Permanencia prolongada en pipeline (> 45 días hábiles)';
+                    if (!valorEsperado) valorEsperado = '<= 45 días hábiles';
+                    if (!valorObservado) valorObservado = `${pipelineBusinessDays} días hábiles`;
+                    counts.estancamiento_pipeline = (counts.estancamiento_pipeline || 0) + 1;
+                }
+            }
+
             // Alertas en historial / resueltas
             if (!isPending) {
                 const hasResolvedEscalation = cad && (cad.estado_cadencia === 'continuidad_autorizada' || cad.estado_cadencia === 'orden_cierre_pendiente' || (Array.isArray(cad.historial_escalaciones) && cad.historial_escalaciones.length > 0));
@@ -1077,6 +1132,8 @@
                     if ((filterMotivo === 'cadencia_5_intentos' || filterMotivo === 'cinco_intentos') && (m.tipo === 'cinco_intentos' || m.tipo === 'seguimiento' || m.subtipo === 'cinco_intentos')) return true;
                     if ((filterMotivo === 'solicitud_sin_contrato' || filterMotivo === 'sin_contrato') && m.tipo === 'solicitud_sin_contrato') return true;
                     if ((filterMotivo === 'limite_etapa' || filterMotivo === 'etapa_vencida') && m.tipo === 'limite_etapa') return true;
+                    if ((filterMotivo === 'reversion' || filterMotivo === 'reversiones_reiteradas') && (m.tipo === 'reversion' || m.subtipo === 'reversiones_reiteradas')) return true;
+                    if ((filterMotivo === 'permanencia_pipeline' || filterMotivo === 'estancamiento_pipeline') && (m.tipo === 'permanencia_pipeline' || m.subtipo === 'estancamiento_pipeline')) return true;
                     return false;
                 });
                 if (!matches) return;

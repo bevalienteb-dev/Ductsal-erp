@@ -173,6 +173,14 @@
         return call(fb, 'advanceProspectStageAdmin', { prospectId, nextStage, data, dbSuffix });
     }
 
+    function revertStage(fb, { prospectId, currentStage, targetStage, motivo, opId: explicitOpId, dbSuffix }) {
+        if (explicitOpId) {
+            return call(fb, 'revertProspectStageAdmin', { prospectId, currentStage, targetStage, motivo, opId: explicitOpId, dbSuffix });
+        }
+        const key = ['revertProspectStage', dbSuffix, prospectId, currentStage, targetStage, motivo].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('revertProspectStageAdmin')({ prospectId, currentStage, targetStage, motivo, opId, dbSuffix }));
+    }
+
     function saveClosingDocuments(fb, { prospectId, data, dbSuffix }) {
         return call(fb, 'saveClosingDocumentsAdmin', { prospectId, data, dbSuffix });
     }
@@ -276,6 +284,7 @@
         updateSettings,
         deleteClient,
         advanceStage,
+        revertStage,
         saveClosingDocuments,
         finalizeProspect,
         markLost,
@@ -289,6 +298,8 @@
         deletePayment,
         deleteProspect,
         reactivateProspect,
+        newOpId,
+        generateCryptoOpId: newOpId,
         errorMessage,
         _pendingOps: pendingOps
     };

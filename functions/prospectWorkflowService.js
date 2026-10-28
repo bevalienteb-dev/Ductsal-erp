@@ -20,7 +20,7 @@
 // tested decision and not a hunt through the code. Manager-only items keep the live Auth check.
 
 const identity = require('./clientIdentity');
-const { ServiceError } = require('./clientsService');
+const { ServiceError, stableHash } = require('./clientsService');
 const { validators } = require('./commercialService');
 const {
   applyDocumentVersionsTx,
@@ -39,9 +39,24 @@ try {
   } catch (e2) {}
 }
 
+let CrmWorkCalendar = null;
+try {
+  CrmWorkCalendar = require('./crm_work_calendar');
+} catch (e) {
+  try {
+    CrmWorkCalendar = require('../crm_work_calendar');
+  } catch (e2) {}
+}
+
 const { bad, asObject, reqString, reqDocId, reqOpId } = validators;
 
 const STAGES = ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
+const REVERSION_PREV_STAGE = {
+  cierre: 'negociacion',
+  negociacion: 'cotizacion',
+  cotizacion: 'levantamiento',
+  levantamiento: 'prospecto'
+};
 const PROBABILIDADES = { alta: 75, media: 50, baja: 25, improbable: 10 };
 const MOTIVOS_PERDIDA = ['Precio', 'Falta de seguimiento', 'No se cumplían los requerimientos técnicos', 'Tiempo de entrega', 'Cliente desiste'];
 const FORMAS_PAGO = { '100% anticipado': 1.0, '70/30': 0.7, '50/50': 0.5 };
@@ -55,6 +70,7 @@ const MAX_FILES = 20;
 // Roles allowed per operation, on top of "has access to the opportunity" (creator / assignee, or manager / gestor).
 const POLICY = {
   advanceStage: ['manager', 'gestor', 'vendedor'],
+  revertStage: ['manager', 'gestor', 'vendedor'],
   saveClosingDocuments: ['manager', 'gestor', 'vendedor'],
   finalizeProspect: ['manager', 'gestor', 'vendedor'],
   markLost: ['manager', 'gestor', 'vendedor'],
@@ -485,25 +501,52 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
+      // Liquidar tiempo de la etapa saliente
+      const stageStart = (p.stage_timestamps && p.stage_timestamps[p.etapa]) || p.fecha_creacion;
+      const workCal = (typeof CrmWorkCalendar !== 'undefined' && CrmWorkCalendar)
+        ? CrmWorkCalendar
+        : (CrmFollowUpCalc && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null);
+      let elapsedDays = 0;
+      if (workCal && typeof workCal.getWorkTimeBetween === 'function' && stageStart) {
+        elapsedDays = workCal.getWorkTimeBetween(stageStart, at, { excludeSaturday: true });
+      }
+      const canonElapsed = Math.round(Number(elapsedDays || 0) * 2) / 2;
+      const prevTiempos = (p.tiempos_etapas_acumulados && typeof p.tiempos_etapas_acumulados === 'object') ? p.tiempos_etapas_acumulados : {};
+      const curAcc = typeof prevTiempos[p.etapa] === 'number' ? prevTiempos[p.etapa] : 0;
+      const newAcc = Math.round((curAcc + canonElapsed) * 2) / 2;
+      const tiempos_etapas_acumulados = { ...prevTiempos, [p.etapa]: newAcc };
+
+      // Si entra a negociación, la propuesta pasa a estado 'vigente'
+      if (nextStage === 'negociacion') {
+        datos.estado_propuesta = 'vigente';
+      }
+
       const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
       const transitionEntry = {
         from: p.etapa,
         to: nextStage,
+        tipo: 'avance',
         fecha: at,
         usuarioId: caller.cid,
         usuarioNombre: caller.name || 'Comercial',
-        usuarioRole: caller.role
+        usuarioRole: caller.role,
+        duracion_dias: canonElapsed
       };
+
+      const nextVersion = (typeof p.version === 'number' ? p.version : 0) + 1;
 
       tx.update(ref, {
         ...patch, datos, etapa: nextStage,
         stage_timestamps: { ...(p.stage_timestamps && typeof p.stage_timestamps === 'object' ? p.stage_timestamps : {}), [nextStage]: at },
+        tiempos_etapas_acumulados,
         stage_transitions: transitions.concat([transitionEntry]),
+        version: nextVersion,
         logs: withLog(p, caller, logMsg)
       });
       addAudit(tx, caller, 'advanceStage', prospectId, {
         from: p.etapa,
         to: nextStage,
+        duracion_dias: canonElapsed,
         ...(nextStage === 'negociacion' ? {
           fecha_entrega_oferta: patch.fecha_entrega_oferta || p.fecha_entrega_oferta,
           primer_contacto: patch.seguimiento && patch.seguimiento.proxima_accion && patch.seguimiento.proxima_accion.fecha
@@ -514,6 +557,212 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         } : {})
       });
       return { status: 'advanced', etapa: nextStage, estado: patch.estado || p.estado };
+    });
+  }
+
+  // =====================================================================================================
+  // Stage Reversion (Fase 4D)
+  // Reversión libre estrictamente contigua, paso a paso, con motivo obligatorio e idempotencia duradera
+  // =====================================================================================================
+  async function revertStage({ caller, prospectId, currentStage, targetStage, motivo, opId }) {
+    authorize(caller, 'revertStage');
+    reqDocId(prospectId, 'prospectId');
+    reqOpId(opId, 'opId');
+    const curStage = reqString(currentStage, 'currentStage', 50);
+    const tgtStage = reqString(targetStage, 'targetStage', 50);
+    const reason = reqString(motivo, 'El motivo del retroceso', 500);
+    if (reason.length < 10) throw bad('El motivo del retroceso debe tener al menos 10 caracteres');
+
+    if (!REVERSION_PREV_STAGE[curStage] || REVERSION_PREV_STAGE[curStage] !== tgtStage) {
+      throw precondition(`Solo se permite retroceder a la etapa inmediatamente anterior (${REVERSION_PREV_STAGE[curStage] || 'ninguna'}). Saltos no contiguos no están permitidos.`);
+    }
+
+    const currentPayloadHash = stableHash({ prospectId, currentStage: curStage, targetStage: tgtStage, motivo: reason });
+    const opRef = col('ops').doc(opId);
+
+    return db.runTransaction(async tx => {
+      // -------------------------------------------------------------
+      // FASE 1: TODAS LAS LECTURAS (Strictly Before Any Write)
+      // -------------------------------------------------------------
+
+      // 1.1 Comprobación de idempotencia duradera en prospectOps
+      const prevOp = await tx.get(opRef);
+      if (prevOp.exists) {
+        const opData = prevOp.data() || {};
+        if (opData.createdBy !== caller.cid) {
+          throw new ServiceError('permission-denied', 'El opId pertenece a otro usuario');
+        }
+        if (opData.prospectId !== prospectId || opData.action !== 'revertStage' || opData.payloadHash !== currentPayloadHash) {
+          throw new ServiceError('failed-precondition', 'El opId ya fue utilizado con otros datos o para otra oportunidad');
+        }
+        return { status: 'reverted', replay: true, ...opData.result };
+      }
+
+      // 1.2 Documento de la oportunidad
+      const { ref, p } = await loadProspect(tx, caller, prospectId);
+      if (p.estado !== 'activo') throw precondition('Solo las oportunidades activas pueden retroceder de etapa');
+
+      // Control de Concurrencia Optimista (OCC): verificar etapa actual
+      if (p.etapa !== curStage) {
+        throw precondition(`Conflicto de concurrencia: la oportunidad se encuentra en la etapa '${p.etapa}', no en '${curStage}'. Actualice la pantalla.`);
+      }
+
+      // 1.3 Si se revierte de Cierre, consultar otras oportunidades de Cierre del cliente
+      let vendorsToRemove = [];
+      if (curStage === 'cierre' && p.clientId) {
+        const otherSnap = await tx.get(
+          col('prospects')
+            .where('clientId', '==', p.clientId)
+            .where('etapa', '==', 'cierre')
+        );
+        const candidates = [p.vendedorId, p.createdBy].filter(v => v && v !== 'sistema');
+        const remainingClosing = new Set();
+        otherSnap.docs.forEach(d => {
+          if (d.id === prospectId) return;
+          const op = d.data() || {};
+          if (op.eliminado === true || op.estado === 'perdido') return;
+          if (op.vendedorId) remainingClosing.add(String(op.vendedorId));
+          if (op.createdBy) remainingClosing.add(String(op.createdBy));
+        });
+        vendorsToRemove = candidates.filter(v => !remainingClosing.has(String(v)));
+      }
+
+      // -------------------------------------------------------------
+      // FASE 2: CÓMPUTO EN MEMORIA
+      // -------------------------------------------------------------
+      const at = iso();
+      const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
+      const patch = {};
+
+      // 2.1 Liquidación de tiempo en la etapa saliente
+      const stageStart = (p.stage_timestamps && p.stage_timestamps[curStage]) || p.fecha_creacion;
+      const workCal = (typeof CrmWorkCalendar !== 'undefined' && CrmWorkCalendar)
+        ? CrmWorkCalendar
+        : (CrmFollowUpCalc && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null);
+      let elapsedDays = 0;
+      if (workCal && typeof workCal.getWorkTimeBetween === 'function' && stageStart) {
+        elapsedDays = workCal.getWorkTimeBetween(stageStart, at, { excludeSaturday: true });
+      }
+      const canonElapsed = Math.round(Number(elapsedDays || 0) * 2) / 2;
+      const prevTiempos = (p.tiempos_etapas_acumulados && typeof p.tiempos_etapas_acumulados === 'object') ? p.tiempos_etapas_acumulados : {};
+      const curAcc = typeof prevTiempos[curStage] === 'number' ? prevTiempos[curStage] : 0;
+      const newAcc = Math.round((curAcc + canonElapsed) * 2) / 2;
+      const tiempos_etapas_acumulados = { ...prevTiempos, [curStage]: newAcc };
+
+      // 2.2 Reinicio del ciclo de SLA para la etapa destino reingresada
+      const prevTimestamps = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
+      const stage_timestamps = { ...prevTimestamps, [tgtStage]: at };
+
+      // 2.3 Registro de transición
+      const prevTransitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
+      const transitionEntry = {
+        from: curStage,
+        to: tgtStage,
+        tipo: 'reversion',
+        fecha: at,
+        usuarioId: caller.cid,
+        usuarioNombre: caller.name || 'Comercial',
+        usuarioRole: caller.role,
+        motivo: reason,
+        opId,
+        duracion_dias: canonElapsed
+      };
+      const stage_transitions = prevTransitions.concat([transitionEntry]);
+
+      // 2.4 Mutaciones específicas según la transición
+      if (curStage === 'cierre' && tgtStage === 'negociacion') {
+        // Invalida incondicionalmente la autorización sin contrato
+        datos.autorizado_sin_contrato = false;
+        if (p.aprobacion_sin_contrato) {
+          patch.aprobacion_sin_contrato = {
+            ...p.aprobacion_sin_contrato,
+            estado: 'invalidada_por_reversion',
+            fecha_invalidacion: at,
+            invalidado_por_id: caller.cid,
+            motivo_invalidacion: reason
+          };
+        }
+        const rawReqs = Array.isArray(p.solicitudes_sin_contrato) ? p.solicitudes_sin_contrato : [];
+        if (rawReqs.length > 0) {
+          patch.solicitudes_sin_contrato = rawReqs.map(r => {
+            if (r && r.estado === 'pendiente') {
+              return {
+                ...r,
+                estado: 'anulada_por_reversion',
+                fecha_anulacion: at,
+                anulado_por_id: caller.cid,
+                motivo_anulacion: reason
+              };
+            }
+            return r;
+          });
+        }
+        patch.fecha_inicio_cierre = FieldValue.delete();
+        patch.fecha_limite_cierre = FieldValue.delete();
+      } else if (curStage === 'negociacion' && tgtStage === 'cotizacion') {
+        // Marca documentos anteriores como borrador
+        datos.estado_propuesta = 'borrador';
+        patch.fecha_entrega_oferta = FieldValue.delete();
+        const curSeg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+        patch.seguimiento = {
+          ...curSeg,
+          cadencia: null,
+          proxima_accion: null
+        };
+      }
+
+      const logMsg = `Retroceso de etapa: de ${curStage.toUpperCase()} a ${tgtStage.toUpperCase()}. Motivo: ${reason}`;
+      const nextVersion = (typeof p.version === 'number' ? p.version : 0) + 1;
+      const opResult = {
+        prospectId,
+        etapa: tgtStage,
+        previousStage: curStage,
+        version: nextVersion
+      };
+
+      // -------------------------------------------------------------
+      // FASE 3: ESCRITURAS ATÓMICAS (Strictly After All Reads)
+      // -------------------------------------------------------------
+      tx.update(ref, {
+        ...patch,
+        datos,
+        etapa: tgtStage,
+        stage_timestamps,
+        tiempos_etapas_acumulados,
+        stage_transitions,
+        version: nextVersion,
+        logs: withLog(p, caller, logMsg)
+      });
+
+      if (vendorsToRemove.length > 0 && p.clientId) {
+        for (const v of vendorsToRemove) {
+          tx.update(col('clients').doc(p.clientId), {
+            closingVendors: FieldValue.arrayRemove(v)
+          });
+        }
+      }
+
+      tx.create(opRef, {
+        action: 'revertStage',
+        status: 'succeeded',
+        prospectId,
+        currentStage: curStage,
+        targetStage: tgtStage,
+        payloadHash: currentPayloadHash,
+        createdBy: caller.cid,
+        createdAt: FieldValue.serverTimestamp(),
+        result: opResult
+      });
+
+      addAudit(tx, caller, 'revertProspectStage', prospectId, {
+        from: curStage,
+        to: tgtStage,
+        motivo: reason,
+        opId,
+        duracion_dias: canonElapsed
+      });
+
+      return { status: 'reverted', replay: false, ...opResult };
     });
   }
 
@@ -1511,7 +1760,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  return { advanceStage, saveClosingDocuments, finalizeProspect, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
+  return { advanceStage, revertStage, saveClosingDocuments, finalizeProspect, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
 }
 
-module.exports = { createProspectWorkflowService, hasEnteredPostclosing: fallbackHasEnteredPostclosing, POLICY, STAGES, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };
+module.exports = { createProspectWorkflowService, hasEnteredPostclosing: fallbackHasEnteredPostclosing, POLICY, STAGES, REVERSION_PREV_STAGE, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };

@@ -466,16 +466,68 @@
             let countCompleted = 0;
             let countExcludedActive = 0;
             let countExcludedNoDate = 0;
+            let countExcludedIncomplete = 0;
             let countInvalidDates = 0;
 
             (prospectsList || []).forEach(p => {
                 if (!p || p.eliminado === true) return;
+
+                // NIVEL 1: Acumulados canónicos oficiales registrados por el workflow
+                const tiempos = (p.tiempos_etapas_acumulados && typeof p.tiempos_etapas_acumulados === 'object') ? p.tiempos_etapas_acumulados : null;
+                if (tiempos && typeof tiempos[stage] === 'number' && !isNaN(tiempos[stage])) {
+                    const accDays = tiempos[stage];
+                    if (accDays >= 0) {
+                        const isCurrentlyActiveInThisStage = p.estado === 'activo' && p.etapa === stage;
+                        const hasPriorTransitions = Array.isArray(p.stage_transitions) && p.stage_transitions.some(t => t && t.from === stage);
+                        if (isCurrentlyActiveInThisStage && !hasPriorTransitions && accDays === 0) {
+                            countExcludedActive++;
+                            return;
+                        }
+                        totalDays += accDays;
+                        countCompleted++;
+                        return;
+                    }
+                }
+
+                // NIVEL 2: Reconstrucción histórica a partir de stage_transitions
+                if (Array.isArray(p.stage_transitions) && p.stage_transitions.length > 0) {
+                    const completedTransitions = p.stage_transitions.filter(t => t && t.from === stage);
+                    if (completedTransitions.length > 0) {
+                        let stageSum = 0;
+                        let validTransitionCount = 0;
+                        completedTransitions.forEach(t => {
+                            if (typeof t.duracion_dias === 'number' && !isNaN(t.duracion_dias)) {
+                                stageSum += t.duracion_dias;
+                                validTransitionCount++;
+                            }
+                        });
+                        if (validTransitionCount > 0) {
+                            totalDays += Math.round(stageSum * 2) / 2;
+                            countCompleted++;
+                            return;
+                        }
+                    }
+                }
+
+                // NIVEL 3: Registros legacy / históricos sin acumulados ni transiciones estructuradas
                 const ts = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
                 const stageStartStr = ts[stage];
-                if (!stageStartStr) return;
+
+                // Si continúa activa en esta etapa: excluir del promedio completado
+                if (p.estado === 'activo' && p.etapa === stage) {
+                    countExcludedActive++;
+                    return;
+                }
+
+                if (!stageStartStr) {
+                    return;
+                }
 
                 const startDate = parseValidDate(stageStartStr);
-                if (!startDate) return;
+                if (!startDate) {
+                    countExcludedNoDate++;
+                    return;
+                }
 
                 let endDate = null;
 
@@ -505,29 +557,27 @@
                     if (lDate) {
                         endDate = lDate;
                     } else {
-                        // Perdida sin fecha fiable: no sustituir por hoy, excluir
                         countExcludedNoDate++;
                         return;
                     }
                 }
 
-                // 4. Si continúa activa en esta etapa: excluir del promedio histórico completado
-                if (!endDate && p.estado === 'activo') {
-                    countExcludedActive++;
-                    return;
-                }
-
                 if (endDate) {
                     const diffMs = endDate.getTime() - startDate.getTime();
                     if (diffMs < 0) {
-                        // Fecha final anterior a la inicial: cronológicamente inválida, se rechaza
+                        // Fecha final anterior a la inicial: cronológicamente inválida o retroceso previo
                         countInvalidDates++;
+                        countExcludedIncomplete++;
                         return;
                     }
                     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
                     totalDays += diffDays;
                     countCompleted++;
+                    return;
                 }
+
+                // Sin fecha de salida comprobable en registro histórico
+                countExcludedIncomplete++;
             });
 
             const avgDays = countCompleted > 0 ? parseFloat((totalDays / countCompleted).toFixed(1)) : 0;
@@ -540,7 +590,9 @@
                 countCompleted,
                 countExcludedActive,
                 countExcludedNoDate,
+                countExcludedIncomplete,
                 countInvalidDates,
+                historial_parcial: countExcludedIncomplete > 0,
                 limit,
                 isOverLimit,
                 hasData: countCompleted > 0

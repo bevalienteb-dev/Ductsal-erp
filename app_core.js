@@ -4755,6 +4755,8 @@ function openDetail(id) {
         stageTitleText.textContent = p.etapa === 'cierre' ? "Cierre Pendiente de Documentación" : "Avance de Etapa";
         const btnAdv = document.getElementById('btn-advance');
         if (btnAdv) btnAdv.style.display = p.etapa === 'cierre' ? 'none' : 'inline-flex';
+        const btnRevert = document.getElementById('btn-revert');
+        if (btnRevert) btnRevert.style.display = (p.etapa !== 'prospecto') ? 'inline-flex' : 'none';
         const btnNewProp = document.getElementById('btn-new-proposal');
         if (btnNewProp) btnNewProp.style.display = p.etapa === 'negociacion' ? 'inline-flex' : 'none';
         const btnLose = document.getElementById('btn-lose');
@@ -5370,8 +5372,11 @@ function renderInfo(p) {
     }
 
     addDoc(p.datos.doc_levantamiento, 'Planos / Notas', 'doc_levantamiento');
-    addDoc(p.datos.doc_oferta, 'Oferta / Cotización', 'doc_oferta');
-    addDoc(p.datos.doc_costos, 'Cuadro de Costos', 'doc_costos');
+    const isOfferDraft = (p.datos && p.datos.estado_propuesta === 'borrador') || p.etapa === 'cotizacion';
+    const ofertaLabel = isOfferDraft ? 'Oferta / Cotización (Borrador)' : 'Oferta / Cotización';
+    const costosLabel = isOfferDraft ? 'Cuadro de Costos (Borrador)' : 'Cuadro de Costos';
+    addDoc(p.datos.doc_oferta, ofertaLabel, 'doc_oferta');
+    addDoc(p.datos.doc_costos, costosLabel, 'doc_costos');
     addDoc(p.datos.doc_oferta_firmada || p.datos.doc_firmado, 'Oferta Firmada', 'doc_oferta_firmada');
     addDoc(p.datos.doc_contrato, 'Contrato', 'doc_contrato');
     if (p.datos.doc_comprobante) {
@@ -5937,6 +5942,114 @@ async function confirmAdvanceToCierre(prospectId) {
     const p = prospects.find(x => x.id === id);
     if (!p) return;
     return processAdvance('cierre');
+}
+
+let currentRevertOpId = null;
+
+function showRevertForm() {
+    const p = prospects.find(x => x.id === currentProspectId);
+    const container = document.getElementById('advance-form-container');
+    if (!p || !container) return;
+
+    const REVERSION_PREV = {
+        cierre: 'negociacion',
+        negociacion: 'cotizacion',
+        cotizacion: 'levantamiento',
+        levantamiento: 'prospecto'
+    };
+
+    const targetStage = REVERSION_PREV[p.etapa];
+    if (!targetStage) {
+        alert('La etapa actual (' + p.etapa + ') no puede retroceder.');
+        return;
+    }
+
+    if (!currentRevertOpId) {
+        const cm = (typeof CrmCommercial !== 'undefined') ? CrmCommercial : null;
+        currentRevertOpId = (cm && typeof cm.generateCryptoOpId === 'function')
+            ? cm.generateCryptoOpId()
+            : ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null);
+    }
+
+    let warningHtml = '';
+    if (p.etapa === 'cierre' && targetStage === 'negociacion') {
+        warningHtml = `<div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--text-primary); line-height: 1.4;">
+            ⚠️ <strong>Aviso de Autorización y Cierre:</strong> Al retroceder a Negociación, cualquier autorización para venta sin contrato quedará automáticamente <strong>invalidada</strong> y las solicitudes pendientes serán <strong>anuladas</strong>. Los accesos exclusivos de Cierre serán actualizados.
+        </div>`;
+    } else if (p.etapa === 'negociacion' && targetStage === 'cotizacion') {
+        warningHtml = `<div style="background: rgba(245, 158, 11, 0.1); border: 1px solid var(--brand-gold); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--text-primary); line-height: 1.4;">
+            ℹ️ <strong>Aviso Documental y Cadencia:</strong> La oferta y el cuadro de costos actuales se conservarán identificados como <strong>borradores</strong>. La cadencia activa de negociación será desescalada para permitir la preparación de la nueva propuesta.
+        </div>`;
+    }
+
+    container.innerHTML = `<div style="background: var(--panel-bg); border: 1px solid var(--panel-border); padding: 1.25rem; border-radius: 8px; margin-top: 1rem;">
+        <h4 style="color: var(--text-primary); margin-top: 0; display: flex; align-items: center; gap: 0.5rem;">
+            <span>↩️ Retroceder Etapa:</span>
+            <span style="color: var(--brand-gold); text-transform: capitalize;">${p.etapa} → ${targetStage}</span>
+        </h4>
+        ${warningHtml}
+        <div class="form-group mt-2">
+            <label for="revert-reason" style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary);">
+                Motivo obligatorio de retroceso (mínimo 10 caracteres, máx. 500):
+            </label>
+            <textarea id="revert-reason" class="form-control" rows="3" maxlength="500" placeholder="Describe claramente el motivo comercial o técnico del retroceso..." style="width: 100%; margin-top: 0.25rem; padding: 0.5rem; background: var(--bg-input); border: 1px solid var(--panel-border); border-radius: 4px; color: var(--text-primary); font-size: 0.85rem;"></textarea>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;" id="revert-char-count">0 / 500 caracteres</div>
+        </div>
+        <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+            <button type="button" class="btn-danger" id="btn-confirm-revert" onclick="processRevertStage('${targetStage}')">Confirmar Retroceso</button>
+            <button type="button" class="btn-secondary" onclick="cancelRevertForm()">Cancelar</button>
+        </div>
+    </div>`;
+
+    const txt = document.getElementById('revert-reason');
+    if (txt) {
+        txt.addEventListener('input', function() {
+            const len = (txt.value || '').trim().length;
+            const countEl = document.getElementById('revert-char-count');
+            if (countEl) countEl.textContent = `${len} / 500 caracteres`;
+        });
+    }
+}
+
+function cancelRevertForm() {
+    currentRevertOpId = null;
+    const container = document.getElementById('advance-form-container');
+    if (container) container.innerHTML = '';
+}
+
+async function processRevertStage(targetStage) {
+    const p = prospects.find(x => x.id === currentProspectId);
+    if (!p) return;
+    const txt = document.getElementById('revert-reason');
+    const reason = txt ? (txt.value || '').trim() : '';
+    if (!reason || reason.length < 10) {
+        alert('El motivo del retroceso es obligatorio y debe tener al menos 10 caracteres.');
+        if (txt) txt.focus();
+        return;
+    }
+    if (reason.length > 500) {
+        alert('El motivo no puede exceder 500 caracteres.');
+        return;
+    }
+
+    const opIdToUse = currentRevertOpId;
+    const ok = await runWorkflowOp('Procesando retroceso de etapa...', async fb => {
+        return CrmCommercial.revertStage(fb, {
+            prospectId: p.id,
+            currentStage: p.etapa,
+            targetStage,
+            motivo: reason,
+            opId: opIdToUse,
+            dbSuffix: DB_SUFFIX
+        });
+    });
+
+    if (ok) {
+        currentRevertOpId = null;
+        const container = document.getElementById('advance-form-container');
+        if (container) container.innerHTML = '';
+        openDetail(p.id);
+    }
 }
 
 function renderClosingDocumentationPanel(p) {
