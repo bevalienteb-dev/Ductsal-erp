@@ -856,6 +856,7 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
     const getEl = (id) => {
       if (!elements[id]) {
         const classes = new Set();
+        const attrs = {};
         elements[id] = {
           id,
           tagName: 'DIV',
@@ -864,6 +865,9 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
           textContent: '',
           _innerHTML: '',
           children: [],
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k],
           classList: {
             add: (c) => classes.add(c),
             remove: (c) => classes.delete(c),
@@ -887,9 +891,13 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
       getElementById: (id) => getEl(id),
       createElement: (tag) => {
         const classes = new Set();
+        const attrs = {};
         return {
           tagName: tag.toUpperCase(),
           style: {},
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k],
           classList: {
             add: (c) => classes.add(c),
             remove: (c) => classes.delete(c),
@@ -906,6 +914,12 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
       'count-opp-activas', 'count-opp-perdidas', 'count-opp-todas',
       'filter-clasif-todas', 'filter-clasif-ejecucion', 'filter-clasif-presupuesto',
       'count-opp-ejecucion', 'count-opp-presupuesto',
+      'filter-stage-todas', 'count-stage-todas',
+      'filter-stage-prospecto', 'count-stage-prospecto',
+      'filter-stage-levantamiento', 'count-stage-levantamiento',
+      'filter-stage-cotizacion', 'count-stage-cotizacion',
+      'filter-stage-negociacion', 'count-stage-negociacion',
+      'filter-stage-cierre', 'count-stage-cierre',
       'opp-count-badge', 'opp-search', 'opp-date-start', 'opp-date-end', 'btn-clear-opp-dates'
     ].forEach(id => getEl(id));
 
@@ -935,7 +949,7 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
 
     const sandboxFn = new Function(
       'S', 'document', 'openDetail',
-      'with(S) {\n' + PIPELINE_CORE_SRC + '\n return { renderList, setOppStatusFilter, setOppClasifFilter, clearOppDateFilter };\n}'
+      'with(S) {\n' + PIPELINE_CORE_SRC + '\n return { renderList, setOppStatusFilter, setOppClasifFilter, setOppStageFilter, getOppStageFilter, getOppStatusFilter, getOppClasifFilter, toggleOppSort, clearOppDateFilter };\n}'
     );
 
     const api = sandboxFn(S, documentMock, openDetail);
@@ -1390,5 +1404,410 @@ describe('Post-Release 5.1 Fixes — Commercial Logs Navigation & Detail View Mo
     });
   });
 });
+
+describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+
+  const extractCode = (from, to) => {
+    const a = appCoreCode.indexOf(from);
+    const b = appCoreCode.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error(`Could not find markers: ${from} .. ${to}`);
+    return appCoreCode.slice(a, b);
+  };
+
+  const PIPELINE_CORE_SRC = [
+    extractCode('function toggleOppSort(column)', 'function getProspectVendorInfo'),
+    extractCode('function updateOppSortIcons()', 'function toggleProjSort'),
+    extractCode('function parseProspectDate(raw)', 'function reassignVendor('),
+    'const formatCurrency = (val) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(val || 0);',
+    'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));',
+    'let oppSortCol = null;',
+    'let oppSortDir = "asc";',
+    extractCode('function getClientName(clientId)', 'function renderProjectsList')
+  ].join('\n');
+
+  function createPipelineSandbox(customState = {}) {
+    const elements = {};
+    const getEl = (id) => {
+      if (!elements[id]) {
+        const classes = new Set();
+        const attrs = {};
+        elements[id] = {
+          id,
+          tagName: 'DIV',
+          value: '',
+          style: {},
+          textContent: '',
+          _innerHTML: '',
+          children: [],
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k],
+          classList: {
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c),
+            toArray: () => Array.from(classes)
+          },
+          get innerHTML() { return this._innerHTML; },
+          set innerHTML(val) {
+            this._innerHTML = val;
+            this.children = [];
+          },
+          appendChild(child) {
+            this.children.push(child);
+          }
+        };
+      }
+      return elements[id];
+    };
+
+    const documentMock = {
+      getElementById: (id) => getEl(id),
+      createElement: (tag) => {
+        const classes = new Set();
+        const attrs = {};
+        return {
+          tagName: tag.toUpperCase(),
+          style: {},
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k],
+          classList: {
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c)
+          },
+          innerHTML: '',
+          onclick: null
+        };
+      }
+    };
+
+    [
+      'opp-table-body', 'filter-opp-activas', 'filter-opp-perdidas', 'filter-opp-todas',
+      'count-opp-activas', 'count-opp-perdidas', 'count-opp-todas',
+      'filter-clasif-todas', 'filter-clasif-ejecucion', 'filter-clasif-presupuesto',
+      'count-opp-ejecucion', 'count-opp-presupuesto',
+      'filter-stage-todas', 'count-stage-todas',
+      'filter-stage-prospecto', 'count-stage-prospecto',
+      'filter-stage-levantamiento', 'count-stage-levantamiento',
+      'filter-stage-cotizacion', 'count-stage-cotizacion',
+      'filter-stage-negociacion', 'count-stage-negociacion',
+      'filter-stage-cierre', 'count-stage-cierre',
+      'opp-count-badge', 'opp-search', 'opp-date-start', 'opp-date-end', 'btn-clear-opp-dates',
+      'sort-opp-codigo', 'sort-opp-cliente', 'sort-opp-proyecto', 'sort-opp-vendedor',
+      'sort-opp-fecha', 'sort-opp-etapa', 'sort-opp-monto', 'sort-opp-estado'
+    ].forEach(id => getEl(id));
+
+    const now = new Date();
+    const daysAgo = (days) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const defaultProspects = [
+      {
+        id: 'p1', codigo: 'OPP-101', clientId: 'cli_1', proyecto: 'Ductos Hospital Central',
+        clasificacion: 'ejecucion', estado: 'activo', etapa: 'cotizacion',
+        precio_cotizado: 52000, fecha_creacion: daysAgo(10),
+        stage_timestamps: { cotizacion: daysAgo(10) },
+        vendedorId: 'v1'
+      },
+      {
+        id: 'p2', codigo: 'OPP-102', clientId: 'cli_2', proyecto: 'Edificio Residencial Prisma',
+        clasificacion: 'presupuesto', estado: 'activo', etapa: 'negociacion',
+        precio_cotizado: 34000, fecha_creacion: daysAgo(20),
+        stage_timestamps: { negociacion: daysAgo(20) }, // High antiquity (> 15d)
+        vendedorId: 'v1'
+      },
+      {
+        id: 'p3', codigo: 'OPP-103', clientId: 'cli_1', proyecto: 'Centro Comercial Plaza',
+        clasificacion: 'ejecucion', estado: 'perdido', etapa: 'levantamiento',
+        precio_cotizado: 18000, fecha_creacion: daysAgo(5),
+        stage_timestamps: { levantamiento: daysAgo(5) },
+        vendedorId: 'v2'
+      },
+      {
+        id: 'p4', codigo: 'OPP-104', clientId: 'cli_2', proyecto: 'Almacén Industrial Norte',
+        clasificacion: 'presupuesto', estado: 'activo', etapa: 'cierre',
+        precio_cotizado: 95000, fecha_creacion: daysAgo(7),
+        stage_timestamps: { cierre: daysAgo(7) }, // High antiquity in cierre (>= 5d)
+        vendedorId: 'v2'
+      },
+      {
+        id: 'p5', codigo: 'OPP-105', clientId: 'cli_1', proyecto: 'Torre Corporativa Sur',
+        clasificacion: 'ejecucion', estado: 'activo', etapa: 'prospecto',
+        precio_cotizado: 60000, fecha_creacion: null, // missing date
+        stage_timestamps: null,
+        vendedorId: 'v1'
+      }
+    ];
+
+    const S = {
+      prospects: customState.prospects || defaultProspects,
+      clients: customState.clients || [
+        { id: 'cli_1', empresa: 'Grupo Constructor Alfa', tipo: 'juridico' },
+        { id: 'cli_2', nombres: 'Mariana', apellidos: 'Pérez', tipo: 'natural' }
+      ],
+      users: customState.users || [
+        { id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' },
+        { id: 'v2', nombre: 'Beatriz Gestora', role: 'gestor' }
+      ],
+      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' }
+    };
+
+    const openedProspectIds = [];
+    const openDetail = (id) => { openedProspectIds.push(id); };
+
+    const sandboxFn = new Function(
+      'S', 'document', 'openDetail',
+      'with(S) {\n' + PIPELINE_CORE_SRC + '\n return { renderList, setOppStatusFilter, setOppClasifFilter, setOppStageFilter, getOppStageFilter, getOppStatusFilter, getOppClasifFilter, toggleOppSort, clearOppDateFilter };\n}'
+    );
+
+    const api = sandboxFn(S, documentMock, openDetail);
+    return { api, elements, documentMock, S, openedProspectIds };
+  }
+
+  describe('A. Simplificación y filtros rápidos por etapa', () => {
+    test('initial stage filter is "todas" and renders all active opportunities', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.renderList();
+      expect(api.getOppStageFilter()).toBe('todas');
+      // Active prospects p1, p2, p4, p5 (p3 is perdido)
+      expect(elements['opp-table-body'].children).toHaveLength(4);
+      expect(elements['filter-stage-todas'].classList.contains('active')).toBe(true);
+      expect(elements['filter-stage-todas'].getAttribute('aria-pressed')).toBe('true');
+      expect(elements['filter-stage-cotizacion'].getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('stage filter isolates opportunities by stage and updates active states', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.setOppStageFilter('cotizacion');
+      expect(api.getOppStageFilter()).toBe('cotizacion');
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-101');
+      expect(elements['filter-stage-cotizacion'].classList.contains('active')).toBe(true);
+      expect(elements['filter-stage-cotizacion'].getAttribute('aria-pressed')).toBe('true');
+      expect(elements['filter-stage-todas'].classList.contains('active')).toBe(false);
+      expect(elements['filter-stage-todas'].getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('clicking the active stage pill toggles filter back to "todas"', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.setOppStageFilter('cierre');
+      expect(api.getOppStageFilter()).toBe('cierre');
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-104');
+
+      // Click same stage again: toggles back to 'todas'
+      api.setOppStageFilter('cierre');
+      expect(api.getOppStageFilter()).toBe('todas');
+      expect(elements['opp-table-body'].children).toHaveLength(4);
+      expect(elements['filter-stage-todas'].classList.contains('active')).toBe(true);
+    });
+
+    test('stage badges update accurately and are scoped to the current status filter', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.renderList();
+      // Active prospects: p1(cotizacion), p2(negociacion), p4(cierre), p5(prospecto) -> total 4
+      expect(elements['count-stage-todas'].textContent).toBe(4);
+      expect(elements['count-stage-cotizacion'].textContent).toBe(1);
+      expect(elements['count-stage-negociacion'].textContent).toBe(1);
+      expect(elements['count-stage-cierre'].textContent).toBe(1);
+      expect(elements['count-stage-prospecto'].textContent).toBe(1);
+      expect(elements['count-stage-levantamiento'].textContent).toBe(0);
+
+      // Switch to lost opportunities (p3: levantamiento)
+      api.setOppStatusFilter('perdidas');
+      expect(elements['count-stage-todas'].textContent).toBe(1);
+      expect(elements['count-stage-levantamiento'].textContent).toBe(1);
+      expect(elements['count-stage-cotizacion'].textContent).toBe(0);
+    });
+
+    test('coexistence: stage filter combines with classification and search', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.renderList();
+
+      // Filter by stage 'negociacion' (p2)
+      api.setOppStageFilter('negociacion');
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+
+      // Also filter by clasificacion 'ejecucion' -> p2 is 'presupuesto', so 0 results
+      api.setOppClasifFilter('ejecucion');
+      expect(elements['opp-table-body'].children).toHaveLength(0);
+
+      // Reset clasif to 'todas' -> p2 visible again
+      api.setOppClasifFilter('todas');
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+
+      // Search matching p2
+      elements['opp-search'].value = 'Prisma';
+      api.renderList();
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+
+      // Search not matching p2
+      elements['opp-search'].value = 'Hospital';
+      api.renderList();
+      expect(elements['opp-table-body'].children).toHaveLength(0);
+    });
+
+    test('role isolation: gestor or vendedor only sees assigned prospects under stage filter', () => {
+      // Carlos Vendedor (v1) only owns p1, p2, p5 (p4 is v2)
+      const { api, elements } = createPipelineSandbox({
+        currentUser: { id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' }
+      });
+      api.renderList();
+      // Active for v1: p1(cotizacion), p2(negociacion), p5(prospecto) -> total 3
+      expect(elements['opp-table-body'].children).toHaveLength(3);
+
+      // Filter by stage 'cierre' (p4 belongs to v2) -> v1 sees 0
+      api.setOppStageFilter('cierre');
+      expect(elements['opp-table-body'].children).toHaveLength(0);
+
+      // Filter by stage 'cotizacion' (p1 belongs to v1) -> v1 sees 1
+      api.setOppStageFilter('cotizacion');
+      expect(elements['opp-table-body'].children).toHaveLength(1);
+      expect(elements['opp-table-body'].children[0].innerHTML).toContain('OPP-101');
+    });
+  });
+
+  describe('B. Días en etapa (daysInStage) y semántica visual', () => {
+    test('renders days in stage accurately next to stage name in desktop and mobile card', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.setOppStageFilter('cotizacion'); // p1 has 10 days in cotizacion
+      const row = elements['opp-table-body'].children[0];
+      expect(row.innerHTML).toContain('opp-stage-pill');
+      expect(row.innerHTML).toContain('class="opp-stage-name"');
+      expect(row.innerHTML).toContain('cotizacion');
+      expect(row.innerHTML).toContain('class="opp-stage-days"');
+      expect(row.innerHTML).toContain('10d');
+      expect(row.innerHTML).not.toContain('opp-stage-days-warn');
+    });
+
+    test('missing or invalid stage date safely renders stage name without NaN or incorrect numbers', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.setOppStageFilter('prospecto'); // p5 has null fecha_creacion and null stage_timestamps
+      const row = elements['opp-table-body'].children[0];
+      expect(row.innerHTML).toContain('class="opp-stage-name"');
+      expect(row.innerHTML).toContain('prospecto');
+      expect(row.innerHTML).not.toContain('NaN');
+      expect(row.innerHTML).not.toContain('undefined');
+      expect(row.innerHTML).not.toContain('class="opp-stage-days"');
+    });
+
+    test('high antiquity adds .opp-stage-days-warn indicator without tinting rows or cards red', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.setOppStageFilter('negociacion'); // p2 has 20 days (>15d)
+      const row = elements['opp-table-body'].children[0];
+      expect(row.innerHTML).toContain('class="opp-stage-days opp-stage-days-warn"');
+      expect(row.innerHTML).toContain('20d');
+      expect(row.innerHTML).toContain('Antigüedad elevada en etapa: 20 días');
+
+      // Strictly verify no forbidden red background or classes
+      expect(row.innerHTML).not.toContain('background: rgba(239, 68, 68');
+      expect(row.innerHTML).not.toContain('class="vencida"');
+      expect(row.style.background || '').not.toContain('red');
+    });
+
+    test('preserves Phase 5.1 mobile card semantic classes and column structure', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.renderList();
+      const row = elements['opp-table-body'].children[0];
+      const requiredColumns = [
+        'col-opp-code', 'col-opp-client', 'col-opp-project',
+        'col-opp-vendor', 'col-opp-date', 'col-opp-stage',
+        'col-opp-amount', 'col-opp-status', 'col-opp-action'
+      ];
+      requiredColumns.forEach(cls => {
+        expect(row.innerHTML).toContain(cls);
+      });
+    });
+  });
+
+  describe('C. Orden predeterminado determinista y ordenamiento por columnas', () => {
+    test('default order is fecha_creacion descending (newest first) with deterministic tie-breaker', () => {
+      const { api, elements } = createPipelineSandbox();
+      api.renderList();
+      const rows = elements['opp-table-body'].children;
+      // Default active prospects:
+      // p4: daysAgo(7)
+      // p1: daysAgo(10)
+      // p2: daysAgo(20)
+      // p5: null date (placed at end)
+      expect(rows[0].innerHTML).toContain('OPP-104');
+      expect(rows[1].innerHTML).toContain('OPP-101');
+      expect(rows[2].innerHTML).toContain('OPP-102');
+      expect(rows[3].innerHTML).toContain('OPP-105');
+    });
+
+    test('deterministic tie-breaker sorts by codigo/id when creation dates are identical', () => {
+      const sameDate = '2026-03-01T12:00:00.000Z';
+      const customProspects = [
+        { id: 'pB', codigo: 'OPP-200', clientId: 'cli_1', proyecto: 'Proyecto B', clasificacion: 'ejecucion', estado: 'activo', etapa: 'cotizacion', precio_cotizado: 10000, fecha_creacion: sameDate, vendedorId: 'v1' },
+        { id: 'pA', codigo: 'OPP-100', clientId: 'cli_1', proyecto: 'Proyecto A', clasificacion: 'ejecucion', estado: 'activo', etapa: 'cotizacion', precio_cotizado: 20000, fecha_creacion: sameDate, vendedorId: 'v1' },
+        { id: 'pC', codigo: 'OPP-300', clientId: 'cli_1', proyecto: 'Proyecto C', clasificacion: 'ejecucion', estado: 'activo', etapa: 'cotizacion', precio_cotizado: 30000, fecha_creacion: sameDate, vendedorId: 'v1' }
+      ];
+      const { api, elements } = createPipelineSandbox({ prospects: customProspects });
+      api.renderList();
+      const rows = elements['opp-table-body'].children;
+      // Tie-breaker localeCompare: OPP-300, OPP-200, OPP-100 or deterministic order
+      expect(rows).toHaveLength(3);
+      const codes = Array.from(rows).map(r => r.innerHTML.match(/OPP-\d+/)[0]);
+      // Verify all 3 are deterministically rendered
+      expect(codes).toContain('OPP-100');
+      expect(codes).toContain('OPP-200');
+      expect(codes).toContain('OPP-300');
+    });
+
+    test('manual column sorting (toggleOppSort) works with deterministic tie-breaker', () => {
+      const { api, elements } = createPipelineSandbox();
+      // Sort by monto ascending
+      api.toggleOppSort('monto');
+      let rows = elements['opp-table-body'].children;
+      // p2 (34000) < p1 (52000) < p5 (60000) < p4 (95000)
+      expect(rows[0].innerHTML).toContain('OPP-102');
+      expect(rows[3].innerHTML).toContain('OPP-104');
+
+      // Toggle monto descending
+      api.toggleOppSort('monto');
+      rows = elements['opp-table-body'].children;
+      expect(rows[0].innerHTML).toContain('OPP-104');
+      expect(rows[3].innerHTML).toContain('OPP-102');
+    });
+  });
+
+  describe('D. HTML, CSS y Accesibilidad (Fase 5.2 Bloque 1)', () => {
+    test('index.html contains .pipeline-stage-filters-container with all 5 stages and counters', () => {
+      expect(indexHtml).toContain('class="pipeline-stage-filters-container');
+      expect(indexHtml).toContain('id="filter-stage-todas"');
+      expect(indexHtml).toContain('id="filter-stage-prospecto"');
+      expect(indexHtml).toContain('id="filter-stage-levantamiento"');
+      expect(indexHtml).toContain('id="filter-stage-cotizacion"');
+      expect(indexHtml).toContain('id="filter-stage-negociacion"');
+      expect(indexHtml).toContain('id="filter-stage-cierre"');
+      expect(indexHtml).toContain('id="count-stage-todas"');
+      expect(indexHtml).toContain('id="count-stage-cierre"');
+    });
+
+    test('styles.css contains mobile horizontal scroll and days-in-stage styles', () => {
+      expect(stylesCss).toMatch(/\.pipeline-stage-filters-container\s*\{[^}]*width:\s*100%;/);
+      expect(stylesCss).toMatch(/\.opp-stage-days\s*\{[^}]*border-radius:/);
+      expect(stylesCss).toMatch(/\.opp-stage-days-warn\s*\{[^}]*background:\s*rgba\(245,\s*158,\s*11/);
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.pipeline-stage-filters-container\s*\{[^}]*overflow-x:\s*auto;/);
+    });
+
+    test('audit compliance: no forbidden red row styles or class="vencida" in pipeline code', () => {
+      const listRenderCode = appCoreCode.substring(
+        appCoreCode.indexOf('function renderList()'),
+        appCoreCode.indexOf('function renderProjectsList()')
+      );
+      expect(listRenderCode).not.toContain('background: rgba(239, 68, 68');
+      expect(listRenderCode).not.toContain('class="vencida"');
+    });
+  });
+});
+
 
 

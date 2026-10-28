@@ -229,6 +229,36 @@
                         <div id="opp-count-badge" class="badge bg-neutral opp-counter-badge" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
                     </div>
 
+                    <!-- Nivel 3: Acceso Rápido por Etapas Comerciales (Fase 5.2 Bloque 1) -->
+                    <div class="pipeline-stage-filters-container mb-3" aria-label="Filtro rápido por etapa comercial">
+                        <div class="pipeline-stage-scroll" id="opp-stage-pills">
+                            <button type="button" id="filter-stage-todas" class="stage-filter-pill active" onclick="setOppStageFilter('todas')" aria-pressed="true" title="Mostrar todas las etapas">
+                                <span>Todas las etapas</span>
+                                <span class="filter-badge" id="count-stage-todas">0</span>
+                            </button>
+                            <button type="button" id="filter-stage-prospecto" class="stage-filter-pill" data-stage="prospecto" onclick="setOppStageFilter('prospecto')" aria-pressed="false" title="Filtrar por etapa Prospecto">
+                                <span>1. Prospecto</span>
+                                <span class="filter-badge" id="count-stage-prospecto">0</span>
+                            </button>
+                            <button type="button" id="filter-stage-levantamiento" class="stage-filter-pill" data-stage="levantamiento" onclick="setOppStageFilter('levantamiento')" aria-pressed="false" title="Filtrar por etapa Levantamiento">
+                                <span>2. Levantamiento</span>
+                                <span class="filter-badge" id="count-stage-levantamiento">0</span>
+                            </button>
+                            <button type="button" id="filter-stage-cotizacion" class="stage-filter-pill" data-stage="cotizacion" onclick="setOppStageFilter('cotizacion')" aria-pressed="false" title="Filtrar por etapa Cotización">
+                                <span>3. Cotización</span>
+                                <span class="filter-badge" id="count-stage-cotizacion">0</span>
+                            </button>
+                            <button type="button" id="filter-stage-negociacion" class="stage-filter-pill" data-stage="negociacion" onclick="setOppStageFilter('negociacion')" aria-pressed="false" title="Filtrar por etapa Negociación">
+                                <span>4. Negociación</span>
+                                <span class="filter-badge" id="count-stage-negociacion">0</span>
+                            </button>
+                            <button type="button" id="filter-stage-cierre" class="stage-filter-pill" data-stage="cierre" onclick="setOppStageFilter('cierre')" aria-pressed="false" title="Filtrar por etapa Cierre">
+                                <span>5. Cierre</span>
+                                <span class="filter-badge" id="count-stage-cierre">0</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="table-container glass-panel">
                         <table id="opportunitiesTable">
                             <thead>

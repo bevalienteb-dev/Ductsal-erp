@@ -408,6 +408,9 @@ function updateOppSortIcons() {
         if (oppSortCol === col) {
             el.innerHTML = oppSortDir === 'asc' ? '▲' : '▼';
             el.style.color = 'var(--brand-gold)';
+        } else if (!oppSortCol && col === 'fecha') {
+            el.innerHTML = '▼';
+            el.style.color = 'var(--text-secondary)';
         } else {
             el.innerHTML = '↕';
             el.style.color = 'var(--text-muted)';
@@ -1680,6 +1683,10 @@ if (typeof window !== 'undefined') {
     if (typeof updateOppSortIcons !== 'undefined') window.updateOppSortIcons = updateOppSortIcons;
     if (typeof setOppStatusFilter !== 'undefined') window.setOppStatusFilter = setOppStatusFilter;
     if (typeof getOppStatusFilter !== 'undefined') window.getOppStatusFilter = getOppStatusFilter;
+    if (typeof setOppClasifFilter !== 'undefined') window.setOppClasifFilter = setOppClasifFilter;
+    if (typeof getOppClasifFilter !== 'undefined') window.getOppClasifFilter = getOppClasifFilter;
+    if (typeof setOppStageFilter !== 'undefined') window.setOppStageFilter = setOppStageFilter;
+    if (typeof getOppStageFilter !== 'undefined') window.getOppStageFilter = getOppStageFilter;
     if (typeof setSellerFilterMode !== 'undefined') window.setSellerFilterMode = setSellerFilterMode;
     if (typeof getSellerFilterMode !== 'undefined') window.getSellerFilterMode = getSellerFilterMode;
     if (typeof renderList !== 'undefined') window.renderList = renderList;
@@ -1706,6 +1713,10 @@ if (typeof module !== 'undefined' && module.exports) {
         getProjPaymentFilter: typeof getProjPaymentFilter !== 'undefined' ? getProjPaymentFilter : undefined,
         setOppStatusFilter: typeof setOppStatusFilter !== 'undefined' ? setOppStatusFilter : undefined,
         getOppStatusFilter: typeof getOppStatusFilter !== 'undefined' ? getOppStatusFilter : undefined,
+        setOppClasifFilter: typeof setOppClasifFilter !== 'undefined' ? setOppClasifFilter : undefined,
+        getOppClasifFilter: typeof getOppClasifFilter !== 'undefined' ? getOppClasifFilter : undefined,
+        setOppStageFilter: typeof setOppStageFilter !== 'undefined' ? setOppStageFilter : undefined,
+        getOppStageFilter: typeof getOppStageFilter !== 'undefined' ? getOppStageFilter : undefined,
         setSellerFilterMode: typeof setSellerFilterMode !== 'undefined' ? setSellerFilterMode : undefined,
         getSellerFilterMode: typeof getSellerFilterMode !== 'undefined' ? getSellerFilterMode : undefined,
         renderList: typeof renderList !== 'undefined' ? renderList : undefined,
@@ -3136,6 +3147,7 @@ function getClientName(clientId) {
 
 let oppStatusFilter = 'activas';
 let oppClasifFilter = 'todas';
+let oppStageFilter = 'todas';
 
 function getOppStatusFilter() {
     return oppStatusFilter;
@@ -3143,6 +3155,10 @@ function getOppStatusFilter() {
 
 function getOppClasifFilter() {
     return oppClasifFilter;
+}
+
+function getOppStageFilter() {
+    return oppStageFilter;
 }
 
 function setOppStatusFilter(filterKey) {
@@ -3155,6 +3171,18 @@ function setOppStatusFilter(filterKey) {
 function setOppClasifFilter(filterKey) {
     if (['todas', 'ejecucion', 'presupuesto'].includes(filterKey)) {
         oppClasifFilter = filterKey;
+        renderList();
+    }
+}
+
+function setOppStageFilter(filterKey) {
+    const validStages = ['todas', 'prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
+    if (validStages.includes(filterKey)) {
+        if (oppStageFilter === filterKey && filterKey !== 'todas') {
+            oppStageFilter = 'todas';
+        } else {
+            oppStageFilter = filterKey;
+        }
         renderList();
     }
 }
@@ -4094,6 +4122,34 @@ function renderList() {
         }
     });
 
+    // Update stage filter badge counters (scoped to active status selection)
+    const stageBase = (oppStatusFilter === 'perdidas')
+        ? baseProspects.filter(p => p.estado === 'perdido')
+        : (oppStatusFilter === 'todas' ? baseProspects : baseProspects.filter(p => p.estado !== 'perdido'));
+
+    const PIPELINE_STAGES = (typeof STAGES !== 'undefined') ? STAGES : ['prospecto', 'levantamiento', 'cotizacion', 'negociacion', 'cierre'];
+
+    PIPELINE_STAGES.forEach(key => {
+        const el = document.getElementById(`count-stage-${key}`);
+        if (el) el.textContent = stageBase.filter(p => p.etapa === key).length;
+    });
+    const elStageTodas = document.getElementById('count-stage-todas');
+    if (elStageTodas) elStageTodas.textContent = stageBase.length;
+
+    // Update active class and aria-pressed on stage pills
+    ['todas', ...PIPELINE_STAGES].forEach(key => {
+        const btn = document.getElementById(`filter-stage-${key}`);
+        if (btn) {
+            if (key === oppStageFilter) {
+                btn.classList.add('active');
+                if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-pressed', 'true');
+            } else {
+                btn.classList.remove('active');
+                if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-pressed', 'false');
+            }
+        }
+    });
+
     // Apply status filter: default 'activas' strictly excludes lost opportunities
     let visibleProspects = baseProspects;
     if (oppStatusFilter === 'activas') {
@@ -4109,6 +4165,11 @@ function renderList() {
         visibleProspects = visibleProspects.filter(p => (p.clasificacion || 'ejecucion') === 'ejecucion');
     } else if (oppClasifFilter === 'presupuesto') {
         visibleProspects = visibleProspects.filter(p => p.clasificacion === 'presupuesto');
+    }
+
+    // Apply stage filter (Bloque 1 Fase 5.2)
+    if (oppStageFilter && oppStageFilter !== 'todas') {
+        visibleProspects = visibleProspects.filter(p => p.etapa === oppStageFilter);
     }
 
     // Apply Search Filter
@@ -4174,12 +4235,20 @@ function renderList() {
             if (oppSortCol === 'fecha') {
                 const dateA = parseProspectDate(a.fecha_creacion);
                 const dateB = parseProspectDate(b.fecha_creacion);
-                if (!dateA && !dateB) return 0;
-                if (!dateA) return 1;
-                if (!dateB) return -1;
-                return oppSortDir === 'asc'
-                    ? dateA.getTime() - dateB.getTime()
-                    : dateB.getTime() - dateA.getTime();
+                let dateDiff = 0;
+                if (dateA && dateB) {
+                    dateDiff = oppSortDir === 'asc'
+                        ? dateA.getTime() - dateB.getTime()
+                        : dateB.getTime() - dateA.getTime();
+                } else if (dateA) {
+                    dateDiff = -1;
+                } else if (dateB) {
+                    dateDiff = 1;
+                }
+                if (dateDiff !== 0) return dateDiff;
+                const tieA = a.codigo || a.id || '';
+                const tieB = b.codigo || b.id || '';
+                return tieA.localeCompare(tieB, 'es', { sensitivity: 'base' });
             }
 
             let valA = '';
@@ -4208,16 +4277,38 @@ function renderList() {
                 valB = b.estado || '';
             }
 
+            let comp = 0;
             if (typeof valA === 'string') {
-                return oppSortDir === 'asc'
+                comp = oppSortDir === 'asc'
                     ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
                     : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
             } else {
-                return oppSortDir === 'asc' ? valA - valB : valB - valA;
+                comp = oppSortDir === 'asc' ? valA - valB : valB - valA;
             }
+
+            if (comp !== 0) return comp;
+            // Desempate determinista
+            const tieA = a.codigo || a.id || '';
+            const tieB = b.codigo || b.id || '';
+            return tieA.localeCompare(tieB, 'es', { sensitivity: 'base' });
         });
     } else {
-        visibleProspects.reverse();
+        // Orden inicial predeterminado: Fecha de ingreso descendente (más reciente primero) con desempate determinista
+        visibleProspects.sort((a, b) => {
+            const dateA = parseProspectDate(a.fecha_creacion);
+            const dateB = parseProspectDate(b.fecha_creacion);
+            if (dateA && dateB) {
+                const diff = dateB.getTime() - dateA.getTime();
+                if (diff !== 0) return diff;
+            } else if (dateA && !dateB) {
+                return -1;
+            } else if (!dateA && dateB) {
+                return 1;
+            }
+            const tieA = a.codigo || a.id || '';
+            const tieB = b.codigo || b.id || '';
+            return tieB.localeCompare(tieA, 'es', { sensitivity: 'base' });
+        });
     }
 
     if (visibleProspects.length === 0) {
@@ -4226,7 +4317,7 @@ function renderList() {
             : 'No se encontraron oportunidades.';
         const emptySub = oppStatusFilter === 'perdidas'
             ? 'No existen oportunidades marcadas con cierre no exitoso bajo los filtros seleccionados.'
-            : 'Intenta modificar el término de búsqueda, el rango de fechas o los filtros de clasificación.';
+            : 'Intenta modificar el término de búsqueda, el rango de fechas o los filtros de etapa y clasificación.';
         tbody.innerHTML = `<tr><td colspan="9" style="padding: 2.5rem 1rem; text-align: center; border: none;">
             <div class="dash-empty-state-box" style="background: transparent; border: none; padding: 0;">
                 <div style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.85;">🔍</div>
@@ -4241,9 +4332,17 @@ function renderList() {
         const tr = document.createElement('tr'); tr.classList.add('cursor-pointer'); tr.onclick = () => openDetail(p.id);
         let badgeClass = p.estado === 'activo' ? 'activo' : 'perdido';
 
-        // Calculate days in stage
-        const timestamp = p.stage_timestamps && p.stage_timestamps[p.etapa] ? p.stage_timestamps[p.etapa] : p.fecha_creacion;
-        const daysInStage = getDaysDifference(timestamp);
+        // Safe calculation of days in stage using parseProspectDate
+        const rawStageDate = (p.stage_timestamps && p.stage_timestamps[p.etapa]) ? p.stage_timestamps[p.etapa] : p.fecha_creacion;
+        const parsedStageDate = parseProspectDate(rawStageDate);
+        let daysInStage = null;
+        if (parsedStageDate) {
+            const now = new Date();
+            const diffMs = now.getTime() - parsedStageDate.getTime();
+            if (!isNaN(diffMs) && diffMs >= 0) {
+                daysInStage = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            }
+        }
 
         const vendor = getProspectVendorInfo(p);
         const vendorBadge = vendor.role ? `<span style="font-size:0.75rem; color:var(--text-secondary); display:block;">(${vendor.role})</span>` : '';
@@ -4270,7 +4369,21 @@ function renderList() {
             'cierre': 'background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.35);'
         };
         const stageBadgeStyle = stageColorMap[p.etapa] || 'background: rgba(255, 255, 255, 0.1); color: var(--text-primary);';
-        const stageBadge = `<span class="badge opp-stage-pill" style="text-transform: capitalize; ${stageBadgeStyle}">${p.etapa || '-'}</span>`;
+
+        // Display days in stage if valid date exists
+        let daysDisplay = '';
+        if (daysInStage !== null && !isNaN(daysInStage)) {
+            const isHighAntiquity = (p.estado === 'activo') && (
+                daysInStage >= 15 || 
+                (p.etapa === 'cierre' && daysInStage >= 5) ||
+                (p.etapa === 'prospecto' && daysInStage >= 5)
+            );
+            const warnClass = isHighAntiquity ? ' opp-stage-days-warn' : '';
+            const warnTitle = isHighAntiquity ? `Antigüedad elevada en etapa: ${daysInStage} días` : `Tiempo en etapa: ${daysInStage} días`;
+            daysDisplay = `<span class="opp-stage-days${warnClass}" title="${warnTitle}">${daysInStage}d</span>`;
+        }
+
+        const stageBadge = `<span class="badge opp-stage-pill" style="text-transform: capitalize; ${stageBadgeStyle}"><span class="opp-stage-name">${p.etapa || '-'}</span>${daysDisplay}</span>`;
 
         const codeVal = p.codigo || p.id.substring(p.id.length - 4);
         const clientVal = getClientName(p.clientId);
