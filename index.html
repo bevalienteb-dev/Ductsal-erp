@@ -188,7 +188,8 @@
 
                 <!-- CONTENEDOR 2: CARTERA COMPLETA (PIPELINE TRADICIONAL) -->
                 <div id="pipeline-view-container" style="display: none;">
-                    <div class="filter-pills-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between;">
+                    <!-- Nivel 1: Segmentación Rápida (Estado y Clasificación) -->
+                    <div class="pipeline-filters-primary mb-3">
                         <div class="filter-pills-group" id="opp-status-pills">
                             <button type="button" id="filter-opp-activas" class="filter-pill active" onclick="setOppStatusFilter('activas')">
                                 ⚡ En Proceso / Activas <span class="filter-badge" id="count-opp-activas">0</span>
@@ -213,18 +214,19 @@
                         </div>
                     </div>
 
-                    <div class="opp-filters-bar mb-3" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;">
-                        <div style="flex: 1; min-width: 280px;">
-                            <input type="text" id="opp-search" placeholder="🔍 Buscar por código, cliente, proyecto, monto, etapa, estado o fecha..." class="form-control" style="width: 100%; padding: 0.75rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary); outline: none;" onkeyup="renderList()">
+                    <!-- Nivel 2: Búsqueda, Rango de Fechas y Contador -->
+                    <div class="opp-filters-bar mb-3">
+                        <div class="opp-search-box">
+                            <input type="text" id="opp-search" placeholder="🔍 Buscar por código, cliente, proyecto, monto, etapa, estado o fecha..." class="form-control" onkeyup="renderList()">
                         </div>
-                        <div class="date-filter-box" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.35rem 0.75rem; border: 1px solid var(--panel-border); border-radius: 6px;">
-                            <span style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">📅 Ingreso:</span>
+                        <div class="date-filter-box">
+                            <span class="date-filter-label" style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap;">📅 Ingreso:</span>
                             <input type="date" id="opp-date-start" title="Fecha inicial de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
-                            <span style="color: var(--text-muted); font-size: 0.8rem;">a</span>
+                            <span class="date-filter-sep" style="color: var(--text-muted); font-size: 0.8rem;">a</span>
                             <input type="date" id="opp-date-end" title="Fecha final de ingreso" style="background: var(--bg-dark); border: 1px solid var(--panel-border); color: white; padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.8rem;" onchange="renderList()">
                             <button type="button" id="btn-clear-opp-dates" class="btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; display: none;" onclick="clearOppDateFilter()" title="Limpiar filtro de fechas">✕ Limpiar</button>
                         </div>
-                        <div id="opp-count-badge" class="badge bg-neutral" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
+                        <div id="opp-count-badge" class="badge bg-neutral opp-counter-badge" style="padding: 0.55rem 0.85rem; font-size: 0.8rem; white-space: nowrap;">0 oportunidades</div>
                     </div>
 
                     <div class="table-container glass-panel">
@@ -1616,6 +1618,7 @@
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>
     <script src="crm_followup_calc.js?v=1"></script>
+    <script src="crm_ui.js?v=1"></script>
     <script src="app_core.js?v=26"></script>
 </body>
 </html>
