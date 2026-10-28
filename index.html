@@ -19,7 +19,7 @@
 <body>
     <!-- Login Screen -->
     <div id="login-screen" class="modal" style="display:flex; z-index: 1000; background: var(--bg-dark);">
-        <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
+        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%; text-align: center; margin: auto;">
             <img src="logo.svg" alt="Ductsal Logo" style="width: 60px; height: 60px; display: block; margin: 0 auto 1rem;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
             <div class="hexagon-logo fallback" style="display:none; margin: 0 auto 1rem;"></div>
             <h2>Ingresar al Sistema</h2>
@@ -34,7 +34,7 @@
 
     <!-- First Time Setup Screen -->
     <div id="setup-screen" class="modal" style="display:none; z-index: 1000; background: var(--bg-dark);">
-        <div class="modal-content glass-panel" style="width: 400px; text-align: center; margin: auto;">
+        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%; text-align: center; margin: auto;">
             <h2 style="color:var(--brand-gold);">Bienvenido a Ductsal</h2>
             <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Como es tu primera vez iniciando sesión, por favor configura tu contraseña.</p>
             <form id="setup-form" onsubmit="processFirstTimeSetup(event)">
@@ -780,7 +780,7 @@
                         <h1 id="detail-cliente">Cliente</h1>
                         <p id="detail-proyecto">Proyecto <span id="detail-codigo" class="badge bg-neutral ml-2"></span></p>
                     </div>
-                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
                         <div class="status-badges" id="detail-badges">
                             <!-- Badges -->
                         </div>
@@ -826,7 +826,7 @@
                         <div id="financial-tracker-container" class="mb-2" style="display: none; padding-bottom: 1.5rem;">
                             <div style="border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1rem;">
                                 <h3 style="color:var(--brand-gold); margin-bottom:1rem;">Balance Financiero del Proyecto</h3>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem; font-size: 0.9rem;">
+                                <div class="financial-balance-grid">
                                     <!-- Columna 1: Ventas -->
                                     <div>
                                         <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Ventas (Ingresos)</h4>
@@ -846,7 +846,7 @@
                                         <div style="color:white; margin-top:10px; padding-top:4px; border-top:1px solid var(--brand-gold);">Margen Bruto: <strong id="fin-margen" style="color:var(--brand-gold); font-size:1.1rem;">$0</strong> <span id="fin-margen-pct" style="font-size:0.8rem;">(0%)</span></div>
                                     </div>
                                     <!-- Columna 3: Facturación -->
-                                    <div style="text-align: right; background: rgba(0,0,0,0.15); padding: 1rem; border-radius: 8px;">
+                                    <div class="financial-cxc-box">
                                         <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px; text-align:right;">Cuentas por Cobrar</h4>
                                         <div>Total Facturado: <strong id="fin-facturado">$0</strong></div>
                                         <div>Total Cobrado: <strong id="fin-cobrado" style="color:var(--success);">$0</strong></div>
@@ -1067,7 +1067,7 @@
 
     <!-- Client Modal (Create & Edit) -->
     <div id="clientModal" class="modal" style="z-index: 110;">
-        <div class="modal-content glass-panel" style="width: 500px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
             <span class="close" onclick="closeModal('clientModal')">&times;</span>
             <h2 id="client-modal-title">Registrar Cliente</h2>
             <form id="clientForm" onsubmit="saveClient(event)">
@@ -1180,7 +1180,7 @@
 
     <!-- Settings Modal -->
     <div id="settingsModal" class="modal" style="z-index: 120;">
-        <div class="modal-content glass-panel" style="width: 500px;">
+        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
             <span class="close" onclick="closeModal('settingsModal')">&times;</span>
             <h2>Configuración del Sistema</h2>
             <div class="mt-4">
@@ -1210,7 +1210,7 @@
 
     <!-- User Management Modal -->
     <div id="userModal" class="modal" style="z-index: 110;">
-        <div class="modal-content glass-panel" style="width: 400px;">
+        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%;">
             <span class="close" onclick="closeModal('userModal')">&times;</span>
             <h2 id="user-modal-title">Registrar Usuario</h2>
             <form id="userForm" onsubmit="saveUser(event)">
@@ -1239,7 +1239,7 @@
 
     <!-- Change Order Modal -->
     <div id="changeOrderModal" class="modal" style="z-index: 110;">
-        <div class="modal-content glass-panel" style="width: 400px;">
+        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%;">
             <span class="close" onclick="closeModal('changeOrderModal')">&times;</span>
             <h2>Orden de Cambio</h2>
             <form id="changeOrderForm" onsubmit="processChangeOrder(event)">
@@ -1263,7 +1263,7 @@
 
     <!-- Edit Base Price Modal -->
     <div id="editBasePriceModal" class="modal" style="z-index: 110;">
-        <div class="modal-content glass-panel" style="width: 400px;">
+        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%;">
             <span class="close" onclick="closeModal('editBasePriceModal')">&times;</span>
             <h2 style="font-size: 1.15rem; color: var(--brand-gold); margin-bottom: 6px;">Corregir Error de Digitación</h2>
             <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.35;">
@@ -1604,7 +1604,7 @@
     <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
         <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
         <h3 id="spinner-msg" style="margin-bottom: 1rem;">Subiendo archivo a la nube...</h3>
-        <div id="upload-progress-container" style="display:none; width: 300px; background: rgba(255,255,255,0.1); border-radius: 10px; height: 8px; overflow: hidden;">
+        <div id="upload-progress-container" style="display:none; width: 300px; max-width: 90%; background: rgba(255,255,255,0.1); border-radius: 10px; height: 8px; overflow: hidden;">
             <div id="upload-progress-bar" style="width: 0%; height: 100%; background: var(--brand-gold); transition: width 0.2s;"></div>
         </div>
         <p id="upload-progress-text" style="display:none; font-size: 0.8rem; margin-top: 0.5rem; color: var(--brand-gold);">0%</p>

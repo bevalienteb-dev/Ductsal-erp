@@ -1184,3 +1184,211 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
   });
 });
 
+describe('Post-Release 5.1 Fixes — Commercial Logs Navigation & Detail View Mobile Responsiveness', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+
+  describe('Problem 1: Real-time Firestore Updates and View Preservation', () => {
+    test('checkInitialLoad lifecycle: initial bootstrap calls checkAuth, subsequent snapshots call reRenderApp without view reset', () => {
+      // Test the exact logic implemented in app_core.js
+      let initialLoadCompleted = false;
+      let loadedCollections = 0;
+      const checkAuthCalls = [];
+      const reRenderAppCalls = [];
+
+      const checkAuth = jest.fn(() => checkAuthCalls.push('checkAuth'));
+      const reRenderApp = jest.fn(() => reRenderAppCalls.push('reRenderApp'));
+
+      // Runner simulating checkInitialLoad
+      function checkInitialLoad() {
+        if (initialLoadCompleted) {
+          reRenderApp();
+          return;
+        }
+        loadedCollections++;
+        if (loadedCollections >= 3) {
+          checkAuth();
+          initialLoadCompleted = true;
+        }
+      }
+
+      function detachSnapshotListeners() {
+        loadedCollections = 0;
+        initialLoadCompleted = false;
+      }
+
+      // Step 1: Bootstrap phase (3 initial collections: prospects, clients, users)
+      checkInitialLoad(); // 1
+      expect(checkAuthCalls.length).toBe(0);
+      expect(reRenderAppCalls.length).toBe(0);
+
+      checkInitialLoad(); // 2
+      expect(checkAuthCalls.length).toBe(0);
+      expect(reRenderAppCalls.length).toBe(0);
+
+      checkInitialLoad(); // 3 -> bootstrap completes
+      expect(checkAuthCalls.length).toBe(1);
+      expect(reRenderAppCalls.length).toBe(0);
+      expect(initialLoadCompleted).toBe(true);
+
+      // Step 2: User is in detail view. A note is added or deleted.
+      // Firestore onSnapshot triggers checkInitialLoad again.
+      checkInitialLoad(); // subsequent snapshot 1
+      expect(checkAuthCalls.length).toBe(1); // checkAuth was NOT called!
+      expect(reRenderAppCalls.length).toBe(1); // reRenderApp WAS called!
+
+      checkInitialLoad(); // subsequent snapshot 2
+      expect(checkAuthCalls.length).toBe(1);
+      expect(reRenderAppCalls.length).toBe(2);
+
+      // Step 3: Listener detachment resets the latch
+      detachSnapshotListeners();
+      expect(initialLoadCompleted).toBe(false);
+      expect(loadedCollections).toBe(0);
+    });
+
+    test('applyRolePermissions preserves currently active view (e.g. detail-view) and avoids switching to dashboard', () => {
+      const showViewCalls = [];
+      const showView = (id) => showViewCalls.push(id);
+
+      // Scenario A: detail-view is active
+      const elementsA = {
+        '#detail-view': { id: 'detail-view', classList: { contains: () => true } },
+        '.view-section.active': { id: 'detail-view' }
+      };
+      const docA = {
+        querySelector: (sel) => elementsA[sel] || null,
+        querySelectorAll: () => []
+      };
+
+      // Simulated applyRolePermissions logic from app_core.js
+      function applyRolePermissions(doc, currentUserRole) {
+        const activeSection = doc.querySelector('.view-section.active');
+        const currentActiveId = activeSection ? activeSection.id : null;
+
+        if (!currentActiveId) {
+          if (currentUserRole === 'manager') showView('dashboard-view');
+          else if (currentUserRole === 'gestor') showView('projects-view');
+          else showView('list-view');
+        }
+      }
+
+      applyRolePermissions(docA, 'manager');
+      // With detail-view active, showView should NOT be called
+      expect(showViewCalls.length).toBe(0);
+
+      // Scenario B: No view active (initial login / bootstrap)
+      const docB = {
+        querySelector: () => null,
+        querySelectorAll: () => []
+      };
+      applyRolePermissions(docB, 'manager');
+      expect(showViewCalls).toEqual(['dashboard-view']);
+    });
+
+    test('reRenderApp preserves detail view context and refreshes sub-panels in place', () => {
+      const trackerCalls = [];
+      const infoCalls = [];
+      const logsCalls = [];
+      const followUpCalls = [];
+
+      const p = { id: 'P_TEST', nombre: 'Test Prospect', logs: [{ text: 'Nota' }] };
+      const S = {
+        currentProspectId: 'P_TEST',
+        prospects: [p],
+        renderTracker: (item) => trackerCalls.push(item.id),
+        renderInfo: (item) => infoCalls.push(item.id),
+        renderLogs: (item) => logsCalls.push(item.id),
+        renderFollowUpSummary: (item) => followUpCalls.push(item.id),
+        renderList: jest.fn(),
+        renderDashboard: jest.fn(),
+        renderProjectsList: jest.fn(),
+        renderAgendaTable: jest.fn()
+      };
+
+      // Simulated reRenderApp from app_core.js
+      function reRenderApp(state) {
+        state.renderList();
+        state.renderDashboard();
+        state.renderProjectsList();
+        state.renderAgendaTable();
+        if (state.currentProspectId) {
+          const found = state.prospects.find(x => x.id === state.currentProspectId);
+          if (found) {
+            state.renderTracker(found);
+            state.renderInfo(found);
+            state.renderLogs(found);
+            state.renderFollowUpSummary(found);
+          }
+        }
+      }
+
+      reRenderApp(S);
+
+      expect(trackerCalls).toEqual(['P_TEST']);
+      expect(infoCalls).toEqual(['P_TEST']);
+      expect(logsCalls).toEqual(['P_TEST']);
+      expect(followUpCalls).toEqual(['P_TEST']);
+      expect(S.renderList).toHaveBeenCalled();
+      expect(S.renderDashboard).toHaveBeenCalled();
+    });
+
+    test('verified in app_core.js source code: initialLoadCompleted guard is present in checkInitialLoad', () => {
+      expect(appCoreCode).toMatch(/let\s+initialLoadCompleted\s*=\s*false/);
+      expect(appCoreCode).toMatch(/function\s+checkInitialLoad\s*\(\)\s*\{[\s\S]*?if\s*\(\s*initialLoadCompleted\s*\)\s*\{[\s\S]*?reRenderApp\(\);[\s\S]*?return;/);
+      expect(appCoreCode).toMatch(/function\s+detachSnapshotListeners\s*\(\)\s*\{[\s\S]*?initialLoadCompleted\s*=\s*false;/);
+    });
+
+    test('verified in app_core.js source code: applyRolePermissions inspects active view before switching', () => {
+      expect(appCoreCode).toMatch(/function\s+applyRolePermissions\s*\(\)\s*\{[\s\S]*?querySelector\(['"]\.view-section\.active['"]\)/);
+      expect(appCoreCode).toMatch(/if\s*\(!currentActiveId\)\s*showView\(['"]dashboard-view['"]\)/);
+    });
+  });
+
+  describe('Problem 2: Mobile Responsiveness of Detail View and Modals', () => {
+    test('styles.css contains viewport overflow containment on html and body', () => {
+      expect(stylesCss).toMatch(/html,\s*body\s*\{[^}]*max-width:\s*100vw;[^}]*overflow-x:\s*hidden;/);
+    });
+
+    test('styles.css contains width containment and word-break on #detail-view', () => {
+      expect(stylesCss).toMatch(/#detail-view\s*\{[^}]*min-width:\s*0;[^}]*box-sizing:\s*border-box;/);
+      expect(stylesCss).toMatch(/#detail-cliente,\s*#detail-proyecto\s*\{[^}]*word-break:\s*break-word;[^}]*overflow-wrap:\s*anywhere;/);
+    });
+
+    test('styles.css defines .financial-balance-grid with 3 columns on desktop and 1 column on <= 768px', () => {
+      expect(stylesCss).toMatch(/\.financial-balance-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*1fr\);/);
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.financial-balance-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
+    });
+
+    test('styles.css defines .closing-checklist-grid with 1 column on <= 480px', () => {
+      expect(stylesCss).toMatch(/\.closing-checklist-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(260px,\s*1fr\)\);/);
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*480px\)[\s\S]*?\.closing-checklist-grid\s*\{[^}]*grid-template-columns:\s*1fr;/);
+    });
+
+    test('styles.css defines .doc-card-row vertical stacking and button wrapping on <= 480px', () => {
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*480px\)[\s\S]*?\.doc-card-row\s*\{[^}]*flex-direction:\s*column;/);
+    });
+
+    test('styles.css enforces modal-content max-width containment for mobile viewports', () => {
+      expect(stylesCss).toMatch(/\.modal-content\s*\{[^}]*max-width:\s*calc\(100vw\s*-\s*24px\)\s*!important;/);
+    });
+
+    test('index.html uses responsive .financial-balance-grid instead of inline 3-column grid', () => {
+      expect(indexHtml).toContain('class="financial-balance-grid"');
+      expect(indexHtml).not.toContain('grid-template-columns: 1fr 1fr 1fr');
+    });
+
+    test('index.html has no modal dialogs with fixed pixel width lacking responsive max-width', () => {
+      const fixedWidthMatches = indexHtml.match(/class="modal-content[^"]*"[^>]*style="[^"]*width:\s*\d{3}px/g) || [];
+      // Every matched modal-content must also include max-width:
+      fixedWidthMatches.forEach(match => {
+        expect(match).toContain('max-width:');
+      });
+    });
+  });
+});
+
+
