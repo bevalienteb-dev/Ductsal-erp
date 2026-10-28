@@ -2135,6 +2135,19 @@ function showView(viewId) {
     document.getElementById(viewId).classList.add('active');
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
+    // Sincronizar encabezado móvil integrado (Fase 5.2 Bloque 3: corrección de superposición)
+    const mobileHeaderDefault = document.getElementById('mobile-header-default');
+    const mobileHeaderDetail = document.getElementById('detail-mobile-sticky-bar');
+    if (mobileHeaderDefault && mobileHeaderDetail) {
+        if (viewId === 'detail-view') {
+            mobileHeaderDefault.style.display = 'none';
+            mobileHeaderDetail.style.display = 'flex';
+        } else {
+            mobileHeaderDefault.style.display = 'flex';
+            mobileHeaderDetail.style.display = 'none';
+        }
+    }
+
     if (viewId === 'list-view') {
         document.getElementById('nav-list').classList.add('active');
         // Al entrar en Oportunidades de Venta como gerente, debe aparecer primero Cartera Completa / Pipeline.
@@ -2161,9 +2174,35 @@ function showView(viewId) {
         if (typeof fetchAdminUsers === 'function') fetchAdminUsers();
         renderUsersTable();
     }
-
 }
-function goBackFromDetail() { showView(lastViewedSection); }
+
+let lastListScrollY = 0;
+
+function saveListScrollPosition() {
+    if (typeof window !== 'undefined') {
+        lastListScrollY = window.scrollY || window.pageYOffset || (document.documentElement && document.documentElement.scrollTop) || 0;
+    }
+}
+
+function restoreListScrollPosition() {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        setTimeout(() => {
+            try {
+                window.scrollTo({ top: lastListScrollY, behavior: 'instant' });
+            } catch (e) {
+                window.scrollTo(0, lastListScrollY);
+            }
+        }, 10);
+    }
+}
+
+function goBackFromDetail() {
+    const targetSection = lastViewedSection || 'list-view';
+    showView(targetSection);
+    if (targetSection === 'list-view') {
+        restoreListScrollPosition();
+    }
+}
 
 function checkAuth() {
     if (!currentUser) {
@@ -3141,8 +3180,28 @@ async function saveClient(e) {
 // PROSPECTS & PROJECTS LISTS
 // ========================
 function getClientName(clientId) {
-    const client = clients.find(c => c.id === clientId) || { nombres: 'Desconocido', empresa: 'Desconocido' };
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof window !== 'undefined' && Array.isArray(window.clients)) ? window.clients : []);
+    const client = clientList.find(c => c && c.id === clientId) || { nombres: 'Desconocido', empresa: 'Desconocido' };
     return client.tipo === 'natural' ? `${client.nombres} ${client.apellidos}` : client.empresa;
+}
+
+function getProspectClient(clientId) {
+    if (!clientId) return null;
+    const clientList = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.length > 0)
+        ? clients
+        : ((typeof window !== 'undefined' && Array.isArray(window.clients)) ? window.clients : []);
+    return clientList.find(c => c && c.id === clientId) || null;
+}
+
+function normalizeWhatsAppNumber(rawPhone) {
+    if (!rawPhone || typeof rawPhone !== 'string') return null;
+    const trimmed = rawPhone.trim();
+    if (!trimmed) return null;
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    if (!digitsOnly || digitsOnly.length < 8) return null;
+    return digitsOnly;
 }
 
 let oppStatusFilter = 'activas';
@@ -3420,26 +3479,26 @@ function renderDailyAgenda() {
 
         let actionBtnHtml = '';
         if (item.etapa === 'cierre') {
-            actionBtnHtml = `<button class="btn-primary" style="padding:4px 8px; font-size:0.75rem; background:var(--brand-gold); border-color:var(--brand-gold); color:black; font-weight:600;" onclick="openDetail('${item.id}')" title="Completar documentación de Cierre">📁 Documentación</button>`;
+            actionBtnHtml = `<button type="button" class="btn-primary btn-agenda-action" style="padding:4px 8px; font-size:0.75rem; background:var(--brand-gold); border-color:var(--brand-gold); color:black; font-weight:600;" onclick="event.stopPropagation(); openDetail('${item.id}')" title="Completar documentación de Cierre">📁 Documentación</button>`;
         } else {
-            actionBtnHtml = `<button class="btn-success" style="padding:4px 8px; font-size:0.75rem;" onclick="openRecordFollowUpModal('${item.id}')" title="Registrar contacto comercial">📞 Gestionar</button>`;
+            actionBtnHtml = `<button type="button" class="btn-success btn-agenda-action" style="padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); openRecordFollowUpModal('${item.id}')" title="Registrar contacto comercial">📞 Gestionar</button>`;
         }
 
         tr.innerHTML = `
-            <td>${badgeHtml}</td>
-            <td><strong style="color:var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
-            <td>
-                <div style="font-weight:600; color:white;">${escapeHtmlDoc(item.proyecto)}</div>
-                <div style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtmlDoc(clientName)}</div>
+            <td class="col-agenda-priority">${badgeHtml}</td>
+            <td class="col-agenda-code"><strong style="color:var(--brand-gold);">${escapeHtmlDoc(item.codigo)}</strong></td>
+            <td class="col-agenda-client">
+                <div class="agenda-client-name" style="font-weight:600; color:white;">${escapeHtmlDoc(item.proyecto)}</div>
+                <div class="agenda-project-name" style="font-size:0.8rem; color:var(--text-secondary);">${escapeHtmlDoc(clientName)}</div>
             </td>
-            <td>${etapaCellHtml}</td>
-            <td><span style="font-size:0.85rem; color:var(--text-secondary);">${escapeHtmlDoc(item.vendedorName)}</span></td>
-            <td>${ultGestionHtml}</td>
-            <td>${proxAccionHtml}</td>
-            <td style="text-align:right;" onclick="event.stopPropagation()">
-                <div style="display:flex; gap:6px; justify-content:flex-end;">
+            <td class="col-agenda-stage">${etapaCellHtml}</td>
+            <td class="col-agenda-vendor"><span style="font-size:0.85rem; color:var(--text-secondary);">${escapeHtmlDoc(item.vendedorName || '-')}</span></td>
+            <td class="col-agenda-last-contact">${ultGestionHtml}</td>
+            <td class="col-agenda-next-action">${proxAccionHtml}</td>
+            <td class="col-agenda-action" style="text-align:right;" onclick="event.stopPropagation()">
+                <div class="agenda-actions-group" style="display:flex; gap:6px; justify-content:flex-end;">
                     ${actionBtnHtml}
-                    <button class="btn-secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="openDetail('${item.id}')" title="Ver expediente">👁️</button>
+                    <button type="button" class="btn-secondary btn-agenda-view" style="padding:4px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); openDetail('${item.id}')" title="Ver expediente">👁️</button>
                 </div>
             </td>
         `;
@@ -3455,9 +3514,44 @@ function openRecordFollowUpModal(prospectId) {
     const idInput = document.getElementById('followup-prospect-id');
     if (idInput) idInput.value = prospectId;
 
+    const client = getProspectClient(p.clientId);
+    const clientName = getClientName(p.clientId);
+    let contactPerson = '';
+    let clientPhone = '';
+    if (client) {
+        if (client.tipo === 'natural') {
+            contactPerson = [client.nombres, client.apellidos].filter(Boolean).join(' ').trim();
+        } else {
+            contactPerson = (client.contacto || client.rep_legal || '').trim();
+        }
+        clientPhone = (client.telefono || '').trim();
+    }
+
     const subEl = document.getElementById('followup-modal-subtitle');
     if (subEl) {
-        subEl.textContent = `Proyecto: ${p.proyecto || '-'} (${p.codigo || p.id.slice(-4)}) | Cliente: ${getClientName(p.clientId)}`;
+        let contactInfo = '';
+        if (contactPerson) contactInfo += ` | Contacto: ${contactPerson}`;
+        if (clientPhone) contactInfo += ` | Tel: ${clientPhone}`;
+        subEl.textContent = `Proyecto: ${p.proyecto || '-'} (${p.codigo || p.id.slice(-4)}) | Cliente: ${clientName}${contactInfo}`;
+    }
+
+    const contactStrip = document.getElementById('followup-modal-contact-strip');
+    if (contactStrip) {
+        if (contactPerson || clientPhone) {
+            const waNumber = normalizeWhatsAppNumber(clientPhone);
+            const cleanDigits = clientPhone ? clientPhone.replace(/[^\d+]/g, '') : '';
+            const telPart = clientPhone
+                ? `<a href="tel:${cleanDigits}" style="color:#93c5fd; text-decoration:none; font-weight:600;">📞 ${escapeHtmlDoc(clientPhone)}</a>`
+                : '<span style="color:var(--text-muted)">Sin teléfono</span>';
+            const waPart = waNumber
+                ? `<a href="https://wa.me/${waNumber}" target="_blank" rel="noopener noreferrer" style="color:#6ee7b7; text-decoration:none; font-weight:600; margin-left:8px;">💬 WhatsApp</a>`
+                : '';
+            contactStrip.innerHTML = `<span>👤 Contacto: <strong>${escapeHtmlDoc(contactPerson || 'Cliente')}</strong></span> <span style="display:flex; align-items:center;">${telPart}${waPart}</span>`;
+            contactStrip.style.display = 'flex';
+        } else {
+            contactStrip.style.display = 'none';
+            contactStrip.innerHTML = '';
+        }
     }
 
     const clasif = typeof CrmFollowUpCalc !== 'undefined' ? CrmFollowUpCalc.classifyFollowUp(p, new Date()) : { intentos_fallidos: 0, llamada_obligatoria: false };
@@ -4388,7 +4482,7 @@ function renderList() {
         const codeVal = p.codigo || p.id.substring(p.id.length - 4);
         const clientVal = getClientName(p.clientId);
 
-        tr.innerHTML = `<td class="col-opp-code"><span class="opp-code-badge" style="font-weight:600; color:var(--text-secondary);">${codeVal}</span></td><td class="col-opp-client"><strong>${clientVal}</strong></td><td class="col-opp-project"><div class="opp-project-wrap" style="display:inline-flex; align-items:center; flex-wrap:wrap;">${p.proyecto || '-'}${clasifBadge}</div></td><td class="col-opp-vendor"><strong>${vendor.name}</strong>${vendorBadge}</td><td class="col-opp-date"><span class="opp-date-val">${formatProspectDate(p.fecha_creacion)}</span></td><td class="col-opp-stage">${stageBadge}</td><td class="col-opp-amount">${amountDisplay}</td><td class="col-opp-status"><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td class="col-opp-action"><button class="btn-secondary btn-opp-view" style="padding: 0.25rem 0.55rem; font-size:0.75rem;">Ver</button></td>`;
+        tr.innerHTML = `<td class="col-opp-code"><span class="opp-code-badge" style="font-weight:600; color:var(--text-secondary);">${codeVal}</span></td><td class="col-opp-client"><strong>${clientVal}</strong></td><td class="col-opp-project"><div class="opp-project-wrap" style="display:inline-flex; align-items:center; flex-wrap:wrap;">${p.proyecto || '-'}${clasifBadge}</div></td><td class="col-opp-vendor"><strong>${vendor.name}</strong>${vendorBadge}</td><td class="col-opp-date"><span class="opp-date-val">${formatProspectDate(p.fecha_creacion)}</span></td><td class="col-opp-stage">${stageBadge}</td><td class="col-opp-amount">${amountDisplay}</td><td class="col-opp-status"><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td class="col-opp-action"><button type="button" class="btn-secondary btn-opp-view" style="padding: 0.25rem 0.55rem; font-size:0.75rem;" onclick="event.stopPropagation(); openDetail('${p.id}')">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
@@ -4927,7 +5021,12 @@ async function createNewProspect(e) {
 // DETAIL VIEW & ADVANCEMENT
 // ========================
 function openDetail(id) {
-    currentProspectId = id; const p = prospects.find(x => x.id === id); if (!p) return;
+    currentProspectId = id;
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x && x.id === id);
+    if (!p) return;
     if (currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor')) {
         const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);
         if (!isAssigned) {
@@ -4936,9 +5035,25 @@ function openDetail(id) {
             return;
         }
     }
+    if (typeof saveListScrollPosition === 'function') saveListScrollPosition();
     showView('detail-view');
-    document.getElementById('detail-cliente').textContent = getClientName(p.clientId);
+    const clientNameStr = getClientName(p.clientId);
+    document.getElementById('detail-cliente').textContent = clientNameStr;
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;
+
+    // Sincronizar barra móvil pegajosa superior (Fase 5.2 Bloque 3)
+    const stickyClient = document.getElementById('sticky-detail-client');
+    if (stickyClient) stickyClient.textContent = clientNameStr;
+    const stickyCode = document.getElementById('sticky-detail-code');
+    if (stickyCode) stickyCode.textContent = p.codigo || (p.id ? p.id.slice(-4) : '-');
+    const stickyBar = document.getElementById('detail-mobile-sticky-bar');
+    if (stickyBar) {
+        const stickyQuickAction = stickyBar.querySelector('.btn-sticky-quick-action');
+        if (stickyQuickAction) {
+            stickyQuickAction.style.display = (p.estado === 'activo') ? 'inline-flex' : 'none';
+        }
+    }
+
     document.getElementById('advance-form-container').innerHTML = '';
     const textEl = document.getElementById('new-log-text');
     if (textEl) textEl.value = '';
@@ -4996,8 +5111,101 @@ function openDetail(id) {
         timeInStage = getDaysDifference(p.fecha_creacion);
     }
     document.getElementById('detail-time-in-stage').textContent = `Tiempo en etapa: ${timeInStage} días`;
+    renderClientContactCard(p);
     renderTracker(p); renderInfo(p); renderLogs(p);
     renderFollowUpSummary(p);
+}
+
+function renderClientContactCard(p) {
+    const cardEl = document.getElementById('detail-client-contact-card');
+    if (!cardEl) return;
+    if (!p) {
+        cardEl.style.display = 'none';
+        cardEl.innerHTML = '';
+        return;
+    }
+
+    const client = getProspectClient(p.clientId);
+    const clientName = getClientName(p.clientId);
+
+    let contactPerson = '';
+    let phone = '';
+    let email = '';
+    let isJuridica = false;
+    let isGranContribuyente = false;
+    let isExport = false;
+
+    if (client) {
+        isJuridica = (client.tipo === 'juridica' || client.tipo === 'juridico');
+        if (isJuridica) {
+            contactPerson = (client.contacto || client.rep_legal || '').trim();
+        } else {
+            contactPerson = [client.nombres, client.apellidos].filter(Boolean).join(' ').trim();
+        }
+        phone = (client.telefono || '').trim();
+        email = (client.correo || '').trim();
+        isGranContribuyente = client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true';
+        isExport = client.es_exportacion === true || client.es_exportacion === 'true';
+    }
+
+    const waNumber = normalizeWhatsAppNumber(phone);
+    const cleanPhoneDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
+
+    const typeBadge = isJuridica
+        ? `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem;">🏢 Empresa</span>`
+        : `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35); font-size: 0.72rem;">👤 Persona Natural</span>`;
+    const granContribBadge = isGranContribuyente
+        ? `<span class="badge" style="background: rgba(212, 175, 55, 0.15); color: var(--brand-gold); border: 1px solid rgba(212, 175, 55, 0.4); font-size: 0.72rem;">🏛️ Gran Contribuyente (1% IVA)</span>`
+        : '';
+    const exportBadge = isExport
+        ? `<span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.4); font-size: 0.72rem;">✈️ Exportación (0% IVA)</span>`
+        : '';
+
+    let contactPersonHtml = '';
+    if (contactPerson) {
+        contactPersonHtml = `<span class="client-contact-person" title="Contacto comercial">👤 Contacto: <strong>${escapeHtmlDoc(contactPerson)}</strong></span>`;
+    } else {
+        contactPersonHtml = `<span class="client-contact-person" style="color:var(--text-muted); font-weight:normal;" title="Sin contacto específico">👤 Sin contacto asignado</span>`;
+    }
+
+    const telHtml = (phone && cleanPhoneDigits)
+        ? `<a href="tel:${cleanPhoneDigits}" class="contact-channel-pill contact-channel-tel" title="Llamar a ${escapeHtmlDoc(phone)}">📞 <span>${escapeHtmlDoc(phone)}</span></a>`
+        : `<span class="contact-channel-pill contact-channel-empty">📞 Sin teléfono</span>`;
+
+    const waHtml = waNumber
+        ? `<a href="https://wa.me/${waNumber}" target="_blank" rel="noopener noreferrer" class="contact-channel-pill contact-channel-wa" title="Abrir chat de WhatsApp">💬 <span>WhatsApp</span></a>`
+        : `<span class="contact-channel-pill contact-channel-empty">💬 Sin WhatsApp</span>`;
+
+    const emailHtml = email
+        ? `<a href="mailto:${encodeURIComponent(email)}" class="contact-channel-pill contact-channel-email" title="Enviar correo a ${escapeHtmlDoc(email)}">✉️ <span>${escapeHtmlDoc(email)}</span></a>`
+        : `<span class="contact-channel-pill contact-channel-empty">✉️ Sin correo</span>`;
+
+    const quickFollowUpBtn = (p.estado === 'activo')
+        ? `<button type="button" class="btn-primary btn-quick-followup" onclick="openRecordFollowUpModal('${p.id}')" title="Registrar contacto de seguimiento">📞 Registrar Gestión</button>`
+        : '';
+
+    cardEl.innerHTML = `
+        <div class="client-contact-main">
+            <div class="client-contact-name-row">
+                <span class="client-contact-company">${escapeHtmlDoc(clientName)}</span>
+                ${typeBadge}
+                ${granContribBadge}
+                ${exportBadge}
+            </div>
+            <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-top:3px;">
+                ${contactPersonHtml}
+            </div>
+            <div class="client-contact-channels">
+                ${telHtml}
+                ${waHtml}
+                ${emailHtml}
+            </div>
+        </div>
+        <div class="client-contact-actions">
+            ${quickFollowUpBtn}
+        </div>
+    `;
+    cardEl.style.display = 'flex';
 }
 
 function renderFinancials(p) {
@@ -5473,51 +5681,41 @@ function renderInfo(p) {
         }
     }
 
-    // 2. Información Complementaria en lista (Prioridad 4)
+    // 2. Información Complementaria en lista (Prioridad 4 - Especificaciones Técnicas y Operativas)
     const list = document.getElementById('info-list');
     if (list) {
-        let vendorLinkHTML = `<li><strong style="color:var(--brand-gold)">Vendedor / Asesor:</strong> <strong>${vendor.name}</strong> ${vendor.role ? `<span style="color:var(--text-secondary)">(${vendor.role})</span>` : ''}`;
-        if (currentUser && currentUser.role === 'manager' && !hasEnteredPostclosing(p) && p.etapa !== 'cierre') {
-            vendorLinkHTML += ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="reassignVendor('${p.id}')">[Reasignar]</span>`;
-        }
-        vendorLinkHTML += `</li>`;
-
-        const isPresupuesto = p.clasificacion === 'presupuesto';
-        const clasifDesc = isPresupuesto ? '📐 Cotización para presupuesto' : '🏗️ Oferta para ejecución';
-        list.innerHTML = `<li><strong>Creación:</strong> ${dateFormatted}</li>${vendorLinkHTML}<li><strong>Clasificación:</strong> <span style="font-weight:600; color: ${isPresupuesto ? '#c084fc' : '#93c5fd'}">${clasifDesc}</span></li><li><strong>Origen:</strong> ${p.origen || '-'}</li><li><strong>Tipo Proy:</strong> ${p.tipo_proyecto || '-'}</li><li><strong>Producto:</strong> ${p.tipo_producto || '-'}</li>`;
+        list.innerHTML = `<li><strong>Origen:</strong> ${escapeHtmlDoc(p.origen || '-')}</li><li><strong>Tipo Proy:</strong> ${escapeHtmlDoc(p.tipo_proyecto || '-')}</li><li><strong>Producto:</strong> ${escapeHtmlDoc(p.tipo_producto || '-')}</li>`;
 
         if (Array.isArray(p.historial_clasificacion) && p.historial_clasificacion.length > 0) {
             const lastChg = p.historial_clasificacion[p.historial_clasificacion.length - 1];
             list.innerHTML += `<li style="font-size:0.75rem; color:var(--text-secondary); background:rgba(255,255,255,0.03); padding:4px 8px; border-radius:4px; margin-top:4px;">
-                🔄 <strong>Último cambio de clasificación:</strong> ${lastChg.fecha ? lastChg.fecha.slice(0, 16).replace('T', ' ') : '-'} por ${lastChg.usuarioNombre || 'Usuario'} (Motivo: "${lastChg.motivo || '-'}")
+                🔄 <strong>Último cambio de clasificación:</strong> ${escapeHtmlDoc(lastChg.fecha ? lastChg.fecha.slice(0, 16).replace('T', ' ') : '-')} por ${escapeHtmlDoc(lastChg.usuarioNombre || 'Usuario')} (Motivo: "${escapeHtmlDoc(lastChg.motivo || '-')}")
             </li>`;
         }
 
-        if (p.datos.ubicacion) {
-            list.innerHTML += `<li><span class="label">Ubicación:</span> ${p.datos.ubicacion}</li>`;
-            if (p.datos.distancia) list.innerHTML += `<li><span class="label">Distancia a fábrica:</span> ${p.datos.distancia} km</li>`;
+        if (p.datos && p.datos.ubicacion) {
+            list.innerHTML += `<li><span class="label">Ubicación:</span> ${escapeHtmlDoc(p.datos.ubicacion)}</li>`;
+            if (p.datos.distancia) list.innerHTML += `<li><span class="label">Distancia a fábrica:</span> ${escapeHtmlDoc(p.datos.distancia)} km</li>`;
         }
-        if (p.datos.visitante) list.innerHTML += `<li><strong>Visitó:</strong> ${p.datos.visitante} (${p.datos.fecha_visita || 'Sin fecha'})</li>`;
-        if (p.datos.fecha_inicio) list.innerHTML += `<li><strong>Est. Inicio:</strong> ${p.datos.fecha_inicio}</li>`;
-        if (p.costo_venta) list.innerHTML += `<li><strong>Costo:</strong> ${formatCurrency(p.costo_venta)}${editBaseLink}</li>`;
-        if (p.precio_cotizado) list.innerHTML += `<li><strong>Precio:</strong> ${formatCurrency(p.precio_cotizado)}${editBaseLink}</li>`;
-        if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${p.probabilidad}%</li>`;
+        if (p.datos && p.datos.visitante) list.innerHTML += `<li><strong>Visitó:</strong> ${escapeHtmlDoc(p.datos.visitante)} (${escapeHtmlDoc(p.datos.fecha_visita || 'Sin fecha')})</li>`;
+        if (p.datos && p.datos.fecha_inicio) list.innerHTML += `<li><strong>Est. Inicio:</strong> ${escapeHtmlDoc(p.datos.fecha_inicio)}</li>`;
+        if (p.probabilidad) list.innerHTML += `<li><strong>Probabilidad:</strong> ${escapeHtmlDoc(p.probabilidad)}%</li>`;
 
         const isBigInstalacionInfo = (p.tipo_proyecto === 'Fabricación e instalación' && (Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000));
         if (isBigInstalacionInfo && p.estado === 'activo' && p.etapa === 'cierre') {
             const isAuthorized = p.datos && p.datos.autorizado_sin_contrato === true;
             if (isAuthorized) {
-                list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${p.datos.autorizado_por || 'Gerente'})</li>`;
+                list.innerHTML += `<li><strong style="color: var(--success)">✔️ Cierre Sin Contrato Autorizado</strong> (por ${escapeHtmlDoc(p.datos.autorizado_por || 'Gerente')})</li>`;
             } else {
                 list.innerHTML += `<li><strong style="color: var(--danger)">⚠️ Requiere Contrato o Autorización en Cierre (> $10k)</strong></li>`;
             }
         }
 
         if (p.estado === 'ganado') {
-            list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${p.forma_pago || '-'}</li>`;
-            if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${p.encargado}</li>`;
+            list.innerHTML += `<li><strong style="color:var(--brand-gold)">Forma de Pago:</strong> ${escapeHtmlDoc(p.forma_pago || '-')}</li>`;
+            if (p.encargado) list.innerHTML += `<li><strong style="color:var(--brand-gold)">Encargado Inst.:</strong> ${escapeHtmlDoc(p.encargado)}</li>`;
         }
-        if (p.estado === 'perdido') list.innerHTML += `<li><strong style="color:var(--danger)">Motivo Pérdida:</strong> ${p.motivo_perdida || '-'}</li>`;
+        if (p.estado === 'perdido') list.innerHTML += `<li><strong style="color:var(--danger)">Motivo Pérdida:</strong> ${escapeHtmlDoc(p.motivo_perdida || '-')}</li>`;
     }
 
     // 3. Documentos Adjuntos (Prioridad 5)
@@ -6302,23 +6500,33 @@ async function processRevertStage(targetStage) {
         return;
     }
 
-    const opIdToUse = currentRevertOpId;
-    const ok = await runWorkflowOp('Procesando retroceso de etapa...', async fb => {
-        return CrmCommercial.revertStage(fb, {
-            prospectId: p.id,
-            currentStage: p.etapa,
-            targetStage,
-            motivo: reason,
-            opId: opIdToUse,
-            dbSuffix: DB_SUFFIX
-        });
-    });
+    const confirmBtn = document.getElementById('btn-confirm-revert');
+    if (confirmBtn) {
+        if (confirmBtn.disabled) return;
+        confirmBtn.disabled = true;
+    }
 
-    if (ok) {
-        currentRevertOpId = null;
-        const container = document.getElementById('advance-form-container');
-        if (container) container.innerHTML = '';
-        openDetail(p.id);
+    try {
+        const opIdToUse = currentRevertOpId;
+        const ok = await runWorkflowOp('Procesando retroceso de etapa...', async fb => {
+            return CrmCommercial.revertStage(fb, {
+                prospectId: p.id,
+                currentStage: p.etapa,
+                targetStage,
+                motivo: reason,
+                opId: opIdToUse,
+                dbSuffix: DB_SUFFIX
+            });
+        });
+
+        if (ok) {
+            currentRevertOpId = null;
+            const container = document.getElementById('advance-form-container');
+            if (container) container.innerHTML = '';
+            openDetail(p.id);
+        }
+    } finally {
+        if (confirmBtn) confirmBtn.disabled = false;
     }
 }
 
@@ -7323,20 +7531,124 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.addLog = typeof addLog !== 'undefined' ? addLog : undefined;
     module.exports.deleteLog = typeof deleteLog !== 'undefined' ? deleteLog : undefined;
     module.exports.openDetail = typeof openDetail !== 'undefined' ? openDetail : undefined;
+    module.exports.renderClientContactCard = typeof renderClientContactCard !== 'undefined' ? renderClientContactCard : undefined;
+    module.exports.normalizeWhatsAppNumber = typeof normalizeWhatsAppNumber !== 'undefined' ? normalizeWhatsAppNumber : undefined;
+    module.exports.getProspectClient = typeof getProspectClient !== 'undefined' ? getProspectClient : undefined;
+    module.exports.openMarkLostModal = typeof openMarkLostModal !== 'undefined' ? openMarkLostModal : undefined;
+    module.exports.closeMarkLostModal = typeof closeMarkLostModal !== 'undefined' ? closeMarkLostModal : undefined;
+    module.exports.processConfirmMarkLost = typeof processConfirmMarkLost !== 'undefined' ? processConfirmMarkLost : undefined;
+    module.exports.showLoseForm = typeof showLoseForm !== 'undefined' ? showLoseForm : undefined;
+    module.exports.processLose = typeof processLose !== 'undefined' ? processLose : undefined;
+    module.exports.goBackFromDetail = typeof goBackFromDetail !== 'undefined' ? goBackFromDetail : undefined;
+    module.exports.saveListScrollPosition = typeof saveListScrollPosition !== 'undefined' ? saveListScrollPosition : undefined;
+    module.exports.restoreListScrollPosition = typeof restoreListScrollPosition !== 'undefined' ? restoreListScrollPosition : undefined;
+    module.exports.getListScrollPosition = () => (typeof lastListScrollY !== 'undefined' ? lastListScrollY : 0);
+    module.exports.setListScrollPosition = (y) => { lastListScrollY = y; };
 }
 
 function showLoseForm() {
-    let opts = MOTIVOS_PERDIDA.map(m => `<option value="${m}">${m}</option>`).join('');
-    document.getElementById('advance-form-container').innerHTML = `<div class="form-group mt-4"><label style="color:var(--danger)">Motivo de pérdida</label><select id="lose-reason" required><option value="">-- Selecciona --</option>${opts}</select><button class="btn-danger mt-2" onclick="processLose()">Confirmar Pérdida</button><button class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button></div>`;
-}
-async function processLose() {
-    const reason = document.getElementById('lose-reason').value; if (!reason) return alert("Debes seleccionar un motivo.");
     const p = prospects.find(x => x.id === currentProspectId);
     if (!p) return;
-    // markProspectLostAdmin validates the reason and that the opportunity is still active, and writes history and audit.
-    const res = await runWorkflowOp('Registrando pérdida...', fb => CrmCommercial.markLost(fb, { prospectId: p.id, reason, dbSuffix: DB_SUFFIX }));
-    if (!res) return;
-    document.getElementById('advance-form-container').innerHTML = ''; openDetail(p.id);
+    openMarkLostModal(p.id);
+}
+
+function openMarkLostModal(prospectId) {
+    const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    const p = prospectList.find(x => x && x.id === prospectId);
+    if (!p) return;
+
+    currentProspectId = prospectId;
+    const modal = document.getElementById('markLostModal');
+    if (!modal) {
+        let opts = MOTIVOS_PERDIDA.map(m => `<option value="${m}">${m}</option>`).join('');
+        const advBox = document.getElementById('advance-form-container');
+        if (advBox) {
+            advBox.innerHTML = `<div class="form-group mt-4"><label style="color:var(--danger)">Motivo de pérdida</label><select id="lose-reason" required><option value="">-- Selecciona --</option>${opts}</select><button class="btn-danger mt-2" onclick="processLose()">Confirmar Pérdida</button><button class="btn-secondary mt-2 ml-2" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button></div>`;
+        }
+        return;
+    }
+
+    const idInput = document.getElementById('mark-lost-prospect-id');
+    if (idInput) idInput.value = prospectId;
+
+    const clientName = getClientName(p.clientId);
+    const subEl = document.getElementById('mark-lost-subtitle');
+    if (subEl) {
+        subEl.textContent = `Proyecto: ${p.codigo || ''} ${p.proyecto || '-'} | Cliente: ${clientName}`;
+    }
+
+    const precioEl = document.getElementById('mark-lost-precio');
+    if (precioEl) {
+        precioEl.textContent = formatCurrency(p.precio_cotizado || 0);
+    }
+
+    const gestionesEl = document.getElementById('mark-lost-gestiones');
+    if (gestionesEl) {
+        const hist = (p.seguimiento && Array.isArray(p.seguimiento.historial_gestiones)) ? p.seguimiento.historial_gestiones : [];
+        gestionesEl.textContent = `${hist.length} ${hist.length === 1 ? 'gestión' : 'gestiones'}`;
+    }
+
+    const intentosEl = document.getElementById('mark-lost-intentos');
+    if (intentosEl) {
+        const cad = (p.seguimiento && p.seguimiento.cadencia) || {};
+        const intentos = Number(cad.intentos_fallidos !== undefined ? cad.intentos_fallidos : cad.intentos_validos_sin_respuesta) || 0;
+        intentosEl.textContent = `${intentos} de 5 fallidos`;
+    }
+
+    const selectEl = document.getElementById('mark-lost-reason');
+    if (selectEl) {
+        selectEl.innerHTML = '<option value="">-- Selecciona un motivo justificado --</option>' +
+            MOTIVOS_PERDIDA.map(m => `<option value="${m}">${m}</option>`).join('');
+        selectEl.value = '';
+    }
+
+    modal.style.display = 'block';
+}
+
+function closeMarkLostModal() {
+    closeModal('markLostModal');
+    const form = document.getElementById('markLostForm');
+    if (form) form.reset();
+}
+
+async function processConfirmMarkLost(event) {
+    return processLose(event);
+}
+
+async function processLose() {
+    const event = arguments[0] || (typeof window !== 'undefined' ? window.event : null);
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const prospectId = (document.getElementById('mark-lost-prospect-id') && document.getElementById('mark-lost-prospect-id').value) || currentProspectId;
+    const p = prospects.find(x => x.id === prospectId);
+    if (!p) return;
+
+    const selectEl = document.getElementById('mark-lost-reason') || document.getElementById('lose-reason');
+    const reason = selectEl ? selectEl.value : '';
+    if (!reason) {
+        alert("Debes seleccionar un motivo obligatorio.");
+        return;
+    }
+
+    const submitBtn = document.getElementById('btn-submit-mark-lost');
+    if (submitBtn) {
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+    }
+
+    try {
+        // markProspectLostAdmin validates the reason and that the opportunity is still active, and writes history and audit.
+        const res = await runWorkflowOp('Registrando pérdida...', fb => CrmCommercial.markLost(fb, { prospectId: p.id, reason, dbSuffix: DB_SUFFIX }));
+        if (!res) return;
+
+        if (typeof closeMarkLostModal === 'function') closeMarkLostModal();
+        const advBox = document.getElementById('advance-form-container');
+        if (advBox) advBox.innerHTML = '';
+        openDetail(p.id);
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
 }
 
 // ========================

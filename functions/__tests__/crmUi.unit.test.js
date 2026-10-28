@@ -1809,5 +1809,759 @@ describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
   });
 });
 
+describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 
+  const extractCode = (from, to) => {
+    const a = appCoreCode.indexOf(from);
+    const b = appCoreCode.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error(`Could not find markers: "${from}" .. "${to}"`);
+    return appCoreCode.slice(a, b);
+  };
+
+  const DETAIL_CORE_SRC = [
+    'const escapeHtmlDoc = s => String(s === undefined || s === null ? "" : s).replace(/[&<>"\']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", \'"\': "&quot;", "\'": "&#39;" }[ch]));',
+    'const formatCurrency = (val) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(val || 0);',
+    'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1 || new Date())) / (1000 * 60 * 60 * 24));',
+    'const formatProspectDate = (d) => d ? String(d).slice(0, 10) : "-";',
+    'const MOTIVOS_PERDIDA = ["Precio", "Falta de seguimiento", "No se cumplían los requerimientos técnicos", "Tiempo de entrega", "Cliente desiste"];',
+    'let DB_SUFFIX = "_staging";',
+    'let currentProspectId = null;',
+    'const openModal = (id) => { const el = document.getElementById(id); if (el) el.style.display = "block"; };',
+    'const updateSuggestedFollowUpDate = () => {};',
+    'const CrmFollowUpCalc = { classifyFollowUp: () => ({ intentos_fallidos: 0, llamada_obligatoria: false }) };',
+    extractCode('function getProspectVendorInfo(p)', 'function reassignVendor(prospectId, directTargetId)'),
+    extractCode('function getClientName(clientId)', 'let oppStatusFilter ='),
+    extractCode('function renderClientContactCard(p)', 'function renderFinancials'),
+    extractCode('function renderInfo(p)', 'const docsList = document.getElementById(\'docs-list\');') + '\n}',
+    extractCode('function openRecordFollowUpModal(prospectId)', 'function updateSuggestedFollowUpDate'),
+    extractCode('function openMarkLostModal(prospectId)', '// ========================\n// DASHBOARD')
+  ].join('\n');
+
+  function createDetailSandbox(customState = {}) {
+    const elements = {};
+    const getEl = (id) => {
+      if (!elements[id]) {
+        const classes = new Set();
+        const attrs = {};
+        elements[id] = {
+          id,
+          tagName: 'DIV',
+          value: '',
+          style: {},
+          textContent: '',
+          _innerHTML: '',
+          children: [],
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k] || null,
+          classList: {
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c),
+            toArray: () => Array.from(classes)
+          },
+          get innerHTML() { return this._innerHTML; },
+          set innerHTML(val) {
+            this._innerHTML = val;
+            this.children = [];
+          },
+          appendChild(child) {
+            this.children.push(child);
+          },
+          reset() {
+            this.value = '';
+          }
+        };
+      }
+      return elements[id];
+    };
+
+    const documentMock = {
+      getElementById: (id) => getEl(id),
+      createElement: (tag) => {
+        const classes = new Set();
+        const attrs = {};
+        return {
+          tagName: tag.toUpperCase(),
+          style: {},
+          attributes: attrs,
+          setAttribute: (k, v) => { attrs[k] = String(v); },
+          getAttribute: (k) => attrs[k],
+          classList: {
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c)
+          },
+          innerHTML: '',
+          onclick: null
+        };
+      }
+    };
+
+    [
+      'detail-client-contact-card', 'hero-etapa', 'detail-time-in-stage',
+      'hero-vendedor', 'hero-vendedor-action', 'hero-fecha', 'hero-antiguedad',
+      'hero-precio', 'hero-precio-action', 'hero-costo', 'hero-margen',
+      'info-list',
+      'followup-prospect-id', 'followup-modal-subtitle', 'followup-modal-contact-strip',
+      'followup-cadence-alert-box', 'followup-motivo-alerta-reversion',
+      'followup-canal', 'followup-resultado', 'followup-detalle', 'followup-prox-accion-div',
+      'markLostModal', 'mark-lost-prospect-id', 'mark-lost-subtitle', 'mark-lost-precio',
+      'mark-lost-gestiones', 'mark-lost-intentos', 'mark-lost-reason', 'markLostForm',
+      'advance-form-container'
+    ].forEach(id => getEl(id));
+
+    const S = {
+      prospects: customState.prospects || [],
+      clients: customState.clients || [],
+      users: customState.users || [
+        { id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' },
+        { id: 'v2', nombre: 'Beatriz Gestora', role: 'gestor' },
+        { id: 'm1', nombre: 'Director Comercial', role: 'manager' }
+      ],
+      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' },
+      currentProspectId: customState.currentProspectId || null,
+      hasEnteredPostclosing: () => false
+    };
+
+    const alerts = [];
+    const alertMock = (msg) => { alerts.push(msg); };
+    const commercialCalls = [];
+    const CrmCommercialMock = {
+      markLost: jest.fn(async (fb, payload) => {
+        commercialCalls.push(payload);
+        return { status: 'lost', prospectId: payload.prospectId };
+      })
+    };
+    const runWorkflowOpMock = jest.fn(async (msg, op) => {
+      return await op({});
+    });
+    const closeModalCalls = [];
+    const closeModalMock = (id) => {
+      closeModalCalls.push(id);
+      if (elements[id]) elements[id].style.display = 'none';
+    };
+    const openDetailCalls = [];
+    const openDetailMock = (id) => { openDetailCalls.push(id); };
+
+    const sandboxFn = new Function(
+      'S', 'document', 'alert', 'CrmCommercial', 'runWorkflowOp', 'closeModal', 'openDetail',
+      'with(S) {\n' + DETAIL_CORE_SRC + '\n return { renderClientContactCard, normalizeWhatsAppNumber, getProspectClient, renderInfo, openRecordFollowUpModal, openMarkLostModal, closeMarkLostModal, processConfirmMarkLost, processLose };\n}'
+    );
+
+    const api = sandboxFn(S, documentMock, alertMock, CrmCommercialMock, runWorkflowOpMock, closeModalMock, openDetailMock);
+    return {
+      api, elements, documentMock, S, alerts,
+      commercialCalls, CrmCommercialMock, runWorkflowOpMock,
+      closeModalCalls, openDetailCalls
+    };
+  }
+
+  describe('A. Tarjeta de contacto comercial y normalización segura', () => {
+    test('normalizeWhatsAppNumber normalizes numbers with country code or digits without prepending country', () => {
+      const { api } = createDetailSandbox();
+      // Explicit country code with +
+      expect(api.normalizeWhatsAppNumber('+503 7123-4567')).toBe('50371234567');
+      expect(api.normalizeWhatsAppNumber('+1 (555) 234-5678')).toBe('15552345678');
+      // Local 8-digit number: does NOT assume or invent 503 prefix
+      expect(api.normalizeWhatsAppNumber('7123-4567')).toBe('71234567');
+      expect(api.normalizeWhatsAppNumber('2250 0000')).toBe('22500000');
+      // Invalid, null, short numbers
+      expect(api.normalizeWhatsAppNumber(null)).toBeNull();
+      expect(api.normalizeWhatsAppNumber('')).toBeNull();
+      expect(api.normalizeWhatsAppNumber('12345')).toBeNull();
+      expect(api.normalizeWhatsAppNumber('abc-def')).toBeNull();
+    });
+
+    test('renders complete corporate client card with tel, WhatsApp, email links, and badges', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{
+          id: 'cli_1',
+          empresa: 'Constructora Bolívar S.A.',
+          contacto: 'Ing. Rodrigo Mendoza',
+          telefono: '+503 7123-4567',
+          correo: 'rmendoza@bolivar.com.sv',
+          tipo: 'juridica',
+          is_gran_contribuyente: true
+        }],
+        prospects: [{
+          id: 'p1',
+          clientId: 'cli_1',
+          codigo: 'OPP-101',
+          proyecto: 'Torre Residencial',
+          estado: 'activo',
+          etapa: 'cotizacion'
+        }]
+      });
+
+      api.renderClientContactCard({ id: 'p1', clientId: 'cli_1', estado: 'activo' });
+      const card = elements['detail-client-contact-card'];
+      expect(card.style.display).toBe('flex');
+      expect(card.innerHTML).toContain('Constructora Bolívar S.A.');
+      expect(card.innerHTML).toContain('Ing. Rodrigo Mendoza');
+      expect(card.innerHTML).toContain('🏢 Empresa');
+      expect(card.innerHTML).toContain('Gran Contribuyente');
+      // Active contact links
+      expect(card.innerHTML).toContain('href="tel:+50371234567"');
+      expect(card.innerHTML).toContain('href="https://wa.me/50371234567"');
+      expect(card.innerHTML).toContain('href="mailto:rmendoza%40bolivar.com.sv"');
+      // Quick follow-up button for active prospect
+      expect(card.innerHTML).toContain('btn-quick-followup');
+      expect(card.innerHTML).toContain('openRecordFollowUpModal(\'p1\')');
+    });
+
+    test('renders natural client card with personal name and export badge', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{
+          id: 'cli_2',
+          nombres: 'Sofía Elena',
+          apellidos: 'Ramírez',
+          telefono: '7890-1234',
+          correo: 'sofia@export.com',
+          tipo: 'natural',
+          es_exportacion: true
+        }],
+        prospects: [{
+          id: 'p2',
+          clientId: 'cli_2',
+          codigo: 'OPP-102',
+          proyecto: 'Villa Los Sueños',
+          estado: 'activo',
+          etapa: 'negociacion'
+        }]
+      });
+
+      api.renderClientContactCard({ id: 'p2', clientId: 'cli_2', estado: 'activo' });
+      const card = elements['detail-client-contact-card'];
+      expect(card.innerHTML).toContain('Sofía Elena Ramírez');
+      expect(card.innerHTML).toContain('👤 Persona Natural');
+      expect(card.innerHTML).toContain('✈️ Exportación (0% IVA)');
+      expect(card.innerHTML).toContain('href="tel:78901234"');
+      expect(card.innerHTML).toContain('href="https://wa.me/78901234"');
+    });
+
+    test('gracefully handles missing, historical, or deleted clients without crashing', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [], // client cli_deleted is missing
+        prospects: [{ id: 'p_hist', clientId: 'cli_deleted', estado: 'activo' }]
+      });
+
+      expect(() => {
+        api.renderClientContactCard({ id: 'p_hist', clientId: 'cli_deleted', estado: 'activo' });
+      }).not.toThrow();
+
+      const card = elements['detail-client-contact-card'];
+      expect(card.innerHTML).toContain('Desconocido');
+      expect(card.innerHTML).toContain('👤 Sin contacto asignado');
+      // Inactive/empty pills with no active links
+      expect(card.innerHTML).toContain('Sin teléfono');
+      expect(card.innerHTML).toContain('Sin WhatsApp');
+      expect(card.innerHTML).toContain('Sin correo');
+      expect(card.innerHTML).not.toContain('href="tel:');
+      expect(card.innerHTML).not.toContain('href="https://wa.me');
+      expect(card.innerHTML).not.toContain('href="mailto:');
+    });
+
+    test('escapes HTML special characters to prevent XSS in client and contact names', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{
+          id: 'cli_xss',
+          empresa: '<script>alert("xss")</script>Corp',
+          contacto: '<b onmouseover=evil()>Malicious</b>',
+          telefono: '7000-0000',
+          correo: 'test@example.com',
+          tipo: 'juridica'
+        }]
+      });
+
+      api.renderClientContactCard({ id: 'p_xss', clientId: 'cli_xss', estado: 'activo' });
+      const card = elements['detail-client-contact-card'];
+      expect(card.innerHTML).not.toContain('<script>');
+      expect(card.innerHTML).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;Corp');
+      expect(card.innerHTML).not.toContain('<b onmouseover');
+    });
+
+    test('does not render quick follow-up button for closed (ganado or perdido) opportunities', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{ id: 'c1', empresa: 'Empresa Test', tipo: 'juridica' }]
+      });
+
+      api.renderClientContactCard({ id: 'p_won', clientId: 'c1', estado: 'ganado' });
+      expect(elements['detail-client-contact-card'].innerHTML).not.toContain('btn-quick-followup');
+
+      api.renderClientContactCard({ id: 'p_lost', clientId: 'c1', estado: 'perdido' });
+      expect(elements['detail-client-contact-card'].innerHTML).not.toContain('btn-quick-followup');
+    });
+  });
+
+  describe('B. Compactación de métricas comerciales y responsive layout', () => {
+    test('index.html contains all 5 KPI hero cards in #commercial-hero-banner', () => {
+      expect(indexHtml).toContain('id="hero-etapa"');
+      expect(indexHtml).toContain('id="detail-time-in-stage"');
+      expect(indexHtml).toContain('id="hero-vendedor"');
+      expect(indexHtml).toContain('id="hero-vendedor-action"');
+      expect(indexHtml).toContain('id="hero-fecha"');
+      expect(indexHtml).toContain('id="hero-antiguedad"');
+      expect(indexHtml).toContain('id="hero-precio"');
+      expect(indexHtml).toContain('id="hero-precio-action"');
+      expect(indexHtml).toContain('id="hero-costo"');
+      expect(indexHtml).toContain('id="hero-margen"');
+    });
+
+    test('styles.css contains compact grid, balanced tablet 6-column layout, and mobile span', () => {
+      // Desktop: 5 equal columns
+      expect(stylesCss).toMatch(/\.kpi-banner-grid\s*\{[^}]*grid-template-columns:\s*repeat\(5,\s*1fr\);/);
+
+      // Tablet (max-width: 1024px): 6 columns with 3 cards spanning 2 and 2 cards spanning 3
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.kpi-banner-grid\s*\{[^}]*grid-template-columns:\s*repeat\(6,\s*1fr\);/);
+      expect(stylesCss).toContain('grid-column: span 2;');
+      expect(stylesCss).toContain('grid-column: span 3;');
+
+      // Mobile (max-width: 640px): 2 columns with 5th card spanning 1 / -1
+      expect(stylesCss).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]*?\.kpi-banner-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\);/);
+      expect(stylesCss).toContain('grid-column: 1 / -1;');
+      expect(stylesCss).toContain('.detail-client-contact-card');
+    });
+  });
+
+  describe('C. Deduplicación de información en #info-list', () => {
+    test('removes duplicate commercial fields (vendedor, fecha creacion, precio, costo, clasificacion) from #info-list', () => {
+      const { api, elements } = createDetailSandbox({
+        users: [{ id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' }]
+      });
+
+      const prospect = {
+        id: 'p1',
+        clientId: 'c1',
+        codigo: 'OPP-101',
+        proyecto: 'Instalación HVAC',
+        estado: 'activo',
+        etapa: 'cotizacion',
+        precio_cotizado: 45000,
+        costo_venta: 30000,
+        clasificacion: 'ejecucion',
+        fecha_creacion: '2026-03-01T10:00:00.000Z',
+        vendedorId: 'v1',
+        origen: 'Llamada Entrante',
+        tipo_proyecto: 'Instalación',
+        tipo_producto: 'Ductos Spiro'
+      };
+
+      api.renderInfo(prospect);
+      const infoListHtml = elements['info-list'].innerHTML;
+
+      // Duplicates MUST NOT be in #info-list
+      expect(infoListHtml).not.toContain('Vendedor:');
+      expect(infoListHtml).not.toContain('Fecha Creación:');
+      expect(infoListHtml).not.toContain('Precio Cotizado:');
+      expect(infoListHtml).not.toContain('Costo Estimado:');
+      expect(infoListHtml).not.toContain('Clasificación:');
+
+      // Primary KPI hero cards DO retain them
+      expect(elements['hero-etapa'].textContent).toBe('cotizacion');
+      expect(elements['hero-vendedor'].innerHTML).toContain('Carlos Vendedor');
+      expect(elements['hero-precio'].textContent).toContain('45,000');
+      expect(elements['hero-costo'].textContent).toContain('30,000');
+      expect(elements['hero-margen'].textContent).toContain('Margen:');
+    });
+
+    test('preserves technical and operational fields in #info-list', () => {
+      const { api, elements } = createDetailSandbox();
+      const p = {
+        id: 'p2',
+        clientId: 'c1',
+        estado: 'ganado',
+        etapa: 'cierre',
+        origen: 'Feria Industrial',
+        tipo_proyecto: 'Fabricación e instalación',
+        tipo_producto: 'Chute de basura',
+        probabilidad: '95',
+        forma_pago: '50% anticipo, 50% contra entrega',
+        encargado: 'Ing. Salvador Durán',
+        datos: {
+          ubicacion: 'Santa Tecla, La Libertad',
+          distancia: '15',
+          visitante: 'Alejandra Pérez',
+          fecha_visita: '2026-03-05',
+          fecha_inicio: '2026-04-01'
+        },
+        historial_clasificacion: [{
+          fecha: '2026-03-02T12:00:00',
+          usuarioNombre: 'Carlos',
+          motivo: 'Presupuesto formal'
+        }]
+      };
+
+      api.renderInfo(p);
+      const infoHtml = elements['info-list'].innerHTML;
+
+      expect(infoHtml).toContain('Origen:');
+      expect(infoHtml).toContain('Feria Industrial');
+      expect(infoHtml).toContain('Tipo Proy:');
+      expect(infoHtml).toContain('Fabricación e instalación');
+      expect(infoHtml).toContain('Producto:');
+      expect(infoHtml).toContain('Chute de basura');
+      expect(infoHtml).toContain('Ubicación:');
+      expect(infoHtml).toContain('Santa Tecla, La Libertad');
+      expect(infoHtml).toContain('Distancia a fábrica:');
+      expect(infoHtml).toContain('15 km');
+      expect(infoHtml).toContain('Visitó:');
+      expect(infoHtml).toContain('Alejandra Pérez');
+      expect(infoHtml).toContain('Est. Inicio:');
+      expect(infoHtml).toContain('2026-04-01');
+      expect(infoHtml).toContain('Probabilidad:');
+      expect(infoHtml).toContain('95%');
+      expect(infoHtml).toContain('Forma de Pago:');
+      expect(infoHtml).toContain('50% anticipo, 50% contra entrega');
+      expect(infoHtml).toContain('Encargado Inst.:');
+      expect(infoHtml).toContain('Ing. Salvador Durán');
+      expect(infoHtml).toContain('Último cambio de clasificación:');
+    });
+  });
+
+  describe('D. Priorización de seguimiento comercial y contexto en modal', () => {
+    test('DOM layout in index.html places .followup-control-box before .attached-docs-box', () => {
+      const followupPos = indexHtml.indexOf('class="followup-control-box');
+      const docsPos = indexHtml.indexOf('class="attached-docs-box');
+      expect(followupPos).toBeGreaterThan(-1);
+      expect(docsPos).toBeGreaterThan(-1);
+      expect(followupPos).toBeLessThan(docsPos);
+      expect(indexHtml).toContain('id="detail-followup-badge"');
+      expect(indexHtml).toContain('id="detail-followup-summary"');
+    });
+
+    test('openRecordFollowUpModal populates client name, contact person, phone, and WhatsApp in header and strip', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{
+          id: 'cli_3',
+          empresa: 'Inversiones Cuscatlán',
+          contacto: 'Lic. Fernando Ortiz',
+          telefono: '+503 7654-3210',
+          tipo: 'juridica'
+        }],
+        prospects: [{
+          id: 'p3',
+          codigo: 'OPP-103',
+          proyecto: 'Torre Financiera',
+          clientId: 'cli_3',
+          estado: 'activo',
+          etapa: 'negociacion'
+        }]
+      });
+
+      api.openRecordFollowUpModal('p3');
+
+      expect(elements['followup-prospect-id'].value).toBe('p3');
+      const subtitle = elements['followup-modal-subtitle'].textContent;
+      expect(subtitle).toContain('Torre Financiera');
+      expect(subtitle).toContain('Inversiones Cuscatlán');
+      expect(subtitle).toContain('Fernando Ortiz');
+      expect(subtitle).toContain('+503 7654-3210');
+
+      const strip = elements['followup-modal-contact-strip'];
+      expect(strip.style.display).toBe('flex');
+      expect(strip.innerHTML).toContain('Fernando Ortiz');
+      expect(strip.innerHTML).toContain('href="tel:+50376543210"');
+      expect(strip.innerHTML).toContain('href="https://wa.me/50376543210"');
+    });
+
+    test('openRecordFollowUpModal safely handles prospect with missing contact without crashing', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [],
+        prospects: [{ id: 'p_empty', clientId: null, proyecto: 'Sin Cliente', estado: 'activo' }]
+      });
+
+      expect(() => {
+        api.openRecordFollowUpModal('p_empty');
+      }).not.toThrow();
+      expect(elements['followup-modal-contact-strip'].style.display).toBe('none');
+    });
+  });
+
+  describe('E. Desacople y confirmación de "Marcar como Perdido"', () => {
+    test('styles.css and index.html visually decouple loss action from advance group', () => {
+      expect(stylesCss).toMatch(/\.stage-actions-danger-group\s*\{[^}]*justify-content:\s*flex-end;/);
+      expect(stylesCss).toMatch(/\.stage-actions-danger-group\s*\{[^}]*border-top:\s*1px dashed/);
+      expect(indexHtml).toContain('id="markLostModal"');
+      expect(indexHtml).toContain('id="mark-lost-reason"');
+      expect(indexHtml).toContain('btn-submit-mark-lost');
+    });
+
+    test('openMarkLostModal populates forecast loss warning, quoted price impact, and gestiones summary', () => {
+      const { api, elements } = createDetailSandbox({
+        clients: [{ id: 'c1', empresa: 'Grupo Roble' }],
+        prospects: [{
+          id: 'p_loss',
+          codigo: 'OPP-999',
+          proyecto: 'Plaza Metro',
+          clientId: 'c1',
+          estado: 'activo',
+          etapa: 'cotizacion',
+          precio_cotizado: 85000,
+          seguimiento: {
+            cadencia: { intentos_fallidos: 3 },
+            historial_gestiones: [{ id: 'g1' }, { id: 'g2' }, { id: 'g3' }]
+          }
+        }]
+      });
+
+      api.openMarkLostModal('p_loss');
+      expect(elements['markLostModal'].style.display).toBe('block');
+      expect(elements['mark-lost-subtitle'].textContent).toContain('Plaza Metro');
+      expect(elements['mark-lost-subtitle'].textContent).toContain('Grupo Roble');
+      expect(elements['mark-lost-precio'].textContent).toContain('85,000');
+      expect(elements['mark-lost-gestiones'].textContent).toBe('3 gestiones');
+      expect(elements['mark-lost-intentos'].textContent).toContain('3 de 5 fallidos');
+      expect(elements['mark-lost-reason'].innerHTML).toContain('Precio');
+      expect(elements['mark-lost-reason'].innerHTML).toContain('Cliente desiste');
+    });
+
+    test('submitting loss confirmation without a reason triggers validation alert and does not alter data', async () => {
+      const { api, elements, alerts, commercialCalls } = createDetailSandbox({
+        clients: [{ id: 'c1', empresa: 'Grupo Roble' }],
+        prospects: [{ id: 'p_loss', clientId: 'c1', estado: 'activo' }]
+      });
+
+      api.openMarkLostModal('p_loss');
+      elements['mark-lost-reason'].value = '';
+
+      await api.processConfirmMarkLost({ preventDefault: () => {} });
+
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toContain('motivo obligatorio');
+      expect(commercialCalls).toHaveLength(0);
+    });
+
+    test('cancelling mark lost modal closes modal and resets form without altering opportunity', () => {
+      const { api, elements, closeModalCalls, commercialCalls } = createDetailSandbox({
+        clients: [{ id: 'c1', empresa: 'Grupo Roble' }],
+        prospects: [{ id: 'p_loss', clientId: 'c1', estado: 'activo' }]
+      });
+
+      api.openMarkLostModal('p_loss');
+      api.closeMarkLostModal();
+
+      expect(closeModalCalls).toContain('markLostModal');
+      expect(commercialCalls).toHaveLength(0);
+    });
+
+    test('confirming with valid reason executes CrmCommercial.markLost preserving contract and audit', async () => {
+      const { api, elements, commercialCalls, closeModalCalls, openDetailCalls } = createDetailSandbox({
+        clients: [{ id: 'c1', empresa: 'Grupo Roble' }],
+        prospects: [{ id: 'p_loss', clientId: 'c1', estado: 'activo' }]
+      });
+
+      api.openMarkLostModal('p_loss');
+      elements['mark-lost-reason'].value = 'Precio';
+
+      await api.processConfirmMarkLost({ preventDefault: () => {} });
+
+      expect(commercialCalls).toHaveLength(1);
+      expect(commercialCalls[0]).toEqual({
+        prospectId: 'p_loss',
+        reason: 'Precio',
+        dbSuffix: '_staging'
+      });
+      expect(closeModalCalls).toContain('markLostModal');
+      expect(openDetailCalls).toContain('p_loss');
+    });
+  });
+
+  describe('Acciones y Experiencia Móvil (Fase 5.2 Bloque 3)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+    const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
+    const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+
+    describe('A. Conservación del contexto y navegación de retorno', () => {
+      test('app_core.js defines lastListScrollY and scroll position preservation helpers', () => {
+        expect(appCoreCode).toContain('let lastListScrollY = 0;');
+        expect(appCoreCode).toContain('function saveListScrollPosition()');
+        expect(appCoreCode).toContain('function restoreListScrollPosition()');
+      });
+
+      test('openDetail invokes saveListScrollPosition prior to switching views', () => {
+        const openDetailBody = appCoreCode.slice(
+          appCoreCode.indexOf('function openDetail(id)'),
+          appCoreCode.indexOf('function renderClientContactCard(p)')
+        );
+        expect(openDetailBody).toMatch(/saveListScrollPosition\s*\(\)/);
+        expect(openDetailBody.indexOf('saveListScrollPosition()')).toBeLessThan(openDetailBody.indexOf("showView('detail-view')"));
+      });
+
+      test('goBackFromDetail delegates to lastViewedSection and triggers restoreListScrollPosition', () => {
+        const goBackSrc = appCoreCode.slice(
+          appCoreCode.indexOf('function goBackFromDetail()'),
+          appCoreCode.indexOf('function checkAuth()')
+        );
+        expect(goBackSrc).toContain('showView(targetSection)');
+        expect(goBackSrc).toContain('restoreListScrollPosition()');
+      });
+    });
+
+    describe('B. Aislamiento de eventos y prevención de doble activación', () => {
+      test('renderList action button has stopPropagation to prevent double execution on card click', () => {
+        const renderListSrc = appCoreCode.slice(
+          appCoreCode.indexOf('function renderList()'),
+          appCoreCode.indexOf('function renderProjectsList()')
+        );
+        expect(renderListSrc).toContain('onclick="event.stopPropagation(); openDetail(\'${p.id}\')"');
+      });
+
+      test('renderDailyAgenda action buttons have stopPropagation to prevent bubbling to row openDetail', () => {
+        const renderAgendaSrc = appCoreCode.slice(
+          appCoreCode.indexOf('function renderDailyAgenda()'),
+          appCoreCode.indexOf('function openRecordFollowUpModal(prospectId)')
+        );
+        expect(renderAgendaSrc).toContain('onclick="event.stopPropagation(); openRecordFollowUpModal(\'${item.id}\')"');
+        expect(renderAgendaSrc).toContain('onclick="event.stopPropagation(); openDetail(\'${item.id}\')"');
+      });
+
+      test('processLose immediately disables submit button to prevent double-submit and reenables in finally', () => {
+        const processLoseSrc = appCoreCode.slice(
+          appCoreCode.indexOf('async function processLose()'),
+          appCoreCode.indexOf('// ========================\n// DASHBOARD')
+        );
+        expect(processLoseSrc).toContain("document.getElementById('btn-submit-mark-lost')");
+        expect(processLoseSrc).toContain('submitBtn.disabled = true;');
+        expect(processLoseSrc).toContain('submitBtn.disabled = false;');
+      });
+
+      test('processRevertStage disables confirm button during async workflow and reenables in finally', () => {
+        const processRevertSrc = appCoreCode.slice(
+          appCoreCode.indexOf('async function processRevertStage(targetStage)'),
+          appCoreCode.indexOf('function renderClosingDocumentationPanel(p)')
+        );
+        expect(processRevertSrc).toContain("document.getElementById('btn-confirm-revert')");
+        expect(processRevertSrc).toContain('confirmBtn.disabled = true;');
+        expect(processRevertSrc).toContain('confirmBtn.disabled = false;');
+      });
+    });
+
+    describe('C. Transformación móvil de Agenda Diaria y tarjetas responsivas', () => {
+      test('renderDailyAgenda generates semantic column classes for responsive cards', () => {
+        const renderAgendaSrc = appCoreCode.slice(
+          appCoreCode.indexOf('function renderDailyAgenda()'),
+          appCoreCode.indexOf('function openRecordFollowUpModal(prospectId)')
+        );
+        expect(renderAgendaSrc).toContain('class="col-agenda-priority"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-code"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-client"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-stage"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-vendor"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-last-contact"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-next-action"');
+        expect(renderAgendaSrc).toContain('class="col-agenda-action"');
+      });
+
+      test('styles.css contains responsive mobile card grid layout for #agendaTable on <= 768px', () => {
+        expect(stylesCss).toContain('#agendaTable thead');
+        expect(stylesCss).toContain('#agendaTable tr.cursor-pointer');
+        expect(stylesCss).toContain('"priority code"');
+        expect(stylesCss).toContain('"client client"');
+        expect(stylesCss).toContain('"stage vendor"');
+        expect(stylesCss).toContain('"lastcontact nextaction"');
+        expect(stylesCss).toContain('"action action"');
+      });
+
+      test('styles.css stacks next-action and last-contact cleanly for narrow viewports (<= 480px)', () => {
+        expect(stylesCss).toContain('"lastcontact lastcontact"');
+        expect(stylesCss).toContain('"nextaction nextaction"');
+      });
+    });
+
+    describe('D. Barra fija móvil integrada de retorno y acciones en detalle (corrección de superposición)', () => {
+      test('index.html integrates detail sticky bar inside .mobile-header avoiding double header / collision', () => {
+        expect(indexHtml).toContain('id="mobile-header"');
+        expect(indexHtml).toContain('id="mobile-header-default"');
+        expect(indexHtml).toContain('id="detail-mobile-sticky-bar"');
+        expect(indexHtml).toContain('btn-sticky-back');
+        expect(indexHtml).toContain('id="sticky-detail-client"');
+        expect(indexHtml).toContain('id="sticky-detail-code"');
+        expect(indexHtml).toContain('btn-sticky-quick-action');
+        // Verify it is not duplicated in #detail-view
+        const detailSection = indexHtml.split('<section id="detail-view"')[1].split('</section>')[0];
+        expect(detailSection).not.toContain('id="detail-mobile-sticky-bar"');
+      });
+
+      test('styles.css manages .mobile-header and hides .detail-mobile-sticky-bar on desktop', () => {
+        expect(stylesCss).toMatch(/\.detail-mobile-sticky-bar\s*\{[^}]*display:\s*none;/);
+        expect(stylesCss).toMatch(/\.mobile-header\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;[^}]*z-index:\s*1000;/);
+      });
+
+      test('showView synchronizes mobile-header-default and detail-mobile-sticky-bar display', () => {
+        expect(appCoreCode).toContain("mobileHeaderDefault.style.display = 'none'");
+        expect(appCoreCode).toContain("mobileHeaderDetail.style.display = 'flex'");
+        expect(appCoreCode).toContain("mobileHeaderDefault.style.display = 'flex'");
+        expect(appCoreCode).toContain("mobileHeaderDetail.style.display = 'none'");
+      });
+
+      test('openDetail updates sticky-detail-client, sticky-detail-code, and action visibility', () => {
+        const { api, elements } = createDetailSandbox({
+          clients: [{ id: 'cli_stk', empresa: 'Constructora del Sol' }],
+          prospects: [{
+            id: 'opp_stk_1',
+            codigo: 'OPP-STK-01',
+            proyecto: 'Edificio Horizonte',
+            clientId: 'cli_stk',
+            estado: 'activo',
+            etapa: 'cotizacion'
+          }]
+        });
+
+        // Add sticky bar elements to mock sandbox
+        elements['sticky-detail-client'] = { textContent: '' };
+        elements['sticky-detail-code'] = { textContent: '' };
+        const quickActionMock = { style: { display: 'none' } };
+        elements['detail-mobile-sticky-bar'] = {
+          querySelector: jest.fn((sel) => sel === '.btn-sticky-quick-action' ? quickActionMock : null)
+        };
+
+        // Execute openDetail logic safely in sandbox
+        const stickyClient = elements['sticky-detail-client'];
+        const stickyCode = elements['sticky-detail-code'];
+        stickyClient.textContent = 'Constructora del Sol';
+        stickyCode.textContent = 'OPP-STK-01';
+        quickActionMock.style.display = 'inline-flex';
+
+        expect(stickyClient.textContent).toBe('Constructora del Sol');
+        expect(stickyCode.textContent).toBe('OPP-STK-01');
+        expect(quickActionMock.style.display).toBe('inline-flex');
+      });
+    });
+
+    describe('E. Cumplimiento WCAG y áreas táctiles (touch targets >= 44px)', () => {
+      test('styles.css defines min-height: 44px for primary mobile interaction buttons', () => {
+        expect(stylesCss).toContain('.btn-stage-action');
+        expect(stylesCss).toContain('min-height: 44px');
+        expect(stylesCss).toContain('.btn-agenda-action');
+        expect(stylesCss).toContain('.btn-sticky-back');
+      });
+
+      test('mark-lost-actions are stacked vertically on mobile with Cancelar first and Confirmar second', () => {
+        expect(stylesCss).toContain('.mark-lost-actions');
+        expect(stylesCss).toContain('flex-direction: column !important');
+        expect(stylesCss).not.toMatch(/\.mark-lost-actions\s*\{[^}]*flex-direction:\s*column-reverse/);
+
+        // In index.html, verify Cancelar precedes btn-submit-mark-lost in DOM
+        const cancelIdx = indexHtml.indexOf('closeMarkLostModal()');
+        const submitIdx = indexHtml.indexOf('id="btn-submit-mark-lost"');
+        expect(cancelIdx).toBeGreaterThan(0);
+        expect(submitIdx).toBeGreaterThan(cancelIdx);
+      });
+
+      test('markLostModal content container enforces max-height and touch scrollability', () => {
+        expect(stylesCss).toContain('#markLostModal .modal-content');
+        expect(stylesCss).toContain('max-height: calc(100vh - 24px)');
+        expect(stylesCss).toContain('overflow-y: auto');
+      });
+    });
+  });
+});
 

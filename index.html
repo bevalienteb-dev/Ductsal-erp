@@ -47,13 +47,27 @@
 
     <div class="app-container" id="main-app" style="display:none;">
         
-        <!-- Mobile Top Header -->
-        <div class="mobile-header">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <div class="hexagon-logo fallback" style="width: 24px; height: 26px;"></div>
-                <h2 style="font-size: 1.2rem; color: white;">Ductsal</h2>
+        <!-- Mobile Top Header (Integrado: marca general o navegación contextual en detalle) -->
+        <div class="mobile-header" id="mobile-header">
+            <div class="mobile-header-default" id="mobile-header-default" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="hexagon-logo fallback" style="width: 24px; height: 26px;"></div>
+                    <h2 style="font-size: 1.2rem; color: white;">Ductsal</h2>
+                </div>
+                <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="processLogout()">Salir</button>
             </div>
-            <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="processLogout()">Salir</button>
+            <div class="detail-mobile-sticky-bar" id="detail-mobile-sticky-bar" style="display: none; width: 100%; align-items: center; justify-content: space-between; gap: 0.5rem;">
+                <button type="button" class="btn-secondary btn-sticky-back" onclick="goBackFromDetail()" title="Volver al pipeline">
+                    <span>← Volver</span>
+                </button>
+                <div class="detail-sticky-info">
+                    <span class="detail-sticky-client" id="sticky-detail-client">Cliente</span>
+                    <span class="detail-sticky-code" id="sticky-detail-code">OPP</span>
+                </div>
+                <button type="button" class="btn-primary btn-sticky-quick-action" onclick="openRecordFollowUpModal(currentProspectId)" title="Registrar contacto comercial">
+                    <span>📞 Gestión</span>
+                </button>
+            </div>
         </div>
 
         <!-- Sidebar -->
@@ -819,6 +833,11 @@
                     </div>
                 </header>
 
+                <!-- Tarjeta de Contacto Comercial (Fase 5.2 Bloque 2) -->
+                <div id="detail-client-contact-card" class="detail-client-contact-card glass-panel mb-3" style="display: none;">
+                    <!-- Injected dynamically by renderClientContactCard(p) -->
+                </div>
+
                 <!-- Resumen Comercial / KPI Hero (Prioridad 2) -->
                 <div class="commercial-hero-banner glass-panel mb-4" id="commercial-hero-banner">
                     <div class="kpi-banner-grid">
@@ -974,19 +993,8 @@
                     </div>
 
                     <div class="side-detail glass-panel">
-                        <!-- Documentos Adjuntos (Prioridad 5) -->
-                        <div class="attached-docs-box">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">
-                                <h3 style="margin: 0; font-size: 1rem; color: white;">Documentos Adjuntos</h3>
-                                <span id="docs-count-badge" class="badge bg-neutral" style="font-size: 0.7rem;">0 docs</span>
-                            </div>
-                            <ul class="info-list docs-card-list" id="docs-list">
-                                <!-- Populated by JS -->
-                            </ul>
-                        </div>
-
-                        <!-- Control de Seguimiento Comercial -->
-                        <div class="followup-control-box mt-4" style="background: rgba(0,0,0,0.18); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--panel-border);">
+                        <!-- Control de Seguimiento Comercial (Prioridad 1 en Panel Lateral - Fase 5.2 Bloque 2) -->
+                        <div class="followup-control-box" style="background: rgba(0,0,0,0.18); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--panel-border);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
                                 <h3 style="margin: 0; font-size: 1rem; color: white; display: flex; align-items: center; gap: 6px;">
                                     <span>📞</span> Seguimiento Comercial
@@ -1001,6 +1009,17 @@
                             <button type="button" class="btn-primary mt-3" style="width: 100%; font-size: 0.88rem; padding: 0.6rem; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;" onclick="openRecordFollowUpModal(currentProspectId)">
                                 <span>📞 Registrar Gestión de Contacto</span>
                             </button>
+                        </div>
+
+                        <!-- Documentos Adjuntos (Prioridad 2 en Panel Lateral) -->
+                        <div class="attached-docs-box mt-4">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.4rem;">
+                                <h3 style="margin: 0; font-size: 1rem; color: white;">Documentos Adjuntos</h3>
+                                <span id="docs-count-badge" class="badge bg-neutral" style="font-size: 0.7rem;">0 docs</span>
+                            </div>
+                            <ul class="info-list docs-card-list" id="docs-list">
+                                <!-- Populated by JS -->
+                            </ul>
                         </div>
 
                         <!-- Bitácora y Notas Internas -->
@@ -1315,6 +1334,7 @@
                 <span class="close" onclick="closeModal('followUpModal')">&times;</span>
                 <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">Registrar Gestión de Seguimiento</h2>
                 <p id="followup-modal-subtitle" style="color: var(--text-secondary); font-size: 0.85rem; margin: 0;">Proyecto: -</p>
+                <div id="followup-modal-contact-strip" style="display:none; margin-top: 8px; font-size: 0.82rem; color: #bfdbfe; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; padding: 6px 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;"></div>
             </div>
 
             <form id="followUpForm" onsubmit="processSaveFollowUp(event)" style="display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; margin: 0;">
@@ -1627,6 +1647,61 @@
                     </button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Modal: Confirmar Pérdida Comercial (Fase 5.2 Bloque 2) -->
+    <div id="markLostModal" class="modal" style="display:none; z-index: 1070;">
+        <div class="modal-content glass-panel" style="max-width: 520px; width: 95%;">
+            <span class="close" onclick="closeMarkLostModal()">&times;</span>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 0.5rem;">
+                <div style="background: rgba(239, 68, 68, 0.2); color: #f87171; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; flex-shrink: 0;">
+                    ⚠️
+                </div>
+                <div>
+                    <h2 style="color: #f87171; margin: 0; font-size: 1.2rem;">Marcar Oportunidad como Perdida</h2>
+                    <p id="mark-lost-subtitle" style="color: var(--text-secondary); font-size: 0.82rem; margin: 2px 0 0 0;">Proyecto: -</p>
+                </div>
+            </div>
+
+            <div style="background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; padding: 0.85rem; margin: 1rem 0; font-size: 0.82rem; line-height: 1.45; color: #fca5a5;">
+                <strong>Advertencia comercial:</strong> Esta oportunidad pasará formalmente a estado <strong>Perdido</strong>. Dejará de contabilizarse en el pronóstico activo de ventas, saldrá de la agenda diaria de seguimiento y su historial quedará archivado con fines estadísticos.
+            </div>
+
+            <div id="mark-lost-impact-card" style="background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.82rem;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="color:var(--text-secondary)">Monto cotizado que saldrá del pronóstico:</span>
+                    <strong id="mark-lost-precio" style="color:var(--brand-gold);">$0</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="color:var(--text-secondary)">Gestiones registradas:</span>
+                    <strong id="mark-lost-gestiones" style="color:white;">0 gestiones</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-secondary)">Intentos fallidos acumulados:</span>
+                    <strong id="mark-lost-intentos" style="color:#f87171;">0 de 5</strong>
+                </div>
+            </div>
+
+            <form id="markLostForm" onsubmit="processConfirmMarkLost(event)">
+                <input type="hidden" id="mark-lost-prospect-id">
+
+                <div class="form-group" style="margin-bottom: 1.25rem;">
+                    <label for="mark-lost-reason" style="font-weight: 600; color: white; display: block; margin-bottom: 0.4rem;">
+                        Motivo obligatorio de pérdida comercial *
+                    </label>
+                    <select id="mark-lost-reason" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.9rem;">
+                        <option value="">-- Selecciona un motivo justificado --</option>
+                    </select>
+                </div>
+
+                <div class="mark-lost-actions" style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button type="button" class="btn-secondary" onclick="closeMarkLostModal()">Cancelar</button>
+                    <button type="submit" class="btn-danger" id="btn-submit-mark-lost" style="background: #dc2626; border-color: #ef4444; font-weight: 700;">
+                        🛑 Confirmar Pérdida
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 

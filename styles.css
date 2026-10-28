@@ -120,9 +120,123 @@ tr.cursor-pointer:hover { background: rgba(255, 255, 255, 0.04); cursor: pointer
     word-break: break-word;
     overflow-wrap: anywhere;
 }
-.commercial-hero-banner { padding: 1.25rem; border-radius: 8px; border: 1px solid var(--panel-border); background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(8px); min-width: 0; }
-.kpi-banner-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; min-width: 0; }
-.kpi-hero-card { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.75rem 1rem; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.commercial-hero-banner { padding: 1.15rem 1.25rem; border-radius: 8px; border: 1px solid var(--panel-border); background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(8px); min-width: 0; }
+.kpi-banner-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.85rem; min-width: 0; }
+.kpi-hero-card { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.7rem 0.95rem; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+
+/* ==========================================================================
+   Fase 5.2 Bloque 2: Commercial Client Contact Card
+   ========================================================================== */
+.detail-client-contact-card {
+    padding: 0.9rem 1.15rem;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(8px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    min-width: 0;
+}
+.client-contact-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+    flex: 1 1 300px;
+}
+.client-contact-name-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.client-contact-company {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: white;
+}
+.client-contact-person {
+    font-size: 0.86rem;
+    color: var(--brand-gold);
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.client-contact-channels {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 3px;
+}
+.contact-channel-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+}
+.contact-channel-tel {
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+}
+.contact-channel-tel:hover {
+    background: rgba(59, 130, 246, 0.28);
+    color: white;
+    transform: translateY(-1px);
+}
+.contact-channel-wa {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    color: #6ee7b7;
+}
+.contact-channel-wa:hover {
+    background: rgba(16, 185, 129, 0.28);
+    color: white;
+    transform: translateY(-1px);
+}
+.contact-channel-email {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fde68a;
+}
+.contact-channel-email:hover {
+    background: rgba(245, 158, 11, 0.28);
+    color: white;
+    transform: translateY(-1px);
+}
+.contact-channel-empty {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    font-weight: normal;
+    cursor: default;
+}
+.client-contact-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.btn-quick-followup {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0.45rem 0.95rem;
+    font-size: 0.84rem;
+    font-weight: 600;
+    white-space: nowrap;
+    border-radius: 6px;
+}
 .kpi-hero-card .kpi-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.35rem; }
 .kpi-hero-card .kpi-val { font-size: 1.15rem; font-weight: 700; color: white; word-break: break-word; }
 .detail-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 1.5rem; }
@@ -371,7 +485,8 @@ body.modal-open {
     .app-container { flex-direction: column; }
     
     /* Show mobile header */
-    .mobile-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg-dark); border-bottom: 1px solid var(--panel-border); position: sticky; top: 0; z-index: 1000; }
+    .mobile-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(18, 24, 40, 0.98); border-bottom: 1px solid var(--panel-border); position: sticky; top: 0; z-index: 1000; min-height: 56px; box-sizing: border-box; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .mobile-header-default { width: 100%; display: flex; justify-content: space-between; align-items: center; }
     
     /* Convert Sidebar to Bottom Navigation Bar */
     .sidebar { position: fixed; bottom: 0; left: 0; width: 100%; height: 65px; flex-direction: row; border-right: none; border-top: 1px solid var(--panel-border); z-index: 1000; padding: 0; background: rgba(30, 35, 55, 0.95); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
@@ -399,7 +514,19 @@ body.modal-open {
     .metrics-grid { grid-template-columns: 1fr; gap: 1rem; }
     .charts-flex-grid { grid-template-columns: 1fr; }
     .detail-grid { grid-template-columns: 1fr; gap: 1rem; }
-    .kpi-banner-grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+    .kpi-banner-grid {
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.75rem;
+    }
+    .kpi-banner-grid .kpi-hero-card:nth-child(1),
+    .kpi-banner-grid .kpi-hero-card:nth-child(2),
+    .kpi-banner-grid .kpi-hero-card:nth-child(3) {
+        grid-column: span 2;
+    }
+    .kpi-banner-grid .kpi-hero-card:nth-child(4),
+    .kpi-banner-grid .kpi-hero-card:nth-child(5) {
+        grid-column: span 3;
+    }
     .form-grid { grid-template-columns: 1fr; }
     .financial-balance-grid { grid-template-columns: 1fr; gap: 1.25rem; }
     .financial-cxc-box { text-align: left; }
@@ -444,7 +571,28 @@ body.modal-open {
 .client-doc-card-actions { display: flex; gap: 5px; align-items: center; }
 
 @media (max-width: 640px) {
-    .kpi-banner-grid { grid-template-columns: 1fr; }
+    .kpi-banner-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.65rem;
+    }
+    .kpi-banner-grid .kpi-hero-card:nth-child(1),
+    .kpi-banner-grid .kpi-hero-card:nth-child(2),
+    .kpi-banner-grid .kpi-hero-card:nth-child(3),
+    .kpi-banner-grid .kpi-hero-card:nth-child(4) {
+        grid-column: span 1;
+    }
+    .kpi-banner-grid .kpi-hero-card:nth-child(5) {
+        grid-column: 1 / -1;
+    }
+    .detail-client-contact-card {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+    .client-contact-actions .btn-quick-followup {
+        width: 100%;
+        justify-content: center;
+    }
     .opp-filters-bar { flex-direction: column; align-items: stretch; }
     .date-filter-box { flex-wrap: wrap; }
     .filter-pills-group { flex-wrap: wrap; }
@@ -1194,11 +1342,12 @@ body.modal-open {
 .stage-actions-danger-group {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
     width: 100%;
     margin-left: 0;
-    padding-top: 0.5rem;
-    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    margin-top: 0.65rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed rgba(239, 68, 68, 0.25);
 }
 
 .btn-stage-action {
@@ -2027,4 +2176,264 @@ body.modal-open {
     }
 }
 
+/* ==========================================================================
+   Fase 5.2 Bloque 3: Acciones y Experiencia Móvil
+   ========================================================================== */
 
+/* 1. Barra Móvil Fija de Acciones y Retorno en Detalle de Oportunidad (Integrada en .mobile-header) */
+.detail-mobile-sticky-bar {
+    display: none;
+    width: 100%;
+}
+
+@media (max-width: 768px) {
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-action button {
+        min-height: 44px;
+        min-width: 88px;
+        padding: 0.45rem 1rem !important;
+        font-weight: 600;
+        border-radius: 6px;
+    }
+    #detail-view .header-flex > div > button.btn-secondary.mb-2 {
+        display: none !important;
+    }
+    .detail-mobile-sticky-bar {
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        box-sizing: border-box;
+    }
+    .btn-sticky-back {
+        min-height: 44px;
+        padding: 0.4rem 0.85rem;
+        font-size: 0.84rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+        border-radius: 6px;
+    }
+    .detail-sticky-info {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        min-width: 0;
+        flex: 1 1 auto;
+        padding: 0 6px;
+        text-align: center;
+    }
+    .detail-sticky-client {
+        font-size: 0.86rem;
+        font-weight: 700;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    .detail-sticky-code {
+        font-size: 0.72rem;
+        color: var(--brand-gold);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+    .btn-sticky-quick-action {
+        min-height: 44px;
+        padding: 0.4rem 0.95rem;
+        font-size: 0.84rem;
+        font-weight: 700;
+        white-space: nowrap;
+        flex-shrink: 0;
+        border-radius: 6px;
+    }
+}
+
+/* 2. Transformación Responsiva de Tabla de Agenda Diaria a Tarjetas Móviles (<= 768px) */
+@media (max-width: 768px) {
+    #agendaTable thead {
+        display: none !important;
+    }
+    #agendaTable,
+    #agendaTable tbody {
+        display: block !important;
+        width: 100% !important;
+    }
+    #agendaTable tr.cursor-pointer {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "priority code"
+            "client client"
+            "stage vendor"
+            "lastcontact nextaction"
+            "action action" !important;
+        gap: 0.55rem 0.75rem !important;
+        background: rgba(22, 27, 46, 0.75) !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 10px !important;
+        padding: 1rem 1.15rem !important;
+        margin-bottom: 0.85rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        transition: transform 0.15s ease, border-color 0.15s ease !important;
+    }
+    #agendaTable tr.cursor-pointer:hover {
+        border-color: rgba(255, 204, 77, 0.4) !important;
+        transform: translateY(-2px) !important;
+    }
+    #agendaTable tr.cursor-pointer > td {
+        display: flex !important;
+        align-items: center !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        min-width: 0 !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-priority {
+        grid-area: priority;
+        justify-content: flex-start;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-code {
+        grid-area: code;
+        justify-content: flex-end;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-client {
+        grid-area: client;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        padding-bottom: 0.45rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+        width: 100% !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-client .agenda-client-name {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: white;
+        word-break: break-word;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-client .agenda-project-name {
+        font-size: 0.84rem;
+        color: var(--text-secondary);
+        word-break: break-word;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-stage {
+        grid-area: stage;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-vendor {
+        grid-area: vendor;
+        justify-content: flex-end;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-last-contact {
+        grid-area: lastcontact;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-next-action {
+        grid-area: nextaction;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-end !important;
+        text-align: right;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-action {
+        grid-area: action;
+        width: 100% !important;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-action .agenda-actions-group {
+        width: 100% !important;
+        display: flex !important;
+        gap: 8px !important;
+    }
+    .btn-agenda-action {
+        flex: 1 1 auto !important;
+        min-height: 44px !important;
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 6px !important;
+    }
+    .btn-agenda-view {
+        width: 48px !important;
+        min-height: 44px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 1.05rem !important;
+        border-radius: 6px !important;
+        flex-shrink: 0 !important;
+    }
+    .mark-lost-actions {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+        width: 100% !important;
+        margin-top: 1rem !important;
+    }
+    .mark-lost-actions button {
+        width: 100% !important;
+        min-height: 44px !important;
+        justify-content: center !important;
+    }
+}
+
+/* 3. Ajustes para pantallas muy angostas (375px - 480px) */
+@media (max-width: 480px) {
+    #agendaTable tr.cursor-pointer {
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "priority code"
+            "client client"
+            "stage vendor"
+            "lastcontact lastcontact"
+            "nextaction nextaction"
+            "action action" !important;
+        gap: 0.5rem 0.6rem !important;
+        padding: 0.85rem 0.95rem !important;
+    }
+    #agendaTable tr.cursor-pointer > td.col-agenda-next-action {
+        align-items: flex-start !important;
+        text-align: left !important;
+    }
+    .contact-channel-pill {
+        flex: 1 1 calc(50% - 0.5rem);
+        min-height: 44px;
+        justify-content: center;
+        font-size: 0.82rem;
+    }
+    .mark-lost-actions {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.75rem !important;
+        width: 100% !important;
+        margin-top: 1rem !important;
+    }
+    .mark-lost-actions button {
+        width: 100% !important;
+        min-height: 44px !important;
+        justify-content: center !important;
+    }
+}
+
+/* 4. Modal de Pérdida Comercial Responsivo */
+#markLostModal .modal-content {
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    box-sizing: border-box;
+}
