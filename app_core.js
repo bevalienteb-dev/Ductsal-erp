@@ -1741,6 +1741,7 @@ let settings = { visitantes: [], encargados: [], gmaps_api_key: "", factory_addr
 let chartFunnel = null; let chartProduct = null; let chartProject = null; let chartOrigin = null; let chartLoss = null; let chartOppProduct = null; let chartOppProject = null; let chartMonthly = null; let chartSeller = null;
 
 let loadedCollections = 0;
+let initialLoadCompleted = false;
 
 function reRenderApp() {
     try {
@@ -1759,7 +1760,7 @@ function reRenderApp() {
             }
         }
     } catch (e) {
-        alert("CRASH EN reRenderApp: " + e.message + "\\n" + e.stack);
+        alert("CRASH EN reRenderApp: " + e.message + "\n" + e.stack);
         console.error(e);
     }
 }
@@ -1773,11 +1774,18 @@ function detachSnapshotListeners() {
         });
     }
     activeUnsubscribers = [];
+    loadedCollections = 0;
+    initialLoadCompleted = false;
 }
 
 function checkInitialLoad() {
+    if (initialLoadCompleted) {
+        reRenderApp();
+        return;
+    }
     loadedCollections++;
     if (loadedCollections >= 3) {
+        initialLoadCompleted = true;
         if (users.length === 0) {
             console.warn('[CRM] No hay usuarios en Firestore. El primer administrador se crea a través del flujo de configuración inicial en functions/LEGACY_IMPORT.md.');
         }
@@ -2295,27 +2303,31 @@ function applyRolePermissions() {
     [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'none'; });
     headerAction.style.display = 'none';
 
+    // Preserve active view if already open (e.g. detail-view or subviews) to prevent jarring resets
+    const activeView = (typeof document !== 'undefined') ? document.querySelector('.view-section.active') : null;
+    const currentActiveId = activeView ? activeView.id : null;
+
     if (role === 'manager') {
         currentListMode = 'pipeline';
         [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
-        showView('dashboard-view');
+        if (!currentActiveId) showView('dashboard-view');
     }
     else if (role === 'admin') {
         currentListMode = 'pipeline';
         [navUsers, navSettings, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
-        showView('users-view');
+        if (!currentActiveId) showView('users-view');
     }
     else if (role === 'gestor') {
         currentListMode = 'agenda';
         [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
-        showView('projects-view');
+        if (!currentActiveId) showView('projects-view');
     }
     else {
         currentListMode = 'agenda';
         [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
-        showView('list-view');
+        if (!currentActiveId) showView('list-view');
     }
 
     renderList();
@@ -4995,7 +5007,7 @@ function renderFinancials(p) {
 
         listDiv.innerHTML += `
             <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="invoice-card-header">
                     <div>
                         <strong style="font-size:1.1rem; color:white;">${f.numero}</strong> <span class="badge ${isPaid ? 'ganado' : 'activo'} ml-2">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
                         <span class="cursor-pointer" style="margin-left:10px; font-size:0.8rem; color:var(--brand-gold);" onclick="editInvoice('${f.id}')">[Editar Factura]</span>
@@ -6362,7 +6374,7 @@ function renderClosingDocumentationPanel(p) {
                 docKey: actualKey
             });
             fileActions = `
-                <div style="display:flex; gap:4px; align-items:center;">
+                <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
                     <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="viewStoredClientDoc('${storeId}')" title="Ver documento">👁️ Ver</button>
                     <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar documento">⬇️</button>
                     <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="showDocumentVersionHistory('client', '${c.id}', '${actualKey}', '${escapeHtmlDoc(spec.label)}')" title="Consultar historial de versiones">📜 Historial</button>
@@ -6373,8 +6385,8 @@ function renderClosingDocumentationPanel(p) {
             docMeta = `<div style="font-size:0.78rem; color:#fca5a5; margin-top:2px;">⚠️ No adjunto en el expediente</div>`;
             if (!isWon) {
                 fileActions = `
-                    <div style="display:flex; gap:6px; align-items:center;">
-                        <input type="file" id="closing-client-file-${actualKey}" style="font-size:0.75rem; max-width:210px;">
+                    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                        <input type="file" id="closing-client-file-${actualKey}" style="font-size:0.75rem; max-width:100%; box-sizing:border-box;">
                         <button type="button" class="btn-primary" style="padding:3px 10px; font-size:0.75rem;" onclick="uploadClientDocumentFromClosing('${c.id}', '${p.id}', '${actualKey}', false)" title="Subir primera versión">📤 Subir</button>
                     </div>
                 `;
@@ -6472,7 +6484,7 @@ function renderClosingDocumentationPanel(p) {
     }
 
     let html = `
-    <div class="closing-panel glass-panel" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 8px; padding: 1.5rem; margin-top: 1rem;">
+    <div class="closing-panel glass-panel">
         <!-- Cabecera de SLA y Estado -->
         <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
             <div>
@@ -6500,7 +6512,7 @@ function renderClosingDocumentationPanel(p) {
         </div>
 
         <!-- Checklist de Validación Documental -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+        <div class="closing-checklist-grid">
             <!-- Documentos Requeridos -->
             <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.75rem 1rem;">
                 <div style="font-size: 0.82rem; font-weight: bold; color: var(--text-primary); margin-bottom: 0.5rem;">📋 Requisitos de Cierre (${reqList.length})</div>
@@ -7191,6 +7203,13 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.renderInfo = renderInfo;
     module.exports.renderClientExpedienteSection = renderClientExpedienteSection;
     module.exports.getDocStore = getDocStore;
+    module.exports.checkInitialLoad = typeof checkInitialLoad !== 'undefined' ? checkInitialLoad : undefined;
+    module.exports.detachSnapshotListeners = typeof detachSnapshotListeners !== 'undefined' ? detachSnapshotListeners : undefined;
+    module.exports.reRenderApp = typeof reRenderApp !== 'undefined' ? reRenderApp : undefined;
+    module.exports.applyRolePermissions = typeof applyRolePermissions !== 'undefined' ? applyRolePermissions : undefined;
+    module.exports.addLog = typeof addLog !== 'undefined' ? addLog : undefined;
+    module.exports.deleteLog = typeof deleteLog !== 'undefined' ? deleteLog : undefined;
+    module.exports.openDetail = typeof openDetail !== 'undefined' ? openDetail : undefined;
 }
 
 function showLoseForm() {
