@@ -2541,15 +2541,17 @@ function renderUsersTable() {
         };
         const rName = roleMap[u.role] || u.role;
         const stHtml = u.activo ? `<span style="color:var(--success);">Activo</span>` : `<span style="color:var(--danger);">Inactivo</span>`;
-        tbody.innerHTML += `<tr>
-            <td>${u.nombre}</td>
-            <td>${u.email || '-'}</td>
-            <td>${rName}</td>
-            <td>${stHtml}</td>
-            <td>
-                <button class="btn-secondary" style="padding:4px 8px; font-size:0.7rem;" onclick="openUserModal('${u.id}')">Editar</button>
-                <button class="btn-secondary" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
-                <button class="btn-danger" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
+        tbody.innerHTML += `<tr class="user-table-row">
+            <td class="col-usr-name">${u.nombre}</td>
+            <td class="col-usr-email">${u.email || '-'}</td>
+            <td class="col-usr-role">${rName}</td>
+            <td class="col-usr-status">${stHtml}</td>
+            <td class="col-usr-actions">
+                <div class="user-actions-group">
+                    <button class="btn-secondary btn-usr-edit" style="padding:4px 8px; font-size:0.7rem;" onclick="openUserModal('${u.id}')">Editar</button>
+                    <button class="btn-secondary btn-usr-reset" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
+                    <button class="btn-danger btn-usr-toggle" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
+                </div>
             </td>
         </tr>`;
     });
@@ -2839,21 +2841,21 @@ function renderClientsTable() {
         actionsHtml += `</div>`;
 
         tbody.innerHTML += `
-            <tr>
-                <td style="white-space:nowrap;">${typeBadge}</td>
-                <td>
-                    <div class="cell-ellipsis" style="font-weight:600; color:white; max-width:240px;" title="${esc(mainName)}">
+            <tr class="client-table-row">
+                <td class="col-cli-type" style="white-space:nowrap;">${typeBadge}</td>
+                <td class="col-cli-name">
+                    <div class="cell-ellipsis cli-name-wrap" style="font-weight:600; color:white; max-width:240px;" title="${esc(mainName)}">
                         ${esc(mainName)}${exportBadge}
                     </div>
                 </td>
-                <td>
-                    <div class="cell-ellipsis" style="max-width:200px; color:var(--text-primary);" title="${esc(contactName)}">
-                        ${esc(contactName)}
+                <td class="col-cli-contact">
+                    <div class="cell-ellipsis cli-contact-wrap" style="max-width:200px; color:var(--text-primary);" title="${esc(contactName)}">
+                        <span class="cli-contact-icon" style="display:none; margin-right:4px;">👤</span>${esc(contactName)}
                     </div>
                 </td>
-                <td style="white-space:nowrap;">${phoneStr}</td>
-                <td>${emailStr}</td>
-                <td style="text-align:right; white-space:nowrap;">${actionsHtml}</td>
+                <td class="col-cli-phone" style="white-space:nowrap;">${phoneStr}</td>
+                <td class="col-cli-email">${emailStr}</td>
+                <td class="col-cli-action" style="text-align:right; white-space:nowrap;">${actionsHtml}</td>
             </tr>
         `;
     });
@@ -4755,25 +4757,29 @@ function renderProjectsList() {
         const ivaLabel = mp.isExport ? '✈️ Exento (0% IVA)' : '(Inc. IVA)';
 
         tr.innerHTML = `
-            <td style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold);">${escapeHtmlDoc(mp.codigo)}</strong></td>
-            <td>
-                <div class="cell-ellipsis" style="max-width:200px; font-weight:600; color:white;" title="${escapeHtmlDoc(mp.cliente)}">
+            <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold);">${escapeHtmlDoc(mp.codigo)}</strong></td>
+            <td class="col-proj-client">
+                <div class="cell-ellipsis proj-client-wrap" style="max-width:200px; font-weight:600; color:white;" title="${escapeHtmlDoc(mp.cliente)}">
                     ${escapeHtmlDoc(mp.cliente)}${exportBadge}
                 </div>
             </td>
-            <td>
-                <div class="cell-ellipsis" style="max-width:220px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.proyecto)}">
+            <td class="col-proj-project">
+                <div class="cell-ellipsis proj-title-wrap" style="max-width:220px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.proyecto)}">
                     ${escapeHtmlDoc(mp.proyecto || '-')}
                 </div>
             </td>
-            <td>${encargadoDisplay}</td>
-            <td class="col-money" style="white-space:nowrap; text-align:right;">
-                <div style="font-weight:700; color:white; font-size:0.95rem;">${formatCurrency(mp.total)}</div>
-                <div style="font-size:0.7rem; color:var(--text-secondary);">${ivaLabel}</div>
-                ${cxcBadgeHtml}
+            <td class="col-proj-lead">${encargadoDisplay}</td>
+            <td class="col-proj-total col-money" style="white-space:nowrap; text-align:right;">
+                <div class="proj-amount-wrap">
+                    <div class="proj-amount-main">
+                        <div style="font-weight:700; color:white; font-size:0.95rem;">${formatCurrency(mp.total)}</div>
+                        <div style="font-size:0.7rem; color:var(--text-secondary);">${ivaLabel}</div>
+                    </div>
+                    ${cxcBadgeHtml}
+                </div>
             </td>
-            <td style="white-space:nowrap;"><span class="badge bg-neutral" style="font-size:0.75rem;">${escapeHtmlDoc(mp.condicion)}</span></td>
-            <td class="col-money" style="min-width:115px; text-align:right;">
+            <td class="col-proj-condition" style="white-space:nowrap;"><span class="badge bg-neutral" style="font-size:0.75rem;">${escapeHtmlDoc(mp.condicion)}</span></td>
+            <td class="col-proj-invoiced col-money" style="min-width:115px; text-align:right;">
                 <div class="table-progress-wrap" style="align-items:flex-end;">
                     <div style="display:flex; justify-content:space-between; width:100%; margin-bottom:2px; font-size:0.75rem;">
                         <span style="color:var(--text-muted); font-size:0.7rem;">Facturado</span>
@@ -4785,7 +4791,7 @@ function renderProjectsList() {
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">${formatCurrency(mp.totalFacturado)}</div>
                 </div>
             </td>
-            <td class="col-money" style="min-width:135px; text-align:right;">
+            <td class="col-proj-collected col-money" style="min-width:135px; text-align:right;">
                 <div class="table-progress-wrap" style="align-items:flex-end;">
                     <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:2px; font-size:0.75rem;">
                         <span style="color:var(--text-muted); font-size:0.7rem;">Cobrado</span>
@@ -4800,7 +4806,7 @@ function renderProjectsList() {
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">${formatCurrency(mp.totalCobrado)}</div>
                 </div>
             </td>
-            <td style="text-align:right; white-space:nowrap;">
+            <td class="col-proj-action" style="text-align:right; white-space:nowrap;">
                 <button type="button" class="btn-table-action btn-table-edit" style="width:100%; justify-content:center;">
                     Gestionar ➔
                 </button>

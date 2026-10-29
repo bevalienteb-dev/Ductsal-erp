@@ -2935,6 +2935,50 @@ body.modal-open {
     font-variant-numeric: tabular-nums;
 }
 
+/* ==========================================================================
+   Fase 5.5: Tablas Adaptables - DUCTSAL ERP
+   ========================================================================== */
+
+/* Mejoras transversales en tablas para escritorio y tablet */
+.table-container {
+    border-radius: 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-container thead th {
+    white-space: nowrap;
+}
+
+/* Alineación de cifras monetarias */
+.col-money {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Contenedor del monto y saldo CxC en proyectos */
+.proj-amount-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+@media (min-width: 769px) and (max-width: 1100px) {
+    #projectsTable {
+        min-width: 960px;
+    }
+    #clientsTable {
+        min-width: 780px;
+    }
+    #usersTable {
+        min-width: 680px;
+    }
+}
+
 /* Reglas responsivas de cobros y facturación */
 @media (max-width: 768px) {
     .financial-balance-grid {
@@ -2948,9 +2992,391 @@ body.modal-open {
     .fin-cxc-saldo-hero {
         font-size: 1.25rem;
     }
-    #projectsTable th,
-    #projectsTable td {
-        padding: 0.65rem 0.5rem;
+
+    /* ----------------------------------------------------------------------
+       1. PROYECTOS: Transformación a Tarjetas Adaptables (Patrón B)
+       ---------------------------------------------------------------------- */
+    #projectsTable thead {
+        display: none !important;
+    }
+    #projectsTable,
+    #projectsTable tbody {
+        display: block !important;
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "client code"
+            "title title"
+            "lead condition"
+            "amount amount"
+            "invoiced collected"
+            "action action" !important;
+        gap: 0.6rem 0.75rem !important;
+        background: rgba(22, 27, 46, 0.75) !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 10px !important;
+        padding: 1rem 1.15rem !important;
+        margin-bottom: 0.85rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        transition: transform 0.15s ease, border-color 0.15s ease !important;
+    }
+    #projectsTable tr.cursor-pointer:hover {
+        border-color: rgba(255, 204, 77, 0.4) !important;
+        transform: translateY(-2px) !important;
+    }
+    #projectsTable tr.cursor-pointer > td {
+        display: flex !important;
+        align-items: center !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        min-width: 0 !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-client {
+        grid-area: client;
+        font-size: 1rem;
+        color: white;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-client .proj-client-wrap {
+        max-width: 100% !important;
+        white-space: normal !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-code {
+        grid-area: code;
+        justify-content: flex-end;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-project {
+        grid-area: title;
+        display: block !important;
+        width: 100% !important;
+        padding-bottom: 0.45rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-project .proj-title-wrap {
+        max-width: 100% !important;
+        white-space: normal !important;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+        line-height: 1.35;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-lead {
+        grid-area: lead;
         font-size: 0.82rem;
+        color: var(--text-secondary);
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-lead .cell-ellipsis {
+        max-width: 100% !important;
+        white-space: normal !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-condition {
+        grid-area: condition;
+        justify-content: flex-end;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-total {
+        grid-area: amount;
+        display: block !important;
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-wrap {
+        display: flex !important;
+        flex-direction: row !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        width: 100% !important;
+        background: rgba(0, 0, 0, 0.25) !important;
+        padding: 0.6rem 0.85rem !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        box-sizing: border-box !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-main {
+        text-align: left !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-invoiced {
+        grid-area: invoiced;
+        display: block !important;
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-invoiced .table-progress-wrap {
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-collected {
+        grid-area: collected;
+        display: block !important;
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-collected .table-progress-wrap {
+        width: 100% !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-action {
+        grid-area: action;
+        width: 100% !important;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #projectsTable tr.cursor-pointer > td.col-proj-action button {
+        width: 100% !important;
+        min-height: 44px !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+        justify-content: center !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+
+    /* ----------------------------------------------------------------------
+       2. CLIENTES: Transformación a Tarjetas Adaptables (Patrón B)
+       ---------------------------------------------------------------------- */
+    #clientsTable thead {
+        display: none !important;
+    }
+    #clientsTable,
+    #clientsTable tbody {
+        display: block !important;
+        width: 100% !important;
+    }
+    #clientsTable tr.client-table-row,
+    #clientsTable tr {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "name type"
+            "contact contact"
+            "phone email"
+            "action action" !important;
+        gap: 0.6rem 0.75rem !important;
+        background: rgba(22, 27, 46, 0.75) !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 10px !important;
+        padding: 1rem 1.15rem !important;
+        margin-bottom: 0.85rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        transition: transform 0.15s ease, border-color 0.15s ease !important;
+    }
+    #clientsTable tr:hover {
+        border-color: rgba(255, 204, 77, 0.4) !important;
+        transform: translateY(-2px) !important;
+    }
+    #clientsTable tr > td {
+        display: flex !important;
+        align-items: center !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        min-width: 0 !important;
+    }
+    #clientsTable tr > td.col-cli-name {
+        grid-area: name;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: white;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    #clientsTable tr > td.col-cli-name .cli-name-wrap {
+        max-width: 100% !important;
+        white-space: normal !important;
+    }
+    #clientsTable tr > td.col-cli-type {
+        grid-area: type;
+        justify-content: flex-end;
+    }
+    #clientsTable tr > td.col-cli-contact {
+        grid-area: contact;
+        display: block !important;
+        width: 100% !important;
+        padding-bottom: 0.45rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #clientsTable tr > td.col-cli-contact .cli-contact-wrap {
+        max-width: 100% !important;
+        white-space: normal !important;
+        font-size: 0.88rem;
+        color: var(--text-primary);
+    }
+    #clientsTable tr > td.col-cli-contact .cli-contact-icon {
+        display: inline-block !important;
+    }
+    #clientsTable tr > td.col-cli-phone {
+        grid-area: phone;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+    #clientsTable tr > td.col-cli-email {
+        grid-area: email;
+        justify-content: flex-end;
+        font-size: 0.85rem;
+    }
+    #clientsTable tr > td.col-cli-email a {
+        max-width: 100% !important;
+        white-space: normal !important;
+        word-break: break-all !important;
+    }
+    #clientsTable tr > td.col-cli-action {
+        grid-area: action;
+        width: 100% !important;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #clientsTable tr > td.col-cli-action .table-btn-group {
+        width: 100% !important;
+        display: flex !important;
+        gap: 8px !important;
+    }
+    #clientsTable tr > td.col-cli-action .btn-table-edit {
+        flex: 1 1 auto !important;
+        min-height: 44px !important;
+        justify-content: center !important;
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+    }
+    #clientsTable tr > td.col-cli-action .btn-table-delete {
+        min-height: 44px !important;
+        min-width: 48px !important;
+        font-size: 1rem !important;
+        justify-content: center !important;
+    }
+
+    /* ----------------------------------------------------------------------
+       3. USUARIOS: Transformación a Tarjetas Adaptables (Patrón B)
+       ---------------------------------------------------------------------- */
+    #usersTable thead {
+        display: none !important;
+    }
+    #usersTable,
+    #usersTable tbody {
+        display: block !important;
+        width: 100% !important;
+    }
+    #usersTable tr.user-table-row,
+    #usersTable tr {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "name status"
+            "email email"
+            "role role"
+            "actions actions" !important;
+        gap: 0.5rem 0.75rem !important;
+        background: rgba(22, 27, 46, 0.75) !important;
+        border: 1px solid var(--panel-border) !important;
+        border-radius: 10px !important;
+        padding: 1rem 1.15rem !important;
+        margin-bottom: 0.85rem !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+    }
+    #usersTable tr > td {
+        display: flex !important;
+        align-items: center !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        min-width: 0 !important;
+    }
+    #usersTable tr > td.col-usr-name {
+        grid-area: name;
+        font-size: 1rem;
+        font-weight: 700;
+        color: white;
+    }
+    #usersTable tr > td.col-usr-status {
+        grid-area: status;
+        justify-content: flex-end;
+    }
+    #usersTable tr > td.col-usr-email {
+        grid-area: email;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        word-break: break-all;
+    }
+    #usersTable tr > td.col-usr-role {
+        grid-area: role;
+        font-size: 0.82rem;
+        color: var(--brand-gold);
+        padding-bottom: 0.4rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #usersTable tr > td.col-usr-actions {
+        grid-area: actions;
+        width: 100% !important;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+    }
+    #usersTable tr > td.col-usr-actions .user-actions-group {
+        width: 100%;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    #usersTable tr > td.col-usr-actions .user-actions-group button {
+        flex: 1 1 calc(33.333% - 6px);
+        min-height: 40px !important;
+        font-size: 0.8rem !important;
+        font-weight: 600 !important;
+        margin: 0 !important;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* ----------------------------------------------------------------------
+       4. DASHBOARD: Oportunidades Estancadas / Alertas (Patrón A Enriquecido)
+       ---------------------------------------------------------------------- */
+    #dashActiveTimesTable th,
+    #dashActiveTimesTable td {
+        white-space: nowrap;
+    }
+    #dashActiveTimesTable td:last-child {
+        min-width: 140px;
+    }
+    #dashActiveTimesTable .btn-table-action {
+        min-height: 38px;
+        padding: 0.45rem 0.75rem;
+    }
+}
+
+/* Ajustes adicionales para teléfonos muy estrechos (<= 480px) */
+@media (max-width: 480px) {
+    #projectsTable tr.cursor-pointer {
+        grid-template-areas:
+            "client code"
+            "title title"
+            "lead condition"
+            "amount amount"
+            "invoiced invoiced"
+            "collected collected"
+            "action action" !important;
+    }
+
+    #clientsTable tr.client-table-row,
+    #clientsTable tr {
+        grid-template-areas:
+            "name type"
+            "contact contact"
+            "phone phone"
+            "email email"
+            "action action" !important;
+    }
+    #clientsTable tr > td.col-cli-email {
+        justify-content: flex-start !important;
+    }
+
+    #usersTable tr > td.col-usr-actions .user-actions-group button {
+        flex: 1 1 100%;
     }
 }
