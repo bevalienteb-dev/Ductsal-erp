@@ -1987,6 +1987,42 @@ body.modal-open {
     border-radius: 6px;
 }
 
+/* Columna de Proyecto y Clasificación Comercial (Pipeline) */
+#opportunitiesTable th:nth-child(3),
+#opportunitiesTable td.col-opp-project {
+    min-width: 280px;
+    width: 26%;
+}
+
+.opp-project-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+}
+
+.opp-project-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    color: var(--text-primary);
+}
+
+.opp-project-status-col {
+    flex: 0 0 115px;
+    width: 115px;
+    min-width: 115px;
+    max-width: 115px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    flex-shrink: 0;
+}
+
 /* Responsive Cards Layout (Pantallas <= 768px) */
 @media (max-width: 768px) {
     .pipeline-stage-filters-container {
@@ -2127,14 +2163,31 @@ body.modal-open {
         overflow-wrap: break-word;
     }
     #opportunitiesTable tr.cursor-pointer > td.col-opp-project .opp-project-wrap {
-        display: inline-flex;
-        align-items: center;
-        flex-wrap: wrap;
-        width: 100%;
-        min-width: 0;
-        word-break: break-word;
-        overflow-wrap: break-word;
-        max-width: 100%;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 0.65rem !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-project .opp-project-name {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+        line-height: 1.35 !important;
+    }
+    #opportunitiesTable tr.cursor-pointer > td.col-opp-project .opp-project-status-col {
+        flex: 0 0 115px !important;
+        width: 115px !important;
+        min-width: 115px !important;
+        max-width: 115px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        flex-shrink: 0 !important;
     }
     #opportunitiesTable tr.cursor-pointer > td.col-opp-stage {
         grid-area: stage;

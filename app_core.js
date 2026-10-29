@@ -4489,8 +4489,8 @@ function renderList() {
 
         const isPresupuesto = p.clasificacion === 'presupuesto';
         const clasifBadge = isPresupuesto
-            ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Cotización referencial para presupuesto">📐 Presupuesto</span>`
-            : `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem; margin-left: 6px; display: inline-flex; align-items: center; gap: 3px;" title="Oferta para ejecución comercial">🏗️ Ejecución</span>`;
+            ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.35); font-size: 0.72rem; display: inline-flex; align-items: center; justify-content: center; gap: 3px; white-space: nowrap;" title="Cotización referencial para presupuesto">📐 Presupuesto</span>`
+            : `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem; display: inline-flex; align-items: center; justify-content: center; gap: 3px; white-space: nowrap;" title="Oferta para ejecución comercial">🏗️ Ejecución</span>`;
 
         // Safe price formatting: strictly prevent NaN, undefined, or format errors
         const rawPrice = (p.precio_cotizado !== null && p.precio_cotizado !== undefined && p.precio_cotizado !== '') ? Number(p.precio_cotizado) : NaN;
@@ -4527,8 +4527,9 @@ function renderList() {
 
         const codeVal = p.codigo || p.id.substring(p.id.length - 4);
         const clientVal = getClientName(p.clientId);
+        const projectName = (typeof escapeHtmlDoc === 'function') ? escapeHtmlDoc(p.proyecto || '-') : (p.proyecto || '-');
 
-        tr.innerHTML = `<td class="col-opp-code"><span class="opp-code-badge" style="font-weight:600; color:var(--text-secondary);">${codeVal}</span></td><td class="col-opp-client"><strong>${clientVal}</strong></td><td class="col-opp-project"><div class="opp-project-wrap" style="display:inline-flex; align-items:center; flex-wrap:wrap;">${p.proyecto || '-'}${clasifBadge}</div></td><td class="col-opp-vendor"><strong>${vendor.name}</strong>${vendorBadge}</td><td class="col-opp-date"><span class="opp-date-val">${formatProspectDate(p.fecha_creacion)}</span></td><td class="col-opp-stage">${stageBadge}</td><td class="col-opp-amount">${amountDisplay}</td><td class="col-opp-status"><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td class="col-opp-action"><button type="button" class="btn-secondary btn-opp-view" style="padding: 0.25rem 0.55rem; font-size:0.75rem;" onclick="event.stopPropagation(); openDetail('${p.id}')">Ver</button></td>`;
+        tr.innerHTML = `<td class="col-opp-code"><span class="opp-code-badge" style="font-weight:600; color:var(--text-secondary);">${codeVal}</span></td><td class="col-opp-client"><strong>${clientVal}</strong></td><td class="col-opp-project"><div class="opp-project-wrap"><span class="opp-project-name" title="${projectName}">${projectName}</span><span class="opp-project-status-col">${clasifBadge}</span></div></td><td class="col-opp-vendor"><strong>${vendor.name}</strong>${vendorBadge}</td><td class="col-opp-date"><span class="opp-date-val">${formatProspectDate(p.fecha_creacion)}</span></td><td class="col-opp-stage">${stageBadge}</td><td class="col-opp-amount">${amountDisplay}</td><td class="col-opp-status"><span class="badge ${badgeClass}">${p.estado.toUpperCase()}</span></td><td class="col-opp-action"><button type="button" class="btn-secondary btn-opp-view" style="padding: 0.25rem 0.55rem; font-size:0.75rem;" onclick="event.stopPropagation(); openDetail('${p.id}')">Ver</button></td>`;
         tbody.appendChild(tr);
     });
 }
