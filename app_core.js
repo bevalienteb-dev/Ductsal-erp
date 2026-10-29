@@ -2629,16 +2629,26 @@ async function toggleUserStatus(id) {
     if (typeof CrmUI !== 'undefined' && CrmUI.success) CrmUI.success(u.activo ? 'Usuario activado exitosamente.' : 'Usuario desactivado exitosamente.');
 }
 
-const formatCurrency = (val) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val || 0);
-const formatDate = (date) => {
-    if (!date) return '-';
-    if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
-        const [y, m, d] = date.trim().split('-').map(Number);
-        return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+if (typeof CrmFormatters === 'undefined' && typeof require === 'function') {
+    try {
+        const _cf = require('./crm_formatters');
+        if (_cf) {
+            if (typeof globalThis !== 'undefined') globalThis.CrmFormatters = _cf;
+            if (typeof window !== 'undefined') window.CrmFormatters = _cf;
+        }
+    } catch (_) {}
+}
+
+const formatCurrency = (val) => (typeof CrmFormatters !== 'undefined' && CrmFormatters.formatCurrency ? CrmFormatters.formatCurrency(val) : new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(val || 0));
+const formatDate = (date) => (typeof CrmFormatters !== 'undefined' && CrmFormatters.formatDate ? CrmFormatters.formatDate(date) : (function(d) {
+    if (!d) return '-';
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
+        const [y, m, day] = d.trim().split('-').map(Number);
+        return `${String(day).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
     }
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return '-';
-    return d.toLocaleString('es-SV', {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '-';
+    return dt.toLocaleString('es-SV', {
         timeZone: 'America/El_Salvador',
         year: 'numeric',
         month: '2-digit',
@@ -2647,8 +2657,8 @@ const formatDate = (date) => {
         minute: '2-digit',
         hour12: true
     });
-};
-const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));
+})(date));
+const getDaysDifference = (d1) => (typeof CrmFormatters !== 'undefined' && CrmFormatters.getDaysDifference ? CrmFormatters.getDaysDifference(d1) : Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24)));
 
 const getProjectSubtotal = (p) => {
     let base = p.precio_cotizado || 0;
@@ -3244,6 +3254,9 @@ function getProspectClient(clientId) {
 }
 
 function normalizeWhatsAppNumber(rawPhone) {
+    if (typeof CrmFormatters !== 'undefined' && typeof CrmFormatters.normalizeWhatsAppNumber === 'function') {
+        return CrmFormatters.normalizeWhatsAppNumber(rawPhone);
+    }
     if (!rawPhone || typeof rawPhone !== 'string') return null;
     const trimmed = rawPhone.trim();
     if (!trimmed) return null;
@@ -7757,6 +7770,9 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.openDetail = typeof openDetail !== 'undefined' ? openDetail : undefined;
     module.exports.renderClientContactCard = typeof renderClientContactCard !== 'undefined' ? renderClientContactCard : undefined;
     module.exports.normalizeWhatsAppNumber = typeof normalizeWhatsAppNumber !== 'undefined' ? normalizeWhatsAppNumber : undefined;
+    module.exports.formatCurrency = typeof formatCurrency !== 'undefined' ? formatCurrency : undefined;
+    module.exports.formatDate = typeof formatDate !== 'undefined' ? formatDate : undefined;
+    module.exports.getDaysDifference = typeof getDaysDifference !== 'undefined' ? getDaysDifference : undefined;
     module.exports.getProspectClient = typeof getProspectClient !== 'undefined' ? getProspectClient : undefined;
     module.exports.openMarkLostModal = typeof openMarkLostModal !== 'undefined' ? openMarkLostModal : undefined;
     module.exports.closeMarkLostModal = typeof closeMarkLostModal !== 'undefined' ? closeMarkLostModal : undefined;
