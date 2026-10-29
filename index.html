@@ -92,7 +92,7 @@
                     <span class="icon">👥</span> Directorio de Clientes
                 </li>
                 <li id="nav-projects" onclick="showView('projects-view')" style="display: none;">
-                    <span class="icon">🏗️</span> Proyectos y Cobros
+                    <span class="icon">🏗️</span> <span id="nav-projects-text">Proyectos y Cobros</span>
                 </li>
                 <li id="nav-dashboard" onclick="showView('dashboard-view')" style="display: none;">
                     <span class="icon">📊</span> Dashboard
@@ -300,8 +300,8 @@
             <section id="projects-view" class="view-section">
                 <header class="header-flex">
                     <div>
-                        <h1>Proyectos y Control de Cobros</h1>
-                        <p>Gestión operativa y financiera de proyectos y liquidación de cobros.</p>
+                        <h1 id="projects-view-title">Proyectos y Control de Cobros</h1>
+                        <p id="projects-view-desc">Gestión operativa y financiera de proyectos y liquidación de cobros.</p>
                     </div>
                 </header>
 
@@ -330,10 +330,10 @@
                                 <th onclick="toggleProjSort('cliente')" style="cursor: pointer;">Cliente <span id="sort-proj-cliente" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleProjSort('proyecto')" style="cursor: pointer;">Proyecto <span id="sort-proj-proyecto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleProjSort('encargado')" style="cursor: pointer;">Encargado <span id="sort-proj-encargado" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleProjSort('total')" style="cursor: pointer;">Total (Inc. IVA) <span id="sort-proj-total" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('total')" style="cursor: pointer; text-align: right;">Total y Saldo CxC <span id="sort-proj-total" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleProjSort('condicion')" style="cursor: pointer;">Condición <span id="sort-proj-condicion" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleProjSort('pctFacturado')" style="cursor: pointer;">% Facturado <span id="sort-proj-pctFacturado" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleProjSort('pctCobrado')" style="cursor: pointer;">% Cobrado <span id="sort-proj-pctCobrado" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('pctFacturado')" style="cursor: pointer; text-align: right;">% Facturado <span id="sort-proj-pctFacturado" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleProjSort('pctCobrado')" style="cursor: pointer; text-align: right;">% Cobrado <span id="sort-proj-pctCobrado" style="color: var(--text-muted);">↕</span></th>
                                 <th style="text-align: right;">Acción</th>
                             </tr>
                         </thead>
@@ -844,7 +844,8 @@
                         <div class="kpi-hero-card">
                             <span class="kpi-label">Etapa Actual</span>
                             <div class="kpi-val" id="hero-etapa" style="text-transform: capitalize;">-</div>
-                            <span id="detail-time-in-stage" class="badge bg-neutral" style="margin-top: 6px; display: inline-block;">Tiempo en etapa: 0 días</span>
+                            <span id="detail-time-in-stage" class="badge bg-neutral" style="margin-top: 6px; display: inline-block;">Tiempo en etapa: 0 días hábiles (0 días naturales)</span>
+                            <div id="detail-last-contact" style="margin-top: 6px; font-size: 0.75rem; color: var(--text-secondary);">Último contacto: Sin contacto registrado</div>
                         </div>
                         <div class="kpi-hero-card">
                             <span class="kpi-label">Vendedor / Responsable</span>
@@ -876,31 +877,43 @@
                             <div style="border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem; margin-bottom: 1rem;">
                                 <h3 style="color:var(--brand-gold); margin-bottom:1rem;">Balance Financiero del Proyecto</h3>
                                 <div class="financial-balance-grid">
-                                    <!-- Columna 1: Ventas -->
-                                    <div>
-                                        <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Ventas (Ingresos)</h4>
-                                        <div>Precio Original: <strong id="fin-precio-original">$0</strong></div>
+                                    <!-- Grupo 1: Contrato y Órdenes -->
+                                    <div class="fin-group-card fin-card-contract">
+                                        <h4 class="fin-group-title fin-title-gold">📜 1. Contrato Comercial</h4>
+                                        <div class="fin-row"><span>Precio Cotizado:</span> <strong id="fin-precio-original" class="tabular-nums">$0</strong></div>
                                         <div id="fin-ordenes-container" style="color:var(--brand-gold);"></div>
-                                        <div style="margin-top:4px; padding-top:4px; border-top:1px dashed var(--panel-border);">Subtotal Final: <strong id="fin-subtotal">$0</strong></div>
-                                        <div>IVA (13%): <strong id="fin-iva">$0</strong></div>
-                                        <div style="color:white; margin-top:4px;">Total con IVA: <strong id="fin-total" style="font-size:1.1rem;">$0</strong></div>
-                                        <button class="btn-secondary mt-2" style="font-size:0.75rem; padding:0.25rem 0.5rem;" onclick="openChangeOrderModal()">+ Orden de Cambio</button>
+                                        <div class="fin-row fin-subtotal-row"><span>Subtotal Final:</span> <strong id="fin-subtotal" class="tabular-nums">$0</strong></div>
+                                        <div class="fin-row"><span>IVA (13%):</span> <strong id="fin-iva" class="tabular-nums">$0</strong></div>
+                                        <div class="fin-row fin-total-row"><span>Total Contratado:</span> <strong id="fin-total" class="tabular-nums fin-val-highlight">$0</strong></div>
+
+                                        <div class="fin-budget-subpanel">
+                                            <div style="font-size:0.75rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Presupuesto y Costos</div>
+                                            <div class="fin-row" style="font-size:0.78rem;"><span>Costo Base:</span> <strong id="fin-costo-original" class="tabular-nums">$0</strong></div>
+                                            <div id="fin-costos-ordenes-container" style="color:var(--danger); font-size:0.78rem;"></div>
+                                            <div class="fin-row" style="font-size:0.78rem;"><span>Costo Total:</span> <strong id="fin-costo-total" class="tabular-nums">$0</strong></div>
+                                            <div class="fin-row" style="font-size:0.8rem; margin-top:2px;"><span>Margen Bruto:</span> <span><strong id="fin-margen" class="tabular-nums" style="color:var(--brand-gold);">$0</strong> <span id="fin-margen-pct" class="tabular-nums" style="font-size:0.75rem;">(0%)</span></span></div>
+                                        </div>
+
+                                        <button class="btn-secondary mt-2" id="btn-add-co" style="font-size:0.75rem; padding:0.25rem 0.6rem; width:100%; justify-content:center;" onclick="openChangeOrderModal()">+ Orden de Cambio</button>
                                     </div>
-                                    <!-- Columna 2: Costos -->
-                                    <div>
-                                        <h4 style="color:var(--danger); margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px;">Presupuesto (Costos)</h4>
-                                        <div>Costo Base: <strong id="fin-costo-original">$0</strong></div>
-                                        <div id="fin-costos-ordenes-container" style="color:var(--danger);"></div>
-                                        <div style="margin-top:4px; padding-top:4px; border-top:1px dashed var(--panel-border);">Costo Total: <strong id="fin-costo-total">$0</strong></div>
-                                        <div style="color:white; margin-top:10px; padding-top:4px; border-top:1px solid var(--brand-gold);">Margen Bruto: <strong id="fin-margen" style="color:var(--brand-gold); font-size:1.1rem;">$0</strong> <span id="fin-margen-pct" style="font-size:0.8rem;">(0%)</span></div>
+                                    <!-- Grupo 2: Control de Facturación -->
+                                    <div class="fin-group-card fin-card-billing">
+                                        <h4 class="fin-group-title fin-title-blue">🧾 2. Facturación</h4>
+                                        <div class="fin-row"><span>Total Facturado:</span> <strong id="fin-facturado" class="tabular-nums fin-val-blue" style="font-size:1.15rem;">$0</strong></div>
+                                        <div class="fin-row fin-subtotal-row"><span>Pendiente por Facturar:</span> <strong id="fin-por-facturar" class="tabular-nums" style="color:#fdba74;">$0</strong></div>
+                                        <div class="fin-metric-desc" style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px; line-height:1.4;">
+                                            Refleja el valor acumulado de los Créditos Fiscales o Facturas emitidas al cliente contra el total contratado.
+                                        </div>
                                     </div>
-                                    <!-- Columna 3: Facturación -->
-                                    <div class="financial-cxc-box">
-                                        <h4 style="color:white; margin-bottom:0.5rem; border-bottom:1px solid var(--panel-border); padding-bottom:4px; text-align:right;">Cuentas por Cobrar</h4>
-                                        <div>Total Facturado: <strong id="fin-facturado">$0</strong></div>
-                                        <div>Total Cobrado: <strong id="fin-cobrado" style="color:var(--success);">$0</strong></div>
-                                        <div style="margin-top:4px; margin-bottom:4px; padding-bottom:4px; border-bottom:1px dashed var(--panel-border);">Pendiente de Facturar: <strong id="fin-por-facturar">$0</strong></div>
-                                        <div><strong>CxC (Saldo Vivo): <span id="fin-saldo" style="color:var(--danger); font-size:1.1rem;">$0</span></strong></div>
+                                    <!-- Grupo 3: Cobranza y Cuentas por Cobrar (CxC) -->
+                                    <div class="fin-group-card fin-card-cxc">
+                                        <h4 class="fin-group-title fin-title-green">💰 3. Cobranza y Saldos (CxC)</h4>
+                                        <div class="fin-row"><span>Total Cobrado:</span> <strong id="fin-cobrado" class="tabular-nums fin-val-green" style="font-size:1.15rem;">$0</strong></div>
+                                        <div class="fin-cxc-badge-box">
+                                            <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary);">Saldo Vivo Pendiente (CxC)</span>
+                                            <div id="fin-saldo" class="tabular-nums fin-cxc-saldo-hero">$0</div>
+                                            <span style="font-size:0.7rem; color:var(--text-muted);">(Total Facturado − Total Cobrado)</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

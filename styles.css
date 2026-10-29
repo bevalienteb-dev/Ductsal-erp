@@ -2697,3 +2697,207 @@ body.modal-open {
         justify-content: center !important;
     }
 }
+
+/* ==========================================================================
+   Fase 5.4: Cobros, Saldos y Oportunidades Estancadas
+   ========================================================================== */
+
+/* Alineación y dígitos tabulares financieros */
+.tabular-nums,
+.col-money,
+.col-number {
+    font-variant-numeric: tabular-nums;
+}
+
+.table-cell-right {
+    text-align: right !important;
+}
+
+/* Badges de Saldo CxC en tabla de proyectos */
+.proj-cxc-badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+    line-height: 1.25;
+}
+
+.proj-cxc-due {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.proj-cxc-paid {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.proj-cxc-neutral {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    border: 1px solid var(--panel-border);
+}
+
+/* Balance Financiero: Paneles de Contrato, Facturación y Cobranza */
+.financial-balance-grid {
+    gap: 0.75rem;
+}
+
+.fin-group-card {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 0;
+    transition: border-color 0.2s ease;
+}
+
+.fin-group-card:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.fin-group-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem 0;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.fin-title-gold { color: var(--brand-gold); }
+.fin-title-blue { color: #60a5fa; }
+.fin-title-green { color: #34d399; }
+
+.fin-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.86rem;
+    color: var(--text-secondary);
+}
+
+.fin-row strong {
+    color: white;
+}
+
+.fin-subtotal-row {
+    margin-top: 4px;
+    padding-top: 5px;
+    border-top: 1px dashed var(--panel-border);
+}
+
+.fin-total-row {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(212, 175, 55, 0.4);
+    font-size: 0.95rem;
+}
+
+.fin-val-highlight {
+    font-size: 1.15rem;
+    color: var(--brand-gold) !important;
+}
+
+.fin-val-blue {
+    color: #93c5fd !important;
+}
+
+.fin-val-green {
+    color: #34d399 !important;
+}
+
+.fin-budget-subpanel {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    border-left: 3px solid var(--danger);
+}
+
+.fin-cxc-badge-box {
+    margin-top: 0.75rem;
+    padding: 0.85rem;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    text-align: center;
+}
+
+.fin-cxc-saldo-hero {
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: #f87171;
+    margin: 4px 0;
+}
+
+/* Tarjetas modernas de factura */
+.invoice-card-modern {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    transition: all 0.2s ease;
+}
+
+.invoice-card-modern:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.invoice-amounts-strip {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.inv-strip-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.inv-strip-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.inv-strip-val {
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Reglas responsivas de cobros y facturación */
+@media (max-width: 768px) {
+    .financial-balance-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    .invoice-amounts-strip {
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
+    .fin-cxc-saldo-hero {
+        font-size: 1.25rem;
+    }
+    #projectsTable th,
+    #projectsTable td {
+        padding: 0.65rem 0.5rem;
+        font-size: 0.82rem;
+    }
+}

@@ -144,9 +144,8 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
       expect(appCoreContent).toContain("[navUsers, navSettings, navList, navClients]");
     });
 
-    test('4.2 showView mantiene bloqueo a proyectos-view para vendedores', () => {
-      expect(appCoreContent).toContain("if (viewId === 'projects-view' && currentUser && currentUser.role === 'vendedor')");
-      expect(appCoreContent).toContain('Acceso denegado: el perfil de vendedor no tiene acceso al módulo de Proyectos y Cobros.');
+    test('4.2 showView permite a vendedor acceder a projects-view (Fase 5.4)', () => {
+      expect(appCoreContent).not.toContain("if (viewId === 'projects-view' && currentUser && currentUser.role === 'vendedor')");
     });
 
     // Simulación funcional de showView con DOM mockeado
@@ -203,10 +202,6 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
         let currentListMode = 'agenda';
 
         return function showView(viewId, currentUser) {
-          if (viewId === 'projects-view' && currentUser && currentUser.role === 'vendedor') {
-            alertLog.push(`projects-view blocked for ${currentUser.role}`);
-            return showView('list-view', currentUser);
-          }
           if (viewId === 'dashboard-view' && currentUser && currentUser.role !== 'manager') {
             alertLog.push(`dashboard-view blocked for ${currentUser.role}`);
             return showView(currentUser.role === 'admin' ? 'users-view' : 'list-view', currentUser);
@@ -293,21 +288,21 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
         expect(resUsers).toBe('list-view');
       });
 
-      test('4.3.4 Vendedor: estrictamente bloqueado de projects-view, dashboard-view y users-view', () => {
+      test('4.3.4 Vendedor: acceso a projects-view (Mis Proyectos), estrictamente bloqueado de dashboard-view y users-view', () => {
         const doc = createDomMock();
         const alerts = [];
         const showView = buildShowViewFn(doc, alerts);
         const vendedorUser = { id: 'U-VEN', role: 'vendedor' };
 
-        // Proyectos
-        expect(showView('projects-view', vendedorUser)).toBe('list-view');
-        expect(alerts).toContain('projects-view blocked for vendedor');
+        // Proyectos: permitido en Fase 5.4
+        expect(showView('projects-view', vendedorUser)).toBe('projects-view');
+        expect(doc.getElementById('projects-view').classList.contains('active')).toBe(true);
 
-        // Dashboard
+        // Dashboard: bloqueado
         expect(showView('dashboard-view', vendedorUser)).toBe('list-view');
         expect(alerts).toContain('dashboard-view blocked for vendedor');
 
-        // Usuarios
+        // Usuarios: bloqueado
         expect(showView('users-view', vendedorUser)).toBe('list-view');
         expect(alerts).toContain('users-view blocked for vendedor');
       });
