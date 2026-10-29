@@ -1777,6 +1777,123 @@ function reRenderApp() {
 }
 
 let activeUnsubscribers = [];
+let currentSubscribedUser = null;
+let crmLoadError = null;
+let authSessionGeneration = 0;
+
+function handleListenerError(collectionName, err) {
+    const isPermission = err && (err.code === 'permission-denied' || (err.message && err.message.toLowerCase().includes('permission')));
+    console.warn(`[CRM] Listener ${collectionName} error:`, err && (err.code || err.message));
+    if (isPermission) {
+        crmLoadError = {
+            code: 'permission-denied',
+            collection: collectionName,
+            message: (err && err.message) || 'Permiso denegado por reglas de seguridad'
+        };
+        currentSubscribedUser = null;
+        reRenderApp();
+    }
+}
+
+async function retryDataListeners() {
+    crmLoadError = null;
+    currentSubscribedUser = null;
+    reRenderApp();
+
+    if (typeof firebase === 'undefined' || typeof firebase.auth !== 'function') {
+        return;
+    }
+
+    const authUser = firebase.auth().currentUser;
+    if (!authUser || !authUser.uid) {
+        crmLoadError = {
+            code: 'unauthenticated',
+            collection: 'auth',
+            message: 'No hay una sesión activa de Firebase Authentication.'
+        };
+        reRenderApp();
+        return;
+    }
+
+    const startUid = authUser.uid;
+    const startGen = authSessionGeneration;
+
+    try {
+        await authUser.getIdToken(true);
+
+        const postTokenAuth = firebase.auth().currentUser;
+        if (!postTokenAuth || postTokenAuth.uid !== startUid || authSessionGeneration !== startGen) {
+            console.warn('[CRM] Reintento cancelado: la sesión cambió o se cerró durante getIdToken.');
+            return;
+        }
+
+        const tok = await postTokenAuth.getIdTokenResult();
+
+        const postClaimsAuth = firebase.auth().currentUser;
+        if (!postClaimsAuth || postClaimsAuth.uid !== startUid || authSessionGeneration !== startGen) {
+            console.warn('[CRM] Reintento cancelado: la sesión cambió o se cerró durante getIdTokenResult.');
+            return;
+        }
+
+        const cid = tok && tok.claims && tok.claims.cid;
+        const role = tok && tok.claims && tok.claims.role;
+        const managerClaim = tok && tok.claims && tok.claims.manager === true;
+        const validCrmRoles = ['manager', 'gestor', 'vendedor'];
+
+        if (!cid || !role || !validCrmRoles.includes(role)) {
+            crmLoadError = {
+                code: 'permission-denied',
+                collection: 'auth',
+                message: 'El usuario autenticado no posee los permisos o rol requeridos (cid/role).'
+            };
+            reRenderApp();
+            return;
+        }
+
+        if (role === 'manager' && !managerClaim) {
+            crmLoadError = {
+                code: 'permission-denied',
+                collection: 'auth',
+                message: 'El usuario requiere autorización de Gerencia General (manager: true).'
+            };
+            reRenderApp();
+            return;
+        }
+
+        if (currentUser) {
+            currentUser.id = cid;
+            currentUser.authUid = startUid;
+            currentUser.role = role;
+            currentUser.activo = true;
+            localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+        } else {
+            currentUser = {
+                id: cid,
+                authUid: startUid,
+                role,
+                nombre: postClaimsAuth.displayName || cid,
+                activo: true
+            };
+            localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+        }
+
+        if (typeof attachDataListeners === 'function') {
+            attachDataListeners(role, cid);
+        }
+        reRenderApp();
+    } catch (e) {
+        console.warn('[CRM] Error al refrescar token durante reintento:', e);
+        const currentAuth = firebase.auth().currentUser;
+        if (currentAuth && currentAuth.uid === startUid && authSessionGeneration === startGen) {
+            crmLoadError = {
+                code: 'token-refresh-error',
+                collection: 'auth',
+                message: 'Error al renovar sesión de autenticación: ' + ((e && e.message) || 'Error de red')
+            };
+            reRenderApp();
+        }
+    }
+}
 
 function detachSnapshotListeners() {
     if (Array.isArray(activeUnsubscribers)) {
@@ -1785,6 +1902,7 @@ function detachSnapshotListeners() {
         });
     }
     activeUnsubscribers = [];
+    currentSubscribedUser = null;
     loadedCollections = 0;
     initialLoadCompleted = false;
 }
@@ -1810,8 +1928,20 @@ function checkInitialLoad() {
 // SEC-01: Scoped snapshot listeners adhering to Firestore rules.
 // In Firestore, "rules are not filters". Queries must specify filters matching allowed subsets.
 function attachDataListeners(role, userId) {
-    detachSnapshotListeners();
     if (!role || !userId) return;
+
+    // Prevent duplicate listeners if actively subscribed for this exact user and healthy
+    if (currentSubscribedUser &&
+        currentSubscribedUser.role === role &&
+        currentSubscribedUser.userId === userId &&
+        activeUnsubscribers.length > 0 &&
+        !crmLoadError) {
+        return;
+    }
+
+    detachSnapshotListeners();
+    currentSubscribedUser = { role, userId };
+    crmLoadError = null;
 
     // 1. Settings listener (system/settings)
     try {
@@ -1820,7 +1950,7 @@ function attachDataListeners(role, userId) {
                 if (doc.exists) settings = Object.assign({ visitantes: [], encargados: [] }, doc.data());
                 checkInitialLoad();
             },
-            err => console.warn('[CRM] Listener system/settings no disponible:', err && err.message)
+            err => handleListenerError('system/settings', err)
         );
         activeUnsubscribers.push(unsubSettings);
     } catch (e) {
@@ -1846,7 +1976,7 @@ function attachDataListeners(role, userId) {
                 checkInitialLoad();
             },
             err => {
-                console.warn('[CRM] Listener userDirectory no disponible:', err && err.message);
+                handleListenerError('userDirectory', err);
                 if (currentUser && !users.some(u => u.id === currentUser.id)) {
                     users = [currentUser];
                 }
@@ -1867,7 +1997,7 @@ function attachDataListeners(role, userId) {
                     clients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
                     checkInitialLoad();
                 },
-                err => console.warn('[CRM] Listener clients no disponible:', err && err.message)
+                err => handleListenerError('clients', err)
             );
             activeUnsubscribers.push(unsubClients);
         } else if (role === 'vendedor') {
@@ -1886,14 +2016,14 @@ function attachDataListeners(role, userId) {
                     ownClients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
                     mergeClients();
                 },
-                err => console.warn('[CRM] Listener clients (propios) no disponible:', err && err.message)
+                err => handleListenerError('clients (propios)', err)
             );
             const unsubVis = db.collection(`clients${DB_SUFFIX}`).where('visibleTo', 'array-contains', userId).onSnapshot(
                 snap => {
                     visibleClients = snap.docs.map(doc => Object.assign({}, doc.data(), { id: doc.id }));
                     mergeClients();
                 },
-                err => console.warn('[CRM] Listener clients (visibles) no disponible:', err && err.message)
+                err => handleListenerError('clients (visibles)', err)
             );
             activeUnsubscribers.push(unsubOwn, unsubVis);
         }
@@ -1910,7 +2040,7 @@ function attachDataListeners(role, userId) {
                     prospects = snap.docs.map(doc => doc.data()).filter(p => p.eliminado !== true);
                     checkInitialLoad();
                 },
-                err => console.warn('[CRM] Listener prospects no disponible:', err && err.message)
+                err => handleListenerError('prospects', err)
             );
             activeUnsubscribers.push(unsubProspects);
         } else if (role === 'gestor') {
@@ -1931,21 +2061,21 @@ function attachDataListeners(role, userId) {
                     ownProspects = snap.docs.map(doc => doc.data());
                     mergeGestorProspects();
                 },
-                err => console.warn('[CRM] Listener prospects (gestor propios) no disponible:', err && err.message)
+                err => handleListenerError('prospects (gestor propios)', err)
             );
             const unsubAssigned = db.collection(`prospects${DB_SUFFIX}`).where('vendedorId', '==', userId).onSnapshot(
                 snap => {
                     assignedProspects = snap.docs.map(doc => doc.data());
                     mergeGestorProspects();
                 },
-                err => console.warn('[CRM] Listener prospects (gestor asignados) no disponible:', err && err.message)
+                err => handleListenerError('prospects (gestor asignados)', err)
             );
             const unsubPostclosing = db.collection(`prospects${DB_SUFFIX}`).where('postcierre_habilitado', '==', true).onSnapshot(
                 snap => {
                     postclosingProspects = snap.docs.map(doc => doc.data());
                     mergeGestorProspects();
                 },
-                err => console.warn('[CRM] Listener prospects (postcierre) no disponible:', err && err.message)
+                err => handleListenerError('prospects (postcierre)', err)
             );
             activeUnsubscribers.push(unsubOwn, unsubAssigned, unsubPostclosing);
         } else if (role === 'vendedor') {
@@ -1955,7 +2085,7 @@ function attachDataListeners(role, userId) {
                     prospects = snap.docs.map(doc => doc.data()).filter(p => p.eliminado !== true);
                     checkInitialLoad();
                 },
-                err => console.warn('[CRM] Listener prospects (asignados) no disponible:', err && err.message)
+                err => handleListenerError('prospects (asignados)', err)
             );
             activeUnsubscribers.push(unsubAssigned);
         }
@@ -1987,25 +2117,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function') {
         try {
             firebase.auth().onAuthStateChanged(async authUser => {
+                authSessionGeneration++;
+                const currentGen = authSessionGeneration;
                 if (authUser) {
                     try {
                         const tok = await authUser.getIdTokenResult();
-                        const cid = tok.claims && tok.claims.cid;
-                        const role = tok.claims && tok.claims.role;
-                        if (!cid || !role) {
+                        if (authSessionGeneration !== currentGen) {
+                            console.warn('[CRM] onAuthStateChanged descartado: sesión superseded durante getIdTokenResult.');
+                            return;
+                        }
+                        const cid = tok && tok.claims && tok.claims.cid;
+                        const role = tok && tok.claims && tok.claims.role;
+                        const managerClaim = tok && tok.claims && tok.claims.manager === true;
+
+                        const validCrmRoles = ['manager', 'gestor', 'vendedor'];
+                        if (!cid || !role || !validCrmRoles.includes(role)) {
                             console.warn('[CRM] Sesión rechazada: token sin claims requeridos (cid/role).');
                             processLogout();
                             return;
                         }
-                        if (!currentUser || currentUser.id !== cid || currentUser.authUid !== authUser.uid || currentUser.role !== role) {
-                            currentUser = { id: cid, authUid: authUser.uid, role, nombre: authUser.displayName || cid, activo: true };
-                            localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
-                            checkAuth();
-                            if (typeof attachDataListeners === 'function') attachDataListeners(role, cid);
-                            reRenderApp();
-                        } else if (activeUnsubscribers.length === 0) {
-                            if (typeof attachDataListeners === 'function') attachDataListeners(role, cid);
+                        if (role === 'manager' && !managerClaim) {
+                            console.warn('[CRM] Sesión rechazada: rol manager sin claim manager: true.');
+                            processLogout();
+                            return;
                         }
+
+                        currentUser = {
+                            id: cid,
+                            authUid: authUser.uid,
+                            role,
+                            nombre: authUser.displayName || (currentUser && currentUser.nombre) || cid,
+                            activo: true
+                        };
+                        localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+                        checkAuth();
+
+                        // Centralized subscription: attach data listeners exclusively under a confirmed session
+                        if (typeof attachDataListeners === 'function') {
+                            attachDataListeners(role, cid);
+                        }
+                        reRenderApp();
                     } catch (e) {
                         console.warn('[CRM] Error al verificar token en onAuthStateChanged:', e);
                         processLogout();
@@ -2018,15 +2169,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                         localStorage.removeItem('ductsal_current_user');
                         if (typeof detachSnapshotListeners === 'function') detachSnapshotListeners();
                         checkAuth();
+                    } else {
+                        checkAuth();
                     }
                 }
             });
         } catch (_) {}
     }
-    if (currentUser && currentUser.id && currentUser.role) {
-        if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
+
+    // Standalone / Offline / Mock test environment guard:
+    // Only execute initial attachment synchronously if Firebase Auth is not present in the runtime.
+    // When Firebase Auth is present, onAuthStateChanged is the authoritative gate for session verification and listener attachment.
+    if (typeof firebase === 'undefined' || typeof firebase.auth !== 'function') {
+        if (currentUser && currentUser.id && currentUser.role) {
+            if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
+        }
+        checkAuth();
+    } else {
+        // Render layout frame to avoid layout flicker if cached user exists, but DO NOT attach data listeners
+        // until onAuthStateChanged verifies the token cryptographically.
+        checkAuth();
     }
-    checkAuth();
 });
 
 // DISABLED: the opportunity and the client are written ONLY by the server operations (commercialService / prospectWorkflowService /
@@ -2327,6 +2490,7 @@ function processFirstTimeSetup(e) {
 }
 
 function processLogout() {
+    authSessionGeneration++;
     if (typeof detachSnapshotListeners === 'function') detachSnapshotListeners();
     clients = [];
     prospects = [];
@@ -4467,6 +4631,34 @@ function renderList() {
     }
 
     if (visibleProspects.length === 0) {
+        const activeError = (typeof crmLoadError !== 'undefined') ? crmLoadError : null;
+        const isInitialLoaded = (typeof initialLoadCompleted !== 'undefined') ? initialLoadCompleted : true;
+        const esc = (typeof escapeHtmlDoc === 'function') ? escapeHtmlDoc : (s => String(s || ''));
+
+        if (activeError) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 2.5rem 1rem; text-align: center; border: none;">
+                <div class="dash-empty-state-box" style="background: transparent; border: none; padding: 0;">
+                    <div style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.85;">⚠️</div>
+                    <div style="font-weight: 600; color: #f87171; font-size: 1rem; margin-bottom: 0.35rem;">Acceso a datos comerciales no disponible</div>
+                    <div style="color: var(--text-secondary); font-size: 0.82rem; max-width: 440px; margin: auto; line-height: 1.4; margin-bottom: 1rem;">
+                        No se pudo cargar la cartera (${esc(activeError.collection || 'comercial')}: ${esc(activeError.message || 'permiso denegado')}). Verifica que tu usuario esté activo y con el rol adecuado.
+                    </div>
+                    <button type="button" class="btn-primary" onclick="retryDataListeners()" style="padding: 6px 14px; font-size: 0.82rem;">
+                        🔄 Reintentar conexión
+                    </button>
+                </div>
+            </td></tr>`;
+            return;
+        }
+        if (!isInitialLoaded && typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 2.5rem 1rem; text-align: center; border: none;">
+                <div class="dash-empty-state-box" style="background: transparent; border: none; padding: 0;">
+                    <div style="display: inline-block; border: 3px solid rgba(255,255,255,0.2); border-top: 3px solid var(--brand-gold); border-radius: 50%; width: 28px; height: 28px; animation: spin 1s linear infinite; margin-bottom: 0.75rem;"></div>
+                    <div style="font-weight: 600; color: white; font-size: 0.95rem;">Cargando oportunidades comerciales...</div>
+                </div>
+            </td></tr>`;
+            return;
+        }
         const emptyMsg = oppStatusFilter === 'perdidas'
             ? 'No hay oportunidades marcadas como perdidas.'
             : 'No se encontraron oportunidades.';
@@ -7798,6 +7990,12 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.editPayment = typeof editPayment !== 'undefined' ? editPayment : undefined;
     module.exports.processPayment = typeof processPayment !== 'undefined' ? processPayment : undefined;
     module.exports.deletePayment = typeof deletePayment !== 'undefined' ? deletePayment : undefined;
+    module.exports.attachDataListeners = typeof attachDataListeners !== 'undefined' ? attachDataListeners : undefined;
+    module.exports.retryDataListeners = typeof retryDataListeners !== 'undefined' ? retryDataListeners : undefined;
+    module.exports.getCurrentSubscribedUser = () => (typeof currentSubscribedUser !== 'undefined' ? currentSubscribedUser : null);
+    module.exports.getCrmLoadError = () => (typeof crmLoadError !== 'undefined' ? crmLoadError : null);
+    module.exports.getActiveUnsubscribers = () => (typeof activeUnsubscribers !== 'undefined' ? activeUnsubscribers : []);
+    module.exports.getAuthSessionGeneration = () => (typeof authSessionGeneration !== 'undefined' ? authSessionGeneration : 0);
 }
 
 function showLoseForm() {

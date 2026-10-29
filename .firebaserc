@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "ductsal-erp"
+    "default": "ductsal-erp",
+    "production": "ductsal-erp",
+    "staging": "ductsal-erp-staging"
   }
 }
