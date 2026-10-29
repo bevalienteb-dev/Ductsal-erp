@@ -4945,7 +4945,7 @@ function renderProjectsList() {
 
         const exportBadge = mp.isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
         const encargadoDisplay = mp.encargado
-            ? `<div class="cell-ellipsis" style="max-width:140px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.encargado)}">${escapeHtmlDoc(mp.encargado)}</div>`
+            ? `<div class="cell-ellipsis" style="max-width:115px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.encargado)}">${escapeHtmlDoc(mp.encargado)}</div>`
             : '<span style="color:var(--text-muted); font-style:italic; font-size:0.8rem;">No asignado</span>';
 
         const cobradoColor = mp.isFullyPaid ? 'var(--success)' : (mp.pctCobrado > 0 ? '#60a5fa' : 'var(--text-muted)');
@@ -4954,22 +4954,22 @@ function renderProjectsList() {
             : '';
 
         const cxcBadgeHtml = mp.saldoCxC > 0.009
-            ? `<div style="margin-top:3px;"><span class="proj-cxc-badge proj-cxc-due" title="Saldo vivo pendiente de cobro">Saldo CxC: ${formatCurrency(mp.saldoCxC)}</span></div>`
+            ? `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-due" title="Saldo vivo pendiente de cobro">Saldo: ${formatCurrency(mp.saldoCxC)}</span></div>`
             : (mp.totalFacturado > 0
-                ? `<div style="margin-top:3px;"><span class="proj-cxc-badge proj-cxc-paid">✓ Al día / Pagado</span></div>`
-                : `<div style="margin-top:3px;"><span class="proj-cxc-badge proj-cxc-neutral">Sin facturar</span></div>`);
+                ? `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-paid">✓ Al día / Pagado</span></div>`
+                : `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-neutral">Sin facturar</span></div>`);
 
         const ivaLabel = mp.isExport ? '✈️ Exento (0% IVA)' : '(Inc. IVA)';
 
         tr.innerHTML = `
-            <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold);">${escapeHtmlDoc(mp.codigo)}</strong></td>
+            <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold); font-size:0.82rem;">${escapeHtmlDoc(mp.codigo)}</strong></td>
             <td class="col-proj-client">
-                <div class="cell-ellipsis proj-client-wrap" style="max-width:200px; font-weight:600; color:white;" title="${escapeHtmlDoc(mp.cliente)}">
+                <div class="cell-ellipsis proj-client-wrap" style="max-width:145px; font-weight:600; color:white;" title="${escapeHtmlDoc(mp.cliente)}">
                     ${escapeHtmlDoc(mp.cliente)}${exportBadge}
                 </div>
             </td>
             <td class="col-proj-project">
-                <div class="cell-ellipsis proj-title-wrap" style="max-width:220px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.proyecto)}">
+                <div class="cell-ellipsis proj-title-wrap" style="max-width:160px; color:var(--text-primary);" title="${escapeHtmlDoc(mp.proyecto)}">
                     ${escapeHtmlDoc(mp.proyecto || '-')}
                 </div>
             </td>
@@ -4977,38 +4977,38 @@ function renderProjectsList() {
             <td class="col-proj-total col-money" style="white-space:nowrap; text-align:right;">
                 <div class="proj-amount-wrap">
                     <div class="proj-amount-main">
-                        <div style="font-weight:700; color:white; font-size:0.95rem;">${formatCurrency(mp.total)}</div>
-                        <div style="font-size:0.7rem; color:var(--text-secondary);">${ivaLabel}</div>
+                        <div class="proj-total-val">${formatCurrency(mp.total)}</div>
+                        <div class="proj-total-iva">${ivaLabel}</div>
                     </div>
                     ${cxcBadgeHtml}
                 </div>
             </td>
-            <td class="col-proj-condition" style="white-space:nowrap;"><span class="badge bg-neutral" style="font-size:0.75rem;">${escapeHtmlDoc(mp.condicion)}</span></td>
-            <td class="col-proj-invoiced col-money" style="min-width:115px; text-align:right;">
-                <div class="table-progress-wrap" style="align-items:flex-end;">
-                    <div style="display:flex; justify-content:space-between; width:100%; margin-bottom:2px; font-size:0.75rem;">
-                        <span style="color:var(--text-muted); font-size:0.7rem;">Facturado</span>
-                        <span style="font-weight:700; color:#93c5fd;">${mp.pctFacturado.toFixed(0)}%</span>
+            <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${escapeHtmlDoc(mp.condicion)}</span></td>
+            <td class="col-proj-invoiced col-money" style="text-align:right;">
+                <div class="table-progress-wrap">
+                    <div class="table-progress-header">
+                        <span class="table-progress-label">Facturado</span>
+                        <span class="table-progress-pct" style="color:#93c5fd;">${mp.pctFacturado.toFixed(0)}%</span>
                     </div>
                     <div class="table-progress-bar">
                         <div class="table-progress-fill-facturado" style="width:${Math.min(100, mp.pctFacturado)}%;"></div>
                     </div>
-                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">${formatCurrency(mp.totalFacturado)}</div>
+                    <div class="table-progress-amount">${formatCurrency(mp.totalFacturado)}</div>
                 </div>
             </td>
-            <td class="col-proj-collected col-money" style="min-width:135px; text-align:right;">
-                <div class="table-progress-wrap" style="align-items:flex-end;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:2px; font-size:0.75rem;">
-                        <span style="color:var(--text-muted); font-size:0.7rem;">Cobrado</span>
-                        <div style="display:flex; align-items:center; gap:4px;">
-                            <span style="font-weight:700; color:${cobradoColor};">${mp.pctCobrado.toFixed(0)}%</span>
+            <td class="col-proj-collected col-money" style="text-align:right;">
+                <div class="table-progress-wrap">
+                    <div class="table-progress-header">
+                        <span class="table-progress-label">Cobrado</span>
+                        <div class="table-progress-pct-wrap">
+                            <span class="table-progress-pct" style="color:${cobradoColor};">${mp.pctCobrado.toFixed(0)}%</span>
                             ${cobradoBadge}
                         </div>
                     </div>
                     <div class="table-progress-bar">
                         <div class="table-progress-fill-cobrado" style="width:${Math.min(100, mp.pctCobrado)}%;"></div>
                     </div>
-                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">${formatCurrency(mp.totalCobrado)}</div>
+                    <div class="table-progress-amount">${formatCurrency(mp.totalCobrado)}</div>
                 </div>
             </td>
             <td class="col-proj-action" style="text-align:right; white-space:nowrap;">
@@ -5670,52 +5670,103 @@ function renderFinancials(p) {
 
         let pHistory = '';
         if (f.pagos && f.pagos.length > 0) {
-            pHistory = `<div style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.5rem; border-top:1px dashed var(--panel-border); padding-top:0.5rem;">
-                <strong>Historial de Pagos de esta factura:</strong><br>` +
-                f.pagos.map((pay, i) => {
-                    let docLink = '';
-                    if (pay.doc_comprobante) {
-                        docLink = `<span style="margin-left:5px;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 Comprobante</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; font-size:0.75rem; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>`;
-                    }
-                    let lbl = pay.metodo === 'retencion_1pct' ? '<span style="color:var(--brand-gold);">[Retención 1%]</span>' : 'Abono:';
-                    let met = pay.metodo === 'retencion_1pct' ? 'Comprobante' : (pay.metodo || 'N/A');
-                    let editDelPaySpans = !isFinancialReadOnly
-                        ? ` <span class="cursor-pointer" style="margin-left:8px; font-size:0.75rem; color:var(--brand-gold);" onclick="editPayment('${f.id}', ${i})">[Editar]</span> <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deletePayment('${f.id}', ${i})">[Eliminar]</span>`
-                        : '';
-                    return `${formatDate(pay.fecha)} - ${lbl} ${formatCurrency(pay.monto)} [${met}] ${pay.ref ? `(Ref: ${pay.ref})` : ''} ${docLink}${editDelPaySpans}`;
-                }).join('<br>') + `</div>`;
+            pHistory = `
+                <div class="invoice-payments-section">
+                    <div class="invoice-payments-header">
+                        <div class="invoice-payments-title">
+                            <span style="color:var(--brand-gold); margin-right:6px;">💳</span>
+                            <strong>Historial de Pagos de esta factura:</strong>
+                        </div>
+                        <span class="invoice-payments-counter">${f.pagos.length} ${f.pagos.length === 1 ? 'abono registrado' : 'abonos registrados'}</span>
+                    </div>
+                    <div class="invoice-payments-list">
+                        ${f.pagos.map((pay, i) => {
+                            let docLink = '';
+                            if (pay.doc_comprobante) {
+                                docLink = `<div class="payment-doc-chip">
+                                    <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-link" title="Previsualizar comprobante">📄 Comprobante</a>
+                                    <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-dl" title="Descargar comprobante">⬇️</a>
+                                </div>`;
+                            } else {
+                                docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
+                            }
+                            let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
+                            let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
+                            let editDelPaySpans = !isFinancialReadOnly
+                                ? `<div class="payment-item-actions">
+                                       <button type="button" class="btn-subtle-edit" onclick="editPayment('${f.id}', ${i})" title="Editar abono">✏️ [Editar]</button>
+                                       <button type="button" class="btn-subtle-delete" onclick="deletePayment('${f.id}', ${i})" title="Eliminar abono">🗑️ [Eliminar]</button>
+                                   </div>`
+                                : '';
+                            return `
+                                <div class="payment-item-card">
+                                    <div class="pay-item-top">
+                                        <div class="pay-item-main">
+                                            <span class="pay-item-date">📅 ${formatDate(pay.fecha)}</span>
+                                            ${lbl}
+                                            <span class="pay-method-name">${escapeHtmlDoc(met)}</span>
+                                            ${pay.ref ? `<span class="pay-reference">(Ref: <strong>${escapeHtmlDoc(pay.ref)}</strong>)</span>` : ''}
+                                        </div>
+                                        <div class="pay-item-amount-col">
+                                            <span class="pay-amount-label">Monto</span>
+                                            <strong class="pay-amount-val tabular-nums">${formatCurrency(pay.monto)}</strong>
+                                        </div>
+                                    </div>
+                                    <div class="pay-item-bottom">
+                                        <div class="pay-item-voucher-col">
+                                            ${docLink}
+                                        </div>
+                                        ${editDelPaySpans}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         const invActionSpans = !isFinancialReadOnly
-            ? `<span class="cursor-pointer" style="margin-left:10px; font-size:0.8rem; color:var(--brand-gold);" onclick="editInvoice('${f.id}')">[Editar Factura]</span>
-               ${invoiceIndex > 0 ? `<span class="cursor-pointer" style="margin-left:5px; font-size:0.8rem; color:var(--danger);" onclick="deleteInvoice('${f.id}')">[Eliminar Factura]</span>` : `<span style="margin-left:5px; font-size:0.8rem; color:var(--text-muted);" title="La factura de anticipo no puede ser eliminada">[Eliminar Factura]</span>`}`
+            ? `<button type="button" class="btn-subtle-edit" onclick="editInvoice('${f.id}')" title="Editar datos de la factura">✏️ [Editar Factura]</button>
+               ${invoiceIndex > 0
+                   ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
+                   : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
             : '';
         const btnAbonarHtml = (!isPaid && !isFinancialReadOnly)
-            ? `<button class="btn-success" onclick="showPaymentForm('${f.id}', '${f.numero}')" style="padding:0.4rem 0.8rem; font-size:0.8rem;">+ Abonar a Factura</button>`
+            ? `<button type="button" class="btn-abono-primary" onclick="showPaymentForm('${f.id}', '${f.numero}')"><span style="margin-right:4px;">💰</span>+ Abonar a Factura</button>`
             : '';
 
         listDiv.innerHTML += `
             <div class="invoice-card-modern">
                 <div class="invoice-card-header">
-                    <div>
-                        <strong style="font-size:1.05rem; color:white;">${escapeHtmlDoc(f.numero)}</strong> <span class="badge ${isPaid ? 'ganado' : 'activo'} ml-2">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
-                        ${invActionSpans}
-                        ${f.doc_factura ? `<span style="margin-left:10px; font-size:0.8rem;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 ${typeof f.doc_factura === 'object' && f.doc_factura.name ? escapeHtmlDoc(f.doc_factura.name) : 'Factura'}</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>` : ''}
+                    <div class="invoice-header-meta">
+                        <strong class="invoice-number">${escapeHtmlDoc(f.numero)}</strong>
+                        <span class="badge ${isPaid ? 'badge-invoice-paid' : 'badge-invoice-pending'}">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
+                        ${f.doc_factura ? `
+                            <div class="invoice-doc-chip">
+                                <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" class="invoice-doc-link" title="Previsualizar factura digital">📄 ${typeof f.doc_factura === 'object' && f.doc_factura.name ? escapeHtmlDoc(f.doc_factura.name) : 'Factura PDF'}</a>
+                                <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" class="invoice-doc-dl" title="Descargar documento">⬇️</a>
+                            </div>` : ''}
                     </div>
-                    ${btnAbonarHtml}
+                    <div class="invoice-header-actions">
+                        ${btnAbonarHtml}
+                        <div class="invoice-mgmt-actions">
+                            ${invActionSpans}
+                        </div>
+                    </div>
                 </div>
                 <div class="invoice-amounts-strip">
                     <div class="inv-strip-col">
                         <span class="inv-strip-label">Monto Facturado</span>
-                        <span class="inv-strip-val fin-val-blue">${formatCurrency(f.monto)}</span>
+                        <span class="inv-strip-val fin-val-blue tabular-nums">${formatCurrency(f.monto)}</span>
                     </div>
                     <div class="inv-strip-col">
                         <span class="inv-strip-label">Total Abonado</span>
-                        <span class="inv-strip-val fin-val-green">${formatCurrency(pCobrado)}</span>
+                        <span class="inv-strip-val fin-val-green tabular-nums">${formatCurrency(pCobrado)}</span>
                     </div>
                     <div class="inv-strip-col">
                         <span class="inv-strip-label">Saldo Pendiente</span>
-                        <span class="inv-strip-val" style="color:${isPaid ? '#34d399' : 'var(--danger)'};">${formatCurrency(Math.max(0, pSaldo))}</span>
+                        <span class="inv-strip-val ${isPaid ? 'fin-val-green' : 'fin-val-danger'} tabular-nums" style="color:${isPaid ? '#34d399' : 'var(--danger)'};">${formatCurrency(Math.max(0, pSaldo))}</span>
                     </div>
                 </div>
                 ${pHistory}

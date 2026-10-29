@@ -924,26 +924,39 @@
                             </div>
 
                             <div style="margin-top: 1rem; text-align: center;">
-                                <button class="btn-primary" id="btn-add-invoice" onclick="showInvoiceForm()">+ Emitir Nueva Factura</button>
+                                <button class="btn-primary" id="btn-add-invoice" onclick="showInvoiceForm()" style="font-weight:600; padding:0.5rem 1.15rem; font-size:0.85rem;">+ Emitir Nueva Factura</button>
                             </div>
 
                             <!-- Invoice Form -->
-                            <form id="invoice-form" onsubmit="processInvoice(event)" style="display:none; margin-top: 1rem; background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; border:1px solid var(--brand-gold);">
-                                <h4 style="color:var(--brand-gold)">Emitir Factura / Crédito Fiscal</h4>
+                            <form id="invoice-form" onsubmit="processInvoice(event)" class="fin-drawer-form fin-drawer-invoice" style="display:none; margin-top: 1rem;">
+                                <div class="drawer-form-header">
+                                    <div class="drawer-title-group">
+                                        <h4 style="color:var(--brand-gold); margin:0; font-size:1.05rem; font-weight:700;">📄 Emitir / Editar Factura</h4>
+                                        <span class="drawer-subtitle">Complete los datos tributarios y adjunte la copia digital del documento</span>
+                                    </div>
+                                    <button type="button" class="btn-icon-close" onclick="document.getElementById('invoice-form').style.display='none'" title="Cerrar formulario">&times;</button>
+                                </div>
                                 <div class="form-grid mt-2">
                                     <input type="hidden" id="inv-id-edit">
                                     <div class="form-group"><label>Número de Documento</label><input type="text" id="inv-numero" placeholder="Ej. FCF-0001" required></div>
                                     <div class="form-group"><label id="inv-monto-label">Monto a Facturar (CON IVA)</label><input type="number" id="inv-monto" required step="0.01"></div>
-                                    <div class="form-group full-width"><label>Copia de Factura</label><input type="file" id="inv-file" required></div>
+                                    <div class="form-group full-width"><label>Copia de Factura (PDF/Imagen)</label><input type="file" id="inv-file" required></div>
                                 </div>
-                                <button type="submit" class="btn-primary mt-2">Guardar Factura</button>
-                                <button type="button" class="btn-secondary ml-2" onclick="document.getElementById('invoice-form').style.display='none'">Cancelar</button>
+                                <div class="drawer-form-actions mt-3">
+                                    <button type="submit" class="btn-primary">Guardar Factura</button>
+                                    <button type="button" class="btn-secondary" onclick="document.getElementById('invoice-form').style.display='none'">Cancelar</button>
+                                </div>
                             </form>
 
                             <!-- Payment Form -->
-                            <form id="payment-form" onsubmit="processPayment(event)" style="display:none; margin-top: 1rem; background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; border:1px solid var(--success);">
-                                <h4 style="color:var(--success)">Registrar Pago</h4>
-                                <p style="font-size:0.85rem; color:var(--text-secondary); margin-top:4px;" id="pay-target-invoice-text"></p>
+                            <form id="payment-form" onsubmit="processPayment(event)" class="fin-drawer-form fin-drawer-payment" style="display:none; margin-top: 1rem;">
+                                <div class="drawer-form-header">
+                                    <div class="drawer-title-group">
+                                        <h4 style="color:var(--success); margin:0; font-size:1.05rem; font-weight:700;">💳 Registrar Abono / Pago</h4>
+                                        <p style="font-size:0.8rem; color:var(--text-secondary); margin:2px 0 0 0;" id="pay-target-invoice-text"></p>
+                                    </div>
+                                    <button type="button" class="btn-icon-close" onclick="document.getElementById('payment-form').style.display='none'" title="Cerrar formulario">&times;</button>
+                                </div>
                                 <input type="hidden" id="pay-invoice-id">
                                 <input type="hidden" id="pay-idx-edit">
                                 <div class="form-grid mt-2">
@@ -955,10 +968,12 @@
                                         </select>
                                     </div>
                                     <div class="form-group full-width"><label>Referencia / Número de Cheque</label><input type="text" id="pay-ref" required></div>
-                                    <div class="form-group full-width"><label>Comprobante de Abono</label><input type="file" id="pay-file" required></div>
+                                    <div class="form-group full-width"><label>Comprobante de Abono (PDF/Imagen)</label><input type="file" id="pay-file" required></div>
                                 </div>
-                                <button type="submit" class="btn-success mt-2">Aplicar Pago</button>
-                                <button type="button" class="btn-secondary ml-2" onclick="document.getElementById('payment-form').style.display='none'">Cancelar</button>
+                                <div class="drawer-form-actions mt-3">
+                                    <button type="submit" class="btn-success">Aplicar Pago</button>
+                                    <button type="button" class="btn-secondary" onclick="document.getElementById('payment-form').style.display='none'">Cancelar</button>
+                                </div>
                             </form>
                         </div>
 
