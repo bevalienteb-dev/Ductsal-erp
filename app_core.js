@@ -1753,16 +1753,30 @@ let chartFunnel = null; let chartProduct = null; let chartProject = null; let ch
 
 let loadedCollections = 0;
 let initialLoadCompleted = false;
+let initialRoleViewRouted = false;
 
 function reRenderApp() {
     try {
         if (!currentUser) return;
         populateTimeFilter();
         toggleClientFields();
-        if (document.getElementById('list-view').classList.contains('active')) renderList();
-        if (document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
-        if (document.getElementById('users-view').classList.contains('active')) renderUsersTable();
-        if (document.getElementById('detail-view').classList.contains('active') && currentProspectId) {
+        if (document.getElementById('list-view') && document.getElementById('list-view').classList.contains('active')) {
+            if (currentListMode === 'agenda') {
+                if (typeof renderDailyAgenda === 'function') renderDailyAgenda();
+                else renderList();
+            } else {
+                renderList();
+            }
+        }
+        if (document.getElementById('dashboard-view') && document.getElementById('dashboard-view').classList.contains('active')) renderDashboard();
+        if (document.getElementById('projects-view') && document.getElementById('projects-view').classList.contains('active')) {
+            if (typeof renderProjectsList === 'function') renderProjectsList();
+        }
+        if (document.getElementById('clients-view') && document.getElementById('clients-view').classList.contains('active')) {
+            if (typeof renderClientsTable === 'function') renderClientsTable();
+        }
+        if (document.getElementById('users-view') && document.getElementById('users-view').classList.contains('active')) renderUsersTable();
+        if (document.getElementById('detail-view') && document.getElementById('detail-view').classList.contains('active') && currentProspectId) {
             const p = prospects.find(x => x.id === currentProspectId);
             if (p) {
                 renderTracker(p); renderInfo(p); renderLogs(p);
@@ -2497,6 +2511,7 @@ function processLogout() {
     users = [];
     if (typeof CrmAuth !== 'undefined') CrmAuth.signOut(firebase);
     currentUser = null;
+    initialRoleViewRouted = false;
     localStorage.removeItem('ductsal_current_user');
     checkAuth();
 }
@@ -2523,12 +2538,10 @@ function applyRolePermissions() {
         [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
-        if (!currentActiveId) showView('dashboard-view');
     }
     else if (role === 'admin') {
         currentListMode = 'pipeline';
         [navUsers, navSettings, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
-        if (!currentActiveId) showView('users-view');
     }
     else if (role === 'gestor') {
         currentListMode = 'agenda';
@@ -2536,7 +2549,6 @@ function applyRolePermissions() {
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
         headerAction.style.display = 'table-cell';
-        if (!currentActiveId) showView('projects-view');
     }
     else if (role === 'vendedor') {
         currentListMode = 'agenda';
@@ -2544,16 +2556,62 @@ function applyRolePermissions() {
         if (navProjectsText) navProjectsText.textContent = 'Mis Proyectos y Cobros Asignados';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Mis Proyectos y Cobros Asignados';
         headerAction.style.display = 'table-cell';
-        if (!currentActiveId) showView('list-view');
     }
     else {
         currentListMode = 'agenda';
         [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
         headerAction.style.display = 'table-cell';
-        if (!currentActiveId) showView('list-view');
     }
 
-    renderList();
+    // Role-specific initial view synchronization
+    if (!initialRoleViewRouted) {
+        initialRoleViewRouted = true;
+        if (role === 'manager') {
+            showView('dashboard-view');
+        } else if (role === 'admin') {
+            showView('users-view');
+        } else if (role === 'gestor' || role === 'vendedor') {
+            currentListMode = 'agenda';
+            showView('list-view');
+            if (typeof switchListMode === 'function') switchListMode('agenda');
+        } else {
+            currentListMode = 'agenda';
+            showView('list-view');
+            if (typeof switchListMode === 'function') switchListMode('agenda');
+        }
+    } else {
+        // En sesiones ya navegadas, preservar la vista activa siempre que tenga permisos
+        if (!currentActiveId) {
+            if (role === 'manager') {
+                showView('dashboard-view');
+            } else if (role === 'admin') {
+                showView('users-view');
+            } else {
+                currentListMode = 'agenda';
+                showView('list-view');
+                if (typeof switchListMode === 'function') switchListMode('agenda');
+            }
+        } else if (currentActiveId === 'dashboard-view' && role !== 'manager') {
+            if (role === 'admin') {
+                showView('users-view');
+            } else {
+                currentListMode = 'agenda';
+                showView('list-view');
+                if (typeof switchListMode === 'function') switchListMode('agenda');
+            }
+        } else if (currentActiveId === 'users-view' && role !== 'manager' && role !== 'admin') {
+            currentListMode = 'agenda';
+            showView('list-view');
+            if (typeof switchListMode === 'function') switchListMode('agenda');
+        }
+    }
+
+    if (currentListMode === 'agenda') {
+        if (typeof renderDailyAgenda === 'function') renderDailyAgenda();
+        else renderList();
+    } else {
+        renderList();
+    }
     renderClientsTable();
     if (role === 'manager' || role === 'admin') {
         renderUsersTable();
@@ -3549,20 +3607,23 @@ function renderDailyAgenda() {
     }
 
     // Filtrar universo de oportunidades por comercial si el Manager seleccionó en el dropdown
-    let targetUniverse = prospects;
+    const allProspects = (Array.isArray(prospects) && prospects.length > 0)
+        ? prospects
+        : ((typeof window !== 'undefined' && Array.isArray(window.prospects)) ? window.prospects : []);
+    let targetUniverse = allProspects;
     let agendaUser = currentUser;
     if (isManager && sellerSelect) {
         if (sellerSelect.value === 'all') {
             // "Todos los comerciales": el Gerente inspecciona la agenda consolidada de todo el equipo comercial
             agendaUser = { ...currentUser, viewAll: true };
-            targetUniverse = prospects;
+            targetUniverse = allProspects;
         } else if (sellerSelect.value === 'manager_only') {
             // "Mi Agenda": el Gerente solo ve sus oportunidades propias y escalaciones gerenciales
             agendaUser = { ...currentUser, viewAll: false };
-            targetUniverse = prospects;
+            targetUniverse = allProspects;
         } else {
             const selId = sellerSelect.value;
-            targetUniverse = prospects.filter(p => p && (p.vendedorId === selId || (!p.vendedorId && p.createdBy === selId)));
+            targetUniverse = allProspects.filter(p => p && (p.vendedorId === selId || (!p.vendedorId && p.createdBy === selId)));
             const matchedSeller = (Array.isArray(users) ? users.find(u => u && (u.id === selId || u.cid === selId)) : null) || { id: selId, cid: selId, role: 'vendedor' };
             agendaUser = matchedSeller;
         }
@@ -3635,21 +3696,23 @@ function renderDailyAgenda() {
 
         if (c.isEscaladoGerencia) {
             rowClass = 'agenda-row-vencida';
-            badgeHtml = `<span class="badge badge-urgency-escalada">🚨 Escalada Gerencia</span>`;
+            const extraDays = c.dias_retraso > 0 ? `<span class="priority-days">${c.dias_retraso}d</span>` : '';
+            badgeHtml = `<div class="priority-badge-group badge-urgency-escalada" title="Escalada a Gerencia (+${c.dias_retraso || 0}d)"><span class="priority-label">🚨 Escalada Gerencia</span>${extraDays}</div>`;
         } else if (c.status === 'vencida') {
             rowClass = 'agenda-row-vencida';
-            badgeHtml = `<span class="badge badge-urgency-vencida">🚨 Vencida (${c.dias_retraso}d)</span>`;
+            badgeHtml = `<div class="priority-badge-group badge-urgency-vencida" title="Vencida por ${c.dias_retraso} días"><span class="priority-label">🚨 Vencida</span><span class="priority-days">${c.dias_retraso}d</span></div>`;
         } else if (c.status === 'hoy') {
             rowClass = 'agenda-row-hoy';
-            badgeHtml = `<span class="badge badge-urgency-hoy">📌 Para Hoy</span>`;
+            badgeHtml = `<div class="priority-badge-group badge-urgency-hoy" title="Gestión comercial programada para hoy"><span class="priority-label">📌 Para Hoy</span></div>`;
         } else if (c.status === 'proxima') {
             rowClass = 'agenda-row-proxima';
-            badgeHtml = `<span class="badge badge-urgency-proxima">⏳ Próxima</span>`;
+            const diasFalt = (c.dias_faltantes !== undefined && c.dias_faltantes !== null) ? `<span class="priority-days">${c.dias_faltantes}d</span>` : '';
+            badgeHtml = `<div class="priority-badge-group badge-urgency-proxima" title="Próxima gestión comercial"><span class="priority-label">⏳ Próxima</span>${diasFalt}</div>`;
         } else if (c.status === 'pendiente_decision') {
             rowClass = 'agenda-row-decision';
-            badgeHtml = `<span class="badge badge-urgency-decision">⚠️ Decisión (${c.intentos_fallidos} int.)</span>`;
+            badgeHtml = `<div class="priority-badge-group badge-urgency-decision" title="${c.intentos_fallidos || 0} intentos sin respuesta"><span class="priority-label">⚠️ Decisión</span><span class="priority-days">${c.intentos_fallidos || 0} int.</span></div>`;
         } else {
-            badgeHtml = `<span class="badge bg-neutral">📋 Sin Seguimiento</span>`;
+            badgeHtml = `<div class="priority-badge-group bg-neutral" title="Al día / sin seguimiento pendiente"><span class="priority-label">📋 Al día</span></div>`;
         }
 
         if (rowClass) tr.classList.add(rowClass);
@@ -8008,6 +8071,8 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.detachSnapshotListeners = typeof detachSnapshotListeners !== 'undefined' ? detachSnapshotListeners : undefined;
     module.exports.reRenderApp = typeof reRenderApp !== 'undefined' ? reRenderApp : undefined;
     module.exports.applyRolePermissions = typeof applyRolePermissions !== 'undefined' ? applyRolePermissions : undefined;
+    module.exports.getInitialRoleViewRouted = () => (typeof initialRoleViewRouted !== 'undefined' ? initialRoleViewRouted : false);
+    module.exports.setInitialRoleViewRouted = (v) => { initialRoleViewRouted = v; };
     module.exports.addLog = typeof addLog !== 'undefined' ? addLog : undefined;
     module.exports.deleteLog = typeof deleteLog !== 'undefined' ? deleteLog : undefined;
     module.exports.openDetail = typeof openDetail !== 'undefined' ? openDetail : undefined;
@@ -8043,10 +8108,32 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.deletePayment = typeof deletePayment !== 'undefined' ? deletePayment : undefined;
     module.exports.attachDataListeners = typeof attachDataListeners !== 'undefined' ? attachDataListeners : undefined;
     module.exports.retryDataListeners = typeof retryDataListeners !== 'undefined' ? retryDataListeners : undefined;
+    module.exports.showView = typeof showView !== 'undefined' ? showView : undefined;
+    module.exports.switchListMode = typeof switchListMode !== 'undefined' ? switchListMode : undefined;
+    module.exports.processLogout = typeof processLogout !== 'undefined' ? processLogout : undefined;
+    module.exports.renderDailyAgenda = typeof renderDailyAgenda !== 'undefined' ? renderDailyAgenda : undefined;
+    module.exports.renderClientsTable = typeof renderClientsTable !== 'undefined' ? renderClientsTable : undefined;
+    module.exports.renderDashboard = typeof renderDashboard !== 'undefined' ? renderDashboard : undefined;
+    module.exports.getCurrentUser = () => (typeof currentUser !== 'undefined' ? currentUser : null);
+    module.exports.setCurrentUser = (u) => { currentUser = u; };
+    module.exports.getProspects = () => (typeof prospects !== 'undefined' ? prospects : []);
+    module.exports.setProspects = (p) => { prospects = p; };
+    module.exports.getClients = () => (typeof clients !== 'undefined' ? clients : []);
+    module.exports.setClients = (c) => { clients = c; };
+    module.exports.getCurrentListMode = () => (typeof currentListMode !== 'undefined' ? currentListMode : 'agenda');
+    module.exports.setCurrentListMode = (m) => { currentListMode = m; };
     module.exports.getCurrentSubscribedUser = () => (typeof currentSubscribedUser !== 'undefined' ? currentSubscribedUser : null);
     module.exports.getCrmLoadError = () => (typeof crmLoadError !== 'undefined' ? crmLoadError : null);
     module.exports.getActiveUnsubscribers = () => (typeof activeUnsubscribers !== 'undefined' ? activeUnsubscribers : []);
     module.exports.getAuthSessionGeneration = () => (typeof authSessionGeneration !== 'undefined' ? authSessionGeneration : 0);
+}
+
+if (typeof window !== 'undefined') {
+    window.setCurrentUser = (u) => { currentUser = u; };
+    window.getCurrentUser = () => currentUser;
+    window.setProspects = (p) => { prospects = p; };
+    window.setClients = (c) => { clients = c; };
+    window.setUsers = (u) => { users = u; };
 }
 
 function showLoseForm() {
@@ -8573,7 +8660,7 @@ function renderDashboardActiveTimes(activeList) {
         : { counts: { total: 0, pendientes: 0, autorizadas: 0, orden_cierre: 0 }, items: [], pendingUniqueCount: 0 };
 
     // 3. Poblar dropdown de responsables dinámicamente si no está poblado
-    if (filterRespSelect && filterRespSelect.options.length <= 1) {
+    if (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateManagerAttentionItems === 'function' && filterRespSelect && filterRespSelect.options.length <= 1) {
         const rawItems = CrmFollowUpCalc.calculateManagerAttentionItems(prospects, users, { filterMotivo: 'all', filterResponsable: 'all', filterEstado: 'todas' }).items;
         const respSet = new Set();
         rawItems.forEach(it => { if (it.responsable && it.responsable !== '-') respSet.add(it.responsable); });
@@ -8845,6 +8932,7 @@ async function submitManagerDecision(decisionType) {
 }
 
 function renderCharts(filterRes) {
+    if (typeof Chart === 'undefined') return;
     Chart.defaults.color = '#a0aabf';
     const gold = '#ffcc4d', blue = '#3b476e', success = '#10b981', danger = '#ef4444', accent1 = '#8b5cf6', accent2 = '#f97316', cyan = '#38bdf8';
 

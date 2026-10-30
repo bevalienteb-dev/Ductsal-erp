@@ -113,7 +113,7 @@
         <main class="main-content">
             
             <!-- List View (Sales Rep) -->
-            <section id="list-view" class="view-section active">
+            <section id="list-view" class="view-section">
                 <header class="header-flex">
                     <div>
                         <h1>Oportunidades de Venta</h1>
@@ -184,7 +184,7 @@
                             <table id="agendaTable">
                                 <thead>
                                     <tr>
-                                        <th style="width: 140px;">Prioridad</th>
+                                        <th class="col-agenda-th-priority" style="min-width: 145px; width: 155px;">Prioridad</th>
                                         <th style="width: 90px;">Código</th>
                                         <th>Cliente y Proyecto</th>
                                         <th>Etapa</th>
@@ -921,6 +921,14 @@
                             </div>
 
                             <!-- Invoices List -->
+                            <div class="invoices-section-divider">
+                                <div class="invoices-section-header">
+                                    <h4 style="color: white; margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 8px;">
+                                        <span>🧾 Facturas Emitidas y Cobros Registrados</span>
+                                    </h4>
+                                    <span class="invoices-section-subtitle" style="font-size: 0.78rem; color: var(--text-secondary);">Detalle tributario, estado de cobro e historial individual de abonos</span>
+                                </div>
+                            </div>
                             <div id="invoices-list" style="display: flex; flex-direction: column; gap: 1rem;">
                                 <!-- Invoices injected here -->
                             </div>

@@ -349,12 +349,12 @@ describe('Fase 1.3: Pruebas de Permisos, Alertas Gerenciales y Aceptación', () 
     // Manager Attention calculation: Authorized alert is NO LONGER counted as pending!
     const snapA = await fdb.collection('prospects_prod').doc(pidA).get();
     const dataA = snapA.data();
-    const checkA = CrmFollowUpCalc.calculateManagerAttentionItems([dataA], [], { filterEstado: 'pendientes' });
+    const checkA = CrmFollowUpCalc.calculateManagerAttentionItems([dataA], [], { filterEstado: 'pendientes', now: CLOCK });
     expect(checkA.pendingUniqueCount).toBe(0);
     expect(checkA.counts.pendientes).toBe(0);
 
     // But queryable with filterEstado: 'autorizadas' or 'todas'
-    const checkHistA = CrmFollowUpCalc.calculateManagerAttentionItems([dataA], [], { filterEstado: 'autorizadas' });
+    const checkHistA = CrmFollowUpCalc.calculateManagerAttentionItems([dataA], [], { filterEstado: 'autorizadas', now: CLOCK });
     expect(checkHistA.items).toHaveLength(1);
     expect(checkHistA.items[0].alerta_estado).toBe('continuidad_autorizada');
 
