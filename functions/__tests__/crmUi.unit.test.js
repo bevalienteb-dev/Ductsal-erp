@@ -576,11 +576,13 @@ describe('Commercial Logs (Bitácora) Integration with CrmUI', () => {
   const fs = require('fs');
   const path = require('path');
   const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const opportunitiesUiCode = fs.existsSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
   const extractFn = (startStr, endStr) => {
-    const start = appCoreCode.indexOf(startStr);
-    const end = appCoreCode.indexOf(endStr, start);
+    const target = (opportunitiesUiCode && opportunitiesUiCode.includes(startStr)) ? opportunitiesUiCode : appCoreCode;
+    const start = target.indexOf(startStr);
+    const end = target.indexOf(endStr, start);
     if (start < 0 || end < 0) throw new Error(`Could not find ${startStr} .. ${endStr}`);
-    return appCoreCode.slice(start, end);
+    return target.slice(start, end);
   };
 
   const makeCommercialContext = (opts = {}) => {
@@ -832,14 +834,16 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
   const fs = require('fs');
   const path = require('path');
   const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const clientsUiCode = fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'clients', 'clients_ui.js'), 'utf8');
   const stylesCssCode = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
   const indexHtmlCode = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 
-  const extractCode = (from, to) => {
-    const a = appCoreCode.indexOf(from);
-    const b = appCoreCode.indexOf(to, a);
+  const extractCode = (from, to, src = null) => {
+    const target = src || (clientsUiCode.includes(from) ? clientsUiCode : appCoreCode);
+    const a = target.indexOf(from);
+    const b = target.indexOf(to, a);
     if (a < 0 || b < 0) throw new Error(`Could not find markers: ${from} .. ${to}`);
-    return appCoreCode.slice(a, b);
+    return target.slice(a, b);
   };
 
   const PIPELINE_CORE_SRC = [
@@ -848,7 +852,8 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
     'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));',
     'let oppSortCol = null;',
     'let oppSortDir = "asc";',
-    extractCode('function getClientName(clientId)', 'function renderProjectsList')
+    clientsUiCode.slice(clientsUiCode.indexOf('function getClientName('), clientsUiCode.indexOf('function renderClientContactCard(')),
+    extractCode('function normalizeWhatsAppNumber(rawPhone)', 'function renderProjectsList')
   ].join('\n');
 
   function createPipelineSandbox(customState = {}) {
@@ -941,7 +946,15 @@ describe('Pipeline Opportunities Presentation & Filter Coexistence (Fase 5.1 Blo
         { id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' },
         { id: 'v2', nombre: 'Beatriz Gestora', role: 'gestor' }
       ],
-      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' }
+      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' },
+      _deps: {
+        getClients: () => (S ? S.clients : []),
+        setClients: (c) => { if (S) S.clients = c; },
+        getCurrentUser: () => (S ? S.currentUser : null),
+        getProspects: () => (S ? S.prospects : []),
+        escapeHtmlDoc: (s) => String(s || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]),
+        normalizeWhatsAppNumber: (p) => (p || '').replace(/\D/g, '')
+      }
     };
 
     const openedProspectIds = [];
@@ -1409,14 +1422,16 @@ describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
   const fs = require('fs');
   const path = require('path');
   const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const clientsUiCode = fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'clients', 'clients_ui.js'), 'utf8');
   const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 
-  const extractCode = (from, to) => {
-    const a = appCoreCode.indexOf(from);
-    const b = appCoreCode.indexOf(to, a);
+  const extractCode = (from, to, src = null) => {
+    const target = src || (clientsUiCode.includes(from) ? clientsUiCode : appCoreCode);
+    const a = target.indexOf(from);
+    const b = target.indexOf(to, a);
     if (a < 0 || b < 0) throw new Error(`Could not find markers: ${from} .. ${to}`);
-    return appCoreCode.slice(a, b);
+    return target.slice(a, b);
   };
 
   const PIPELINE_CORE_SRC = [
@@ -1427,7 +1442,8 @@ describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
     'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));',
     'let oppSortCol = null;',
     'let oppSortDir = "asc";',
-    extractCode('function getClientName(clientId)', 'function renderProjectsList')
+    clientsUiCode.slice(clientsUiCode.indexOf('function getClientName('), clientsUiCode.indexOf('function renderClientContactCard(')),
+    extractCode('function normalizeWhatsAppNumber(rawPhone)', 'function renderProjectsList')
   ].join('\n');
 
   function createPipelineSandbox(customState = {}) {
@@ -1555,7 +1571,15 @@ describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
         { id: 'v1', nombre: 'Carlos Vendedor', role: 'vendedor' },
         { id: 'v2', nombre: 'Beatriz Gestora', role: 'gestor' }
       ],
-      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' }
+      currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' },
+      _deps: {
+        getClients: () => (S ? S.clients : []),
+        setClients: (c) => { if (S) S.clients = c; },
+        getCurrentUser: () => (S ? S.currentUser : null),
+        getProspects: () => (S ? S.prospects : []),
+        escapeHtmlDoc: (s) => String(s || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]),
+        normalizeWhatsAppNumber: (p) => (p || '').replace(/\D/g, '')
+      }
     };
 
     const openedProspectIds = [];
@@ -1799,9 +1823,11 @@ describe('Pipeline Simplification & Enrichment (Fase 5.2 Bloque 1)', () => {
     });
 
     test('audit compliance: no forbidden red row styles or class="vencida" in pipeline code', () => {
-      const listRenderCode = appCoreCode.substring(
-        appCoreCode.indexOf('function renderList()'),
-        appCoreCode.indexOf('function renderProjectsList()')
+      const oppCode = fs.existsSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
+      const target = (oppCode && oppCode.includes('function renderList()')) ? oppCode : appCoreCode;
+      const listRenderCode = target.substring(
+        target.indexOf('function renderList()'),
+        target.indexOf('function renderProjectsList()') !== -1 ? target.indexOf('function renderProjectsList()') : target.indexOf('function openDetail(')
       );
       expect(listRenderCode).not.toContain('background: rgba(239, 68, 68');
       expect(listRenderCode).not.toContain('class="vencida"');
@@ -1813,14 +1839,29 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
   const fs = require('fs');
   const path = require('path');
   const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+  const clientsUiCode = fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'clients', 'clients_ui.js'), 'utf8');
+  const opportunitiesUiCode = fs.existsSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
   const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 
-  const extractCode = (from, to) => {
-    const a = appCoreCode.indexOf(from);
-    const b = appCoreCode.indexOf(to, a);
+  const extractCode = (from, to, src = null) => {
+    let target = src;
+    if (!target) {
+      if (clientsUiCode.includes(from)) {
+        target = clientsUiCode;
+      } else if (opportunitiesUiCode && opportunitiesUiCode.includes(from)) {
+        target = opportunitiesUiCode;
+      } else {
+        target = appCoreCode;
+      }
+    }
+    const a = target.indexOf(from);
+    let b = target.indexOf(to, a);
+    if (b < 0 && target === opportunitiesUiCode && to.includes('// DASHBOARD')) {
+      b = target.indexOf('// -------------------------------------------------------------------------', a);
+    }
     if (a < 0 || b < 0) throw new Error(`Could not find markers: "${from}" .. "${to}"`);
-    return appCoreCode.slice(a, b);
+    return target.slice(a, b);
   };
 
   const DETAIL_CORE_SRC = [
@@ -1835,8 +1876,9 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
     'const updateSuggestedFollowUpDate = () => {};',
     'const CrmFollowUpCalc = { classifyFollowUp: () => ({ intentos_fallidos: 0, llamada_obligatoria: false }) };',
     extractCode('function getProspectVendorInfo(p)', 'function reassignVendor(prospectId, directTargetId)'),
-    extractCode('function getClientName(clientId)', 'let oppStatusFilter ='),
-    extractCode('function renderClientContactCard(p)', 'function renderFinancials'),
+    extractCode('function getClientName(clientId)', 'function renderClientContactCard', clientsUiCode),
+    extractCode('function renderClientContactCard(p)', 'const ClientsUI = {', clientsUiCode),
+    extractCode('function normalizeWhatsAppNumber(rawPhone)', 'let oppStatusFilter ='),
     extractCode('function renderInfo(p)', 'const docsList = document.getElementById(\'docs-list\');') + '\n}',
     extractCode('function openRecordFollowUpModal(prospectId)', 'function updateSuggestedFollowUpDate'),
     extractCode('function openMarkLostModal(prospectId)', '// ========================\n// DASHBOARD')
@@ -1926,7 +1968,15 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
       ],
       currentUser: customState.currentUser || { id: 'm1', nombre: 'Director Comercial', role: 'manager' },
       currentProspectId: customState.currentProspectId || null,
-      hasEnteredPostclosing: () => false
+      hasEnteredPostclosing: () => false,
+      _deps: {
+        getClients: () => (S ? S.clients : []),
+        setClients: (c) => { if (S) S.clients = c; },
+        getCurrentUser: () => (S ? S.currentUser : null),
+        getProspects: () => (S ? S.prospects : []),
+        escapeHtmlDoc: (s) => String(s || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]),
+        normalizeWhatsAppNumber: (p) => (p || '').replace(/\D/g, '')
+      }
     };
 
     const alerts = [];
@@ -2376,6 +2426,7 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
     const fs = require('fs');
     const path = require('path');
     const appCoreCode = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+    const opportunitiesUiCode = fs.existsSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
     const stylesCss = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
     const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 
@@ -2387,18 +2438,20 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
       });
 
       test('openDetail invokes saveListScrollPosition prior to switching views', () => {
-        const openDetailBody = appCoreCode.slice(
-          appCoreCode.indexOf('function openDetail(id)'),
-          appCoreCode.indexOf('function renderClientContactCard(p)')
+        const target = (opportunitiesUiCode && opportunitiesUiCode.includes('function openDetail(id)')) ? opportunitiesUiCode : appCoreCode;
+        const openDetailBody = target.slice(
+          target.indexOf('function openDetail(id)'),
+          target.indexOf('function renderFinancials(p)') !== -1 ? target.indexOf('function renderFinancials(p)') : target.indexOf('function renderTracker(p)')
         );
         expect(openDetailBody).toMatch(/saveListScrollPosition\s*\(\)/);
         expect(openDetailBody.indexOf('saveListScrollPosition()')).toBeLessThan(openDetailBody.indexOf("showView('detail-view')"));
       });
 
       test('goBackFromDetail delegates to lastViewedSection and triggers restoreListScrollPosition', () => {
-        const goBackSrc = appCoreCode.slice(
-          appCoreCode.indexOf('function goBackFromDetail()'),
-          appCoreCode.indexOf('function checkAuth()')
+        const target = (opportunitiesUiCode && opportunitiesUiCode.includes('function goBackFromDetail()')) ? opportunitiesUiCode : appCoreCode;
+        const goBackSrc = target.slice(
+          target.indexOf('function goBackFromDetail()'),
+          target.indexOf('function checkAuth()') !== -1 ? target.indexOf('function checkAuth()') : target.indexOf('function renderTracker(')
         );
         expect(goBackSrc).toContain('showView(targetSection)');
         expect(goBackSrc).toContain('restoreListScrollPosition()');
@@ -2407,9 +2460,10 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
 
     describe('B. Aislamiento de eventos y prevención de doble activación', () => {
       test('renderList action button has stopPropagation to prevent double execution on card click', () => {
-        const renderListSrc = appCoreCode.slice(
-          appCoreCode.indexOf('function renderList()'),
-          appCoreCode.indexOf('function renderProjectsList()')
+        const target = (opportunitiesUiCode && opportunitiesUiCode.includes('function renderList()')) ? opportunitiesUiCode : appCoreCode;
+        const renderListSrc = target.slice(
+          target.indexOf('function renderList()'),
+          target.indexOf('function renderProjectsList()') !== -1 ? target.indexOf('function renderProjectsList()') : target.indexOf('function openDetail(')
         );
         expect(renderListSrc).toContain('onclick="event.stopPropagation(); openDetail(\'${p.id}\')"');
       });
@@ -2417,16 +2471,17 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
       test('renderDailyAgenda action buttons have stopPropagation to prevent bubbling to row openDetail', () => {
         const renderAgendaSrc = appCoreCode.slice(
           appCoreCode.indexOf('function renderDailyAgenda()'),
-          appCoreCode.indexOf('function openRecordFollowUpModal(prospectId)')
+          appCoreCode.indexOf('function openRecordFollowUpModal(prospectId)') !== -1 ? appCoreCode.indexOf('function openRecordFollowUpModal(prospectId)') : appCoreCode.indexOf('function renderProjectsList()')
         );
         expect(renderAgendaSrc).toContain('onclick="event.stopPropagation(); openRecordFollowUpModal(\'${item.id}\')"');
         expect(renderAgendaSrc).toContain('onclick="event.stopPropagation(); openDetail(\'${item.id}\')"');
       });
 
       test('processLose immediately disables submit button to prevent double-submit and reenables in finally', () => {
-        const processLoseSrc = appCoreCode.slice(
-          appCoreCode.indexOf('async function processLose()'),
-          appCoreCode.indexOf('// ========================\n// DASHBOARD')
+        const target = (opportunitiesUiCode && opportunitiesUiCode.includes('async function processLose()')) ? opportunitiesUiCode : appCoreCode;
+        const processLoseSrc = target.slice(
+          target.indexOf('async function processLose()'),
+          target.indexOf('// ========================\n// DASHBOARD') !== -1 ? target.indexOf('// ========================\n// DASHBOARD') : target.indexOf('const OpportunitiesUI = {')
         );
         expect(processLoseSrc).toContain("document.getElementById('btn-submit-mark-lost')");
         expect(processLoseSrc).toContain('submitBtn.disabled = true;');
@@ -2434,9 +2489,10 @@ describe('Ficha Comercial de la Oportunidad (Fase 5.2 Bloque 2)', () => {
       });
 
       test('processRevertStage disables confirm button during async workflow and reenables in finally', () => {
-        const processRevertSrc = appCoreCode.slice(
-          appCoreCode.indexOf('async function processRevertStage(targetStage)'),
-          appCoreCode.indexOf('function renderClosingDocumentationPanel(p)')
+        const target = (opportunitiesUiCode && opportunitiesUiCode.includes('async function processRevertStage(targetStage)')) ? opportunitiesUiCode : appCoreCode;
+        const processRevertSrc = target.slice(
+          target.indexOf('async function processRevertStage(targetStage)'),
+          target.indexOf('function renderClosingDocumentationPanel(p)')
         );
         expect(processRevertSrc).toContain("document.getElementById('btn-confirm-revert')");
         expect(processRevertSrc).toContain('confirmBtn.disabled = true;');

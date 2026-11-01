@@ -1,0 +1,445 @@
+// ============================================================================
+// DUCTSAL ERP — CLIENTS MODULE: CONTROLLER (Fase 6.2)
+// Archivo: modules/clients/clients_controller.js
+// Responsabilidad:
+// 1. Gestión del ciclo de vida y estado de clientes en memoria.
+// 2. Persistencia autorizada vía Cloud Functions (creación atómica en 3 pasos y edición con 3-way merge).
+// 3. Manejo de reservas de identificadores (NIT/DUI) y cancelación de reservas pendientes.
+// 4. Búsqueda remota en catálogo de clientes para el selector de oportunidades.
+// 5. Filtrado de cartera visible según rol y atribución comercial (getVisibleClients).
+// 6. Eliminación protegida de clientes (exclusiva de manager, sin proyectos asociados).
+// ============================================================================
+
+(function (root, factory) {
+    'use strict';
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = factory();
+    } else {
+        const api = factory();
+        root.ClientsController = api;
+        // Compatibilidad global con window
+        if (typeof window !== 'undefined') {
+            window.ClientsController = api;
+            window.getVisibleClients = api.getVisibleClients;
+            window.persistClientViaServer = api.persistClientViaServer;
+            window.cancelPendingClientReservation = api.cancelPendingClientReservation;
+            window.catalogueSearchActive = api.catalogueSearchActive;
+            window.getSelectorClientsLocal = api.getSelectorClientsLocal;
+            window.onClientCatalogSearchInput = api.onClientCatalogSearchInput;
+            window.runClientCatalogSearch = api.runClientCatalogSearch;
+            window.deleteClient = api.deleteClient;
+        }
+    }
+})(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this), function () {
+    'use strict';
+
+    // -------------------------------------------------------------------------
+    // 1. Dependencias inyectadas con fallbacks seguros
+    // -------------------------------------------------------------------------
+    const _deps = {
+        getCurrentUser: () => {
+            if (typeof currentUser !== 'undefined') return currentUser;
+            if (typeof window !== 'undefined' && window.currentUser) return window.currentUser;
+            return null;
+        },
+        getProspects: () => {
+            if (typeof prospects !== 'undefined' && Array.isArray(prospects)) return prospects;
+            if (typeof window !== 'undefined' && Array.isArray(window.prospects)) return window.prospects;
+            return [];
+        },
+        getClients: () => {
+            if (typeof clients !== 'undefined' && Array.isArray(clients)) return clients;
+            if (typeof window !== 'undefined' && Array.isArray(window.clients)) return window.clients;
+            return [];
+        },
+        setClients: (c) => {
+            if (typeof clients !== 'undefined') clients = c;
+            if (typeof window !== 'undefined') window.clients = c;
+        },
+        getDbSuffix: () => (typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : (typeof window !== 'undefined' && window.DB_SUFFIX ? window.DB_SUFFIX : '_prod')),
+        getStoragePrefix: () => (typeof STORAGE_PREFIX !== 'undefined' ? STORAGE_PREFIX : (typeof window !== 'undefined' && window.STORAGE_PREFIX ? window.STORAGE_PREFIX : 'prod_files')),
+        getFirebase: () => (typeof firebase !== 'undefined' ? firebase : (typeof window !== 'undefined' && window.firebase ? window.firebase : null)),
+        getFirestore: () => (typeof db !== 'undefined' ? db : (typeof window !== 'undefined' && window.db ? window.db : null)),
+        getCrmClients: () => (typeof CrmClients !== 'undefined' ? CrmClients : (typeof window !== 'undefined' && window.CrmClients ? window.CrmClients : null)),
+        getCrmCommercial: () => (typeof CrmCommercial !== 'undefined' ? CrmCommercial : (typeof window !== 'undefined' && window.CrmCommercial ? window.CrmCommercial : null)),
+        hasStagedClientFiles: (type) => {
+            if (typeof window !== 'undefined' && typeof window.hasStagedClientFiles === 'function') return window.hasStagedClientFiles(type);
+            return false;
+        },
+        uploadClientStagedFiles: async (targetId, type, existingDocs) => {
+            if (typeof window !== 'undefined' && typeof window.uploadClientStagedFiles === 'function') {
+                return window.uploadClientStagedFiles(targetId, type, existingDocs);
+            }
+            return existingDocs;
+        },
+        selectClientInSelector: (id, label) => {
+            if (typeof window !== 'undefined' && typeof window.selectClientInSelector === 'function') {
+                return window.selectClientInSelector(id, label);
+            }
+        },
+        closeModal: (id) => {
+            if (typeof closeModal === 'function') return closeModal(id);
+            if (typeof window !== 'undefined' && typeof window.closeModal === 'function') return window.closeModal(id);
+        },
+        renderClientsTable: () => {
+            if (typeof renderClientsTable === 'function') return renderClientsTable();
+            if (typeof window !== 'undefined' && typeof window.renderClientsTable === 'function') return window.renderClientsTable();
+        },
+        showLoading: (msg) => {
+            if (typeof showLoading === 'function') return showLoading(msg);
+            if (typeof window !== 'undefined' && typeof window.showLoading === 'function') return window.showLoading(msg);
+        },
+        hideLoading: () => {
+            if (typeof hideLoading === 'function') return hideLoading();
+            if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
+        },
+        alert: (msg) => {
+            if (typeof alert === 'function') return alert(msg);
+            if (typeof window !== 'undefined' && typeof window.alert === 'function') return window.alert(msg);
+            console.warn('[ClientsController Alert]', msg);
+        },
+        confirm: (msg) => {
+            if (typeof confirm === 'function') return confirm(msg);
+            if (typeof window !== 'undefined' && typeof window.confirm === 'function') return window.confirm(msg);
+            return true;
+        }
+    };
+
+    /**
+     * Inicializa o actualiza dependencias del controlador de clientes.
+     */
+    function initClientsController(customDeps) {
+        if (customDeps && typeof customDeps === 'object') {
+            for (const k of Object.keys(customDeps)) {
+                if (typeof customDeps[k] === 'function') {
+                    _deps[k] = customDeps[k];
+                } else {
+                    _deps[k] = () => customDeps[k];
+                }
+            }
+        }
+        return ClientsController;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Visibilidad y Cartera
+    // -------------------------------------------------------------------------
+    // Clients visible to the current user (list and selector). A vendedor sees the clients they created plus the
+    // clients referenced (clientId) by opportunities they created or that are assigned to them: the same criterion
+    // renderList uses for opportunities, so an assigned opportunity never points at a client the vendedor cannot see.
+    // Gerente, gestor and any other role keep seeing every client. Read-only: no stored data is modified.
+    function getVisibleClients() {
+        const currentUser = _deps.getCurrentUser();
+        const clientsList = _deps.getClients();
+        if (!currentUser || currentUser.role !== 'vendedor') return clientsList;
+        const related = new Set();
+        const prospectsList = _deps.getProspects();
+        prospectsList.forEach(p => {
+            const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);
+            if (isAssigned && p.eliminado !== true && p.clientId) {
+                related.add(p.clientId);
+            }
+        });
+        return clientsList.filter(c =>
+            c.createdBy === currentUser.id ||
+            related.has(c.id) ||
+            (Array.isArray(c.visibleTo) && c.visibleTo.includes(currentUser.id))
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Gestión de Reservas de Clientes
+    // -------------------------------------------------------------------------
+    let currentClientReservationId = null;
+
+    function getPendingClientReservationId() {
+        return currentClientReservationId;
+    }
+
+    function setPendingClientReservationId(id) {
+        currentClientReservationId = id;
+    }
+
+    async function cancelPendingClientReservation() {
+        if (!currentClientReservationId) return;
+        const resId = currentClientReservationId;
+        currentClientReservationId = null;
+        const fb = _deps.getFirebase();
+        const CrmClients = _deps.getCrmClients();
+        if (fb && CrmClients && typeof CrmClients.cancelReservation === 'function') {
+            try {
+                await CrmClients.cancelReservation(fb, { reservationId: resId, dbSuffix: _deps.getDbSuffix() });
+            } catch (e) {
+                console.warn('No se pudo cancelar la reserva pendiente:', e);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Catálogo Remoto y Selector
+    // -------------------------------------------------------------------------
+    // Selector of NEW opportunities. Deliberately NOT getVisibleClients(): that is the portfolio shown in the Clients
+    // section. A vendedor with a Firebase session searches the WHOLE catalogue on the server (searchClientsCatalog: id,
+    // name and a masked document hint only); picking a client never creates or modifies it. Gerente / gestor keep the
+    // complete local list. A vendedor on the historical login has no server session, so the portfolio is the best available.
+    function catalogueSearchActive() {
+        const currentUser = _deps.getCurrentUser();
+        const CrmClients = _deps.getCrmClients();
+        const fb = _deps.getFirebase();
+        return !!(currentUser && currentUser.role === 'vendedor' && CrmClients && typeof CrmClients.hasSessionSync === 'function' && CrmClients.hasSessionSync(fb));
+    }
+
+    function getSelectorClientsLocal() {
+        const currentUser = _deps.getCurrentUser();
+        return (currentUser && currentUser.role === 'vendedor') ? getVisibleClients() : _deps.getClients();
+    }
+
+    let catalogueSearchTimer = null;
+    let catalogueSearchSeq = 0;
+
+    function onClientCatalogSearchInput() {
+        if (typeof clearTimeout === 'function') clearTimeout(catalogueSearchTimer);
+        if (typeof setTimeout === 'function') {
+            catalogueSearchTimer = setTimeout(runClientCatalogSearch, 300);
+        } else {
+            runClientCatalogSearch();
+        }
+    }
+
+    async function runClientCatalogSearch() {
+        if (typeof document === 'undefined') return;
+        const search = document.getElementById('new-cliente-search');
+        const hint = document.getElementById('new-cliente-search-hint');
+        const select = document.getElementById('new-cliente-select');
+        if (!search || !hint || !select) return;
+        const seq = ++catalogueSearchSeq;
+        const q = search.value.trim();
+        const fb = _deps.getFirebase();
+        const CrmClients = _deps.getCrmClients();
+        if (!CrmClients || typeof CrmClients.searchCatalog !== 'function') return;
+
+        try {
+            const res = await CrmClients.searchCatalog(fb, { q, dbSuffix: _deps.getDbSuffix() });
+            if (seq !== catalogueSearchSeq) return; // a newer search is in flight
+            const keep = select.value ? { id: select.value, label: select.options[select.selectedIndex].text } : null;
+            select.innerHTML = '<option value="">-- Selecciona Cliente --</option>';
+            if (keep && typeof Option === 'function') select.add(new Option(keep.label, keep.id));
+            (res.results || []).forEach(r => {
+                if ((!keep || keep.id !== r.id) && typeof Option === 'function') {
+                    select.add(new Option(CrmClients.catalogOptionLabel(r), r.id));
+                }
+            });
+            if (keep) select.value = keep.id;
+            hint.textContent = res.tooShort ? 'Escribe al menos 2 letras o 4 dígitos para buscar.'
+                : (res.results || []).length === 0 ? 'Sin resultados. Si el cliente no existe, usa "+ Nuevo".'
+                : `${res.results.length} resultado(s)${res.truncated ? ' (hay más: afina la búsqueda)' : ''}. ★ = ya está en tu cartera.`;
+        } catch (err) {
+            if (seq === catalogueSearchSeq) hint.textContent = CrmClients.errorMessage(err);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Persistencia Autorizada vía Cloud Functions
+    // -------------------------------------------------------------------------
+    // Creates / edits a client through Cloud Functions with server reservation and hierarchical storage.
+    // Returns the saved client, or null when nothing was saved (duplicate, review declined, error, no session).
+    async function persistClientViaServer(c, editId) {
+        const fb = _deps.getFirebase();
+        const CrmClients = _deps.getCrmClients();
+        const crmClients = CrmClients;
+        if (!CrmClients || typeof CrmClients.hasSessionSync !== 'function' || !CrmClients.hasSessionSync(fb)) {
+            _deps.hideLoading();
+            _deps.alert(CrmClients && CrmClients.NO_SESSION_MESSAGE ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+            return null;
+        }
+        let confirmReview = false;
+        const dbSuffix = _deps.getDbSuffix();
+
+        // A) EDIT EXISTING CLIENT
+        if (editId) {
+            const filesStaged = _deps.hasStagedClientFiles(c.tipo);
+            if (filesStaged) {
+                _deps.showLoading('Subiendo documentos del cliente...');
+                try {
+                    const activeBaseDocs = (typeof window !== 'undefined' && window._activeClientBaseDocs !== undefined && window._activeClientBaseDocs !== null)
+                        ? window._activeClientBaseDocs
+                        : null;
+                    c.baseDocumentos = (activeBaseDocs !== null)
+                        ? JSON.parse(JSON.stringify(activeBaseDocs))
+                        : (c.documentos ? JSON.parse(JSON.stringify(c.documentos)) : {});
+                    c.documentos = await _deps.uploadClientStagedFiles(editId, c.tipo, c.documentos);
+                } catch (uploadErr) {
+                    _deps.hideLoading();
+                    _deps.alert("Error al subir documentos: " + uploadErr.message);
+                    return null;
+                }
+            } else {
+                // General data update: do NOT send documentos so live Firestore documents remain untouched
+                delete c.documentos;
+                delete c.baseDocumentos;
+            }
+
+            _deps.showLoading('Guardando cambios en cliente...');
+            for (let attempt = 0; attempt < 2; attempt++) {
+                let res;
+                try {
+                    res = await crmClients.updateClient(fb, { id: editId, client: c, dbSuffix, confirmReview });
+                } catch (err) {
+                    _deps.hideLoading();
+                    _deps.alert(crmClients.errorMessage(err));
+                    return null;
+                }
+                if (res.status === 'duplicate') {
+                    _deps.hideLoading();
+                    _deps.alert(crmClients.duplicateMessage(res));
+                    return null;
+                }
+                if (res.status === 'needs-review') {
+                    _deps.hideLoading();
+                    if (!_deps.confirm(crmClients.reviewMessage(res))) return null;
+                    _deps.showLoading('Guardando cliente...');
+                    confirmReview = true;
+                    continue;
+                }
+                const mergedClient = Object.assign({}, c, res.client || {});
+                if (typeof window !== 'undefined') {
+                    window._activeClientBaseDocs = (mergedClient.documentos && typeof mergedClient.documentos === 'object')
+                        ? JSON.parse(JSON.stringify(mergedClient.documentos))
+                        : null;
+                }
+                return mergedClient;
+            }
+            return null;
+        }
+
+        // B) CREATE NEW CLIENT (RESERVATION -> UPLOAD -> FINALIZE)
+        let reservationId = null;
+        _deps.showLoading('Validando y reservando registro de cliente...');
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+            let res;
+            try {
+                res = await crmClients.reserveCreation(fb, { client: c, dbSuffix, confirmReview });
+            } catch (err) {
+                _deps.hideLoading();
+                _deps.alert(crmClients.errorMessage(err));
+                return null;
+            }
+
+            if (res.status === 'duplicate') {
+                _deps.hideLoading();
+                _deps.alert(crmClients.duplicateMessage(res));
+                const modalOpen = typeof document !== 'undefined' && document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block';
+                if (modalOpen && res.matches && res.matches.length === 1) {
+                    _deps.closeModal('clientModal');
+                    _deps.selectClientInSelector(res.matches[0].clientId, res.matches[0].nombre);
+                }
+                return null;
+            }
+
+            if (res.status === 'needs-review') {
+                _deps.hideLoading();
+                if (!_deps.confirm(crmClients.reviewMessage(res))) return null;
+                _deps.showLoading('Confirmando revisión de cliente...');
+                confirmReview = true;
+                continue;
+            }
+
+            if (res.status === 'reserved' && res.reservationId) {
+                reservationId = res.reservationId;
+                currentClientReservationId = reservationId;
+                break;
+            }
+
+            _deps.hideLoading();
+            _deps.alert('Respuesta inesperada al reservar cliente: ' + (res.status || 'error'));
+            return null;
+        }
+
+        if (!reservationId) return null;
+
+        // STEP 2: Upload staged files with active server reservation
+        try {
+            c.documentos = await _deps.uploadClientStagedFiles(reservationId, c.tipo, c.documentos);
+        } catch (uploadErr) {
+            _deps.hideLoading();
+            console.error('Error al subir documentos de la reserva:', uploadErr);
+            if (_deps.confirm(`Error al subir documentos: ${uploadErr.message}. ¿Deseas cancelar la reserva para intentar de nuevo?`)) {
+                await cancelPendingClientReservation();
+            }
+            return null;
+        }
+
+        // STEP 3: Finalize Client Creation
+        _deps.showLoading('Formalizando creación del cliente...');
+        let finRes;
+        try {
+            finRes = await crmClients.finalizeCreation(fb, { reservationId, client: c, dbSuffix, confirmReview });
+        } catch (finErr) {
+            _deps.hideLoading();
+            _deps.alert(crmClients.errorMessage(finErr));
+            return null;
+        }
+
+        if (finRes.status === 'duplicate') {
+            _deps.hideLoading();
+            _deps.alert(crmClients.duplicateMessage(finRes));
+            return null;
+        }
+        if (finRes.status !== 'created' && finRes.status !== 'ok') {
+            _deps.hideLoading();
+            _deps.alert('No se pudo formalizar el cliente: ' + (finRes.status || 'error desconocido'));
+            return null;
+        }
+
+        currentClientReservationId = null; // Successfully finalized!
+        return Object.assign({}, c, finRes.client || { id: reservationId });
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Eliminación de Cliente
+    // -------------------------------------------------------------------------
+    function deleteClient(id) {
+        const currentUser = _deps.getCurrentUser();
+        if (!currentUser || currentUser.role !== 'manager') return _deps.alert("Permiso denegado.");
+        const clientsList = _deps.getClients();
+        const c = clientsList.find(x => x.id === id);
+        if (!c) return;
+
+        const prospectsList = _deps.getProspects();
+        const hasProjects = prospectsList.some(p => p.clientId === id);
+        if (hasProjects) {
+            return _deps.alert("⚠️ No puedes eliminar este cliente porque tiene proyectos asociados. Debes eliminar primero todos sus proyectos.");
+        }
+
+        if (!_deps.confirm(`¿Estás SEGURO de que deseas eliminar permanentemente el cliente "${c.nombres || c.empresa || id}"?\n\nEsta acción NO se puede deshacer.`)) return;
+        const fb = _deps.getFirebase();
+        const CrmCommercial = _deps.getCrmCommercial();
+        if (!CrmCommercial || typeof CrmCommercial.hasSessionSync !== 'function' || !CrmCommercial.hasSessionSync(fb)) {
+            return _deps.alert(CrmCommercial && CrmCommercial.NO_SESSION_MESSAGE ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        }
+
+        // deleteClientAdmin re-checks the manager role live, refuses clients with projects, frees the identifiers and writes the audit.
+        CrmCommercial.deleteClient(fb, { clientId: id, dbSuffix: _deps.getDbSuffix() })
+            .then(() => _deps.alert("Cliente eliminado exitosamente."))
+            .catch(err => _deps.alert(CrmCommercial.errorMessage(err)));
+    }
+
+    const ClientsController = {
+        init: initClientsController,
+        initClientsController,
+        getVisibleClients,
+        getPendingClientReservationId,
+        setPendingClientReservationId,
+        cancelPendingClientReservation,
+        catalogueSearchActive,
+        getSelectorClientsLocal,
+        onClientCatalogSearchInput,
+        runClientCatalogSearch,
+        persistClientViaServer,
+        deleteClient,
+        _deps
+    };
+
+    return ClientsController;
+});

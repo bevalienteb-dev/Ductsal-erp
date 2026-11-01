@@ -1,0 +1,1843 @@
+{
+  "opId": "attr_mig_20261028212030_5cba9b70",
+  "mode": "DRY_RUN",
+  "timestamp": "2026-10-28T21:20:36.060Z",
+  "totalAnalyzed": 174,
+  "correctCount": 93,
+  "mutationsPlannedCount": 81,
+  "batchesCount": 2,
+  "byUser": {
+    "1776895495203": {
+      "id": "1776895495203",
+      "nombre": "Benjamin Valiente",
+      "role": "manager",
+      "activo": true,
+      "assignedCount": 0,
+      "proposedCorrectionCount": 0
+    },
+    "1776904494660": {
+      "id": "1776904494660",
+      "nombre": "Denys González",
+      "role": "manager",
+      "activo": true,
+      "assignedCount": 0,
+      "proposedCorrectionCount": 0
+    },
+    "1776904514932": {
+      "id": "1776904514932",
+      "nombre": "Alejandra Ayala",
+      "role": "gestor",
+      "activo": true,
+      "assignedCount": 59,
+      "proposedCorrectionCount": 81
+    },
+    "1784221928346": {
+      "id": "1784221928346",
+      "nombre": "Gustavo Velásquez",
+      "role": "vendedor",
+      "activo": false,
+      "assignedCount": 10,
+      "proposedCorrectionCount": 0
+    },
+    "1788471603604": {
+      "id": "1788471603604",
+      "nombre": "Roberto Flores",
+      "role": "vendedor",
+      "activo": true,
+      "assignedCount": 24,
+      "proposedCorrectionCount": 0
+    }
+  },
+  "vistaTowerReferenceCheck": {
+    "found": true,
+    "targetId": "OPP-1777081083975-23",
+    "proyecto": "VISTA TOWER 2",
+    "proposedVendor": "Alejandra Ayala",
+    "proposedVendorId": "1776904514932",
+    "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+  },
+  "mutations": [
+    {
+      "docId": "1777072883747",
+      "proyecto": "INSTALACION DE BOMBAS DE VACIO Y DUCTO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1777332796030",
+      "proyecto": "ACOPLES",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1777566214924",
+      "proyecto": "Santa Ana 2",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1777929390425",
+      "proyecto": "APARTAMENTOS SENTOSA RESIDENCES 523",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1778534944212",
+      "proyecto": "DUCTO CIRCULAR PARA POLVO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1778538947850",
+      "proyecto": "ACOPLE PARA EXTRACTOR",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1778878595821",
+      "proyecto": "EXTRACCION DE AIRE CALIENTE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779123328318",
+      "proyecto": "PRESURIZACION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779380593787",
+      "proyecto": "LA GRAN VIA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779382102683",
+      "proyecto": "CASA 19",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779401653768",
+      "proyecto": "TORRE STELLA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779403976924",
+      "proyecto": "CASA MIGUEL CUBIAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779465362560",
+      "proyecto": "INGENIO LA CABAÑA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779725390316",
+      "proyecto": "PIEZAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1779750637943",
+      "proyecto": "TORRE FLORELI",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780000300719",
+      "proyecto": "ducto para AC",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780005963827",
+      "proyecto": "RESIDENCIA LA UNION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780006077723",
+      "proyecto": "BANCO CUSCATLAN",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780077087572",
+      "proyecto": "CASA POMA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780086589917",
+      "proyecto": "TORRE MILENIUM",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780412515772",
+      "proyecto": "SISTEMA DE RETORNO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780530244875",
+      "proyecto": "REFORMA 150",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780530450685",
+      "proyecto": "PIEZAS RECTAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780530581710",
+      "proyecto": "CENTRO COMERCIAL FORUM",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780960853512",
+      "proyecto": "TONACATEPEQUE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780961823396",
+      "proyecto": "MARTINIZIN",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780962014173",
+      "proyecto": "EXTRACCION - EX BURGUER KING",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1780962036821",
+      "proyecto": "EXTRACCION - METROCENTRO 8TVA ETAPA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781046020672",
+      "proyecto": "EXTRACCION EN CASA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781129889183",
+      "proyecto": "PEDIDO 4",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781132720120",
+      "proyecto": "PIEZAS CIRCULARES",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781304044089",
+      "proyecto": "5 MTS DE DUCTO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781798957922",
+      "proyecto": "PEDIDO 5",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781812609822",
+      "proyecto": "PEDIDO 6",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781825302250",
+      "proyecto": "CONDOMINIOS INFINITY",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1781825513335",
+      "proyecto": "DUCTO CIRCULAR",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782168754739",
+      "proyecto": "COMPLEMENTO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782170341878",
+      "proyecto": "PEDIDO 7",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782327970755",
+      "proyecto": "BANDEJA DE DESAGUE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782342481383",
+      "proyecto": "INSTITUTO NACIONAL DE SALUD",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782517421174",
+      "proyecto": "SUMINISTRO Y RETORNO DE AIRE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1782773963818",
+      "proyecto": "ADOC - PLAZA MUNDO SOYAPANGO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783028101911",
+      "proyecto": "SIN NOMBRE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783031756410",
+      "proyecto": "2 METROS DE DUCTO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783462659046",
+      "proyecto": "FORRO PARA CODO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783464963096",
+      "proyecto": "AVITAT DUO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783637070763",
+      "proyecto": "PIEZAS VARIAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783979980644",
+      "proyecto": "DUCTO PARA EXTRACCION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1783980723221",
+      "proyecto": "DUCTO CIRCULAR",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784327598519",
+      "proyecto": "DIUNSA SUYAPA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784568449305",
+      "proyecto": "AMANELLI",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784673563209",
+      "proyecto": "Parqueo MM TGU",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784673652946",
+      "proyecto": "DUCTO RECTO PARA AC",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784760324179",
+      "proyecto": "SUMINISTRO DE 7 FUELLES",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1784930539464",
+      "proyecto": "MOTORES DEL ASIA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1785173609743",
+      "proyecto": "AC PARA MAQUILA TEXTIL",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1785332243802",
+      "proyecto": "3 TAPONES",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "1785334857670",
+      "proyecto": "INYECCION CIRCULAR - SAN MIGUEL",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "createdBy matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081074646-1",
+      "proyecto": "CONDOMINIOS CENTRE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081075076-2",
+      "proyecto": "EDIFICIO NORDICO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081075508-3",
+      "proyecto": "EDIFICIO CORPORATIVO BAC",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081075974-4",
+      "proyecto": "EDIFICIO ESTUDIO 89",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081076382-5",
+      "proyecto": "SERIE 3 - SFORMA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081076801-6",
+      "proyecto": "4 HORNOS DE EXTRACCION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081077278-7",
+      "proyecto": "EDIFICIO DESIRE",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081077707-8",
+      "proyecto": "SISTEMA DE AC",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081078136-9",
+      "proyecto": "APARTAMENTO VALLE DULCE 1",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081078558-10",
+      "proyecto": "APARTAMENTO CIVITAS - SANTA ANA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081078987-11",
+      "proyecto": "AC - HANES BRANS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081079439-12",
+      "proyecto": "WAVE HOUSE SAN BLAS - EXTRACCION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081079748-13",
+      "proyecto": "WAVE HOUSE SAN BLAS - PRESURIZACION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081080014-14",
+      "proyecto": "WAVE HOUSE SAN BLAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081080411-15",
+      "proyecto": "15 METRO S DE DUCTO RECTO",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081080866-16",
+      "proyecto": "CAMPANAS DE EXTRACCION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081081370-17",
+      "proyecto": "CASA 725",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081081877-18",
+      "proyecto": "ESTADIO CATARINA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081082386-19",
+      "proyecto": "DUCTO DE EXTRACCION",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081082764-20",
+      "proyecto": "BANDEJAS PARA TUBERIAS",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081083165-21",
+      "proyecto": "EDIFICIO BAC",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081083543-22",
+      "proyecto": "FORROS PARA TUBERIA",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    },
+    {
+      "docId": "OPP-1777081083975-23",
+      "proyecto": "VISTA TOWER 2",
+      "responsableActual": "Alejandra Ayala",
+      "responsableId": "1776904514932",
+      "before": {
+        "vendedorId": null,
+        "vendedorName": null,
+        "vendedorRole": null
+      },
+      "after": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "patch": {
+        "vendedorId": "1776904514932",
+        "vendedorName": "Alejandra Ayala",
+        "vendedorRole": "gestor"
+      },
+      "evidence": "vendedor string matches user 'Alejandra Ayala' (1776904514932)"
+    }
+  ]
+}

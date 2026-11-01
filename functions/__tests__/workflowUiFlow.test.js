@@ -11,23 +11,27 @@ const path = require('path');
 const CrmCommercial = require('../../crm_commercial.js');
 
 const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
-const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a + from.length);
+const oppUiPath = path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js');
+const oppUiSrc = fs.existsSync(oppUiPath) ? fs.readFileSync(oppUiPath, 'utf8') : '';
+const between = (from, to, src = null) => {
+  const target = src || ((oppUiSrc && oppUiSrc.includes(from) && oppUiSrc.includes(to)) ? oppUiSrc : appCore);
+  const a = target.indexOf(from);
+  const b = target.indexOf(to, a + from.length);
   if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+  return target.slice(a, b);
 };
 
 const SRC = [
-  between('async function runWorkflowOp(', 'function showInvoiceForm'),
-  between('async function processInvoice(', 'function showPaymentForm'),
-  between('function editPayment(', 'function renderTracker'),
-  between('async function processNewProposal()', '// Google Maps auto-script removed'),
-  between('async function processAdvance(', 'function showLoseForm'),
-  between('async function processLose()', '// ========================\n// DASHBOARD'),
-  between('async function processEditBasePrice(', 'function deleteClient(')
-  , between('async function deleteProspect()', '// Compresión de imágenes')
-  , between('const escapeHtmlText', '// REMOVED (window.applyManagerBypass)')
+  between('async function runWorkflowOp(', 'function showInvoiceForm', appCore),
+  between('async function processInvoice(', 'function showPaymentForm', appCore),
+  between('function editPayment(', 'function renderTracker', appCore),
+  between('async function processNewProposal()', '// Google Maps auto-script removed', oppUiSrc || appCore),
+  between('async function processAdvance(', oppUiSrc ? 'async function confirmAdvanceToCierre' : 'function showLoseForm', oppUiSrc || appCore),
+  between('async function processLose()', oppUiSrc ? 'const OpportunitiesUI = {' : '// ========================\n// DASHBOARD', oppUiSrc || appCore),
+  between('async function processEditBasePrice(', oppUiSrc ? 'function showNewProposalForm()' : 'async function deleteProspect()', oppUiSrc || appCore),
+  between('async function deleteChangeOrder(', 'async function deleteProspect()', appCore),
+  between('async function deleteProspect()', '// Compresión de imágenes', appCore),
+  between('const escapeHtmlText', oppUiSrc ? 'function renderLogs(p)' : '// REMOVED (window.applyManagerBypass)', oppUiSrc || appCore)
 ].join('\n');
 
 function build({ session = true, handler, prospect, client } = {}) {

@@ -435,8 +435,8 @@ describe('SEC-05 Fase 1.3: Verificación de Correcciones de Seguridad', () => {
   // --------------------------------------------------------------------------
   describe('H-06: Descarga sin pestañas residuales', () => {
     test('downloadSecureDocument no utiliza target="_blank" en el ancla nativa de descarga', () => {
-      const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
-      const downloadSrc = appCore.slice(appCore.indexOf('async function downloadSecureDocument('), appCore.indexOf('async function viewSecureDocument('));
+      const docViewer = fs.readFileSync(path.join(__dirname, '..', '..', 'core', 'document_viewer.js'), 'utf8');
+      const downloadSrc = docViewer.slice(docViewer.indexOf('async function downloadSecureDocument('), docViewer.indexOf('async function viewSecureDocument('));
 
       expect(downloadSrc).not.toContain('a.target = \'_blank\'');
       expect(downloadSrc).toContain('a.download = safeDownloadName');

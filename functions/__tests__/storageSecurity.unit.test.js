@@ -8,16 +8,17 @@
 
 const fs = require('fs');
 const path = require('path');
-const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+const docViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
+const docViewer = fs.readFileSync(docViewerPath, 'utf8');
 
 const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a + from.length);
+  const a = docViewer.indexOf(from);
+  const b = docViewer.indexOf(to, a + from.length);
   if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+  return docViewer.slice(a, b);
 };
 
-const resolveStoragePathSrc = between('function resolveStoragePath(docRef, envConfig = null) {', 'async function viewSecureDocument');
+const resolveStoragePathSrc = between('function resolveStoragePath(docRef, envConfig = null) {', 'async function downloadSecureDocument');
 const resolveStoragePath = new Function('STORAGE_PREFIX', `
   ${resolveStoragePathSrc}
   return resolveStoragePath;

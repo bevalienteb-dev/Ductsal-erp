@@ -9,27 +9,27 @@ const { createStorageService } = require('../storageService');
 const { createFakeFirestore } = require('../test-helpers/fakeFirestore');
 
 describe('SEC-03: Storage Document Preview & Download Flow', () => {
-  const releaseAppCorePath = path.join(__dirname, '..', '..', '..', 'sales-reporting-system-release', 'app_core.js');
-  const mainAppCorePath = path.join(__dirname, '..', '..', 'app_core.js');
+  const releaseViewerPath = path.join(__dirname, '..', '..', '..', 'sales-reporting-system-release', 'core', 'document_viewer.js');
+  const mainViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
 
-  const appCoreSrc = fs.existsSync(releaseAppCorePath)
-    ? fs.readFileSync(releaseAppCorePath, 'utf8')
-    : fs.readFileSync(mainAppCorePath, 'utf8');
+  const viewerSrc = fs.existsSync(releaseViewerPath)
+    ? fs.readFileSync(releaseViewerPath, 'utf8')
+    : fs.readFileSync(mainViewerPath, 'utf8');
 
   const extractFn = (fnName, nextFn) => {
-    const start = appCoreSrc.indexOf(`async function ${fnName}(`);
-    const end = appCoreSrc.indexOf(nextFn, start);
+    const start = viewerSrc.indexOf(`async function ${fnName}(`);
+    const end = viewerSrc.indexOf(nextFn, start);
     if (start < 0 || end < 0) throw new Error(`Could not find boundary for ${fnName}`);
-    return appCoreSrc.slice(start, end);
+    return viewerSrc.slice(start, end);
   };
 
-  const viewDocSrc = extractFn('viewSecureDocument', 'const KNOWN_DOC_LABELS');
+  const viewDocSrc = extractFn('viewSecureDocument', 'function openDocPreviewModal');
   const downloadDocSrc = extractFn('downloadSecureDocument', 'async function viewSecureDocument');
 
   // ---------------------------------------------------------------------------
   // 1. Diagnóstico de Causa Raíz: Ausencia de getBlob
   // ---------------------------------------------------------------------------
-  describe('1. Causa Raíz: Ausencia de getBlob en app_core.js', () => {
+  describe('1. Causa Raíz: Ausencia de getBlob en core/document_viewer.js', () => {
     test('viewSecureDocument no contiene llamadas a fileRef.getBlob ni .getBlob(', () => {
       expect(viewDocSrc).not.toContain('fileRef.getBlob');
       expect(viewDocSrc).not.toContain('.getBlob(');

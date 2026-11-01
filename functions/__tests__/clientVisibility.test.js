@@ -7,19 +7,25 @@
 const fs = require('fs');
 const path = require('path');
 
-const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
-const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a);
-  if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+const ROOT = path.join(__dirname, '..', '..');
+const appCore = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
+const clientsCtrlSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_controller.js'), 'utf8');
+const clientsUiSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
+
+const between = (src, from, to) => {
+  const a = src.indexOf(from);
+  if (a < 0) throw new Error(`marker from not found: ${from}`);
+  const b = src.indexOf(to, a + from.length);
+  if (b < 0) throw new Error(`marker to not found: ${to}`);
+  return src.slice(a, b);
 };
 
 const SRC = [
-  between('function getProspectVendorInfo', 'function updateOppSortIcons'), // + reassignVendor
-  between('// Clients visible to the current user', 'function toggleClientFields'), // getVisibleClients + renderClientsTable
-  between('// Selector of NEW opportunities', '// The opportunity is created by createProspectAdmin'), // selector + catalogue search (ends before the now-async createNewProspect)
-  between('function getClientName', 'function renderList')
+  between(appCore, 'function getProspectVendorInfo', 'function updateOppSortIcons'), // + reassignVendor
+  between(clientsCtrlSrc, 'function getVisibleClients()', '// -------------------------------------------------------------------------\n    // 3. Gestión de Reservas'),
+  between(clientsCtrlSrc, 'function catalogueSearchActive() {', 'async function persistClientViaServer('),
+  between(clientsUiSrc, 'function renderClientsTable()', 'function toggleClientFields()'),
+  between(clientsUiSrc, 'function renderClientSelect()', 'function renderClientContactCard(')
 ].join('\n');
 
 // Free variables resolve against the state object S (read AND written), like the globals of app_core.js.
@@ -66,6 +72,28 @@ function sandbox(S) {
         }
       };
       var openDetail = function () {}; var renderList = function () {};
+      var _deps = {
+        getCurrentUser: () => S.currentUser,
+        getClients: () => S.clients,
+        setClients: (c) => { S.clients = c; },
+        getProspects: () => S.prospects,
+        getDbSuffix: () => S.DB_SUFFIX,
+        getFirebase: () => firebase,
+        getCrmClients: () => (typeof CrmClients !== 'undefined' ? CrmClients : null),
+        getCrmCommercial: () => CrmCommercial,
+        alert: function (m) { ui.alerts.push(m); },
+        escapeHtmlDoc: function (s) { return s; },
+        showLoading: function () {},
+        hideLoading: function () {},
+        getVisibleClients: () => getVisibleClients(),
+        renderClientsTable: () => renderClientsTable(),
+        catalogueSearchActive: () => catalogueSearchActive(),
+        getSelectorClientsLocal: () => getSelectorClientsLocal(),
+        renderClientSelect: () => renderClientSelect(),
+        selectClientInSelector: (id, name) => selectClientInSelector(id, name),
+        getClientName: (id) => getClientName(id),
+        getProspectClient: (p) => getProspectClient(p)
+      };
       ${SRC}
       return { getVisibleClients: getVisibleClients, renderClientsTable: renderClientsTable, renderClientSelect: renderClientSelect, runClientCatalogSearch: runClientCatalogSearch, selectClientInSelector: selectClientInSelector,
                getClientName: getClientName, reassignVendor: reassignVendor, getProspectVendorInfo: getProspectVendorInfo };
@@ -307,8 +335,8 @@ describe('no stored data is modified by the visibility logic', () => {
 
 describe('static guards', () => {
   test('list uses getVisibleClients; the selector reaches it only through the legacy fallback; no inline createdBy filtering', () => {
-    const table = between('function renderClientsTable', 'function toggleClientFields');
-    const select = between('// Selector of NEW opportunities', 'function createNewProspect');
+    const table = between(clientsUiSrc, 'function renderClientsTable()', 'function toggleClientFields()');
+    const select = between(clientsCtrlSrc, 'function getSelectorClientsLocal()', 'async function persistClientViaServer(');
     expect(table).toContain('getVisibleClients()');
     expect(select).toContain('getVisibleClients()'); // only as the degraded fallback (see the catalogue tests)
     expect(table).not.toMatch(/c\.createdBy === currentUser\.id/);
@@ -316,13 +344,13 @@ describe('static guards', () => {
   });
 
   test('the opportunity list still uses the criterion this logic mirrors', () => {
-    const list = between('function renderList', 'function renderProjectsList');
+    const list = between(appCore, 'function renderList', 'function renderProjectsList');
     expect(list).toContain('p.createdBy === currentUser.id');
     expect(list).toContain('p.vendedorId === currentUser.id');
   });
 
   test('getVisibleClients contains no writes to stored fields', () => {
-    const fn = between('function getVisibleClients', 'function renderClientsTable');
+    const fn = between(clientsCtrlSrc, 'function getVisibleClients()', '// -------------------------------------------------------------------------\n    // 3. Gestión de Reservas');
     expect(fn).not.toMatch(/\.(createdBy|vendedorId|clientId)\s*=[^=]/);
     expect(fn).not.toMatch(/saveClientToDB|saveProspectToDB|\.set\(|\.update\(|\.delete\(/);
   });
@@ -396,7 +424,7 @@ describe('catalogue selector (vendedor with a Firebase session): different crite
   });
 
   test('the selector code never writes data and never reuses the portfolio function for a session', () => {
-    const src = between('// Selector of NEW opportunities', 'async function persistClientViaServer');
+    const src = between(clientsCtrlSrc, 'function catalogueSearchActive() {', 'async function persistClientViaServer(');
     expect(src).not.toMatch(/saveClientToDB|saveProspectToDB|\.set\(|\.update\(|\.delete\(|\.createdBy\s*=[^=]/);
     expect(src).toContain('CrmClients.searchCatalog');
   });

@@ -19,18 +19,18 @@ const {
   resolveDocumentsForUpdate
 } = require('../clientsService');
 
-// Load helpers from app_core.js
-const appCorePath = path.join(__dirname, '..', '..', 'app_core.js');
-const appCoreSrc = fs.readFileSync(appCorePath, 'utf8');
+// Load helpers from core/document_viewer.js
+const docViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
+const docViewerSrc = fs.readFileSync(docViewerPath, 'utf8');
 
 const between = (from, to) => {
-  const a = appCoreSrc.indexOf(from);
-  const b = appCoreSrc.indexOf(to, a);
+  const a = docViewerSrc.indexOf(from);
+  const b = docViewerSrc.indexOf(to, a);
   if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCoreSrc.slice(a, b);
+  return docViewerSrc.slice(a, b);
 };
 
-// Sandbox for app_core.js document presentation functions
+// Sandbox for document presentation functions
 const helperScope = {};
 const helperFn = new Function('scope', `
   var window = { _docStore: new Map() };
@@ -53,7 +53,7 @@ const helperFn = new Function('scope', `
   var viewSecureDocument = function(ref, name, opts) { lastViewCall = { ref: ref, name: name, opts: opts }; };
   var deleteClientDocument = function(clientId, docKey, itemIndex) { lastDeleteCall = { clientId: clientId, docKey: docKey, itemIndex: itemIndex }; };
 
-  ${between('const escapeHtmlDoc', 'const STAGES')}
+  ${between('const escapeHtmlDoc', 'async function showDocumentVersionHistory')}
 
   scope.escapeHtmlDoc = escapeHtmlDoc;
   scope.formatClientDocLabel = formatClientDocLabel;

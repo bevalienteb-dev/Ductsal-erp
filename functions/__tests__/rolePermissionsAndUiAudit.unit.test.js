@@ -11,6 +11,9 @@ const { createProspectWorkflowService } = require('../prospectWorkflowService');
 const { createFakeFirestore } = require('../test-helpers/fakeFirestore');
 
 const appCoreSource = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+const oppUiPath = path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js');
+const oppUiSource = fs.existsSync(oppUiPath) ? fs.readFileSync(oppUiPath, 'utf8') : '';
+const combinedSource = appCoreSource + '\n' + oppUiSource;
 const indexHtmlSource = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
 const stylesCssSource = fs.readFileSync(path.join(__dirname, '..', '..', 'styles.css'), 'utf8');
 
@@ -175,9 +178,9 @@ describe('Auditoría Integral de Permisos por Rol y Layout CRM', () => {
     });
 
     test('1.8 Frontend: openDetail bloquea acceso tanto a vendedor como a gestor si la oportunidad es ajena', () => {
-      expect(appCoreSource).toContain("if (currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor'))");
-      expect(appCoreSource).toContain("const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);");
-      expect(appCoreSource).toContain("alert('No tienes acceso a esta oportunidad');");
+      expect(combinedSource).toContain("if (currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor'))");
+      expect(combinedSource).toContain("const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);");
+      expect(combinedSource).toContain("alert('No tienes acceso a esta oportunidad');");
     });
   });
 
@@ -275,8 +278,8 @@ describe('Auditoría Integral de Permisos por Rol y Layout CRM', () => {
     });
 
     test('3.3 openModal y closeModal bloquean y desbloquean el scroll de la página de fondo (body.modal-open)', () => {
-      expect(appCoreSource).toContain("document.body.classList.add('modal-open');");
-      expect(appCoreSource).toContain("document.body.classList.remove('modal-open');");
+      expect(combinedSource).toContain("document.body.classList.add('modal-open');");
+      expect(combinedSource).toContain("document.body.classList.remove('modal-open');");
     });
   });
 

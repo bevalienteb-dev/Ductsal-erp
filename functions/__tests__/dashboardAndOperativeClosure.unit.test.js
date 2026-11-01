@@ -11,6 +11,12 @@ const appCorePath = path.join(__dirname, '../../app_core.js');
 const indexHtmlPath = path.join(__dirname, '../../index.html');
 const appCoreContent = fs.readFileSync(appCorePath, 'utf8');
 const indexHtmlContent = fs.readFileSync(indexHtmlPath, 'utf8');
+const financeUiPath = path.join(__dirname, '../../modules/finance/finance_ui.js');
+const financeUiContent = fs.existsSync(financeUiPath) ? fs.readFileSync(financeUiPath, 'utf8') : '';
+const getProjectsListContent = () => (financeUiContent || appCoreContent);
+const dashboardUiPath = path.join(__dirname, '../../modules/dashboard/dashboard_ui.js');
+const dashboardUiContent = fs.existsSync(dashboardUiPath) ? fs.readFileSync(dashboardUiPath, 'utf8') : '';
+const getDashboardContent = () => (dashboardUiContent || appCoreContent);
 
 describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
 
@@ -90,7 +96,7 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
     });
 
     test('2.2 renderProjectsList en app_core.js actualiza la clase active soportando filter-proj-', () => {
-      expect(appCoreContent).toContain("document.getElementById(`filter-proj-${key}`) || document.getElementById(`pill-proj-${key}`)");
+      expect(getProjectsListContent()).toContain("document.getElementById(`filter-proj-${key}`) || document.getElementById(`pill-proj-${key}`)");
     });
   });
 
@@ -99,7 +105,7 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
   // =========================================================================
   describe('3. Consistencia de Cuentas por Cobrar (Stock Vivo)', () => {
     test('3.1 app_core.js calcula CxC Global sobre el universo de proyectos no eliminados', () => {
-      expect(appCoreContent).toContain("const cxcUniverse = (prospects && Array.isArray(prospects)) ? prospects.filter(p => p && p.eliminado !== true) : [];");
+      expect(getDashboardContent()).toContain("const cxcUniverse = (prospects && Array.isArray(prospects)) ? prospects.filter(p => p && p.eliminado !== true) : [];");
     });
 
     test('3.2 calculateCxCMetrics preserva facturas de años anteriores independientemente del filtro de flujo', () => {
@@ -134,14 +140,11 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
   // 4. Seguridad y Protección de Navegación por Rol (Simulación y Contratos)
   // =========================================================================
   describe('4. Seguridad y Protección de Navegación por Rol', () => {
-    test('4.1 showView y applyRolePermissions respetan al Administrador legítimo', () => {
-      // El admin tiene acceso a users-view
-      expect(appCoreContent).toContain("if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager' && currentUser.role !== 'admin')");
+    test('4.1 showView y applyRolePermissions garantizan autoridad total al Gerente y bloquean acceso administrativo a roles no autorizados', () => {
       // El dashboard comercial queda reservado para la gerencia
       expect(appCoreContent).toContain("if (viewId === 'dashboard-view' && currentUser && currentUser.role !== 'manager')");
-      // applyRolePermissions da acceso a users y settings para el admin
-      expect(appCoreContent).toContain("else if (role === 'admin')");
-      expect(appCoreContent).toContain("[navUsers, navSettings, navList, navClients]");
+      // La vista de usuarios queda reservada exclusivamente para la gerencia
+      expect(appCoreContent).toContain("if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager')");
     });
 
     test('4.2 showView permite a vendedor acceder a projects-view (Fase 5.4)', () => {
@@ -197,16 +200,15 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
       }
 
       function buildShowViewFn(docMock, alertLog) {
-        // Implementación canónica idéntica a app_core.js
+        // Implementación canónica idéntica a app_core.js y app_router.js
         let lastViewedSection = 'list-view';
-        let currentListMode = 'agenda';
 
         return function showView(viewId, currentUser) {
           if (viewId === 'dashboard-view' && currentUser && currentUser.role !== 'manager') {
             alertLog.push(`dashboard-view blocked for ${currentUser.role}`);
-            return showView(currentUser.role === 'admin' ? 'users-view' : 'list-view', currentUser);
+            return showView('list-view', currentUser);
           }
-          if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager' && currentUser.role !== 'admin') {
+          if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager') {
             alertLog.push(`users-view blocked for ${currentUser.role}`);
             return showView('list-view', currentUser);
           }
@@ -232,25 +234,7 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
         };
       }
 
-      test('4.3.1 Administrador legítimo: accede a users-view pero es redirigido desde dashboard-view', () => {
-        const doc = createDomMock();
-        const alerts = [];
-        const showView = buildShowViewFn(doc, alerts);
-        const adminUser = { id: 'U-ADM', role: 'admin' };
-
-        // Admin abre users-view: permitido
-        const resUsers = showView('users-view', adminUser);
-        expect(resUsers).toBe('users-view');
-        expect(doc.getElementById('users-view').classList.contains('active')).toBe(true);
-        expect(alerts).toHaveLength(0);
-
-        // Admin intenta abrir dashboard-view: bloqueado y redirigido a users-view
-        const resDash = showView('dashboard-view', adminUser);
-        expect(alerts).toContain('dashboard-view blocked for admin');
-        expect(resDash).toBe('users-view');
-      });
-
-      test('4.3.2 Gerente: acceso irrestricto a dashboard-view, users-view y projects-view', () => {
+      test('4.3.1 Gerente General: acceso irrestricto y autoridad total sobre dashboard-view, users-view y projects-view', () => {
         const doc = createDomMock();
         const alerts = [];
         const showView = buildShowViewFn(doc, alerts);
@@ -268,7 +252,7 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
         expect(alerts).toHaveLength(0);
       });
 
-      test('4.3.3 Gestor: acceso a projects-view, pero bloqueado de dashboard-view y users-view', () => {
+      test('4.3.2 Gestor: acceso a projects-view, pero bloqueado de dashboard-view y users-view', () => {
         const doc = createDomMock();
         const alerts = [];
         const showView = buildShowViewFn(doc, alerts);
@@ -323,4 +307,123 @@ describe('Cierre de Dashboards Gerenciales y Operativos (DUCTSAL CRM)', () => {
     });
   });
 
+  // =========================================================================
+  // 6. Trazabilidad de Integración E2E Completa (Ciclo de Vida Empresarial)
+  // Cliente -> Oportunidad -> Cotización -> Proyecto -> Contrato -> Facturación -> Pagos -> Dashboard
+  // =========================================================================
+  describe('6. Trazabilidad de Integración E2E Completa (Ciclo de Vida Empresarial)', () => {
+    test('6.1 Flujo completo preserva identificadores, importes, retenciones, pagos y métricas en Dashboard', () => {
+      const FinanceCalculations = require('../../modules/finance/finance_calculations');
+
+      // 1. Cliente
+      const client = {
+        id: 'CLI_E2E_901',
+        empresa: 'Corporación Inmobiliaria Las Cascadas',
+        tipo: 'juridica',
+        nit: '0614-250890-101-2',
+        es_exportacion: false,
+        createdBy: 'vnd_101',
+        visibleTo: ['vnd_101', 'mgr_001']
+      };
+
+      // 2. Oportunidad
+      const opportunity = {
+        id: 'OPP_E2E_801',
+        clientId: client.id,
+        nombre: 'Suministro y Montaje de Ductos Torre B',
+        createdBy: 'vnd_101',
+        vendedorId: 'vnd_101',
+        vendedorName: 'Carlos Mendoza',
+        etapa: 'contacto',
+        estado: 'activo',
+        fecha_creacion: '2026-10-01T08:00:00.000Z'
+      };
+      expect(opportunity.clientId).toBe(client.id);
+
+      // 3. Cotización y Propuesta
+      opportunity.precio_cotizado = 20000;
+      opportunity.costo_venta = 12000;
+      opportunity.etapa = 'cotizacion';
+      const initialSubtotal = FinanceCalculations.getProjectSubtotal(opportunity);
+      const initialCosto = FinanceCalculations.getProjectCosto(opportunity);
+      const initialMargin = initialSubtotal - initialCosto;
+      expect(initialSubtotal).toBe(20000);
+      expect(initialMargin).toBe(8000);
+
+      // 4. Proyecto Ganado y Postcierre
+      opportunity.etapa = 'cierre';
+      opportunity.estado = 'ganado';
+      opportunity.postcierre_habilitado = true;
+      opportunity.fecha_cierre = '2026-10-15T15:30:00.000Z';
+      opportunity.stage_timestamps = {
+        cotizacion: '2026-10-05T10:00:00.000Z',
+        cierre: '2026-10-15T15:30:00.000Z'
+      };
+
+      // 5. Contrato y Órdenes de Cambio
+      opportunity.ordenes_cambio = [
+        { id: 'OC_01', tipo: 'aumento', precio: 5000, costo: 3000, motivo: 'Extensión a Nivel 5' }
+      ];
+      const revisedSubtotal = FinanceCalculations.getProjectSubtotal(opportunity);
+      const revisedCosto = FinanceCalculations.getProjectCosto(opportunity);
+      expect(revisedSubtotal).toBe(25000);
+      expect(revisedCosto).toBe(15000);
+
+      // 6. Facturación (Anticipo de obra 30% con IVA)
+      // Subtotal $25,000 * 13% IVA = $28,250 Total Contratado
+      const anticipoSubtotal = 7500;
+      const anticipoIva = anticipoSubtotal * 0.13; // $975
+      const anticipoTotal = anticipoSubtotal + anticipoIva; // $8,475
+
+      opportunity.facturas = [
+        {
+          id: 'FAC_001',
+          numero: 'CCFE-00982',
+          tipo: 'anticipo',
+          monto: anticipoTotal,
+          fecha: '2026-10-18T10:00:00.000Z',
+          pagos: []
+        }
+      ];
+
+      FinanceCalculations.setDeps({ getClients: () => [client] });
+      const finBeforePayment = FinanceCalculations.calculateProjectFinancials(opportunity);
+      expect(finBeforePayment.totalFacturado).toBe(8475);
+      expect(finBeforePayment.totalCobrado).toBe(0);
+      expect(finBeforePayment.saldoCxC).toBe(8475); // Facturado $8,475 - Cobrado $0
+      expect(finBeforePayment.porFacturar).toBe(19775); // Total $28,250 - Facturado $8,475
+      expect(finBeforePayment.isFullyPaid).toBe(false);
+
+      // 7. Pagos y Cobranza Conciliada
+      opportunity.facturas[0].pagos.push({
+        id: 'PAG_001',
+        monto: anticipoTotal,
+        metodo: 'transferencia',
+        banco: 'Banco Agrícola',
+        referencia: 'TR-88129031',
+        fecha: '2026-10-20T11:00:00.000Z'
+      });
+
+      const finAfterPayment = FinanceCalculations.calculateProjectFinancials(opportunity);
+      expect(finAfterPayment.totalCobrado).toBe(8475);
+      expect(finAfterPayment.saldoCxC).toBe(0); // $8,475 facturado - $8,475 cobrado = $0
+      expect(finAfterPayment.porFacturar).toBe(19775);
+      expect(finAfterPayment.pctCobrado).toBe(30);
+
+      // 8. Reflejo Exacto en el Dashboard Gerencial
+      const wonMetrics = CrmDashboardCalc.calculateWonMetrics([opportunity]);
+      expect(wonMetrics.totalPrecio).toBe(25000); // Subtotal consolidado ($20,000 + $5,000 OC)
+      expect(wonMetrics.totalCosto).toBe(15000);  // Costo consolidado ($12,000 + $3,000 OC)
+      expect(wonMetrics.margen).toBe(10000);      // Margen bruto $10,000 USD
+      expect(wonMetrics.countTotal).toBe(1);
+
+      const sellerMetrics = CrmDashboardCalc.calculateSellerPerformance([opportunity], [], [], [
+        { id: 'vnd_101', nombre: 'Carlos Mendoza', role: 'vendedor' }
+      ]);
+      const vendorRow = sellerMetrics.sellers.find(s => s.sellerId === 'vnd_101');
+      expect(vendorRow).toBeDefined();
+      expect(vendorRow.countGanadas).toBe(1);
+      expect(vendorRow.ventasGanadas).toBe(25000);
+    });
+  });
 });

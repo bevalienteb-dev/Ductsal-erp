@@ -94,10 +94,14 @@ service cloud.firestore {
         || (d.get('vendedorId', '') == '' && d.createdBy == me());
     }
     function isPostclosing(d) {
-      return d.get('postcierre_habilitado', false) == true
-        || d.get('fecha_cierre', '') != ''
-        || d.get('stage_timestamps', {}).get('cierre', '') != ''
-        || d.get('facturas', []).size() > 0;
+      return d != null && (
+        d.get('postcierre_habilitado', false) == true
+        || (
+          d.get('estado', '') != 'activo'
+          && d.get('estado', '') != 'perdido'
+          && (d.get('estado', '') == 'ganado' || d.get('fecha_cierre', '') != '' || d.get('facturas', []).size() > 0)
+        )
+      );
     }
     function prospectVisible(d) {
       return isManager()

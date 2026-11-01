@@ -22,7 +22,34 @@ function collectionsIn(src) {
 }
 const uploadFolders = src => [...new Set([...src.matchAll(/uploadFileToStorage\([^;]*?,\s*'([a-z_]+)'(?:\s*\)|\s*,)/g)].map(m => m[1]))].sort();
 
-const CRM_CLIENT_FILES = ['app_core.js', 'crm_auth.js', 'crm_clients.js', 'crm_commercial.js', 'crm_env.js'];
+const CRM_CLIENT_FILES = [
+  'app_core.js',
+  'crm_auth.js',
+  'crm_clients.js',
+  'crm_commercial.js',
+  'crm_env.js',
+  'modules/clients/clients_controller.js',
+  'modules/clients/client_documents.js',
+  'modules/clients/clients_ui.js',
+  'modules/opportunities/opportunities_controller.js',
+  'modules/opportunities/opportunities_ui.js',
+  'modules/finance/finance_calculations.js',
+  'modules/finance/finance_change_orders.js',
+  'modules/finance/finance_invoicing.js',
+  'modules/finance/finance_payments.js',
+  'modules/finance/finance_contracts.js',
+  'modules/finance/finance_controller.js',
+  'modules/finance/finance_ui.js',
+  'modules/dashboard/dashboard_controller.js',
+  'modules/dashboard/dashboard_ui.js',
+  'modules/dashboard/dashboard_charts.js',
+  'modules/dashboard/dashboard_manager_workflow.js',
+  'modules/dashboard/dashboard_audit.js',
+  'modules/users/users_permissions.js',
+  'modules/users/users_ui.js',
+  'modules/users/users_controller.js',
+  'modules/users/auth_session.js'
+];
 const FAB_FILES = ['app.js', 'operador.js', 'bom.js', ...(haveFab ? fs.readdirSync(path.join(FAB, 'js')).map(f => `js/${f}`) : [])];
 
 describe('CRM (sales-reporting-system): collections, writers and Storage paths', () => {

@@ -74,10 +74,14 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/prospects_prod/$(pid)).data;
     }
     function isPostclosing(d) {
-      return d.get('postcierre_habilitado', false) == true
-        || d.get('fecha_cierre', '') != ''
-        || d.get('stage_timestamps', {}).get('cierre', '') != ''
-        || d.get('facturas', []).size() > 0;
+      return d != null && (
+        d.get('postcierre_habilitado', false) == true
+        || (
+          d.get('estado', '') != 'activo'
+          && d.get('estado', '') != 'perdido'
+          && (d.get('estado', '') == 'ganado' || d.get('fecha_cierre', '') != '' || d.get('facturas', []).size() > 0)
+        )
+      );
     }
     function canReadProspectDoc(p) {
       return p != null && (

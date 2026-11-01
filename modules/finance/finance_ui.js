@@ -1,0 +1,717 @@
+// ============================================================================
+// DUCTSAL ERP — FINANCE MODULE: UI (Fase 6.4)
+// Archivo: modules/finance/finance_ui.js
+// Responsabilidades:
+// 1. Renderizado de la lista de proyectos y control de cobros (renderProjectsList).
+// 2. Renderizado del panel financiero, órdenes de cambio, facturación y pagos (renderFinancials).
+// 3. Manejo de alertas fiscales (Gran Contribuyente 1% retención, Exención IVA exportación).
+// 4. Cumplimiento estricto del modo solo lectura financiero para vendedores.
+// 5. Integración con DocumentViewer para documentos de facturas, órdenes de cambio y pagos.
+// ============================================================================
+
+(function (root, factory) {
+    'use strict';
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = factory();
+    } else {
+        const api = factory();
+        root.FinanceUI = api;
+        if (typeof window !== 'undefined') {
+            window.FinanceUI = api;
+            window.renderProjectsList = api.renderProjectsList;
+            window.renderFinancials = api.renderFinancials;
+        }
+    }
+})(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this), function () {
+    'use strict';
+
+    // -------------------------------------------------------------------------
+    // 1. Dependencias inyectadas con fallbacks seguros
+    // -------------------------------------------------------------------------
+    const _deps = {
+        getCurrentUser: () => {
+            if (typeof currentUser !== 'undefined') return currentUser;
+            if (typeof window !== 'undefined' && window.currentUser) return window.currentUser;
+            return null;
+        },
+        getProspects: () => {
+            if (typeof prospects !== 'undefined' && Array.isArray(prospects)) return prospects;
+            if (typeof window !== 'undefined' && Array.isArray(window.prospects)) return window.prospects;
+            return [];
+        },
+        getClients: () => {
+            if (typeof clients !== 'undefined' && Array.isArray(clients)) return clients;
+            if (typeof window !== 'undefined' && Array.isArray(window.clients)) return window.clients;
+            return [];
+        },
+        getClientName: (id) => {
+            if (typeof getClientName === 'function') return getClientName(id);
+            if (typeof window !== 'undefined' && typeof window.getClientName === 'function') return window.getClientName(id);
+            const clientsList = _deps.getClients();
+            const c = clientsList.find(item => item.id === id);
+            return c ? (c.nombre || c.empresa || id) : (id || '-');
+        },
+        hasEnteredPostclosing: (p) => {
+            if (typeof hasEnteredPostclosing === 'function') return hasEnteredPostclosing(p);
+            if (typeof window !== 'undefined' && typeof window.hasEnteredPostclosing === 'function') return window.hasEnteredPostclosing(p);
+            return Boolean(p && (p.ganada === true || p.stage === 'cerrada_ganada' || p.estado === 'ganado' || p.fecha_cierre));
+        },
+        isProjectFullyPaid: (p) => {
+            if (typeof FinanceCalculations !== 'undefined' && typeof FinanceCalculations.isProjectFullyPaid === 'function') {
+                return FinanceCalculations.isProjectFullyPaid(p);
+            }
+            if (typeof isProjectFullyPaid === 'function') return isProjectFullyPaid(p);
+            if (typeof window !== 'undefined' && typeof window.isProjectFullyPaid === 'function') return window.isProjectFullyPaid(p);
+            return false;
+        },
+        getProjectSubtotal: (p) => {
+            if (typeof FinanceCalculations !== 'undefined' && typeof FinanceCalculations.getProjectSubtotal === 'function') {
+                return FinanceCalculations.getProjectSubtotal(p);
+            }
+            if (typeof getProjectSubtotal === 'function') return getProjectSubtotal(p);
+            if (typeof window !== 'undefined' && typeof window.getProjectSubtotal === 'function') return window.getProjectSubtotal(p);
+            return parseFloat(p?.precio_cotizado) || 0;
+        },
+        getProjectCosto: (p) => {
+            if (typeof FinanceCalculations !== 'undefined' && typeof FinanceCalculations.getProjectCosto === 'function') {
+                return FinanceCalculations.getProjectCosto(p);
+            }
+            if (typeof getProjectCosto === 'function') return getProjectCosto(p);
+            if (typeof window !== 'undefined' && typeof window.getProjectCosto === 'function') return window.getProjectCosto(p);
+            return parseFloat(p?.costo_venta) || 0;
+        },
+        formatCurrency: (val) => {
+            if (typeof formatCurrency === 'function') return formatCurrency(val);
+            if (typeof window !== 'undefined' && typeof window.formatCurrency === 'function') return window.formatCurrency(val);
+            const n = parseFloat(val) || 0;
+            return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        },
+        formatDate: (val) => {
+            if (typeof formatDate === 'function') return formatDate(val);
+            if (typeof window !== 'undefined' && typeof window.formatDate === 'function') return window.formatDate(val);
+            if (!val) return 'N/A';
+            try {
+                const d = new Date(val);
+                return isNaN(d.getTime()) ? String(val) : d.toLocaleDateString('es-SV');
+            } catch (e) {
+                return String(val);
+            }
+        },
+        escapeHtmlDoc: (str) => {
+            if (typeof escapeHtmlDoc === 'function') return escapeHtmlDoc(str);
+            if (typeof window !== 'undefined' && typeof window.escapeHtmlDoc === 'function') return window.escapeHtmlDoc(str);
+            if (str == null) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        },
+        getProjPaymentFilter: () => {
+            if (typeof FinanceController !== 'undefined' && typeof FinanceController.getProjPaymentFilter === 'function') {
+                return FinanceController.getProjPaymentFilter();
+            }
+            if (typeof getProjPaymentFilter === 'function') return getProjPaymentFilter();
+            if (typeof window !== 'undefined' && typeof window.getProjPaymentFilter === 'function') return window.getProjPaymentFilter();
+            if (typeof projPaymentFilter !== 'undefined') return projPaymentFilter;
+            return 'pendientes';
+        },
+        getProjSortCol: () => {
+            if (typeof FinanceController !== 'undefined' && typeof FinanceController.getProjSortCol === 'function') {
+                return FinanceController.getProjSortCol();
+            }
+            if (typeof projSortCol !== 'undefined') return projSortCol;
+            if (typeof window !== 'undefined' && typeof window.projSortCol !== 'undefined') return window.projSortCol;
+            return '';
+        },
+        getProjSortDir: () => {
+            if (typeof FinanceController !== 'undefined' && typeof FinanceController.getProjSortDir === 'function') {
+                return FinanceController.getProjSortDir();
+            }
+            if (typeof projSortDir !== 'undefined') return projSortDir;
+            if (typeof window !== 'undefined' && typeof window.projSortDir !== 'undefined') return window.projSortDir;
+            return 'asc';
+        },
+        openDetail: (id) => {
+            if (typeof openDetail === 'function') return openDetail(id);
+            if (typeof window !== 'undefined' && typeof window.openDetail === 'function') return window.openDetail(id);
+        },
+        getDocument: () => {
+            if (typeof document !== 'undefined') return document;
+            return null;
+        }
+    };
+
+    function setDeps(customDeps) {
+        if (!customDeps || typeof customDeps !== 'object') return;
+        Object.assign(_deps, customDeps);
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Renderizado de Proyectos y Control de Cobros
+    // -------------------------------------------------------------------------
+    function renderProjectsList() {
+        const doc = _deps.getDocument();
+        if (!doc) return;
+
+        const curUser = _deps.getCurrentUser();
+        const isVendedor = Boolean(curUser && curUser.role === 'vendedor');
+
+        // Adapt view title and subtitle dynamically according to role
+        const titleEl = doc.getElementById('projects-view-title');
+        const descEl = doc.getElementById('projects-view-desc');
+        if (titleEl) {
+            titleEl.textContent = isVendedor ? 'Mis Proyectos y Cobros Asignados' : 'Proyectos y Control de Cobros';
+        }
+        if (descEl) {
+            descEl.textContent = isVendedor
+                ? 'Consulta de expedientes y estado financiero de tus proyectos asignados.'
+                : 'Gestión operativa y financiera de proyectos y liquidación de cobros.';
+        }
+
+        const tbody = doc.getElementById('proj-table-body');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        const prospectList = _deps.getProspects();
+        let allProjects = prospectList.filter(p => _deps.hasEnteredPostclosing(p));
+
+        // Vendedor restriction: isolated strictly to assigned projects (p.vendedorId === currentUserId)
+        if (isVendedor) {
+            const currentUserId = curUser?.id || curUser?.uid;
+            allProjects = allProjects.filter(p => p.vendedorId === currentUserId);
+        }
+
+        const countPendientes = allProjects.filter(p => !_deps.isProjectFullyPaid(p)).length;
+        const countPagados = allProjects.filter(p => _deps.isProjectFullyPaid(p)).length;
+        const countTodos = allProjects.length;
+
+        const elPendientes = doc.getElementById('count-proj-pendientes');
+        if (elPendientes) elPendientes.textContent = countPendientes;
+        const elPagados = doc.getElementById('count-proj-pagados');
+        if (elPagados) elPagados.textContent = countPagados;
+        const elTodos = doc.getElementById('count-proj-todos');
+        if (elTodos) elTodos.textContent = countTodos;
+
+        const activeFilter = _deps.getProjPaymentFilter();
+        ['pendientes', 'pagados', 'todos'].forEach(key => {
+            const btn = document.getElementById(`filter-proj-${key}`) || document.getElementById(`pill-proj-${key}`) || (doc && (doc.getElementById(`filter-proj-${key}`) || doc.getElementById(`pill-proj-${key}`)));
+            if (btn) {
+                if (key === activeFilter) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+        });
+
+        if (allProjects.length === 0) {
+            const emptyTitle = isVendedor
+                ? 'No tienes proyectos cerrados / ganados asignados todavía'
+                : 'No hay proyectos cerrados / ganados todavía';
+            const emptyDesc = isVendedor
+                ? 'Tus oportunidades ganadas ingresarán automáticamente a este módulo para consulta de facturas y cobros.'
+                : 'Las oportunidades ganadas ingresarán automáticamente a este módulo.';
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9">
+                        <div class="table-empty-box">
+                            <div style="font-size:2rem; margin-bottom:0.4rem;">📊</div>
+                            <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">${emptyTitle}</div>
+                            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">${emptyDesc}</div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        let activeProjects = allProjects;
+        if (activeFilter === 'pendientes') {
+            activeProjects = allProjects.filter(p => !_deps.isProjectFullyPaid(p));
+        } else if (activeFilter === 'pagados') {
+            activeProjects = allProjects.filter(p => _deps.isProjectFullyPaid(p));
+        }
+
+        const clientsList = _deps.getClients();
+
+        // Map projects to calculated objects for search and sort
+        let mappedProjects = activeProjects.map(p => {
+            const subtotal = _deps.getProjectSubtotal(p);
+            const client = clientsList.find(c => c.id === p.clientId);
+            const isExport = Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+            const total = isExport ? Math.round(subtotal * 100) / 100 : Math.round(subtotal * 1.13 * 100) / 100;
+            const fullyPaid = _deps.isProjectFullyPaid(p);
+
+            let totalFacturado = 0;
+            let totalCobrado = 0;
+            if (Array.isArray(p.facturas)) {
+                p.facturas.forEach(f => {
+                    const fm = parseFloat(f.monto);
+                    if (!isNaN(fm) && fm > 0) totalFacturado += fm;
+                    if (Array.isArray(f.pagos)) {
+                        f.pagos.forEach(pay => {
+                            const m = parseFloat(pay.monto);
+                            if (!isNaN(m) && m > 0) totalCobrado += m;
+                        });
+                    }
+                });
+            }
+
+            const saldoCxC = Math.max(0, Math.round((totalFacturado - totalCobrado) * 100) / 100);
+            const porFacturar = Math.max(0, Math.round((total - totalFacturado) * 100) / 100);
+
+            const pctFacturado = total > 0 ? Math.min(100, (totalFacturado / total) * 100) : 0;
+            const pctCobrado = total > 0 ? Math.min(100, (totalCobrado / total) * 100) : 0;
+
+            return {
+                original: p,
+                codigo: p.codigo || (p.id ? p.id.substring(p.id.length - 4) : '-'),
+                cliente: _deps.getClientName(p.clientId),
+                isExport: isExport,
+                proyecto: p.proyecto || '',
+                encargado: p.encargado || '',
+                total: total,
+                totalFacturado: totalFacturado,
+                totalCobrado: totalCobrado,
+                saldoCxC: saldoCxC,
+                porFacturar: porFacturar,
+                condicion: p.forma_pago || 'N/A',
+                pctFacturado: pctFacturado,
+                pctCobrado: pctCobrado,
+                isFullyPaid: fullyPaid
+            };
+        });
+
+        // Apply Search Filter
+        const searchInput = doc.getElementById('proj-search');
+        const searchVal = searchInput ? searchInput.value.toLowerCase().trim() : '';
+        if (searchVal) {
+            mappedProjects = mappedProjects.filter(mp => {
+                return mp.codigo.toLowerCase().includes(searchVal) ||
+                    mp.cliente.toLowerCase().includes(searchVal) ||
+                    mp.proyecto.toLowerCase().includes(searchVal) ||
+                    mp.encargado.toLowerCase().includes(searchVal) ||
+                    mp.condicion.toLowerCase().includes(searchVal) ||
+                    _deps.formatCurrency(mp.total).toLowerCase().includes(searchVal) ||
+                    String(mp.total).includes(searchVal) ||
+                    _deps.formatCurrency(mp.saldoCxC).toLowerCase().includes(searchVal) ||
+                    String(mp.saldoCxC).includes(searchVal) ||
+                    mp.pctFacturado.toFixed(0).includes(searchVal) ||
+                    mp.pctCobrado.toFixed(0).includes(searchVal);
+            });
+        }
+
+        // Apply Sorting
+        const sortCol = _deps.getProjSortCol();
+        const sortDir = _deps.getProjSortDir();
+        if (sortCol) {
+            mappedProjects.sort((a, b) => {
+                let valA = a[sortCol];
+                let valB = b[sortCol];
+
+                if (typeof valA === 'string') {
+                    return sortDir === 'asc'
+                        ? valA.localeCompare(valB, 'es', { sensitivity: 'base' })
+                        : valB.localeCompare(valA, 'es', { sensitivity: 'base' });
+                } else {
+                    return sortDir === 'asc' ? valA - valB : valB - valA;
+                }
+            });
+        } else {
+            mappedProjects.reverse();
+        }
+
+        if (mappedProjects.length === 0) {
+            const filterMsg = activeFilter === 'pagados'
+                ? 'No hay proyectos completamente pagados.'
+                : (activeFilter === 'pendientes' ? 'No hay proyectos pendientes de cobro.' : 'No se encontraron proyectos.');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9">
+                        <div class="table-empty-box">
+                            <div style="font-size:2rem; margin-bottom:0.4rem;">🔍</div>
+                            <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">${filterMsg}</div>
+                            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
+                                ${searchVal ? 'Prueba cambiando los términos de búsqueda o el filtro de cobro.' : 'Puedes alternar entre pendientes, pagados o todos con los filtros superiores.'}
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        mappedProjects.forEach(mp => {
+            const p = mp.original;
+            const tr = doc.createElement('tr');
+            tr.classList.add('cursor-pointer');
+            tr.onclick = () => _deps.openDetail(p.id);
+
+            const exportBadge = mp.isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
+            const encargadoDisplay = mp.encargado
+                ? `<div class="cell-ellipsis" style="max-width:115px; color:var(--text-primary);" title="${_deps.escapeHtmlDoc(mp.encargado)}">${_deps.escapeHtmlDoc(mp.encargado)}</div>`
+                : '<span style="color:var(--text-muted); font-style:italic; font-size:0.8rem;">No asignado</span>';
+
+            const cobradoColor = mp.isFullyPaid ? 'var(--success)' : (mp.pctCobrado > 0 ? '#60a5fa' : 'var(--text-muted)');
+            const cobradoBadge = mp.isFullyPaid
+                ? '<span class="badge" style="background:rgba(16, 185, 129, 0.2); color:#10b981; border:1px solid rgba(16, 185, 129, 0.4); font-size:0.65rem; padding:1px 5px; margin-left:4px;">100% Pagado</span>'
+                : '';
+
+            const cxcBadgeHtml = mp.saldoCxC > 0.009
+                ? `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-due" title="Saldo vivo pendiente de cobro">Saldo: ${_deps.formatCurrency(mp.saldoCxC)}</span></div>`
+                : (mp.totalFacturado > 0
+                    ? `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-paid">✓ Al día / Pagado</span></div>`
+                    : `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-neutral">Sin facturar</span></div>`);
+
+            const ivaLabel = mp.isExport ? '✈️ Exento (0% IVA)' : '(Inc. IVA)';
+
+            tr.innerHTML = `
+                <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold); font-size:0.82rem;">${_deps.escapeHtmlDoc(mp.codigo)}</strong></td>
+                <td class="col-proj-client">
+                    <div class="cell-ellipsis proj-client-wrap" style="max-width:145px; font-weight:600; color:white;" title="${_deps.escapeHtmlDoc(mp.cliente)}">
+                        ${_deps.escapeHtmlDoc(mp.cliente)}${exportBadge}
+                    </div>
+                </td>
+                <td class="col-proj-project">
+                    <div class="cell-ellipsis proj-title-wrap" style="max-width:160px; color:var(--text-primary);" title="${_deps.escapeHtmlDoc(mp.proyecto)}">
+                        ${_deps.escapeHtmlDoc(mp.proyecto || '-')}
+                    </div>
+                </td>
+                <td class="col-proj-lead">${encargadoDisplay}</td>
+                <td class="col-proj-total col-money" style="white-space:nowrap; text-align:right;">
+                    <div class="proj-amount-wrap">
+                        <div class="proj-amount-main">
+                            <div class="proj-total-val">${_deps.formatCurrency(mp.total)}</div>
+                            <div class="proj-total-iva">${ivaLabel}</div>
+                        </div>
+                        ${cxcBadgeHtml}
+                    </div>
+                </td>
+                <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${_deps.escapeHtmlDoc(mp.condicion)}</span></td>
+                <td class="col-proj-invoiced col-money" style="text-align:right;">
+                    <div class="table-progress-wrap">
+                        <div class="table-progress-header">
+                            <span class="table-progress-label">Facturado</span>
+                            <span class="table-progress-pct" style="color:#93c5fd;">${mp.pctFacturado.toFixed(0)}%</span>
+                        </div>
+                        <div class="table-progress-bar">
+                            <div class="table-progress-fill-facturado" style="width:${Math.min(100, mp.pctFacturado)}%;"></div>
+                        </div>
+                        <div class="table-progress-amount">${_deps.formatCurrency(mp.totalFacturado)}</div>
+                    </div>
+                </td>
+                <td class="col-proj-collected col-money" style="text-align:right;">
+                    <div class="table-progress-wrap">
+                        <div class="table-progress-header">
+                            <span class="table-progress-label">Cobrado</span>
+                            <div class="table-progress-pct-wrap">
+                                <span class="table-progress-pct" style="color:${cobradoColor};">${mp.pctCobrado.toFixed(0)}%</span>
+                                ${cobradoBadge}
+                            </div>
+                        </div>
+                        <div class="table-progress-bar">
+                            <div class="table-progress-fill-cobrado" style="width:${Math.min(100, mp.pctCobrado)}%;"></div>
+                        </div>
+                        <div class="table-progress-amount">${_deps.formatCurrency(mp.totalCobrado)}</div>
+                    </div>
+                </td>
+                <td class="col-proj-action" style="text-align:right; white-space:nowrap;">
+                    <button type="button" class="btn-table-action btn-table-edit" style="width:100%; justify-content:center;">
+                        Gestionar ➔
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Renderizado del Panel Financiero del Proyecto
+    // -------------------------------------------------------------------------
+    function renderFinancials(p) {
+        const doc = _deps.getDocument();
+        if (!doc || !p) return;
+
+        const currentUser = _deps.getCurrentUser();
+        const isFinancialReadOnly = (currentUser && currentUser.role === 'vendedor');
+
+        const clientsList = _deps.getClients();
+        const client = clientsList.find(c => c.id === p.clientId);
+        const isExport = Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+        const getProjectSubtotal = (proj) => _deps.getProjectSubtotal(proj);
+        const subtotal = getProjectSubtotal(p);
+        const iva = isExport ? 0 : subtotal * 0.13;
+        const total = subtotal + iva;
+
+        const costoTotal = _deps.getProjectCosto(p);
+        const margen = subtotal - costoTotal;
+        const margenPct = subtotal > 0 ? (margen / subtotal) * 100 : 0;
+
+        const elPrecioOrig = doc.getElementById('fin-precio-original');
+        if (elPrecioOrig) elPrecioOrig.textContent = _deps.formatCurrency(p.precio_cotizado || 0);
+
+        const elCostoOrig = doc.getElementById('fin-costo-original');
+        if (elCostoOrig) elCostoOrig.textContent = _deps.formatCurrency(p.costo_venta || 0);
+
+        const ordContainer = doc.getElementById('fin-ordenes-container');
+        const costContainer = doc.getElementById('fin-costos-ordenes-container');
+
+        if (ordContainer) ordContainer.innerHTML = '';
+        if (costContainer) costContainer.innerHTML = '';
+
+        const btnAddCo = doc.getElementById('btn-add-co');
+        if (btnAddCo) {
+            btnAddCo.style.display = isFinancialReadOnly ? 'none' : 'flex';
+        }
+
+        // Advertencia de Retención 1% (Gran Contribuyente)
+        const isGranContribuyente = Boolean(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true'));
+        const warningContainer = doc.getElementById('fin-retencion-warning');
+        const invoicesListEl = doc.getElementById('invoices-list');
+        if (isGranContribuyente) {
+            if (!warningContainer && invoicesListEl && invoicesListEl.parentNode) {
+                const warnDiv = doc.createElement('div');
+                warnDiv.id = 'fin-retencion-warning';
+                warnDiv.style.cssText = 'background-color: rgba(255, 193, 7, 0.15); border-left: 4px solid var(--brand-gold); padding: 10px; margin-bottom: 15px; border-radius: 4px; color: var(--brand-gold); font-size: 0.9rem;';
+                warnDiv.innerHTML = `<strong>⚠️ Agente de Retención:</strong> Este cliente es Gran Contribuyente. Recuerda que el <strong>1% de cada factura</strong> quedará como saldo pendiente (CXC) hasta que se registre el <em>Comprobante de Retención</em> como pago.`;
+                invoicesListEl.parentNode.insertBefore(warnDiv, invoicesListEl);
+            } else if (warningContainer) {
+                warningContainer.style.display = 'block';
+            }
+        } else if (warningContainer) {
+            warningContainer.style.display = 'none';
+        }
+
+        // Advertencia de Cliente de Exportación (Sin IVA)
+        const exportContainer = doc.getElementById('fin-export-warning');
+        if (isExport) {
+            if (!exportContainer && invoicesListEl && invoicesListEl.parentNode) {
+                const expDiv = doc.createElement('div');
+                expDiv.id = 'fin-export-warning';
+                expDiv.style.cssText = 'background-color: rgba(33, 150, 243, 0.15); border-left: 4px solid #2196F3; padding: 10px; margin-bottom: 15px; border-radius: 4px; color: #64B5F6; font-size: 0.9rem;';
+                expDiv.innerHTML = `<strong>✈️ Cliente de Exportación:</strong> Este cliente está exento de IVA (0% IVA). Los montos de facturación y cobro no incluyen impuesto.`;
+                invoicesListEl.parentNode.insertBefore(expDiv, invoicesListEl);
+            } else if (exportContainer) {
+                exportContainer.style.display = 'block';
+            }
+        } else if (exportContainer) {
+            exportContainer.style.display = 'none';
+        }
+
+        if (Array.isArray(p.ordenes_cambio) && p.ordenes_cambio.length > 0) {
+            p.ordenes_cambio.forEach(o => {
+                let sign = o.tipo === 'aumento' ? '+' : '-';
+                let color = o.tipo === 'aumento' ? 'var(--brand-gold)' : 'var(--danger)';
+
+                if (ordContainer) {
+                    let ocDocLink = '';
+                    if (o.doc_oferta) {
+                        ocDocLink = `<span style="margin-left:5px;"><a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.ordenes_cambio?.find(oc => oc.id === '${o.id}')?.doc_oferta, 'Oferta OC', { prospectId: '${p.id}' })" style="color:var(--brand-gold); text-decoration:none; cursor:pointer;" title="Previsualizar">📄 Doc</a> <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.ordenes_cambio?.find(oc => oc.id === '${o.id}')?.doc_oferta, 'Oferta OC', { prospectId: '${p.id}' })" style="color:var(--text-secondary); margin-left:3px; font-size:0.75rem; text-decoration:none; cursor:pointer;" title="Descargar documento">⬇️</a></span>`;
+                    }
+                    const ocActionSpans = !isFinancialReadOnly
+                        ? ` <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--brand-gold);" onclick="editChangeOrder('${o.id}')">[Editar]</span>
+                            <span class="cursor-pointer" style="margin-left:5px; font-size:0.75rem; color:var(--danger);" onclick="deleteChangeOrder('${o.id}')">[Eliminar]</span>`
+                        : '';
+                    ordContainer.innerHTML += `<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${color}; margin-top:2px;">
+                        <span>↳ ${_deps.escapeHtmlDoc(o.desc)} ${ocDocLink}${ocActionSpans}</span> <span>${sign}${_deps.formatCurrency(o.precio)}</span>
+                    </div>`;
+                }
+                if (costContainer) {
+                    costContainer.innerHTML += `<div style="display:flex; justify-content:space-between; font-size:0.8rem; color:${color}; margin-top:2px;">
+                        <span>↳ ${_deps.escapeHtmlDoc(o.desc)}</span> <span>${sign}${_deps.formatCurrency(o.costo)}</span>
+                    </div>`;
+                }
+            });
+        }
+
+        const elCostoTotal = doc.getElementById('fin-costo-total');
+        if (elCostoTotal) elCostoTotal.textContent = _deps.formatCurrency(costoTotal);
+
+        const margenEl = doc.getElementById('fin-margen');
+        if (margenEl) {
+            margenEl.textContent = _deps.formatCurrency(margen);
+            margenEl.style.color = margen >= 0 ? 'var(--success)' : 'var(--danger)';
+            const elMargenPct = doc.getElementById('fin-margen-pct');
+            if (elMargenPct) {
+                elMargenPct.textContent = `(${margenPct.toFixed(1)}%)`;
+                elMargenPct.style.color = margen >= 0 ? 'var(--success)' : 'var(--danger)';
+            }
+        }
+
+        let totalFacturado = 0;
+        let totalCobrado = 0;
+
+        const listDiv = doc.getElementById('invoices-list');
+        if (listDiv) {
+            listDiv.innerHTML = '';
+        }
+
+        if (!p.facturas) p.facturas = [];
+
+        p.facturas.forEach((f, invoiceIndex) => {
+            const fMonto = parseFloat(f.monto) || 0;
+            totalFacturado += fMonto;
+            let pCobrado = 0;
+            if (Array.isArray(f.pagos)) {
+                pCobrado = f.pagos.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0);
+            }
+            totalCobrado += pCobrado;
+            let pSaldo = fMonto - pCobrado;
+            let isPaid = pSaldo <= 0.009;
+
+            let pHistory = '';
+            if (Array.isArray(f.pagos) && f.pagos.length > 0) {
+                pHistory = `
+                    <div class="invoice-payments-section">
+                        <div class="invoice-payments-header">
+                            <div class="invoice-payments-title">
+                                <span style="color:var(--brand-gold); margin-right:6px;">💳</span>
+                                <strong>Historial de Pagos de esta factura:</strong>
+                            </div>
+                            <span class="invoice-payments-counter">${f.pagos.length} ${f.pagos.length === 1 ? 'abono registrado' : 'abonos registrados'}</span>
+                        </div>
+                        <div class="invoice-payments-list">
+                            ${f.pagos.map((pay, i) => {
+                                let docLink = '';
+                                if (pay.doc_comprobante) {
+                                    docLink = `<div class="payment-doc-chip">
+                                        <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-link" title="Previsualizar comprobante">📄 Comprobante</a>
+                                        <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-dl" title="Descargar comprobante">⬇️</a>
+                                    </div>`;
+                                } else {
+                                    docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
+                                }
+                                let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
+                                let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
+                                let editDelPaySpans = !isFinancialReadOnly
+                                    ? `<div class="payment-item-actions">
+                                           <button type="button" class="btn-subtle-edit" onclick="editPayment('${f.id}', ${i})" title="Editar abono">✏️ [Editar]</button>
+                                           <button type="button" class="btn-subtle-delete" onclick="deletePayment('${f.id}', ${i})" title="Eliminar abono">🗑️ [Eliminar]</button>
+                                       </div>`
+                                    : '';
+                                return `
+                                    <div class="payment-item-card">
+                                        <div class="pay-item-top">
+                                            <div class="pay-item-main">
+                                                <span class="pay-item-date">📅 ${_deps.formatDate(pay.fecha)}</span>
+                                                ${lbl}
+                                                <span class="pay-method-name">${_deps.escapeHtmlDoc(met)}</span>
+                                                ${pay.ref ? `<span class="pay-reference">(Ref: <strong>${_deps.escapeHtmlDoc(pay.ref)}</strong>)</span>` : ''}
+                                            </div>
+                                            <div class="pay-item-amount-col">
+                                                <span class="pay-amount-label">Monto</span>
+                                                <strong class="pay-amount-val tabular-nums">${_deps.formatCurrency(pay.monto)}</strong>
+                                            </div>
+                                        </div>
+                                        <div class="pay-item-bottom">
+                                            <div class="pay-item-voucher-col">
+                                                ${docLink}
+                                            </div>
+                                            ${editDelPaySpans}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            const invActionSpans = !isFinancialReadOnly
+                ? `<button type="button" class="btn-subtle-edit" onclick="editInvoice('${f.id}')" title="Editar datos de la factura">✏️ [Editar Factura]</button>
+                   ${invoiceIndex > 0
+                       ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
+                       : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
+                : '';
+            const btnAbonarHtml = (!isPaid && !isFinancialReadOnly)
+                ? `<button type="button" class="btn-abono-primary" onclick="showPaymentForm('${f.id}', '${f.numero}')"><span style="margin-right:4px;">💰</span>+ Abonar a Factura</button>`
+                : '';
+
+            if (listDiv) {
+                listDiv.innerHTML += `
+                    <div class="invoice-card-modern">
+                        <div class="invoice-card-header">
+                            <div class="invoice-header-meta">
+                                <strong class="invoice-number">${_deps.escapeHtmlDoc(f.numero)}</strong>
+                                <span class="badge ${isPaid ? 'badge-invoice-paid' : 'badge-invoice-pending'}">${isPaid ? 'PAGADA' : 'PENDIENTE'}</span>
+                                ${f.doc_factura ? `
+                                    <div class="invoice-doc-chip">
+                                        <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${_deps.escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" class="invoice-doc-link" title="Previsualizar factura digital">📄 ${typeof f.doc_factura === 'object' && f.doc_factura.name ? _deps.escapeHtmlDoc(f.doc_factura.name) : 'Factura PDF'}</a>
+                                        <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.doc_factura, 'Factura ${_deps.escapeHtmlDoc(f.numero)}', { prospectId: '${p.id}' })" class="invoice-doc-dl" title="Descargar documento">⬇️</a>
+                                    </div>` : ''}
+                            </div>
+                            <div class="invoice-header-actions">
+                                ${btnAbonarHtml}
+                                <div class="invoice-mgmt-actions">
+                                    ${invActionSpans}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="invoice-amounts-strip">
+                            <div class="inv-strip-col">
+                                <span class="inv-strip-label">Monto Facturado</span>
+                                <span class="inv-strip-val fin-val-blue tabular-nums">${_deps.formatCurrency(f.monto)}</span>
+                            </div>
+                            <div class="inv-strip-col">
+                                <span class="inv-strip-label">Total Abonado</span>
+                                <span class="inv-strip-val fin-val-green tabular-nums">${_deps.formatCurrency(pCobrado)}</span>
+                            </div>
+                            <div class="inv-strip-col">
+                                <span class="inv-strip-label">Saldo Pendiente</span>
+                                <span class="inv-strip-val ${isPaid ? 'fin-val-green' : 'fin-val-danger'} tabular-nums" style="color:${isPaid ? '#34d399' : 'var(--danger)'};">${_deps.formatCurrency(Math.max(0, pSaldo))}</span>
+                            </div>
+                        </div>
+                        ${pHistory}
+                    </div>
+                `;
+            }
+        });
+
+        if (listDiv && p.facturas.length === 0) {
+            listDiv.innerHTML = '<div style="text-align:center; padding: 1rem; color:var(--text-muted);">No hay facturas emitidas todavía.</div>';
+        }
+
+        const cxc = totalFacturado - totalCobrado;
+        const porFacturar = total - totalFacturado;
+
+        const elSubtotal = doc.getElementById('fin-subtotal');
+        if (elSubtotal) elSubtotal.textContent = _deps.formatCurrency(subtotal);
+
+        const elIva = doc.getElementById('fin-iva');
+        if (elIva) elIva.textContent = isExport ? "$0 (0% Exportación)" : _deps.formatCurrency(iva);
+
+        const elTotal = doc.getElementById('fin-total');
+        if (elTotal) elTotal.textContent = _deps.formatCurrency(total);
+
+        const elFacturado = doc.getElementById('fin-facturado');
+        if (elFacturado) elFacturado.textContent = _deps.formatCurrency(totalFacturado);
+
+        const elCobrado = doc.getElementById('fin-cobrado');
+        if (elCobrado) elCobrado.textContent = _deps.formatCurrency(totalCobrado);
+
+        const elSaldo = doc.getElementById('fin-saldo');
+        if (elSaldo) elSaldo.textContent = _deps.formatCurrency(cxc);
+
+        const elPorFacturar = doc.getElementById('fin-por-facturar');
+        if (elPorFacturar) elPorFacturar.textContent = _deps.formatCurrency(porFacturar > 0 ? porFacturar : 0);
+
+        const btnAddInvoice = doc.getElementById('btn-add-invoice');
+        if (btnAddInvoice) {
+            if (isFinancialReadOnly || totalFacturado >= (total - 0.1)) {
+                btnAddInvoice.style.display = 'none';
+                const invForm = doc.getElementById('invoice-form');
+                if (invForm) invForm.style.display = 'none';
+            } else {
+                btnAddInvoice.style.display = 'inline-block';
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. API Pública
+    // -------------------------------------------------------------------------
+    return {
+        renderProjectsList,
+        renderFinancials,
+        setDeps
+    };
+});

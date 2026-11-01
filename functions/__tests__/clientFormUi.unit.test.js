@@ -11,7 +11,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const stylesCss = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf8');
-const appCoreSrc = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
+const clientsUiSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
 
 describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
 
@@ -127,8 +127,8 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
   // =========================================================================
   describe('3. Functional Validations & Error Handling', () => {
     test('defines setClientFieldError to safely toggle .input-error', () => {
-      expect(appCoreSrc).toContain('function setClientFieldError(elementId, hasError)');
-      expect(appCoreSrc).toContain("classList.toggle('input-error'");
+      expect(clientsUiSrc).toContain('function setClientFieldError(elementId, hasError)');
+      expect(clientsUiSrc).toContain("classList.toggle('input-error'");
     });
 
     test('toggleClientFields alternates natural and juridica display', () => {
@@ -165,17 +165,17 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
     });
 
     test('openClientModal resets form and clears input-error states', () => {
-      expect(appCoreSrc).toContain("const errs = document.querySelectorAll('#clientForm .input-error');");
-      expect(appCoreSrc).toContain("errs.forEach(el => el.classList.remove('input-error'))");
+      expect(clientsUiSrc).toContain("const errs = document.querySelectorAll('#clientForm .input-error');");
+      expect(clientsUiSrc).toContain("errs.forEach(el => el.classList.remove('input-error'))");
     });
 
     test('saveClient validates missing type, missing contacts, and missing names/company', async () => {
-      // Slices real saveClient from app_core.js
+      // Slices real saveClient from modules/clients/clients_ui.js
       const from = 'async function saveClient(e)';
-      const to = '// ========================\n// PROSPECTS & PROJECTS LISTS';
-      const a = appCoreSrc.indexOf(from);
-      const b = appCoreSrc.indexOf(to, a + from.length);
-      const saveSrc = appCoreSrc.slice(a, b);
+      const to = '// -------------------------------------------------------------------------\n    // 5. Selector de Clientes';
+      const a = clientsUiSrc.indexOf(from);
+      const b = clientsUiSrc.indexOf(to, a + from.length);
+      const saveSrc = clientsUiSrc.slice(a, b);
 
       const els = {};
       const el = (id, val = '', extra = {}) => {
@@ -213,6 +213,18 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
         document: { getElementById: id => els[id] || el(id) },
         alert: fakeAlert,
         clients: fakeClients,
+        persistClientViaServer: fakePersist,
+        closeModal: () => {},
+        renderClientsTable: () => {},
+        selectClientInSelector: () => {},
+        getClientName: () => 'Test',
+        showLoading: () => {},
+        hideLoading: () => {}
+      };
+      scope._deps = {
+        alert: fakeAlert,
+        getClients: () => fakeClients,
+        setClients: (val) => { fakeClients.length = 0; fakeClients.push(...val); },
         persistClientViaServer: fakePersist,
         closeModal: () => {},
         renderClientsTable: () => {},

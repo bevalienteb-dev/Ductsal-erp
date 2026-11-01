@@ -259,13 +259,16 @@ describe('DUCTSAL ERP — Regla Definitiva de Pantalla Inicial por Rol y Reactiv
     expect(getEl('pipeline-view-container').style.display).toBe('none');
   });
 
-  test('4. Administrador (admin): inicia en Gestión de Usuarios (users-view)', () => {
-    appCore.setCurrentUser({ id: 'U-ADM', cid: 'U-ADM', role: 'admin', nombre: 'Admin TI', activo: true });
+  test('4. Gerente (manager): tiene autoridad plena y acceso a Gestión de Usuarios (users-view)', () => {
+    appCore.setCurrentUser({ id: 'U-MGR', cid: 'U-MGR', role: 'manager', nombre: 'Gerente General', activo: true });
     appCore.setInitialRoleViewRouted(false);
 
     appCore.applyRolePermissions();
 
     expect(appCore.getInitialRoleViewRouted()).toBe(true);
+    expect(activeSectionId).toBe('dashboard-view');
+
+    appCore.showView('users-view');
     expect(activeSectionId).toBe('users-view');
     expect(getEl('nav-users').classList.add).toHaveBeenCalledWith('active');
   });
@@ -399,11 +402,11 @@ describe('DUCTSAL ERP — Regla Definitiva de Pantalla Inicial por Rol y Reactiv
     expect(appCore.getCurrentListMode()).toBe('agenda');
     expect(getEl('agenda-view-container').style.display).toBe('block');
 
-    // 4. Cierra sesión e inicia como Administrador -> debe enrutar a Usuarios
+    // 4. Cierra sesión e inicia como Vendedor -> debe enrutar a Agenda
     appCore.processLogout();
-    appCore.setCurrentUser({ id: 'U-ADM', cid: 'U-ADM', role: 'admin', nombre: 'Admin General' });
+    appCore.setCurrentUser({ id: 'U-VEN', cid: 'U-VEN', role: 'vendedor', nombre: 'Carlos Mendoza' });
     appCore.applyRolePermissions();
-    expect(activeSectionId).toBe('users-view');
+    expect(activeSectionId).toBe('list-view');
   });
 
   test('9. No se generan listeners duplicados ni se debilitan las autorizaciones', () => {

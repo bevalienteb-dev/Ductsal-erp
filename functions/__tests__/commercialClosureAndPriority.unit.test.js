@@ -122,6 +122,8 @@ const fileObj = (name, folder = 'proyectos', prospectId = 'p-100') => ({
 describe('1. Columna Prioridad en Agenda — Estructura, Legibilidad y Adaptación', () => {
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(CLOCK);
     domElements = {};
     makeMockEl('agenda-table-body');
     makeMockEl('agenda-empty-state');
@@ -140,6 +142,10 @@ describe('1. Columna Prioridad en Agenda — Estructura, Legibilidad y Adaptaci�
     appCore.setCurrentUser({ id: 'V-01', cid: 'V-01', role: 'vendedor', nombre: 'Carlos Vendedor', activo: true });
     appCore.setClients([{ id: 'c-1', empresa: 'Cliente Corporativo Alfa S.A.' }]);
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   test('1.1 Genera componente priority-badge-group con información de estado y días diferenciados para 1, 2 y 3 dígitos', () => {

@@ -21,6 +21,8 @@ beforeAll(async () => {
   await fsApi.seed('prospects_prod', 'PS2', { id: 'PS2', createdBy: ID.MGR, vendedorId: V2, clientId: 'C1', datos: {} });
   await fsApi.seed('prospects_prod', 'PS_COLAB', { id: 'PS_COLAB', createdBy: ID.GES, vendedorId: V2, clientId: 'C1', datos: {} });
   await fsApi.seed('prospects_prod', 'PS_GES_OWN', { id: 'PS_GES_OWN', createdBy: ID.GES, vendedorId: ID.GES, clientId: 'C1', datos: {} });
+  await fsApi.seed('prospects_prod', '1792004940382', { id: '1792004940382', codigo: '202610153', proyecto: '4 METROS', createdBy: ID.GES, vendedorId: ID.GES, clientId: 'C1', etapa: 'cierre', estado: 'activo', postcierre_habilitado: false, stage_timestamps: { cierre: '2026-10-29T21:37:34.339Z' }, datos: {} });
+  await fsApi.seed('prospects_prod', 'PS_V_CIERRE', { id: 'PS_V_CIERRE', codigo: '202610154', proyecto: 'Proyecto V1 Cierre', createdBy: V1, vendedorId: V1, clientId: 'C1', etapa: 'cierre', estado: 'activo', postcierre_habilitado: false, stage_timestamps: { cierre: '2026-10-29T21:37:34.339Z' }, datos: {} });
   await fsApi.seed('prospects_prod', 'PS_POST', { id: 'PS_POST', createdBy: V1, vendedorId: V1, clientId: 'C1', postcierre_habilitado: true, datos: {}, facturas: [{ id: 'FAC1' }] });
   await fsApi.seed('prospects_prod', 'PS_REASSIGNED', { id: 'PS_REASSIGNED', createdBy: V1, vendedorId: V2, clientId: 'C1', datos: {} });
   await fsApi.seed('prospects_prod', 'PS_HIST_NOCB', { id: 'PS_HIST_NOCB', vendedorId: V1, clientId: 'C1', datos: {} });
@@ -135,6 +137,16 @@ describe('Storage: opportunity / project files', () => {
   allow('new assigned vendedor uploads to reassigned lead', () => stApi.upload('prod_files/prospects/PS_REASSIGNED/proyectos/nuevo-vendedor.pdf', T.v2));
   deny('previous vendedor CANNOT upload after reassignment (H-01/H-02)', () => stApi.upload('prod_files/prospects/PS_REASSIGNED/proyectos/ex-vendedor.pdf', T.v1));
   deny('previous vendedor CANNOT read after reassignment (H-01/H-02)', () => stApi.download('prod_files/prospects/PS_REASSIGNED/proyectos/nuevo-vendedor.pdf', T.v1));
+  // E2. Cierre de Oportunidad activa (etapa cierre con stage_timestamps.cierre) - Incidente Grado 0
+  allow('Alejandra (gestor owner) uploads signed offer during closing (incidente 1792004940382)', () => stApi.upload('prod_files/prospects/1792004940382/proyectos/1793390517164_oferta_Grado_0.pdf', T.ges));
+  allow('Alejandra (gestor owner) uploads advance receipt during closing', () => stApi.upload('prod_files/prospects/1792004940382/facturas/1793390518000_comprobante.pdf', T.ges));
+  deny('Alejandra cannot upload payments before closing is finalized', () => stApi.upload('prod_files/prospects/1792004940382/pagos/pago.pdf', T.ges));
+  deny('unrelated vendedor cannot upload to Alejandra closing prospect', () => stApi.upload('prod_files/prospects/1792004940382/proyectos/intruso.pdf', T.v3));
+  allow('vendedor owner uploads signed offer during closing (PS_V_CIERRE)', () => stApi.upload('prod_files/prospects/PS_V_CIERRE/proyectos/oferta-v1.pdf', T.v1));
+  allow('vendedor owner uploads advance invoice during closing (PS_V_CIERRE)', () => stApi.upload('prod_files/prospects/PS_V_CIERRE/facturas/anticipo-v1.pdf', T.v1));
+  deny('vendedor owner cannot upload payments before closing (PS_V_CIERRE)', () => stApi.upload('prod_files/prospects/PS_V_CIERRE/pagos/pago.pdf', T.v1));
+  deny('gestor cannot upload to another seller closing lead (horizontal isolation)', () => stApi.upload('prod_files/prospects/PS_V_CIERRE/proyectos/by-gestor.pdf', T.ges));
+  allow('manager uploads to closing prospect', () => stApi.upload('prod_files/prospects/1792004940382/proyectos/by-mgr.pdf', T.mgr));
 
   // F. Restricciones de integridad, sobrescritura, borrado, tipos y tamaños
   deny('owner overwrites an existing file', () => stApi.upload(SEEDED, T.v1, { content: 'overwritten' }));

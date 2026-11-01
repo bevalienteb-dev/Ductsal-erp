@@ -8,6 +8,18 @@ const path = require('path');
 const appCorePath = path.join(__dirname, '..', '..', 'app_core.js');
 const appCoreSrc = fs.readFileSync(appCorePath, 'utf8');
 
+const docViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
+const docViewerSrc = fs.existsSync(docViewerPath) ? fs.readFileSync(docViewerPath, 'utf8') : '';
+
+const clientDocsPath = path.join(__dirname, '..', '..', 'modules', 'clients', 'client_documents.js');
+const clientDocsSrc = fs.existsSync(clientDocsPath) ? fs.readFileSync(clientDocsPath, 'utf8') : '';
+
+const clientsUiPath = path.join(__dirname, '..', '..', 'modules', 'clients', 'clients_ui.js');
+const clientsUiSrc = fs.existsSync(clientsUiPath) ? fs.readFileSync(clientsUiPath, 'utf8') : '';
+
+const oppUiPath = path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js');
+const oppUiSrc = fs.existsSync(oppUiPath) ? fs.readFileSync(oppUiPath, 'utf8') : '';
+
 const indexHtmlPath = path.join(__dirname, '..', '..', 'index.html');
 const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
 
@@ -360,19 +372,19 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
   // =========================================================================
   describe('5. Client Dossier Presentation & Isolation', () => {
     test('viewStoredClientDoc and downloadStoredClientDoc isolate client documents', () => {
-      const appCoreFunctionsSrc = fs.readFileSync(appCorePath, 'utf8');
+      const docFunctionsSrc = docViewerSrc || fs.readFileSync(appCorePath, 'utf8');
 
       // Check viewStoredClientDoc and downloadStoredClientDoc pass full entity context
-      expect(appCoreFunctionsSrc).toContain("viewStoredClientDoc(storeId)");
-      expect(appCoreFunctionsSrc).toContain("if (item.clientId) options.clientId = item.clientId;");
-      expect(appCoreFunctionsSrc).toContain("if (item.prospectId) options.prospectId = item.prospectId;");
-      expect(appCoreFunctionsSrc).toContain("return viewSecureDocument(item.docRef, item.fileName, options);");
-      expect(appCoreFunctionsSrc).toContain("return downloadSecureDocument(item.docRef, item.fileName, options);");
+      expect(docFunctionsSrc).toContain("viewStoredClientDoc(storeId)");
+      expect(docFunctionsSrc).toContain("if (item.clientId) options.clientId = item.clientId;");
+      expect(docFunctionsSrc).toContain("if (item.prospectId) options.prospectId = item.prospectId;");
+      expect(docFunctionsSrc).toContain("return viewSecureDocument(item.docRef, item.fileName, options);");
+      expect(docFunctionsSrc).toContain("return downloadSecureDocument(item.docRef, item.fileName, options);");
       // Check that viewSecureDocument does NOT leak currentProspectId when clientId is provided
-      expect(appCoreFunctionsSrc).toContain(
+      expect(docFunctionsSrc).toContain(
         "const reqProspectId = (options.prospectId !== undefined && options.prospectId !== null)"
       );
-      expect(appCoreFunctionsSrc).toContain(
+      expect(docFunctionsSrc).toContain(
         ": (options.clientId ? null : (typeof currentProspectId !== 'undefined' ? currentProspectId : null));"
       );
     });
@@ -400,7 +412,7 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
       expect(indexHtml).toContain('id="client-docs-list"');
       expect(indexHtml).toContain('id="client-docs-count-badge"');
       expect(indexHtml).toContain('Expediente Digital del Cliente');
-      expect(appCoreSrc).toContain('function renderClientExpedienteSection');
+      expect(clientDocsSrc).toContain('function renderClientExpedienteSection');
       expect(typeof appCore.renderClientExpedienteSection).toBe('function');
     });
   });
@@ -410,12 +422,14 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
   // =========================================================================
   describe('6. PDF Preview vs Download Behavior & Disposition Integrity', () => {
     test('viewSecureDocument defaults disposition to inline for in-browser viewing', () => {
-      expect(appCoreSrc).toContain("const reqDisposition = (options && options.disposition) || (options && options.download ? 'attachment' : 'inline');");
-      expect(appCoreSrc).toContain("disposition: reqDisposition");
+      const docSource = docViewerSrc || appCoreSrc;
+      expect(docSource).toContain("const reqDisposition = (options && options.disposition) || (options && options.download ? 'attachment' : 'inline');");
+      expect(docSource).toContain("disposition: reqDisposition");
     });
 
     test('downloadSecureDocument explicitly specifies disposition attachment', () => {
-      expect(appCoreSrc).toContain("disposition: 'attachment'");
+      const docSource = docViewerSrc || appCoreSrc;
+      expect(docSource).toContain("disposition: 'attachment'");
     });
 
     test('storageService resolves application/pdf for PDF files and attaches responseType', async () => {
@@ -430,10 +444,11 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
     });
 
     test('opportunity documents render separate 👁️ Ver (view) and ⬇️ Descargar (download) action buttons', () => {
-      expect(appCoreSrc).toContain('class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>');
-      expect(appCoreSrc).toContain('class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>');
-      expect(appCoreSrc).toContain("viewSecureDocument(window._docStore ? window._docStore.get");
-      expect(appCoreSrc).toContain("downloadSecureDocument(window._docStore ? window._docStore.get");
+      const oppDocSource = oppUiSrc || appCoreSrc;
+      expect(oppDocSource).toContain('class="btn-doc-view" title="Previsualizar en visor">👁️ Ver</a>');
+      expect(oppDocSource).toContain('class="btn-doc-dl" title="Descargar archivo">⬇️ Descargar</a>');
+      expect(oppDocSource).toContain("viewSecureDocument(window._docStore ? window._docStore.get");
+      expect(oppDocSource).toContain("downloadSecureDocument(window._docStore ? window._docStore.get");
     });
   });
 
@@ -874,7 +889,8 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
       'const formatCurrency = (val) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(val || 0);',
       'const getDaysDifference = (d1) => Math.floor((new Date() - new Date(d1)) / (1000 * 60 * 60 * 24));',
       'const KPI_LIMITS = { "prospecto": 7, "levantamiento": 10, "cotizacion": 7, "negociacion": 21, "cierre": 5 };',
-      between('function getClientName', 'function renderProjectsList')
+      clientsUiSrc.slice(clientsUiSrc.indexOf('function getClientName('), clientsUiSrc.indexOf('function renderClientContactCard(')),
+      between('function normalizeWhatsAppNumber(', 'function renderProjectsList')
     ].join('\n');
 
     function createSandboxEnvironment(customState = {}) {
@@ -953,7 +969,14 @@ describe('UI Enhancements, Proyectos y Cobros, Excel Preview & Client Dossier', 
           { id: 'v1', nombre: 'Roberto Flores', role: 'vendedor' },
           { id: 'v2', nombre: 'Ana Ayala', role: 'gestor' }
         ],
-        currentUser: customState.currentUser !== undefined ? customState.currentUser : { id: 'm1', nombre: 'Gerente General', role: 'manager' }
+        currentUser: customState.currentUser !== undefined ? customState.currentUser : { id: 'm1', nombre: 'Gerente General', role: 'manager' },
+        _deps: {
+          getClients: () => (S ? S.clients : []),
+          setClients: (val) => { if (S) S.clients = val; },
+          getCurrentUser: () => (S ? S.currentUser : null),
+          getProspects: () => (S ? S.prospects : []),
+          escapeHtmlDoc: (s) => (s || '')
+        }
       };
 
       const openedDetails = [];

@@ -20,18 +20,24 @@ const CrmCommercial = require('../../crm_commercial.js');
 const ROOT = path.join(__dirname, '..', '..');
 const appCore = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
 
-const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a + from.length);
-  if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+const clientsCtrlSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_controller.js'), 'utf8');
+const clientDocsSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'client_documents.js'), 'utf8');
+const clientsUiSrc = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
+
+const between = (src, from, to) => {
+  const a = src.indexOf(from);
+  if (a < 0) throw new Error(`marker from not found: ${from}`);
+  const b = src.indexOf(to, a + from.length);
+  if (b < 0) throw new Error(`marker to not found: ${to}`);
+  return src.slice(a, b);
 };
 
-// Extract real functions from app_core.js
+// Extract real functions from modules/clients/
 const SRC = [
-  between('let currentClientReservationId = null;', '// Selector of NEW opportunities'),
-  between('async function uploadClientStagedFiles', '// ========================\n// PROSPECTS & PROJECTS LISTS'),
-  between('async function persistClientViaServer', '// The opportunity is created by createProspectAdmin')
+  between(clientsCtrlSrc, 'let currentClientReservationId = null;', '// -------------------------------------------------------------------------\n    // 4. Catálogo Remoto y Selector'),
+  between(clientDocsSrc, 'function hasStagedClientFiles(type)', 'async function deleteClientDocument'),
+  between(clientsUiSrc, 'function setClientFieldError(elementId, hasError)', 'function renderClientSelect'),
+  between(clientsCtrlSrc, 'async function persistClientViaServer(', 'function deleteClient(id)')
 ].join('\n');
 
 function buildEnvironment({ session = true, clientHandler, uploadHandler } = {}) {
@@ -124,7 +130,7 @@ function buildEnvironment({ session = true, clientHandler, uploadHandler } = {})
   };
 
   // Real uploadFileToStorage function from app_core.js
-  const uploadFileToStorageSrc = between('async function uploadFileToStorage(', 'const STAGES =');
+  const uploadFileToStorageSrc = between(appCore, 'async function uploadFileToStorage(', '// ============================================================================');
 
   const api = new Function('S', 'document', 'ui', 'firebase', 'CrmClients', `
     with (S) {
@@ -142,6 +148,39 @@ function buildEnvironment({ session = true, clientHandler, uploadHandler } = {})
       var storage = firebase.storage();
 
       ${uploadFileToStorageSrc}
+
+      var _deps = {
+        getCurrentUser: () => S.currentUser,
+        getClients: () => S.clients,
+        setClients: (val) => { S.clients = val; },
+        getProspects: () => S.prospects,
+        getDbSuffix: () => S.DB_SUFFIX,
+        getStoragePrefix: () => S.STORAGE_PREFIX,
+        getFirebase: () => firebase,
+        getCrmClients: () => CrmClients,
+        getCrmCommercial: () => (typeof CrmCommercial !== 'undefined' ? CrmCommercial : null),
+        alert: function (m) { ui.alerts.push(m); },
+        confirm: function (m) { ui.confirms.push(m); return ui.confirmAnswer; },
+        showLoading: function () { ui.loading++; },
+        hideLoading: function () { ui.loading--; },
+        closeModal: function (id) {
+          ui.closed.push(id);
+          const el = document.getElementById(id);
+          if (el && el.style) el.style.display = 'none';
+        },
+        renderClientsTable: function () { ui.tableRendered++; },
+        selectClientInSelector: function (id, name) { ui.selectorSelected = { id, name }; },
+        getClientName: function () { return 'Cliente Test'; },
+        uploadFileToStorage: uploadFileToStorage,
+        compressImage: async function (f) { return f; },
+        hasStagedClientFiles: (type) => hasStagedClientFiles(type),
+        uploadClientStagedFiles: (targetId, type, existingDocs) => uploadClientStagedFiles(targetId, type, existingDocs),
+        persistClientViaServer: (c, confirmReview) => persistClientViaServer(c, confirmReview),
+        cancelPendingClientReservation: () => cancelPendingClientReservation(),
+        getPendingClientReservationId: () => currentClientReservationId,
+        setPendingClientReservationId: (id) => { currentClientReservationId = id; }
+      };
+
       ${SRC}
 
       return {

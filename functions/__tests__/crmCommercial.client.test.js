@@ -9,13 +9,24 @@ const CrmCommercial = require('../../crm_commercial.js');
 
 const ROOT = path.join(__dirname, '..', '..');
 const appCore = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
+const oppUiSrc = fs.existsSync(path.join(ROOT, 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
+const finCoSrc = fs.existsSync(path.join(ROOT, 'modules', 'finance', 'finance_change_orders.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'finance', 'finance_change_orders.js'), 'utf8') : '';
+const finInvSrc = fs.existsSync(path.join(ROOT, 'modules', 'finance', 'finance_invoicing.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'finance', 'finance_invoicing.js'), 'utf8') : '';
+const finPaySrc = fs.existsSync(path.join(ROOT, 'modules', 'finance', 'finance_payments.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'finance', 'finance_payments.js'), 'utf8') : '';
+const dashAuditSrc = fs.existsSync(path.join(ROOT, 'modules', 'dashboard', 'dashboard_audit.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'dashboard', 'dashboard_audit.js'), 'utf8') : '';
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const between = (from, to) => {
-  const a = appCore.indexOf(from);
+const clientsCtrl = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_controller.js'), 'utf8');
+const getSource = (from, to) => {
+  if (oppUiSrc && oppUiSrc.includes(from) && oppUiSrc.includes(to)) return oppUiSrc;
+  return appCore;
+};
+const between = (from, to, source = null) => {
+  const target = source || getSource(from, to);
+  const a = target.indexOf(from);
   if (a === -1) throw new Error(`marker not found: ${from}`);
-  const b = appCore.indexOf(to, a + from.length);
+  const b = target.indexOf(to, a + from.length);
   if (b === -1) throw new Error(`marker not found: ${to}`);
-  return appCore.slice(a, b);
+  return target.slice(a, b);
 };
 
 function fbWith(impl, { session = true } = {}) {
@@ -147,16 +158,21 @@ describe('wording', () => {
 
 describe('static guards on the page: migrated operations (no direct write, no fallback)', () => {
   const direct = /saveProspectToDB|saveClientToDB|\.collection\(|\.set\(|\.update\(|\.delete\(|\.add\(/;
-  const guard = (name, from, to, token) => test(`${name} goes through CrmCommercial.${token} and writes nothing directly`, () => {
-    const body = between(from, to);
+  const guard = (name, from, to, token, source = null) => test(`${name} goes through CrmCommercial.${token} and writes nothing directly`, () => {
+    const src = source || getSource(from, to);
+    const a = src.indexOf(from);
+    if (a === -1) throw new Error(`marker not found: ${from}`);
+    const b = src.indexOf(to, a + from.length);
+    if (b === -1) throw new Error(`marker not found: ${to}`);
+    const body = src.slice(a, b);
     expect(body).toContain(`CrmCommercial.${token}`);
     expect(body).not.toMatch(direct);
   });
   guard('createNewProspect', 'async function createNewProspect', '// DETAIL VIEW', 'createProspect');
   guard('deleteLog', 'function deleteLog(', 'function addLogToProspect', 'deleteLog');
-  guard('addLog', 'function addLog()', 'function showNewProposalForm', 'addLog');
+  guard('addLog', 'function addLog()', (oppUiSrc && oppUiSrc.includes('function addLog()')) ? 'function openRecordFollowUpModal' : 'function showNewProposalForm', 'addLog');
   guard('applyNoContractAuthorization', 'async function applyNoContractAuthorization', 'window.toggleManagerApproval =', 'setNoContractAuthorization');
-  guard('deleteClient', 'function deleteClient(', 'async function deleteProspect()', 'deleteClient');
+  guard('deleteClient', 'function deleteClient(', 'const ClientsController = {', 'deleteClient', clientsCtrl);
   guard('addSetting / removeSetting / saveMapsSettings (applySettingsChange)', 'async function applySettingsChange', 'function addSetting', 'updateSettings');
 
   test('the approval toggles use the shared server-backed helper', () => {
@@ -169,7 +185,7 @@ describe('static guards on the page: migrated operations (no direct write, no fa
     expect(body).not.toMatch(/createdBy|vendedorName|vendedorRole|codigo|currentUser\.id/);
   });
   test('the log author prefix is no longer computed in the browser for typed notes', () => {
-    expect(between('function addLog()', 'function showNewProposalForm')).not.toContain('addLogToProspect');
+    expect(between('function addLog()', (oppUiSrc && oppUiSrc.includes('function addLog()')) ? 'function openRecordFollowUpModal' : 'function showNewProposalForm')).not.toContain('addLogToProspect');
   });
   test('reassignVendor uses the server', () => {
     const body = between('function reassignVendor', 'CrmCommercial.reassign');
@@ -200,7 +216,9 @@ describe('static guards on the page: workflow operations are migrated and the di
     expect(appCore).not.toContain('adv-auth-password');
     expect(lines(/function reportToManager|window\.applyManagerBypass\s*=/)).toHaveLength(0);
     // The only reference left is the READ-ONLY audit panel listener.
-    const refs = lines(/audit_logs|commercialAudit/);
+    const auditSrc = dashAuditSrc || appCore;
+    const auditLines = (re) => auditSrc.split('\n').filter(l => re.test(l) && !/^\s*(\/\/|\*)/.test(l));
+    const refs = auditLines(/audit_logs|commercialAudit/);
     expect(refs).toHaveLength(1);
     expect(refs[0]).toMatch(/onSnapshot/);
     expect(refs[0]).not.toMatch(/\.(set|add|update|delete)\(/);
@@ -211,8 +229,11 @@ describe('static guards on the page: workflow operations are migrated and the di
     ['processEditBasePrice', 'editBasePrice'], ['processNewProposal', 'registerProposal'],
     ['processAdvance', 'advanceStage'], ['processLose', 'markLost']
   ])('%s uses CrmCommercial.%s', (fn, token) => {
-    expect(appCore).toMatch(new RegExp(`function ${fn}\\(`));
-    expect(appCore).toContain(`CrmCommercial.${token}`);
+    const finSources = [finCoSrc, finInvSrc, finPaySrc];
+    const finMatch = finSources.find(s => s && s.includes(`CrmCommercial.${token}`));
+    const target = finMatch || ((oppUiSrc && oppUiSrc.includes(`CrmCommercial.${token}`)) ? oppUiSrc : appCore);
+    expect(target).toMatch(new RegExp(`function ${fn}\\(`));
+    expect(target).toContain(`CrmCommercial.${token}`);
   });
   test('the old localStorage migration no longer writes (detection only)', () => {
     const at = appCore.indexOf("document.addEventListener('DOMContentLoaded', async");

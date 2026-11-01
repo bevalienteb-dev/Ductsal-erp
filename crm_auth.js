@@ -60,6 +60,22 @@
                 await fb.auth().signOut();
                 return { ok: false, reason: 'uid-mismatch' };
             }
+            if (typeof cred.user.getIdTokenResult === 'function') {
+                const tok = await cred.user.getIdTokenResult();
+                const claims = (tok && tok.claims) || {};
+                if (claims.cid && user.id && claims.cid !== user.id) {
+                    await fb.auth().signOut();
+                    return { ok: false, reason: 'cid-mismatch' };
+                }
+                if (claims.role && user.role && claims.role !== user.role) {
+                    await fb.auth().signOut();
+                    return { ok: false, reason: 'role-mismatch' };
+                }
+                if (user.role === 'manager' && claims.manager !== true) {
+                    await fb.auth().signOut();
+                    return { ok: false, reason: 'permission-denied' };
+                }
+            }
             return { ok: true };
         } catch (e) {
             return { ok: false, reason: normalizeCode(e) || 'error' };
@@ -70,6 +86,9 @@
         switch (reason) {
             case 'sdk-unavailable': return 'No se pudo cargar Firebase Authentication. Recarga la página.';
             case 'uid-mismatch': return 'La cuenta de acceso no corresponde a este usuario. Contacta a un gerente.';
+            case 'cid-mismatch': return 'El identificador del perfil no coincide con las credenciales de acceso.';
+            case 'role-mismatch': return 'El rol asignado no coincide con las credenciales de acceso.';
+            case 'permission-denied': return 'La cuenta no cuenta con permisos administrativos verificados.';
             case 'user-disabled': return 'Esta cuenta está deshabilitada.';
             case 'too-many-requests': return 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.';
             case 'network-request-failed': return 'Error de red. Revisa tu conexión.';
@@ -313,6 +332,15 @@
         return (res && res.data && res.data.users) || [];
     }
 
+    async function resendInvitationViaFunction(fb, { id, dbSuffix }) {
+        if (!fb || typeof fb.functions !== 'function') throw new Error('functions-unavailable');
+        const key = 'resendInvitation:' + id;
+        return callIdempotent(key, opId => {
+            const fn = fb.functions().httpsCallable('resendInvitationAdmin');
+            return fn({ id, opId, dbSuffix });
+        });
+    }
+
     return {
         CREATABLE_ROLES,
         loginWithFirebase,
@@ -327,6 +355,7 @@
         linkHistoricalUserViaFunction,
         purgeHistoricalPassword,
         listUsersViaFunction,
+        resendInvitationViaFunction,
         createErrorMessage,
         statusErrorMessage,
         updateErrorMessage,

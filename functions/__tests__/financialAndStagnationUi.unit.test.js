@@ -19,6 +19,10 @@ const ROOT = path.join(__dirname, '..', '..');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const stylesCss = fs.readFileSync(path.join(ROOT, 'styles.css'), 'utf8');
 const appCoreSrc = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
+const oppUiSrc = fs.existsSync(path.join(ROOT, 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
+const getOpenDetailSource = () => (oppUiSrc.includes('function openDetail(') ? oppUiSrc : appCoreSrc);
+const financeUiSrc = fs.existsSync(path.join(ROOT, 'modules', 'finance', 'finance_ui.js')) ? fs.readFileSync(path.join(ROOT, 'modules', 'finance', 'finance_ui.js'), 'utf8') : '';
+const getFinanceUiSource = () => (financeUiSrc || appCoreSrc);
 const prospectWorkflowSrc = fs.readFileSync(path.join(ROOT, 'functions', 'prospectWorkflowService.js'), 'utf8');
 const storageServiceSrc = fs.readFileSync(path.join(ROOT, 'functions', 'storageService.js'), 'utf8');
 const CrmWorkCalendar = require(path.join(ROOT, 'crm_work_calendar.js'));
@@ -74,10 +78,11 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('app_core.js renderProjectsList calcula saldoCxC y porFacturar con datos existentes', () => {
-      expect(appCoreSrc).toContain('const saldoCxC = Math.max(0, Math.round((totalFacturado - totalCobrado) * 100) / 100);');
-      expect(appCoreSrc).toContain('const porFacturar = Math.max(0, Math.round((total - totalFacturado) * 100) / 100);');
-      expect(appCoreSrc).toContain('saldoCxC: saldoCxC');
-      expect(appCoreSrc).toContain('porFacturar: porFacturar');
+      const src = getFinanceUiSource();
+      expect(src).toContain('const saldoCxC = Math.max(0, Math.round((totalFacturado - totalCobrado) * 100) / 100);');
+      expect(src).toContain('const porFacturar = Math.max(0, Math.round((total - totalFacturado) * 100) / 100);');
+      expect(src).toContain('saldoCxC: saldoCxC');
+      expect(src).toContain('porFacturar: porFacturar');
     });
   });
 
@@ -140,12 +145,13 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('app_core.js renderFinancials genera tarjetas con strip de 3 montos y badge PAGADA/PENDIENTE', () => {
-      expect(appCoreSrc).toContain('class="invoice-card-modern"');
-      expect(appCoreSrc).toContain('class="invoice-amounts-strip"');
-      expect(appCoreSrc).toContain('${isPaid ? \'PAGADA\' : \'PENDIENTE\'}');
-      expect(appCoreSrc).toContain('Monto Facturado');
-      expect(appCoreSrc).toContain('Total Abonado');
-      expect(appCoreSrc).toContain('Saldo Pendiente');
+      const src = getFinanceUiSource();
+      expect(src).toContain('class="invoice-card-modern"');
+      expect(src).toContain('class="invoice-amounts-strip"');
+      expect(src).toContain('${isPaid ? \'PAGADA\' : \'PENDIENTE\'}');
+      expect(src).toContain('Monto Facturado');
+      expect(src).toContain('Total Abonado');
+      expect(src).toContain('Saldo Pendiente');
     });
   });
 
@@ -162,7 +168,7 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('openDetail actualiza detail-time-in-stage con ambas unidades explícitas', () => {
-      expect(appCoreSrc).toContain('timeInStageEl.textContent = `Tiempo en etapa: ${businessDays} días hábiles (${calendarDays} días naturales)`;');
+      expect(getOpenDetailSource()).toContain('timeInStageEl.textContent = `Tiempo en etapa: ${businessDays} días hábiles (${calendarDays} días naturales)`;');
     });
 
     test('index.html contiene el contenedor de tiempo en etapa preservando su id original', () => {
@@ -192,11 +198,12 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('openDetail extrae el último contacto únicamente de p.seguimiento.ultimo_contacto.fecha', () => {
-      expect(appCoreSrc).toContain('p.seguimiento && p.seguimiento.ultimo_contacto && p.seguimiento.ultimo_contacto.fecha');
+      const src = getOpenDetailSource();
+      expect(src).toContain('p.seguimiento && p.seguimiento.ultimo_contacto && p.seguimiento.ultimo_contacto.fecha');
       // Confirma que no se usa updatedAt ni modifiedAt como sustituto
-      const openDetailSlice = appCoreSrc.substring(
-        appCoreSrc.indexOf('function openDetail('),
-        appCoreSrc.indexOf('function renderClientContactCard(')
+      const openDetailSlice = src.substring(
+        src.indexOf('function openDetail('),
+        src.indexOf('function renderClientContactCard(') !== -1 ? src.indexOf('function renderClientContactCard(') : (src.indexOf('function goBackFromDetail(') !== -1 ? src.indexOf('function goBackFromDetail(') : src.length)
       );
       expect(openDetailSlice).not.toContain('p.updatedAt');
       expect(openDetailSlice).not.toContain('p.fecha_modificacion');
@@ -210,7 +217,7 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     test('muestra "Sin contacto registrado" cuando no existe fecha de último contacto', () => {
       expect(indexHtml).toContain('id="detail-last-contact"');
       expect(indexHtml).toContain('Último contacto: Sin contacto registrado');
-      expect(appCoreSrc).toContain('Sin contacto registrado');
+      expect(getOpenDetailSource()).toContain('Sin contacto registrado');
     });
 
     test('no inventa fecha de vencimiento en facturas', () => {
@@ -237,31 +244,34 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('2. La lista, totales y saldos del vendedor no incluyen proyectos de otros vendedores', () => {
-      expect(appCoreSrc).toContain('if (isVendedor)');
-      expect(appCoreSrc).toContain('allProjects = allProjects.filter(p => p.vendedorId === currentUserId);');
+      const src = getFinanceUiSource();
+      expect(src).toContain('if (isVendedor)');
+      expect(src).toContain('allProjects = allProjects.filter(p => p.vendedorId === currentUserId);');
       // No leak of global portfolio: allProjects is filtered BEFORE counts, search and rendering
-      expect(appCoreSrc).toContain('const countPendientes = allProjects.filter(');
-      expect(appCoreSrc).toContain('const countPagados = allProjects.filter(');
-      expect(appCoreSrc).toContain('const countTodos = allProjects.length;');
+      expect(src).toContain('const countPendientes = allProjects.filter(');
+      expect(src).toContain('const countPagados = allProjects.filter(');
+      expect(src).toContain('const countTodos = allProjects.length;');
     });
 
     test('3. El vendedor puede consultar facturas, pagos, saldos e historial de sus propios proyectos', () => {
-      expect(appCoreSrc).toContain('class="invoice-card-modern"');
-      expect(appCoreSrc).toContain('class="invoice-amounts-strip"');
-      expect(appCoreSrc).toContain('Historial de Pagos de esta factura:');
-      expect(appCoreSrc).toContain('viewSecureDocument(');
-      expect(appCoreSrc).toContain('downloadSecureDocument(');
+      const src = getFinanceUiSource();
+      expect(src).toContain('class="invoice-card-modern"');
+      expect(src).toContain('class="invoice-amounts-strip"');
+      expect(src).toContain('Historial de Pagos de esta factura:');
+      expect(src).toContain('viewSecureDocument(');
+      expect(src).toContain('downloadSecureDocument(');
     });
 
     test('4. El DOM de la interfaz del vendedor no ofrece controles para crear, editar o eliminar movimientos', () => {
       // isFinancialReadOnly hides write buttons and edit/delete links
-      expect(appCoreSrc).toContain('const isFinancialReadOnly = (currentUser && currentUser.role === \'vendedor\')');
-      expect(appCoreSrc).toContain("btnAddCo.style.display = isFinancialReadOnly ? 'none' : 'flex';");
-      expect(appCoreSrc).toContain("const ocActionSpans = !isFinancialReadOnly");
-      expect(appCoreSrc).toContain("let editDelPaySpans = !isFinancialReadOnly");
-      expect(appCoreSrc).toContain("const invActionSpans = !isFinancialReadOnly");
-      expect(appCoreSrc).toContain("(!isPaid && !isFinancialReadOnly)");
-      expect(appCoreSrc).toContain("if (isFinancialReadOnly || totalFacturado >= (total - 0.1))");
+      const src = getFinanceUiSource();
+      expect(src).toContain('const isFinancialReadOnly = (currentUser && currentUser.role === \'vendedor\')');
+      expect(src).toContain("btnAddCo.style.display = isFinancialReadOnly ? 'none' : 'flex';");
+      expect(src).toContain("const ocActionSpans = !isFinancialReadOnly");
+      expect(src).toContain("let editDelPaySpans = !isFinancialReadOnly");
+      expect(src).toContain("const invActionSpans = !isFinancialReadOnly");
+      expect(src).toContain("(!isPaid && !isFinancialReadOnly)");
+      expect(src).toContain("if (isFinancialReadOnly || totalFacturado >= (total - 0.1))");
     });
 
     test('5. Las funciones que abren formularios o ejecutan acciones financieras bloquean al vendedor', () => {
@@ -301,9 +311,10 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
 
     test('7. El vendedor no puede abrir ni acceder a documentos de proyectos de otros vendedores', () => {
       expect(storageServiceSrc).toContain("p.vendedorId === caller.cid");
-      const openDetailSlice = appCoreSrc.substring(
-        appCoreSrc.indexOf('function openDetail('),
-        appCoreSrc.indexOf('showView(\'detail-view\')')
+      const src = getOpenDetailSource();
+      const openDetailSlice = src.substring(
+        src.indexOf('function openDetail('),
+        src.indexOf('showView(\'detail-view\')')
       );
       expect(openDetailSlice).toContain("if (currentUser && (currentUser.role === 'vendedor' || currentUser.role === 'gestor'))");
       expect(openDetailSlice).toContain("const isAssigned = p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id);");
@@ -311,9 +322,10 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('8. El gestor puede abrir un proyecto de postcierre asignado a otro vendedor', () => {
-      const openDetailSlice = appCoreSrc.substring(
-        appCoreSrc.indexOf('function openDetail('),
-        appCoreSrc.indexOf('showView(\'detail-view\')')
+      const src = getOpenDetailSource();
+      const openDetailSlice = src.substring(
+        src.indexOf('function openDetail('),
+        src.indexOf('showView(\'detail-view\')')
       );
       expect(openDetailSlice).toContain("const inPostclosing = currentUser.role === 'gestor' && hasEnteredPostclosing(p);");
       expect(openDetailSlice).toContain("if (!isAssigned && !inPostclosing)");
@@ -331,7 +343,7 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
       expect(appCoreSrc).toContain("if (!currentUser || currentUser.role !== 'manager')");
       expect(appCoreSrc).toContain("Solo los Gerentes pueden reasignar oportunidades.");
       expect(prospectWorkflowSrc).toContain("deleteProspect: ['manager-live']");
-      expect(appCoreSrc).toContain("[navUsers, navSettings, navList, navClients]");
+      expect(appCoreSrc).toContain("if (viewId === 'users-view' && currentUser && currentUser.role !== 'manager')");
     });
 
     test('11. El gerente conserva el acceso global y sus permisos actuales', () => {
@@ -342,9 +354,10 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
     });
 
     test('12. Los proyectos que no están en postcierre respetan las restricciones de acceso', () => {
-      const openDetailSlice = appCoreSrc.substring(
-        appCoreSrc.indexOf('function openDetail('),
-        appCoreSrc.indexOf('showView(\'detail-view\')')
+      const src = getOpenDetailSource();
+      const openDetailSlice = src.substring(
+        src.indexOf('function openDetail('),
+        src.indexOf('showView(\'detail-view\')')
       );
       expect(openDetailSlice).toContain("if (!isAssigned && !inPostclosing)");
       expect(openDetailSlice).toContain("alert('No tienes acceso a esta oportunidad');");
@@ -356,24 +369,27 @@ describe('Phase 5.4: Financial Balances, Collections & Opportunity Stagnation UI
   // =========================================================================
   describe('8. Conservación de lógica tributaria, órdenes de cambio y comprobantes', () => {
     test('preserva el cálculo de órdenes de cambio (aumento/disminución) y subtotal', () => {
-      expect(appCoreSrc).toContain('const subtotal = getProjectSubtotal(p);');
-      expect(appCoreSrc).toContain('const iva = isExport ? 0 : subtotal * 0.13;');
-      expect(appCoreSrc).toContain('const total = subtotal + iva;');
+      const src = getFinanceUiSource();
+      expect(src).toContain('const subtotal = getProjectSubtotal(p);');
+      expect(src).toContain('const iva = isExport ? 0 : subtotal * 0.13;');
+      expect(src).toContain('const total = subtotal + iva;');
     });
 
     test('preserva la advertencia de Gran Contribuyente (1% Retención) y Exportación (0% IVA)', () => {
-      expect(appCoreSrc).toContain("'fin-retencion-warning'");
-      expect(appCoreSrc).toContain('1% de cada factura');
-      expect(appCoreSrc).toContain("'fin-export-warning'");
-      expect(appCoreSrc).toContain('0% Exportación');
+      const src = getFinanceUiSource();
+      expect(src).toContain("'fin-retencion-warning'");
+      expect(src).toContain('1% de cada factura');
+      expect(src).toContain("'fin-export-warning'");
+      expect(src).toContain('0% Exportación');
     });
 
     test('preserva los enlaces de previsualización y descarga de comprobantes de pago', () => {
-      expect(appCoreSrc).toContain("viewSecureDocument(");
-      expect(appCoreSrc).toContain("downloadSecureDocument(");
-      expect(appCoreSrc).toContain("pay.doc_comprobante");
-      expect(appCoreSrc).toContain("editPayment(");
-      expect(appCoreSrc).toContain("deletePayment(");
+      const src = getFinanceUiSource();
+      expect(src).toContain("viewSecureDocument(");
+      expect(src).toContain("downloadSecureDocument(");
+      expect(src).toContain("pay.doc_comprobante");
+      expect(src).toContain("editPayment(");
+      expect(src).toContain("deletePayment(");
     });
   });
 

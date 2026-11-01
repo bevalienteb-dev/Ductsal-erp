@@ -10,20 +10,25 @@ const path = require('path');
 const CrmCommercial = require('../../crm_commercial.js');
 
 const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+const oppUiSrc = fs.existsSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js')) ? fs.readFileSync(path.join(__dirname, '..', '..', 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8') : '';
 const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a + from.length);
+  const target = (oppUiSrc && oppUiSrc.includes(from) && oppUiSrc.includes(to)) ? oppUiSrc : appCore;
+  const a = target.indexOf(from);
+  const b = target.indexOf(to, a + from.length);
   if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+  return target.slice(a, b);
 };
+
+const ClientsController = require('../../modules/clients/clients_controller.js');
 
 const SRC = [
   between('// Settings are manager-only and decided by the server', 'function renderSettingsLists'),
   between('async function addSetting', 'function showView'),
   between('// The opportunity is created by createProspectAdmin', '// DETAIL VIEW & ADVANCEMENT'),
   between('// Manager-only decision resolved by setNoContractAuthorizationAdmin', 'window.applyManagerBypass'),
-  between('function deleteLog(', 'function showNewProposalForm'),
-  between('function deleteClient(', 'async function deleteProspect()')
+  (oppUiSrc && oppUiSrc.includes('function deleteLog('))
+    ? between('function deleteLog(', 'function openRecordFollowUpModal', oppUiSrc)
+    : between('function deleteLog(', 'function showNewProposalForm')
 ].join('\n');
 
 function build({ session = true, handler } = {}) {
@@ -47,7 +52,18 @@ function build({ session = true, handler } = {}) {
   };
   const trap = () => { writes.push('direct write'); return { set() { writes.push('set'); }, delete() { writes.push('delete'); }, add() { writes.push('add'); } }; };
   const db = { collection: () => ({ doc: () => trap(), add: () => writes.push('add') }) };
-  const api = new Function('S', 'document', 'ui', 'firebase', 'db', 'CrmCommercial', 'window', `
+  ClientsController.init({
+    getCurrentUser: () => S.currentUser,
+    getClients: () => S.clients,
+    getProspects: () => S.prospects,
+    getDbSuffix: () => S.DB_SUFFIX,
+    getFirebase: () => firebase,
+    getCrmCommercial: () => CrmCommercial,
+    alert: (m) => ui.alerts.push(m),
+    confirm: (m) => ui.confirmAnswer
+  });
+
+  const api = new Function('S', 'document', 'ui', 'firebase', 'db', 'CrmCommercial', 'window', 'ClientsController', `
     with (S) {
       var alert = function (m) { ui.alerts.push(m); };
       var confirm = function () { return ui.confirmAnswer; };
@@ -60,12 +76,13 @@ function build({ session = true, handler } = {}) {
       var getClientName = function () { return 'x'; };
       var saveProspectToDB = function () { throw new Error('direct prospect write'); };
       var saveClientToDB = function () { throw new Error('direct client write'); };
+      var deleteClient = ClientsController.deleteClient;
       ${SRC}
       return { createNewProspect: createNewProspect, addLog: addLog, deleteLog: deleteLog, deleteClient: deleteClient,
                toggleManagerApproval: window.toggleManagerApproval, toggleManagerApprovalInForm: window.toggleManagerApprovalInForm,
                addSetting: addSetting, removeSetting: removeSetting, saveMapsSettings: saveMapsSettings };
     }
-  `)(S, document, ui, firebase, db, CrmCommercial, {});
+  `)(S, document, ui, firebase, db, CrmCommercial, {}, ClientsController);
   // renderSettingsLists is inside the slice boundary: provide it through S so the sandbox can call it.
   S.renderSettingsLists = () => { ui.renderSettings++; };
   return { api, S, ui, calls, writes, el };

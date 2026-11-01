@@ -1,0 +1,61 @@
+{
+  "opId": "attr_mig_20261028220341_6f4095c6",
+  "mode": "DRY_RUN",
+  "timestamp": "2026-10-28T22:03:46.241Z",
+  "totalAnalyzed": 174,
+  "correctCount": 174,
+  "mutationsPlannedCount": 0,
+  "batchesCount": 0,
+  "byUser": {
+    "1776895495203": {
+      "id": "1776895495203",
+      "nombre": "Benjamin Valiente",
+      "role": "manager",
+      "activo": true,
+      "assignedCount": 0,
+      "proposedCorrectionCount": 0
+    },
+    "1776904494660": {
+      "id": "1776904494660",
+      "nombre": "Denys González",
+      "role": "manager",
+      "activo": true,
+      "assignedCount": 0,
+      "proposedCorrectionCount": 0
+    },
+    "1776904514932": {
+      "id": "1776904514932",
+      "nombre": "Alejandra Ayala",
+      "role": "gestor",
+      "activo": true,
+      "assignedCount": 140,
+      "proposedCorrectionCount": 0
+    },
+    "1784221928346": {
+      "id": "1784221928346",
+      "nombre": "Gustavo Velásquez",
+      "role": "vendedor",
+      "activo": false,
+      "assignedCount": 10,
+      "proposedCorrectionCount": 0
+    },
+    "1788471603604": {
+      "id": "1788471603604",
+      "nombre": "Roberto Flores",
+      "role": "vendedor",
+      "activo": true,
+      "assignedCount": 24,
+      "proposedCorrectionCount": 0
+    }
+  },
+  "vistaTowerReferenceCheck": {
+    "found": false,
+    "targetId": "OPP-1777081083975-23",
+    "proyecto": null,
+    "proposedVendor": null,
+    "proposedVendorId": null,
+    "evidence": null,
+    "financials": null
+  },
+  "mutations": []
+}

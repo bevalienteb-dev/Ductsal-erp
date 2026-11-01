@@ -2,11 +2,17 @@
 node_modules/
 # Service account keys (ignore only key files)
 serviceAccountKey.json
+staging-service-account.json
 # OS generated files
 .DS_Store
 # Build artifacts
+.firebase/
+coverage/
+functions/coverage/
 
 # Logs and temporary files
 *.log
+staging_*.png
+scratch/
 # PDF assets (keep if needed, otherwise add explicitly)
 # Bancoagrícola.pdf

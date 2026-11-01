@@ -7,14 +7,15 @@ const path = require('path');
 const { createStorageService, ALLOWED_FOLDER_PREFIXES, PRIVILEGED_ROLES, PLANT_ROLES } = require('../storageService');
 const { createFakeFirestore } = require('../test-helpers/fakeFirestore');
 
-// Extract and eval app_core functions in test environment
-const appCore = fs.readFileSync(path.join(__dirname, '..', '..', 'app_core.js'), 'utf8');
+// Extract and eval document viewer functions in test environment
+const docViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
+const docViewer = fs.readFileSync(docViewerPath, 'utf8');
 
 const between = (from, to) => {
-  const a = appCore.indexOf(from);
-  const b = appCore.indexOf(to, a + from.length);
+  const a = docViewer.indexOf(from);
+  const b = docViewer.indexOf(to, a + from.length);
   if (a < 0 || b < 0) throw new Error(`markers not found: ${from} .. ${to}`);
-  return appCore.slice(a, b);
+  return docViewer.slice(a, b);
 };
 
 const resolveStoragePathSrc = between('function resolveStoragePath(docRef, envConfig = null) {', 'const PREVIEWABLE_EXTS');
@@ -152,7 +153,7 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
     test('la arquitectura no usa getBlob() en el cliente para downloadSecureDocument y usa cuenta dedicada en el servidor', () => {
       // downloadSecureDocument uses getSecureDownloadUrlAdmin -> window.open/a.click
       // and does NOT call getBlob()
-      expect(appCore).toContain('async function downloadSecureDocument');
+      expect(docViewer).toContain('async function downloadSecureDocument');
       const downloadFnSrc = between('async function downloadSecureDocument(docRef', 'async function viewSecureDocument');
       expect(downloadFnSrc).not.toContain('getBlob');
       expect(downloadFnSrc).toContain('getSecureDownloadUrlAdmin');
@@ -202,7 +203,7 @@ describe('SEC-05 Phase 1.1: Descarga universal y manejo seguro de archivos grand
     });
 
     test('viewSecureDocument redirige automáticamente a descarga para formatos no previewables', () => {
-      const viewFnSrc = between('async function viewSecureDocument(docRef', 'if (typeof window !== \'undefined\')');
+      const viewFnSrc = between('async function viewSecureDocument(docRef', 'function openDocPreviewModal');
       expect(viewFnSrc).toContain('if (!isFormatPreviewable(fileName)) {');
       expect(viewFnSrc).toContain('downloadSecureDocument(docRef, fallbackName, options)');
     });

@@ -9,7 +9,10 @@ const CrmClients = require('../../crm_clients.js');
 const ROOT = path.join(__dirname, '..', '..');
 const appCore = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const between = (from, to) => appCore.slice(appCore.indexOf(from), appCore.indexOf(to, appCore.indexOf(from)));
+const clientsUi = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
+const clientsCtrl = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_controller.js'), 'utf8');
+const clientDocs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'client_documents.js'), 'utf8');
+const between = (from, to, src = appCore) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from)));
 
 function fbWith(impl, { session = true } = {}) {
   const calls = [];
@@ -140,16 +143,16 @@ describe('wording', () => {
 
 describe('static guards on the page', () => {
   test('saving a client never writes it straight to Firestore, and there is no fallback', () => {
-    const save = between('async function saveClient', '// PROSPECTS & PROJECTS LISTS');
+    const save = between('async function saveClient', 'function renderClientSelect', clientsUi);
     expect(save).toContain('persistClientViaServer');
     expect(save).not.toContain('saveClientToDB');
-    const persist = between('async function persistClientViaServer', 'function createNewProspect');
+    const persist = between('async function persistClientViaServer', 'function deleteClient', clientsCtrl);
     expect(persist).not.toMatch(/saveClientToDB|\.collection\(|\.set\(/);
   });
   test('no direct client write remains: document removal also goes through updateClientAdmin (manager only on the server)', () => {
-    const uses = appCore.split('\n').filter(l => l.includes('saveClientToDB(') && !l.includes('function saveClientToDB'));
+    const uses = [appCore, clientsUi, clientsCtrl, clientDocs].flatMap(s => s.split('\n')).filter(l => l.includes('saveClientToDB(') && !l.includes('function saveClientToDB'));
     expect(uses).toHaveLength(0);
-    const removal = between('async function deleteClientDocument', 'async function saveClient');
+    const removal = between('async function deleteClientDocument', 'async function uploadClientDocumentFromClosing', clientDocs);
     expect(removal).toContain('CrmClients.updateClient');
   });
   test('index.html loads crm_clients.js before app_core.js and has the catalogue search box', () => {
@@ -158,7 +161,7 @@ describe('static guards on the page', () => {
     expect(indexHtml).toContain('id="new-cliente-search"');
   });
   test('the portfolio list and the selector use different functions', () => {
-    expect(between('function renderClientsTable', 'function toggleClientFields')).toContain('getVisibleClients()');
-    expect(between('function renderClientsTable', 'function toggleClientFields')).not.toContain('searchCatalog');
+    expect(between('function renderClientsTable', 'function toggleClientFields', clientsUi)).toContain('getVisibleClients()');
+    expect(between('function renderClientsTable', 'function toggleClientFields', clientsUi)).not.toContain('searchCatalog');
   });
 });
