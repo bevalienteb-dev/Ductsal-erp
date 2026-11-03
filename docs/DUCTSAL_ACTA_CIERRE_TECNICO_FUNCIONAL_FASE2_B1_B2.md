@@ -243,20 +243,29 @@ Para no atribuir erróneamente al navegador pruebas o restricciones que se evalu
     throw new ServiceError('failed-precondition', 'El contacto no pertenece a la cuenta de esta oportunidad');
   }
   ```
-  Esta restricción está cubierta y verificada al 100% mediante las pruebas automatizadas en `functions/__tests__/opportunityContacts.unit.test.js:L252-270` (*"addOpportunityContact fails if contact belongs to different account"*). Durante la validación en navegador real se verificó el filtrado estricto en la UI sin inyectar artificialmente llamadas corruptas desde consola para mantener la integridad de los datos de prueba.
+---
 
-1. **Pruebas de Concurrencia Real Multi-Cliente en Firestore Emulator:**
-   - *Descripción:* Las pruebas de carreras de asignación simultánea de contacto principal (`Promise.all` con OCC) se ejecutan actualmente sobre `FakeFirebase`. No existe un arnés de pruebas de estrés con múltiples clientes concurrentes contra el motor binario de Firestore Emulator.
-   - *Severidad:* Baja (Deuda técnica).
-   - *Plan de Resolución:* Implementar antes del despliegue productivo general dentro del arnés global de pruebas de estrés.
-2. **Helper Residual `seedInitialRolesIfEmpty`:**
-   - *Descripción:* La función auxiliar declarada en [functions/opportunityContactsService.js:L147-160](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/opportunityContactsService.js#L147-L160) permanece exportada pero sin invocadores activos tras el desacoplamiento del catálogo de roles.
-   - *Severidad:* Muy baja (Código muerto). No representa vulnerabilidad de seguridad al no estar expuesta a Cloud Functions.
-   - *Plan de Resolución:* Depuración programada en el siguiente ciclo de mantenimiento.
-3. **Registro de Auditoría en Inicialización Masiva del Catálogo:**
-   - *Descripción:* `seedOpportunityContactRoles` actualiza los 8 roles iniciales registrando `createdBy: caller.cid`, pero no inserta un documento en la colección de auditoría `audit_prod` (a diferencia de `manageOpportunityContactRole`).
-   - *Severidad:* Muy baja.
-   - *Plan de Resolución:* Agregar llamada a `addAudit` en la siguiente revisión menor.
+## 8. DEUDAS TÉCNICAS Y OBSERVACIONES CONSERVADAS
+
+En cumplimiento de las directrices y decisiones de Dirección, se conservan formalmente inventariados y categorizados los tres hallazgos técnicos:
+
+### 8.1 Concurrencia Real Multi-Cliente en Firestore Emulator: Pendiente antes del Lanzamiento General
+- **Clasificación Oficial:** **Pendiente antes del lanzamiento general.**
+- **Descripción:** Las pruebas de carreras de asignación simultánea de contacto principal (`Promise.all` con control de concurrencia optimista `_version`) se ejecutan actualmente sobre `FakeFirebase` en memoria. No existe un arnés de pruebas de estrés con múltiples clientes concurrentes contra el motor binario de Firestore Emulator.
+- **Impacto en PR #8:** No bloqueante para el cierre de Fase 2. La lógica de control de versiones y transacciones ACID está probada unitariamente.
+- **Plan de Acción:** Desarrollar e integrar en el arnés global de pruebas de estrés concurrente previo a la salida a producción.
+
+### 8.2 Helper Residual `seedInitialRolesIfEmpty`: Limpieza Técnica Menor
+- **Clasificación Oficial:** **Limpieza técnica menor.**
+- **Descripción:** La función auxiliar interna declarada en [functions/opportunityContactsService.js:L147-160](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/opportunityContactsService.js#L147-L160) y exportada en L776 permanece sin invocadores activos tras el desacoplamiento de la consulta de roles (P-07).
+- **Impacto en PR #8:** Muy bajo (código muerto). Cero riesgo de seguridad al no estar expuesta a ninguna Cloud Function HTTPS ni punto de entrada cliente.
+- **Plan de Acción:** Depuración programada en el siguiente ciclo de mantenimiento o refactorización.
+
+### 8.3 Auditoría del Sembrado Masivo de Roles: Mejora de Trazabilidad
+- **Clasificación Oficial:** **Mejora de trazabilidad.**
+- **Descripción:** La Cloud Function administrativa `seedOpportunityContactRoles` actualiza los 8 roles iniciales grabando el campo `createdBy: caller.cid` en cada documento de rol, pero no inserta un registro en la colección de auditoría `audit_prod` (a diferencia de `manageOpportunityContactRole`).
+- **Impacto en PR #8:** Muy bajo. La autoría queda registrada en los documentos de rol creados.
+- **Plan de Acción:** Agregar inserción en la colección `audit_prod` durante la próxima revisión menor de Cloud Functions.
 
 ---
 
