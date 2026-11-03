@@ -153,6 +153,41 @@ async function getDoc(collection, id) {
   return { id, data: decodeFields(r.json.fields || {}) };
 }
 
+function encodeValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(encodeValue) } };
+  if (typeof v === 'object') return { mapValue: { fields: encodeFields(v) } };
+  return { stringValue: String(v) };
+}
+
+function encodeFields(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v !== undefined) out[k] = encodeValue(v);
+  }
+  return out;
+}
+
+async function setDoc(collection, id, data) {
+  const r = await http('PATCH', `${docsUrl}/${collection}/${id}`, {
+    headers: OWNER,
+    body: { fields: encodeFields(data) }
+  });
+  if (r.status !== 200) throw new Error(`setDoc failed for ${collection}/${id}: ${r.text}`);
+  return { id, data };
+}
+
+async function deleteDoc(collection, id) {
+  const r = await http('DELETE', `${docsUrl}/${collection}/${id}`, { headers: OWNER });
+  return r.status === 200;
+}
+
 // Every field name (recursively) in every document of every collection.
 async function findFieldAnywhere(fieldRegex) {
   const hits = [];
@@ -205,5 +240,5 @@ module.exports = {
   PROJECT, AUTH, FIRESTORE, FUNCTIONS, SEED,
   randomSecret, randomTag, assertEmulatorsUp,
   signUp, signIn, adminSetPassword, listAuthUsers, sendOobCode, listOobCodes, completePasswordReset, decodeClaims,
-  callFunction, listCollectionIds, listDocs, getDoc, findFieldAnywhere, makeRestFirebase
+  callFunction, listCollectionIds, listDocs, getDoc, setDoc, deleteDoc, encodeFields, findFieldAnywhere, makeRestFirebase
 };
