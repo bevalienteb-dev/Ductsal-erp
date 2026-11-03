@@ -395,6 +395,10 @@
             if (typeof global !== 'undefined' && typeof global.renderClientContactCard === 'function') return global.renderClientContactCard(p);
             if (typeof window !== 'undefined' && typeof window.renderClientContactCard === 'function') return window.renderClientContactCard(p);
         },
+        renderOpportunityParticipants: (p) => {
+            if (typeof global !== 'undefined' && typeof global.renderOpportunityParticipants === 'function') return global.renderOpportunityParticipants(p);
+            if (typeof window !== 'undefined' && typeof window.renderOpportunityParticipants === 'function') return window.renderOpportunityParticipants(p);
+        },
         renderFinancials: (p) => {
             if (typeof global !== 'undefined' && typeof global.renderFinancials === 'function') return global.renderFinancials(p);
             if (typeof window !== 'undefined' && typeof window.renderFinancials === 'function') return window.renderFinancials(p);
@@ -528,6 +532,7 @@
     const hideLoading = (...args) => _deps.hideLoading(...args);
     const runWorkflowOp = (...args) => _deps.runWorkflowOp(...args);
     const renderClientContactCard = (...args) => _deps.renderClientContactCard(...args);
+    const renderOpportunityParticipants = (...args) => _deps.renderOpportunityParticipants(...args);
     const renderFinancials = (...args) => _deps.renderFinancials(...args);
     const renderClientSelect = (...args) => _deps.renderClientSelect(...args);
     const renderDailyAgenda = (...args) => _deps.renderDailyAgenda(...args);
@@ -1186,6 +1191,7 @@ function openDetail(id) {
         }
     }
     renderClientContactCard(p);
+    renderOpportunityParticipants(p);
     renderTracker(p); renderInfo(p); renderLogs(p);
     renderFollowUpSummary(p);
 }

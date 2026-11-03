@@ -851,6 +851,11 @@
                     <!-- Injected dynamically by renderClientContactCard(p) -->
                 </div>
 
+                <!-- Participantes Comerciales de la Oportunidad (Fase 2 Bloque B2) -->
+                <div id="opportunity-participants-card" class="opportunity-participants-card glass-panel mb-3" style="display: none;">
+                    <!-- Injected dynamically by renderOpportunityParticipants(p) -->
+                </div>
+
                 <!-- Resumen Comercial / KPI Hero (Prioridad 2) -->
                 <div class="commercial-hero-banner glass-panel mb-4" id="commercial-hero-banner">
                     <div class="kpi-banner-grid">
@@ -2214,6 +2219,126 @@
         </div>
     </div>
 
+    <!-- Modal: Agregar Participante a Oportunidad (Fase 2 Bloque B2) -->
+    <div id="modal-add-opportunity-contact" class="modal" style="display:none; z-index: 1070;">
+        <div class="modal-content glass-panel" style="max-width: 550px; width: 95%;">
+            <span class="close" onclick="closeAddOpportunityContactModal()">&times;</span>
+            <h2 style="color: white; margin-bottom: 0.25rem;">👥 Asignar Participante Comercial</h2>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
+                Selecciona una persona vinculada activamente a la cuenta y define su rol de decisión o compra en el proyecto.
+            </p>
+            <form onsubmit="submitAddOpportunityContact(event)">
+                <input type="hidden" id="add-opp-contact-opp-id">
+                <input type="hidden" id="add-opp-contact-acc-id">
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Contacto de la Cuenta *</label>
+                    <select id="add-opp-contact-select" required style="width: 100%;">
+                        <option value="">Cargando contactos...</option>
+                    </select>
+                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                        Solo se listan relaciones activas de la cuenta. No se pueden crear personas desde la oportunidad.
+                    </small>
+                </div>
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Rol Comercial / Rol de Compra *</label>
+                    <select id="add-opp-contact-role-select" required style="width: 100%;">
+                        <option value="">Cargando roles...</option>
+                    </select>
+                </div>
+
+                <div class="form-group mb-3" style="background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: white; margin: 0;">
+                        <input type="checkbox" id="add-opp-contact-is-primary" style="width: auto;">
+                        <span>⭐ <strong>Designar como Contacto Principal</strong> de la oportunidad</span>
+                    </label>
+                    <small style="color: var(--text-secondary); display: block; margin-top: 4px; margin-left: 1.5rem;">
+                        La oportunidad solo puede tener un contacto principal a la vez. Si ya existe uno, será sustituido atómicamente.
+                    </small>
+                </div>
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Notas Comerciales / Especificaciones (Opcional)</label>
+                    <textarea id="add-opp-contact-notes" rows="2" placeholder="Ej. Valida especificaciones técnicas de ductos y aislamiento..." style="width: 100%; resize: vertical;"></textarea>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
+                    <button type="button" class="btn-secondary" onclick="closeAddOpportunityContactModal()">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-add-opp-contact">Asignar a Oportunidad</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Editar Rol o Notas de Participante (Fase 2 Bloque B2) -->
+    <div id="modal-edit-opportunity-contact" class="modal" style="display:none; z-index: 1070;">
+        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
+            <span class="close" onclick="closeEditOpportunityContactRoleModal()">&times;</span>
+            <h2 style="color: white; margin-bottom: 0.25rem;">✏️ Modificar Rol Comercial</h2>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
+                Participante: <strong id="edit-opp-contact-name" style="color: white;">-</strong>
+            </p>
+            <form onsubmit="submitEditOpportunityContactRole(event)">
+                <input type="hidden" id="edit-opp-contact-id">
+                <input type="hidden" id="edit-opp-contact-opp-id">
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Nuevo Rol Comercial *</label>
+                    <select id="edit-opp-contact-role-select" required style="width: 100%;">
+                        <option value="">Cargando roles...</option>
+                    </select>
+                </div>
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Notas / Observaciones</label>
+                    <textarea id="edit-opp-contact-notes" rows="2" placeholder="Notas sobre la participación comercial..." style="width: 100%; resize: vertical;"></textarea>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
+                    <button type="button" class="btn-secondary" onclick="closeEditOpportunityContactRoleModal()">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-edit-opp-contact">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Cambiar Cuenta de la Oportunidad (Fase 2 Bloque B2) -->
+    <div id="modal-change-opportunity-account" class="modal" style="display:none; z-index: 1070;">
+        <div class="modal-content glass-panel" style="max-width: 550px; width: 95%;">
+            <span class="close" onclick="closeChangeOpportunityAccountModal()">&times;</span>
+            <h2 style="color: #60a5fa; margin-bottom: 0.25rem;">🔄 Cambiar Cuenta Comercial</h2>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
+                Reasigna esta oportunidad en etapa temprana a otra cuenta de tu cartera de clientes.
+            </p>
+
+            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.85rem; margin-bottom: 1rem; font-size: 0.82rem; line-height: 1.45; color: #fca5a5;">
+                <strong>⚠️ Reglas de negocio:</strong> Esta operación solo está permitida en etapa <em>prospecto</em> y sin cotizaciones activas. Al transferir la cuenta, <strong>todos los participantes actuales quedarán como registros históricos inactivos</strong> y se limpiará el contacto principal.
+            </div>
+
+            <form onsubmit="submitChangeOpportunityAccount(event)">
+                <input type="hidden" id="change-opp-acc-opp-id">
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Nueva Cuenta (Cliente) *</label>
+                    <select id="change-opp-acc-client-select" required style="width: 100%;">
+                        <option value="">Cargando cuentas...</option>
+                    </select>
+                </div>
+
+                <div class="form-group mb-3">
+                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Motivo obligatorio del cambio *</label>
+                    <textarea id="change-opp-acc-motivo" rows="2" placeholder="Explique por qué se transfiere la oportunidad a otra cuenta..." required style="width: 100%; resize: vertical;"></textarea>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
+                    <button type="button" class="btn-secondary" onclick="closeChangeOpportunityAccountModal()">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-change-opp-acc" style="background: #2563eb; border-color: #3b82f6;">Confirmar Cambio de Cuenta</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Loading Spinner Overlay -->
     <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
         <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
@@ -2231,6 +2356,7 @@
     <script src="crm_auth.js?v=3"></script>
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_contacts.js?v=1"></script>
+    <script src="crm_opportunity_contacts.js?v=1"></script>
     <script src="crm_commercial.js?v=3"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>
@@ -2245,6 +2371,7 @@
     <script src="modules/clients/contacts_ui.js?v=1"></script>
     <script src="modules/clients/clients_ui.js?v=1"></script>
     <script src="modules/opportunities/opportunities_controller.js?v=1"></script>
+    <script src="modules/opportunities/opportunity_contacts_ui.js?v=1"></script>
     <script src="modules/opportunities/opportunities_ui.js?v=1"></script>
     <script src="modules/finance/finance_calculations.js?v=1"></script>
     <script src="modules/finance/finance_change_orders.js?v=1"></script>

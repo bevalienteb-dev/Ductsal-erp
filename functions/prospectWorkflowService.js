@@ -1638,10 +1638,37 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         vendorsToRemove = candidates.filter(v => !remainingClosing.has(String(v)));
       }
 
-      tx.update(ref, {
+      // Phase 2 Block B2: Read all opportunity participants before writing
+      const oppContactsSnap = await tx.get(
+        col('opportunityContacts').where('opportunityId', '==', prospectId)
+      );
+
+      // Writes: cascade logical deletion to all subordinate participants
+      oppContactsSnap.docs.forEach(d => {
+        const oc = d.data() || {};
+        if (oc.eliminado !== true) {
+          tx.update(col('opportunityContacts').doc(d.id), {
+            eliminado: true,
+            estado_participacion: 'inactivo',
+            isPrimary: false,
+            fecha_eliminacion: iso(),
+            eliminado_por_id: caller.cid,
+            eliminado_por: caller.name || '',
+            updatedAt: iso(),
+            updatedBy: caller.cid
+          });
+        }
+      });
+
+      const prospectPatch = {
         eliminado: true, eliminado_por_id: caller.cid, eliminado_por: caller.name || '', fecha_eliminacion: iso(), motivo_eliminacion: reason,
         logs: withLog(p, caller, `Oportunidad ELIMINADA (eliminación lógica) por ${caller.name || 'gerente'}. Motivo: ${reason}`)
-      });
+      };
+      if (p.primaryOpportunityContactId || p.primaryContactSnapshot || oppContactsSnap.docs.length > 0) {
+        prospectPatch.primaryOpportunityContactId = null;
+        prospectPatch.primaryContactSnapshot = null;
+      }
+      tx.update(ref, prospectPatch);
       for (const v of vendorsToRemove) {
         tx.update(col('clients').doc(p.clientId), {
           closingVendors: FieldValue.arrayRemove(v)
