@@ -2242,6 +2242,10 @@ async function runOpportunityContactOp(data, context, op) {
   }
 }
 
+/** { force?, dbSuffix? } -> { status, count } */
+exports.seedOpportunityContactRolesAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.seedOpportunityContactRoles({ caller, force: d.force === true })));
+
 /** { includeInactive?, dbSuffix? } -> { roles: [...] } */
 exports.listOpportunityContactRolesAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
   (service, caller, d) => service.listOpportunityContactRoles({ caller, includeInactive: d.includeInactive === true })));

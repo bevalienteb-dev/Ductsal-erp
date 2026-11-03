@@ -159,9 +159,31 @@ function createOpportunityContactsService({
     }
   }
 
+  async function seedOpportunityContactRoles({ caller, force = false }) {
+    await requireManager(caller, 'inicializar el catálogo de roles');
+    const snap = await col('opportunityContactRoles').limit(1).get();
+    if (!snap.empty && !force) {
+      const existing = await col('opportunityContactRoles').get();
+      return {
+        status: 'already-seeded',
+        message: 'El catálogo de roles ya contiene elementos',
+        count: existing.size
+      };
+    }
+    const at = now().toISOString();
+    for (const r of INITIAL_ROLES) {
+      await col('opportunityContactRoles').doc(r.id).set({
+        ...r,
+        createdAt: at,
+        updatedAt: at,
+        createdBy: caller.cid
+      }, { merge: true });
+    }
+    return { status: 'seeded', count: INITIAL_ROLES.length };
+  }
+
   async function listOpportunityContactRoles({ caller, includeInactive = false }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
-    await seedInitialRolesIfEmpty();
 
     const snap = await col('opportunityContactRoles').get();
     let roles = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -178,7 +200,7 @@ function createOpportunityContactsService({
 
   async function manageOpportunityContactRole({ caller, roleId, name, activo, orden, action = 'update' }) {
     await requireManager(caller, 'gestionar el catálogo de roles');
-    await seedInitialRolesIfEmpty();
+    await seedOpportunityContactRoles({ caller });
 
     const at = now().toISOString();
 
@@ -259,7 +281,6 @@ function createOpportunityContactsService({
     const roleRef = col('opportunityContactRoles').doc(rId);
 
     const at = now().toISOString();
-    await seedInitialRolesIfEmpty();
 
     return db.runTransaction(async tx => {
       // 1. All reads must occur before any writes in Firestore transactions
@@ -751,6 +772,7 @@ function createOpportunityContactsService({
   return {
     names,
     resolveCaller,
+    seedOpportunityContactRoles,
     seedInitialRolesIfEmpty,
     listOpportunityContactRoles,
     manageOpportunityContactRole,

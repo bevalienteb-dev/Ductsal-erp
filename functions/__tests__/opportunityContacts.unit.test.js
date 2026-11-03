@@ -12,6 +12,7 @@ const {
   ServiceError
 } = require('../opportunityContactsService');
 const {
+  seedOpportunityContactRolesAdmin,
   listOpportunityContactRolesAdmin,
   manageOpportunityContactRoleAdmin,
   addOpportunityContactAdmin,
@@ -198,10 +199,38 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 1. Roles Catalogue
   // =========================================================================
   describe('Roles Catalogue', () => {
-    test('seeds initial 8 roles automatically if catalogue is empty', async () => {
+    test('listOpportunityContactRoles is strictly read-only and does not write to Firestore when catalogue is empty', async () => {
       const res = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
-      expect(res.roles).toHaveLength(8);
-      expect(res.roles.map(r => r.name)).toEqual([
+      expect(res.roles).toEqual([]);
+      // Zero writes verification: no role documents in state
+      const roleDocs = Object.keys(state.docs).filter(k => k.startsWith('opportunity_contact_roles_prod/'));
+      expect(roleDocs).toHaveLength(0);
+    });
+
+    test('seedOpportunityContactRoles explicitly seeds initial 8 roles and restricts to managers', async () => {
+      // Vendedor rejected
+      await expect(
+        svc.seedOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } })
+      ).rejects.toThrow('Solo un gerente puede inicializar el catálogo de roles');
+
+      // Gestor rejected
+      await expect(
+        svc.seedOpportunityContactRoles({ caller: { uid: 'uid-ges', cid: GES, role: 'gestor' } })
+      ).rejects.toThrow('Solo un gerente puede inicializar el catálogo de roles');
+
+      // Manager allowed
+      const seeded = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
+      expect(seeded.status).toBe('seeded');
+      expect(seeded.count).toBe(8);
+
+      // Re-seeding without force reports already-seeded
+      const reseed = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
+      expect(reseed.status).toBe('already-seeded');
+
+      // Query now returns 8 roles
+      const list = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(list.roles).toHaveLength(8);
+      expect(list.roles.map(r => r.name)).toEqual([
         'Decisor',
         'Comprador Económico',
         'Evaluador Técnico',
@@ -243,6 +272,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
     });
 
     test('permits activating and deactivating roles in catalogue', async () => {
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       await svc.listOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
 
       // Deactivate 'otro'
@@ -882,6 +912,10 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 6. Cloud Functions Callables Integration
   // =========================================================================
   describe('Cloud Functions Callables Integration', () => {
+    beforeEach(async () => {
+      await seedOpportunityContactRolesAdmin({ dbSuffix: '_prod' }, ctx('uid-mgr', { manager: true, cid: MGR }));
+    });
+
     test('addOpportunityContactAdmin, setOpportunityPrimaryContactAdmin, and listOpportunityContactsAdmin', async () => {
       // 1. Add participant
       const addRes = await addOpportunityContactAdmin({
@@ -951,6 +985,10 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 7. Canonical Fields Consistency & Deleted Opportunity Exclusion
   // =========================================================================
   describe('Canonical Fields Consistency & Deleted Opportunity Exclusion', () => {
+    beforeEach(async () => {
+      await seedOpportunityContactRolesAdmin({ dbSuffix: '_prod' }, ctx('uid-mgr', { manager: true, cid: MGR }));
+    });
+
     test('immediately excludes deleted opportunities from all subordinate operations and listings', async () => {
       // First, create an active participant on OPP_1
       await addOpportunityContactAdmin({

@@ -56,6 +56,14 @@
 
     // ---------- Role Catalogue ----------
 
+    async function seedOpportunityContactRoles(fb, { force = false, dbSuffix } = {}) {
+        const r = await fb.functions().httpsCallable('seedOpportunityContactRolesAdmin')({
+            force: force === true,
+            dbSuffix
+        });
+        return r.data;
+    }
+
     async function listOpportunityContactRoles(fb, { includeInactive = false, dbSuffix } = {}) {
         const r = await fb.functions().httpsCallable('listOpportunityContactRolesAdmin')({
             includeInactive,
@@ -173,6 +181,7 @@
     }
 
     return {
+        seedOpportunityContactRoles,
         listOpportunityContactRoles,
         manageOpportunityContactRole,
         addOpportunityContact,
