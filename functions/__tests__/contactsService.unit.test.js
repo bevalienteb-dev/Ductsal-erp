@@ -245,6 +245,84 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
       expect(item.createdBy).toBeUndefined();
       expect(item.fecha_creacion).toBeUndefined();
     });
+
+    test('getContact enforces strict portfolio isolation and authorship across all scenarios', async () => {
+      const callerV1 = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const callerV2 = { uid: 'uid-v2', cid: V2, role: 'vendedor', name: 'Vendedor Dos' };
+      const callerMgr = { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' };
+
+      // 1. Contact created by V1 and linked to C1 (V1 portfolio)
+      const resA = await svc.createContact({
+        caller: callerV1,
+        contact: { nombres: 'Carlos', apellidos: 'Propio', correo: 'carlos@v1.test' }
+      });
+      await svc.linkContactToAccount({
+        caller: callerV1,
+        accountId: 'C1',
+        contactId: resA.contact.id,
+        cargo: 'Gerente'
+      });
+
+      // 2. Contact created by V2 and linked exclusively to C2 (alien to V1)
+      const resB = await svc.createContact({
+        caller: callerV2,
+        contact: { nombres: 'Bernardo', apellidos: 'Ajeno', correo: 'bernardo@v2.test' }
+      });
+      await svc.linkContactToAccount({
+        caller: callerV2,
+        accountId: 'C2',
+        contactId: resB.contact.id,
+        cargo: 'Director'
+      });
+
+      // 3. Shared contact created by V2, linked to both C1 (V1) and C2 (V2)
+      const resC = await svc.createContact({
+        caller: callerV2,
+        contact: { nombres: 'Cecilia', apellidos: 'Compartida', correo: 'cecilia@multi.test' }
+      });
+      await svc.linkContactToAccount({
+        caller: callerV2,
+        accountId: 'C2',
+        contactId: resC.contact.id,
+        cargo: 'Asesora'
+      });
+      await svc.linkContactToAccount({
+        caller: callerMgr,
+        accountId: 'C1',
+        contactId: resC.contact.id,
+        cargo: 'Consultora'
+      });
+
+      // 4. Orphan contact created by V1 without active relations
+      const resD = await svc.createContact({
+        caller: callerV1,
+        contact: { nombres: 'David', apellidos: 'CreadoPorV1', correo: 'david@v1.test' }
+      });
+
+      // Scenario A: V1 queries portfolio contact via backend -> ALLOWED
+      const getA = await svc.getContact({ caller: callerV1, contactId: resA.contact.id });
+      expect(getA.contact.nombres).toBe('Carlos');
+
+      // Scenario B: V1 queries exclusive V2 contact via backend -> DENIED
+      await expect(svc.getContact({ caller: callerV1, contactId: resB.contact.id }))
+        .rejects.toThrow('No tiene permisos para consultar los datos de esta persona');
+
+      // Scenario C: V1 queries shared contact linked to own account -> ALLOWED
+      const getC = await svc.getContact({ caller: callerV1, contactId: resC.contact.id });
+      expect(getC.contact.nombres).toBe('Cecilia');
+
+      // Scenario D: V1 queries contact created by them without active relations -> ALLOWED (authorship policy)
+      const getD = await svc.getContact({ caller: callerV1, contactId: resD.contact.id });
+      expect(getD.contact.nombres).toBe('David');
+
+      // Scenario E: Manager queries all contacts -> ALLOWED
+      const mgrA = await svc.getContact({ caller: callerMgr, contactId: resA.contact.id });
+      const mgrB = await svc.getContact({ caller: callerMgr, contactId: resB.contact.id });
+      const mgrD = await svc.getContact({ caller: callerMgr, contactId: resD.contact.id });
+      expect(mgrA.contact.nombres).toBe('Carlos');
+      expect(mgrB.contact.nombres).toBe('Bernardo');
+      expect(mgrD.contact.nombres).toBe('David');
+    });
   });
 
   // ===========================================================================

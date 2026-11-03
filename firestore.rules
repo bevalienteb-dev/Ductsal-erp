@@ -90,8 +90,7 @@ service cloud.firestore {
 
     // ---------- contacts (persons and account relations - Phase 2 Block 1) ----------
     match /contacts_prod/{contactId} {
-      allow get: if validSession();
-      allow list: if isPrivileged();
+      allow get, list: if isPrivileged();
       allow write: if false;
     }
 
