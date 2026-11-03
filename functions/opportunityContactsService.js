@@ -467,7 +467,11 @@ function createOpportunityContactsService({
         return { status: 'unchanged', primaryOpportunityContactId: ocId };
       }
 
-      // 3. Read previous primary participant if different
+      // 3. Read any existing participants currently marked as primary (all reads before writes)
+      const currentPrimariesSnap = await tx.get(
+        col('opportunityContacts').where('opportunityId', '==', oppId).where('isPrimary', '==', true)
+      );
+
       let prevPrimaryRef = null;
       let prevPrimaryData = null;
       if (p.primaryOpportunityContactId && p.primaryOpportunityContactId !== ocId) {
@@ -476,8 +480,21 @@ function createOpportunityContactsService({
         if (prevSnap.exists) prevPrimaryData = prevSnap.data() || {};
       }
 
-      // 4. Writes
-      if (prevPrimaryRef && prevPrimaryData && prevPrimaryData.isPrimary === true) {
+      // 4. Writes: ensure all other primaries are demoted and target is promoted
+      const demotedIds = new Set();
+      currentPrimariesSnap.docs.forEach(d => {
+        if (d.id !== ocId) {
+          demotedIds.add(d.id);
+          tx.update(col('opportunityContacts').doc(d.id), {
+            isPrimary: false,
+            updatedAt: at,
+            updatedBy: caller.cid,
+            updatedByName: caller.name || ''
+          });
+        }
+      });
+
+      if (prevPrimaryRef && prevPrimaryData && prevPrimaryData.isPrimary === true && !demotedIds.has(p.primaryOpportunityContactId)) {
         tx.update(prevPrimaryRef, {
           isPrimary: false,
           updatedAt: at,
@@ -617,16 +634,22 @@ function createOpportunityContactsService({
       requireOpportunityAccess(caller, p);
 
       // Invariants:
-      // a) Allowed ONLY in initial stage 'prospecto'
-      if (p.etapa !== 'prospecto') {
+      // a) Allowed ONLY in initial stage 'prospecto' and active state
+      if (p.estado !== 'activo' || p.etapa !== 'prospecto') {
         throw new ServiceError('failed-precondition', 'El cambio de cuenta solo está permitido en la etapa inicial "prospecto"');
       }
 
-      // b) Forbidden if active quotation exists
+      // b) Forbidden if active quotation exists across all ERP quotation sources
       const hasActiveQuote = (Array.isArray(p.cotizaciones) && p.cotizaciones.length > 0)
         || (p.datos && Array.isArray(p.datos.doc_oferta) && p.datos.doc_oferta.length > 0)
+        || (Array.isArray(p.doc_oferta) && p.doc_oferta.length > 0)
+        || (p.datos && Array.isArray(p.datos.doc_costos) && p.datos.doc_costos.length > 0)
+        || (Array.isArray(p.doc_costos) && p.doc_costos.length > 0)
         || (p.precio_cotizado && Number(p.precio_cotizado) > 0)
-        || Boolean(p.activeQuoteId);
+        || (p.costo_venta && Number(p.costo_venta) > 0)
+        || Boolean(p.activeQuoteId)
+        || Boolean(p.cotizacion)
+        || (p.datos && (Boolean(p.datos.cotizacion) || Boolean(p.datos.doc_cotizacion) || (Array.isArray(p.datos.cotizaciones) && p.datos.cotizaciones.length > 0)));
 
       if (hasActiveQuote) {
         throw new ServiceError('failed-precondition', 'No se puede cambiar la cuenta si existe una cotización activa');

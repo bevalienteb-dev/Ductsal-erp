@@ -228,7 +228,7 @@
 
         // 2. Registro del Historial de Navegación
         const previousSection = _deps.getLastViewedSection();
-        if (viewId !== 'detail-view') {
+        if (viewId !== 'detail-view' && !viewId.includes('opportunity-contact') && !viewId.includes('opportunity-account')) {
             _deps.setLastViewedSection(viewId);
         }
         if (typeof _deps.setCurrentView === 'function') {

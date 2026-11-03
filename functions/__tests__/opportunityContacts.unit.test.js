@@ -525,6 +525,50 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
       ).rejects.toThrow('Conflicto de concurrencia al designar contacto principal');
     });
 
+    test('concurrent racing operations with Promise.all guarantee exactly one primary contact', async () => {
+      // Setup Carlos and Ana as active participants, neither primary
+      await svc.addOpportunityContact({
+        caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
+        opportunityId: 'OPP_1',
+        accountContactId: 'AC_DELTA_CARLOS',
+        roleId: 'decisor',
+        isPrimary: false
+      });
+      await svc.addOpportunityContact({
+        caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
+        opportunityId: 'OPP_1',
+        accountContactId: 'AC_DELTA_ANA',
+        roleId: 'comprador_economico',
+        isPrimary: false
+      });
+
+      // Launch both promotions concurrently in a Promise.all race
+      await Promise.all([
+        svc.setOpportunityPrimaryContact({
+          caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' },
+          opportunityId: 'OPP_1',
+          opportunityContactId: 'OC_OPP_1_AC_DELTA_CARLOS'
+        }),
+        svc.setOpportunityPrimaryContact({
+          caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' },
+          opportunityId: 'OPP_1',
+          opportunityContactId: 'OC_OPP_1_AC_DELTA_ANA'
+        })
+      ]);
+
+      const prospect = state.docs['prospects_prod/OPP_1'];
+      const carlos = state.docs['opportunity_contacts_prod/OC_OPP_1_AC_DELTA_CARLOS'];
+      const ana = state.docs['opportunity_contacts_prod/OC_OPP_1_AC_DELTA_ANA'];
+
+      // Invariant: Exactly ONE participant is primary, and prospect SSOT matches
+      const primaryCount = (carlos.isPrimary === true ? 1 : 0) + (ana.isPrimary === true ? 1 : 0);
+      expect(primaryCount).toBe(1);
+
+      const winningId = carlos.isPrimary ? 'OC_OPP_1_AC_DELTA_CARLOS' : 'OC_OPP_1_AC_DELTA_ANA';
+      expect(prospect.primaryOpportunityContactId).toBe(winningId);
+      expect(prospect.primaryContactSnapshot.nombre).toBe(carlos.isPrimary ? 'Carlos Roberto Mendoza Gómez' : 'Ana María López Ramos');
+    });
+
     test('removing primary contact clears prospect SSOT without auto-assigning another', async () => {
       await svc.addOpportunityContact({
         caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
@@ -648,6 +692,46 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
       ).rejects.toThrow();
     });
 
+    test('rejects account change across all quotation indicator formats in the ERP', async () => {
+      const cases = [
+        { label: 'cotizaciones array', patch: { cotizaciones: ['oferta_v1.pdf'] } },
+        { label: 'datos.doc_oferta', patch: { datos: { doc_oferta: [{ name: 'of.pdf' }] } } },
+        { label: 'root doc_oferta', patch: { doc_oferta: ['of.pdf'] } },
+        { label: 'datos.doc_costos', patch: { datos: { doc_costos: [{ name: 'cost.pdf' }] } } },
+        { label: 'root doc_costos', patch: { doc_costos: ['cost.pdf'] } },
+        { label: 'precio_cotizado > 0', patch: { precio_cotizado: 15000 } },
+        { label: 'costo_venta > 0', patch: { costo_venta: 8000 } },
+        { label: 'activeQuoteId flag', patch: { activeQuoteId: 'QUOTE_999' } },
+        { label: 'cotizacion string', patch: { cotizacion: 'QT_123' } },
+        { label: 'datos.cotizaciones array', patch: { datos: { cotizaciones: ['q1.pdf'] } } }
+      ];
+
+      for (const c of cases) {
+        state.docs['prospects_prod/OPP_TEST_QUOTE'] = {
+          id: 'OPP_TEST_QUOTE',
+          codigo: '2026-999',
+          proyecto: 'Proyecto Test Cotizaciones',
+          clientId: 'ACC_DELTA',
+          vendedorId: V1,
+          createdBy: V1,
+          etapa: 'prospecto',
+          estado: 'activo',
+          _version: 1,
+          eliminado: false,
+          ...c.patch
+        };
+
+        await expect(
+          svc.changeOpportunityAccount({
+            caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' },
+            opportunityId: 'OPP_TEST_QUOTE',
+            newAccountId: 'ACC_GAMMA',
+            motivo: `Intento con ${c.label}`
+          })
+        ).rejects.toThrow('No se puede cambiar la cuenta si existe una cotización activa');
+      }
+    });
+
     test('rejects account change to an account outside seller portfolio', async () => {
       // V1 cannot transfer OPP_1 to ACC_OMEGA (ACC_OMEGA belongs to V2)
       await expect(
@@ -718,6 +802,79 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
           includeInactive: true
         })
       ).rejects.toThrow('La oportunidad fue eliminada');
+    });
+
+    test('handles large participant volume (> 400) without exceeding Firestore limits and completes idempotently', async () => {
+      // Seed 450 participants for OPP_1
+      for (let i = 1; i <= 450; i++) {
+        const id = `OC_OPP_1_BULK_${i}`;
+        state.docs[`opportunity_contacts_prod/${id}`] = {
+          id,
+          opportunityId: 'OPP_1',
+          accountContactId: `AC_BULK_${i}`,
+          isPrimary: i === 1,
+          estado_participacion: 'activo',
+          eliminado: false
+        };
+      }
+
+      const res = await deleteProspectAdmin(
+        { prospectId: 'OPP_1', motivo: 'Eliminación masiva de participantes' },
+        ctx('uid-mgr', { manager: true, cid: MGR })
+      );
+      expect(res.status).toBe('deleted');
+
+      // Verify all 450 participants are marked eliminado: true, inactivo, isPrimary: false
+      let activeRemaining = 0;
+      for (let i = 1; i <= 450; i++) {
+        const id = `OC_OPP_1_BULK_${i}`;
+        const doc = state.docs[`opportunity_contacts_prod/${id}`];
+        if (doc.eliminado !== true || doc.estado_participacion !== 'inactivo' || doc.isPrimary !== false) {
+          activeRemaining++;
+        }
+      }
+      expect(activeRemaining).toBe(0);
+      expect(state.docs['prospects_prod/OPP_1'].eliminado).toBe(true);
+    });
+
+    test('recovers from interrupted deletion when prospect was already marked eliminado', async () => {
+      // Simulate partially applied deletion where prospect is already deleted but participants remain
+      state.docs['prospects_prod/OPP_1'].eliminado = true;
+      state.docs['prospects_prod/OPP_1'].motivo_eliminacion = 'Eliminación interrumpida previa';
+
+      state.docs['opportunity_contacts_prod/OC_REMAINING_1'] = {
+        id: 'OC_REMAINING_1',
+        opportunityId: 'OPP_1',
+        estado_participacion: 'activo',
+        isPrimary: true,
+        eliminado: false
+      };
+      state.docs['opportunity_contacts_prod/OC_REMAINING_2'] = {
+        id: 'OC_REMAINING_2',
+        opportunityId: 'OPP_1',
+        estado_participacion: 'activo',
+        isPrimary: false,
+        eliminado: false
+      };
+
+      // Retry deleteProspectAdmin
+      const retryRes = await deleteProspectAdmin(
+        { prospectId: 'OPP_1', motivo: 'Reintento de recuperación' },
+        ctx('uid-mgr', { manager: true, cid: MGR })
+      );
+
+      expect(retryRes.status).toBe('deleted');
+      expect(retryRes.recoveredParticipants).toBeGreaterThanOrEqual(2);
+
+      expect(state.docs['opportunity_contacts_prod/OC_REMAINING_1'].eliminado).toBe(true);
+      expect(state.docs['opportunity_contacts_prod/OC_REMAINING_2'].eliminado).toBe(true);
+
+      // Third call when all participants are already clean returns unchanged
+      const thirdRes = await deleteProspectAdmin(
+        { prospectId: 'OPP_1', motivo: 'Tercer llamado idempotente' },
+        ctx('uid-mgr', { manager: true, cid: MGR })
+      );
+      expect(thirdRes.status).toBe('unchanged');
     });
   });
 

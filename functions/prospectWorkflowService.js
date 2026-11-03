@@ -1611,12 +1611,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     await requireManager(caller, 'eliminar proyectos');
     reqDocId(prospectId, 'prospectId');
     const reason = reqString(motivo, 'El motivo de la eliminación', 300);
-    return db.runTransaction(async tx => {
+
+    const txResult = await db.runTransaction(async tx => {
       const ref = col('prospects').doc(prospectId);
       const snap = await tx.get(ref);
       if (!snap.exists) return { status: 'absent' }; // never existed (or deleted by the previous, physical implementation)
       const p = snap.data() || {};
-      if (p.eliminado === true) return { status: 'unchanged' }; // retry / double click: the first reason and author stay
+      if (p.eliminado === true) return { status: 'already_deleted', prospect: p };
+
       const client = await loadClient(tx, p);
 
       let vendorsToRemove = [];
@@ -1638,12 +1640,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         vendorsToRemove = candidates.filter(v => !remainingClosing.has(String(v)));
       }
 
-      // Phase 2 Block B2: Read all opportunity participants before writing
+      // Phase 2 Block B2: Read initial chunk of opportunity participants (bounded to 400 to respect Firestore 500-op limit)
       const oppContactsSnap = await tx.get(
-        col('opportunityContacts').where('opportunityId', '==', prospectId)
+        col('opportunityContacts').where('opportunityId', '==', prospectId).limit(400)
       );
 
-      // Writes: cascade logical deletion to all subordinate participants
+      // Writes: cascade logical deletion to subordinate participants in this transaction
       oppContactsSnap.docs.forEach(d => {
         const oc = d.data() || {};
         if (oc.eliminado !== true) {
@@ -1678,6 +1680,44 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       addDeletionNotice(tx, caller, p, client, 'Proyecto', `Proyecto completo (${p.codigo || p.id}) eliminado. Motivo: ${reason}`);
       return { status: 'deleted' };
     });
+
+    if (txResult.status === 'absent') return { status: 'absent' };
+
+    // Idempotent and recoverable batch cleanup for any remaining participants beyond 400 (or if previously partially processed)
+    let cleanedAdditional = 0;
+    const remainingSnap = await col('opportunityContacts')
+      .where('opportunityId', '==', prospectId)
+      .get();
+
+    const toClean = remainingSnap.docs.filter(d => {
+      const data = d.data() || {};
+      return data.eliminado !== true || data.estado_participacion === 'activo' || data.isPrimary === true;
+    });
+
+    for (let i = 0; i < toClean.length; i += 400) {
+      const chunk = toClean.slice(i, i + 400);
+      const batch = db.batch();
+      for (const d of chunk) {
+        batch.update(col('opportunityContacts').doc(d.id), {
+          eliminado: true,
+          estado_participacion: 'inactivo',
+          isPrimary: false,
+          fecha_eliminacion: iso(),
+          eliminado_por_id: caller.cid,
+          eliminado_por: caller.name || '',
+          updatedAt: iso(),
+          updatedBy: caller.cid
+        });
+        cleanedAdditional++;
+      }
+      await batch.commit();
+    }
+
+    if (txResult.status === 'already_deleted') {
+      return cleanedAdditional > 0 ? { status: 'deleted', recoveredParticipants: cleanedAdditional } : { status: 'unchanged' };
+    }
+
+    return { status: 'deleted' };
   }
 
   // =====================================================================================================

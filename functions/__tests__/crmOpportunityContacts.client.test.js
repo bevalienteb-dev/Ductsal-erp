@@ -184,10 +184,59 @@ describe('Phase 2 Block B2 Frontend & Security Audit', () => {
     expect(indexHtml).toContain('id="opportunity-participants-card"');
   });
 
-  test('index.html contains B2 modals for adding, editing, and changing account', () => {
-    expect(indexHtml).toContain('id="modal-add-opportunity-contact"');
-    expect(indexHtml).toContain('id="modal-edit-opportunity-contact"');
-    expect(indexHtml).toContain('id="modal-change-opportunity-account"');
+  test('index.html has zero B2 modals (full-screen navigation criterion enforced)', () => {
+    expect(indexHtml).not.toContain('id="modal-add-opportunity-contact"');
+    expect(indexHtml).not.toContain('id="modal-edit-opportunity-contact"');
+    expect(indexHtml).not.toContain('id="modal-change-opportunity-account"');
+  });
+
+  test('index.html contains all 5 full-screen view sections integrated as ERP view-sections', () => {
+    const views = [
+      'add-opportunity-contact-view',
+      'edit-opportunity-contact-view',
+      'set-opportunity-primary-contact-view',
+      'remove-opportunity-contact-view',
+      'change-opportunity-account-view'
+    ];
+    for (const v of views) {
+      expect(indexHtml).toContain(`id="${v}"`);
+      expect(indexHtml).toContain(`<section id="${v}" class="view-section"`);
+    }
+  });
+
+  test('each full-screen view includes header, context banner, back action, and status banner', () => {
+    const views = [
+      'add-opportunity-contact-view',
+      'edit-opportunity-contact-view',
+      'set-opportunity-primary-contact-view',
+      'remove-opportunity-contact-view',
+      'change-opportunity-account-view'
+    ];
+    for (const v of views) {
+      const start = indexHtml.indexOf(`id="${v}"`);
+      const end = indexHtml.indexOf('</section>', start);
+      const sectionHtml = indexHtml.substring(start, end);
+
+      expect(sectionHtml).toContain('cancelOpportunityContactOperation()');
+      expect(sectionHtml).toContain('← Volver a Oportunidad');
+      expect(sectionHtml).toContain('opp-context-banner');
+      expect(sectionHtml).toContain('opp-contact-status-banner');
+    }
+  });
+
+  test('opportunity_contacts_ui.js contains zero popup confirmations (no confirm, prompt, or alert)', () => {
+    expect(oppContactsUi).not.toMatch(/\bconfirm\s*\(/);
+    expect(oppContactsUi).not.toMatch(/\bprompt\s*\(/);
+    expect(oppContactsUi).not.toMatch(/\balert\s*\(/);
+  });
+
+  test('opportunity_contacts_ui.js exports full-screen view navigation and cancel methods', () => {
+    expect(oppContactsUi).toContain('openAddOpportunityContactView');
+    expect(oppContactsUi).toContain('openEditOpportunityContactRoleView');
+    expect(oppContactsUi).toContain('openSetOpportunityPrimaryContactView');
+    expect(oppContactsUi).toContain('openRemoveOpportunityContactView');
+    expect(oppContactsUi).toContain('openChangeOpportunityAccountView');
+    expect(oppContactsUi).toContain('cancelOpportunityContactOperation');
   });
 
   test('index.html includes script tags for crm_opportunity_contacts.js and opportunity_contacts_ui.js', () => {

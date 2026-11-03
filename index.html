@@ -1101,6 +1101,366 @@
                 </div>
             </section>
 
+            <!-- ========================================================================= -->
+            <!-- VISTAS OPERATIVAS FULL-SCREEN: PARTICIPANTES COMERCIALES (FASE 2 B2)      -->
+            <!-- ========================================================================= -->
+
+            <!-- Vista 1: Agregar Participante a Oportunidad -->
+            <section id="add-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: white; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>👥</span> Asignar Participante Comercial
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Selecciona una persona vinculada activamente a la cuenta y define su rol de decisión o compra en el proyecto.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto de la Oportunidad y Cuenta -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto / Código</span>
+                            <strong id="add-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                            <span id="add-opp-context-code" class="badge bg-neutral ml-1" style="font-size: 0.72rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial (Cliente)</span>
+                            <strong id="add-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Etapa Comercial</span>
+                            <span id="add-opp-context-stage" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; text-transform: capitalize;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Responsable / Vendedor</span>
+                            <strong id="add-opp-context-vendor" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario Completo -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="add-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-add-opportunity-contact" onsubmit="submitAddOpportunityContact(event)">
+                        <input type="hidden" id="add-opp-contact-opp-id">
+                        <input type="hidden" id="add-opp-contact-acc-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Contacto de la Cuenta *</label>
+                            <select id="add-opp-contact-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando contactos...</option>
+                            </select>
+                            <small style="color: var(--text-muted); display: block; margin-top: 6px; font-size: 0.8rem;">
+                                Solo se listan relaciones activas de la cuenta. No se pueden crear personas desde la oportunidad.
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Rol Comercial / Rol de Compra *</label>
+                            <select id="add-opp-contact-role-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando roles...</option>
+                            </select>
+                            <small style="color: var(--text-muted); display: block; margin-top: 6px; font-size: 0.8rem;">
+                                Define el papel que desempeña el participante en este proceso comercial (Decisor, Comprador, Evaluador Técnico, etc.).
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-3" style="background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 0.85rem 1rem;">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: white; margin: 0;">
+                                <input type="checkbox" id="add-opp-contact-is-primary" style="width: 18px; height: 18px; accent-color: var(--brand-gold);">
+                                <span style="font-size: 0.92rem;">⭐ <strong>Designar como Contacto Principal</strong> de la oportunidad</span>
+                            </label>
+                            <small style="color: var(--text-secondary); display: block; margin-top: 6px; margin-left: 28px; font-size: 0.8rem; line-height: 1.4;">
+                                La oportunidad solo puede tener un contacto principal a la vez. Si ya existe un contacto principal, será sustituido de forma atómica.
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Notas Comerciales / Especificaciones Técnicas (Opcional)</label>
+                            <textarea id="add-opp-contact-notes" rows="3" placeholder="Ej. Valida especificaciones técnicas de ductos, horarios de visita a obra y requerimientos de cotización..." style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-add-opp-contact" style="font-weight: 600;">Asignar a Oportunidad</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 2: Editar Rol y Notas de Participante -->
+            <section id="edit-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: white; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>✏️</span> Modificar Rol Comercial de Participante
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Actualiza la responsabilidad comercial, el rol de compra o las notas internas de seguimiento para este participante.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="edit-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="edit-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Participante</span>
+                            <strong id="edit-opp-contact-name" style="color: #60a5fa; font-size: 0.95rem;">-</strong>
+                            <div id="edit-opp-contact-cargo" style="font-size: 0.8rem; color: var(--text-secondary);">-</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Condición</span>
+                            <span id="edit-opp-contact-badge-primary" class="badge" style="background: rgba(212, 175, 55, 0.2); color: var(--brand-gold); display: none;">⭐ Contacto Principal</span>
+                            <span id="edit-opp-contact-badge-sec" class="badge bg-neutral">Participante Comercial</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="edit-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-edit-opportunity-contact" onsubmit="submitEditOpportunityContactRole(event)">
+                        <input type="hidden" id="edit-opp-contact-id">
+                        <input type="hidden" id="edit-opp-contact-opp-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Nuevo Rol Comercial *</label>
+                            <select id="edit-opp-contact-role-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando roles...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Notas / Observaciones de Participación</label>
+                            <textarea id="edit-opp-contact-notes" rows="3" placeholder="Notas sobre la participación comercial..." style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-edit-opp-contact" style="font-weight: 600;">Guardar Cambios</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 3: Designar o Cambiar Contacto Principal -->
+            <section id="set-opportunity-primary-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: var(--brand-gold); font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>⭐</span> Designar Contacto Comercial Principal
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Establece el interlocutor comercial principal responsable de la interacción en esta oportunidad.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="set-primary-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="set-primary-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Comparativa y Confirmación -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="set-primary-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.5rem;" id="set-primary-comparison-grid">
+                        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem;">
+                            <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 6px;">Contacto Principal Actual</span>
+                            <div id="set-primary-current-box">
+                                <strong id="set-primary-current-name" style="color: white; font-size: 1rem; display: block;">(Ninguno)</strong>
+                                <span id="set-primary-current-cargo" style="color: var(--text-secondary); font-size: 0.82rem; display: block; margin-top: 2px;">Sin designación previa</span>
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(212, 175, 55, 0.08); border: 1px solid var(--brand-gold); border-radius: 8px; padding: 1rem;">
+                            <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; display: block; margin-bottom: 6px;">Nuevo Principal Propuesto</span>
+                            <div>
+                                <strong id="set-primary-target-name" style="color: white; font-size: 1.05rem; display: block;">-</strong>
+                                <span id="set-primary-target-cargo" style="color: var(--text-secondary); font-size: 0.82rem; display: block; margin-top: 2px;">-</span>
+                                <span id="set-primary-target-role" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; font-size: 0.72rem; margin-top: 6px; display: inline-block;">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 1.5rem; font-size: 0.84rem; color: #93c5fd; line-height: 1.45;">
+                        ℹ️ <strong>Regla de negocio:</strong> La oportunidad mantiene exactamente un contacto principal a la vez. Al confirmar, la fuente de verdad (SSOT) se actualizará de forma atómica bajo control de concurrencia y las proyecciones se sincronizarán inmediatamente.
+                    </div>
+
+                    <input type="hidden" id="set-primary-opp-id">
+                    <input type="hidden" id="set-primary-part-id">
+
+                    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                        <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                        <button type="button" class="btn-primary" id="btn-confirm-set-primary" onclick="confirmSetOpportunityPrimaryContact()" style="background: var(--brand-gold); color: var(--brand-blue); border-color: var(--brand-gold); font-weight: 700;">
+                            ⭐ Confirmar Contacto Principal
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Vista 4: Retirar Participante de Oportunidad -->
+            <section id="remove-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: #ef4444; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>🛑</span> Retirar Participante de la Oportunidad
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Desvincula a este participante del seguimiento comercial de la oportunidad conservando la trazabilidad.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="remove-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="remove-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Participante a Desvincular</span>
+                            <strong id="remove-opp-contact-name" style="color: white; font-size: 0.95rem;">-</strong>
+                            <div id="remove-opp-contact-cargo" style="font-size: 0.8rem; color: var(--text-secondary);">-</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Rol Asignado</span>
+                            <span id="remove-opp-contact-role" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario de Retiro -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="remove-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <div id="remove-opp-primary-warning" style="display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 1.25rem; color: #fca5a5; font-size: 0.85rem; line-height: 1.45;">
+                        ⚠️ <strong>Advertencia Crítica:</strong> Este participante es actualmente el <strong>Contacto Principal</strong> de la oportunidad. Al retirarlo, la oportunidad quedará sin contacto principal asignado. El sistema no reasignará automáticamente a otro participante para evitar falsas asunciones.
+                    </div>
+
+                    <form id="form-remove-opportunity-contact" onsubmit="confirmRemoveOpportunityContact(event)">
+                        <input type="hidden" id="remove-opp-contact-id">
+                        <input type="hidden" id="remove-opp-contact-opp-id">
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Motivo obligatorio del retiro / desvinculación *</label>
+                            <textarea id="remove-opp-contact-motivo" rows="3" placeholder="Explique por qué se desvincula este participante (ej. Cambio de responsabilidades en la constructora, salida de la empresa, ya no interviene en decisiones de compra)..." required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-danger" id="btn-confirm-remove-contact" style="background: #dc2626; border-color: #ef4444; font-weight: 700;">
+                                🛑 Confirmar Retiro de Participante
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 5: Cambiar Cuenta Comercial de la Oportunidad -->
+            <section id="change-opportunity-account-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: #60a5fa; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>🔄</span> Cambiar Cuenta Comercial de la Oportunidad
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Reasigna esta oportunidad en etapa temprana a otra cuenta de tu cartera de clientes.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="change-acc-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                            <span id="change-acc-context-code" class="badge bg-neutral ml-1" style="font-size: 0.72rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Actual</span>
+                            <strong id="change-acc-context-current-account" style="color: #fca5a5; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Etapa Comercial</span>
+                            <span id="change-acc-context-stage" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; text-transform: capitalize;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reglas de Negocio -->
+                <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; font-size: 0.85rem; line-height: 1.5; color: #fca5a5; max-width: 800px;">
+                    <strong>⚠️ Reglas de Gobernanza Comercial:</strong>
+                    <ul style="margin: 6px 0 0 1.25rem; padding: 0;">
+                        <li>Esta operación está permitida exclusivamente en la etapa inicial <strong>"prospecto"</strong>.</li>
+                        <li>No debe existir ninguna <strong>cotización, oferta formal ni cuadro de costos</strong> activo.</li>
+                        <li>Al transferir la oportunidad, <strong>todos los participantes asignados a la cuenta anterior se archivarán como registros históricos inactivos</strong>.</li>
+                        <li>El contacto principal actual será removido y la visibilidad de la nueva cuenta se sincronizará automáticamente.</li>
+                    </ul>
+                </div>
+
+                <!-- Formulario -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="change-opp-acc-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-change-opportunity-account" onsubmit="submitChangeOpportunityAccount(event)">
+                        <input type="hidden" id="change-opp-acc-opp-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Nueva Cuenta Comercial (Cliente Destino) *</label>
+                            <select id="change-opp-acc-client-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando cuentas...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Motivo obligatorio de la transferencia de cuenta *</label>
+                            <textarea id="change-opp-acc-motivo" rows="3" placeholder="Explique la justificación comercial para transferir este proyecto a una nueva cuenta..." required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-change-opp-acc" style="background: #2563eb; border-color: #3b82f6; font-weight: 600;">Confirmar Cambio de Cuenta</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -2219,125 +2579,6 @@
         </div>
     </div>
 
-    <!-- Modal: Agregar Participante a Oportunidad (Fase 2 Bloque B2) -->
-    <div id="modal-add-opportunity-contact" class="modal" style="display:none; z-index: 1070;">
-        <div class="modal-content glass-panel" style="max-width: 550px; width: 95%;">
-            <span class="close" onclick="closeAddOpportunityContactModal()">&times;</span>
-            <h2 style="color: white; margin-bottom: 0.25rem;">👥 Asignar Participante Comercial</h2>
-            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
-                Selecciona una persona vinculada activamente a la cuenta y define su rol de decisión o compra en el proyecto.
-            </p>
-            <form onsubmit="submitAddOpportunityContact(event)">
-                <input type="hidden" id="add-opp-contact-opp-id">
-                <input type="hidden" id="add-opp-contact-acc-id">
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Contacto de la Cuenta *</label>
-                    <select id="add-opp-contact-select" required style="width: 100%;">
-                        <option value="">Cargando contactos...</option>
-                    </select>
-                    <small style="color: var(--text-muted); display: block; margin-top: 4px;">
-                        Solo se listan relaciones activas de la cuenta. No se pueden crear personas desde la oportunidad.
-                    </small>
-                </div>
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Rol Comercial / Rol de Compra *</label>
-                    <select id="add-opp-contact-role-select" required style="width: 100%;">
-                        <option value="">Cargando roles...</option>
-                    </select>
-                </div>
-
-                <div class="form-group mb-3" style="background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 0.75rem;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: white; margin: 0;">
-                        <input type="checkbox" id="add-opp-contact-is-primary" style="width: auto;">
-                        <span>⭐ <strong>Designar como Contacto Principal</strong> de la oportunidad</span>
-                    </label>
-                    <small style="color: var(--text-secondary); display: block; margin-top: 4px; margin-left: 1.5rem;">
-                        La oportunidad solo puede tener un contacto principal a la vez. Si ya existe uno, será sustituido atómicamente.
-                    </small>
-                </div>
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Notas Comerciales / Especificaciones (Opcional)</label>
-                    <textarea id="add-opp-contact-notes" rows="2" placeholder="Ej. Valida especificaciones técnicas de ductos y aislamiento..." style="width: 100%; resize: vertical;"></textarea>
-                </div>
-
-                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="closeAddOpportunityContactModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary" id="btn-submit-add-opp-contact">Asignar a Oportunidad</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal: Editar Rol o Notas de Participante (Fase 2 Bloque B2) -->
-    <div id="modal-edit-opportunity-contact" class="modal" style="display:none; z-index: 1070;">
-        <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
-            <span class="close" onclick="closeEditOpportunityContactRoleModal()">&times;</span>
-            <h2 style="color: white; margin-bottom: 0.25rem;">✏️ Modificar Rol Comercial</h2>
-            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
-                Participante: <strong id="edit-opp-contact-name" style="color: white;">-</strong>
-            </p>
-            <form onsubmit="submitEditOpportunityContactRole(event)">
-                <input type="hidden" id="edit-opp-contact-id">
-                <input type="hidden" id="edit-opp-contact-opp-id">
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Nuevo Rol Comercial *</label>
-                    <select id="edit-opp-contact-role-select" required style="width: 100%;">
-                        <option value="">Cargando roles...</option>
-                    </select>
-                </div>
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Notas / Observaciones</label>
-                    <textarea id="edit-opp-contact-notes" rows="2" placeholder="Notas sobre la participación comercial..." style="width: 100%; resize: vertical;"></textarea>
-                </div>
-
-                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="closeEditOpportunityContactRoleModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary" id="btn-submit-edit-opp-contact">Guardar Cambios</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal: Cambiar Cuenta de la Oportunidad (Fase 2 Bloque B2) -->
-    <div id="modal-change-opportunity-account" class="modal" style="display:none; z-index: 1070;">
-        <div class="modal-content glass-panel" style="max-width: 550px; width: 95%;">
-            <span class="close" onclick="closeChangeOpportunityAccountModal()">&times;</span>
-            <h2 style="color: #60a5fa; margin-bottom: 0.25rem;">🔄 Cambiar Cuenta Comercial</h2>
-            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
-                Reasigna esta oportunidad en etapa temprana a otra cuenta de tu cartera de clientes.
-            </p>
-
-            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.85rem; margin-bottom: 1rem; font-size: 0.82rem; line-height: 1.45; color: #fca5a5;">
-                <strong>⚠️ Reglas de negocio:</strong> Esta operación solo está permitida en etapa <em>prospecto</em> y sin cotizaciones activas. Al transferir la cuenta, <strong>todos los participantes actuales quedarán como registros históricos inactivos</strong> y se limpiará el contacto principal.
-            </div>
-
-            <form onsubmit="submitChangeOpportunityAccount(event)">
-                <input type="hidden" id="change-opp-acc-opp-id">
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Nueva Cuenta (Cliente) *</label>
-                    <select id="change-opp-acc-client-select" required style="width: 100%;">
-                        <option value="">Cargando cuentas...</option>
-                    </select>
-                </div>
-
-                <div class="form-group mb-3">
-                    <label style="color: white; font-weight: 600; display: block; margin-bottom: 4px;">Motivo obligatorio del cambio *</label>
-                    <textarea id="change-opp-acc-motivo" rows="2" placeholder="Explique por qué se transfiere la oportunidad a otra cuenta..." required style="width: 100%; resize: vertical;"></textarea>
-                </div>
-
-                <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="closeChangeOpportunityAccountModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary" id="btn-submit-change-opp-acc" style="background: #2563eb; border-color: #3b82f6;">Confirmar Cambio de Cuenta</button>
-                </div>
-            </form>
-        </div>
-    </div>
 
     <!-- Loading Spinner Overlay -->
     <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
