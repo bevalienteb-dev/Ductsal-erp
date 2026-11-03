@@ -702,4 +702,75 @@ describe('FASE 2 B1/B2: Concurrencia Real Multi-Cliente en Firestore Emulator', 
       expect(snapB.data.isPrimary).toBe(winId === ocBId);
     });
   });
+
+  // ====================================================================================================
+  // TAREA 3: Auditoría Transaccional del Sembrado Masivo de Roles
+  // ====================================================================================================
+  describe('Tarea 3: Auditoría Transaccional del Sembrado de Roles', () => {
+    test('sembrado por manager genera registro de auditoría atómico con todos los campos requeridos', async () => {
+      // 1. Limpiar catálogo para asegurar sembrado inicial
+      const currentRoles = await H.listDocs('opportunity_contact_roles_local');
+      for (const r of currentRoles) {
+        await H.deleteDoc('opportunity_contact_roles_local', r.id);
+      }
+
+      // 2. Intento por vendedor es rechazado sin escrituras de roles ni auditoría
+      const sellerAttempt = await H.callFunction('seedOpportunityContactRolesAdmin', { dbSuffix: SUFFIX }, state.tokens.seller1);
+      expect([400, 403]).toContain(sellerAttempt.httpStatus);
+      expect(sellerAttempt.error).toBeDefined();
+
+      const rolesAfterRejection = await H.listDocs('opportunity_contact_roles_local');
+      expect(rolesAfterRejection).toHaveLength(0);
+
+      // 3. Sembrado exitoso por manager
+      const seedRes = await H.callFunction('seedOpportunityContactRolesAdmin', { dbSuffix: SUFFIX }, state.tokens.manager);
+      expect(seedRes.httpStatus).toBe(200);
+      expect(seedRes.result.status).toBe('seeded');
+      expect(seedRes.result.count).toBe(8);
+
+      // 4. Verificación de invariantes en Firestore Emulator
+      const seededRoles = await H.listDocs('opportunity_contact_roles_local');
+      expect(seededRoles).toHaveLength(8);
+
+      const auditEntries = await H.listDocs('commercialAudit_local');
+      const seedAudit = auditEntries.find(a => a.data.action === 'seedOpportunityContactRoles');
+      expect(seedAudit).toBeDefined();
+      expect(seedAudit.data.targetId).toBe('opportunity_contact_roles_local');
+      expect(seedAudit.data.userId).toBe(USERS.manager.cid);
+      expect(seedAudit.data.userName).toBe(USERS.manager.nombre);
+      expect(seedAudit.data.userRole).toBe('manager');
+
+      const details = seedAudit.data.details;
+      expect(details).toBeDefined();
+      expect(details.action).toBe('seedOpportunityContactRoles');
+      expect(details.entidad).toBe('opportunity_contact_roles_local');
+      expect(details.entorno).toBe(SUFFIX);
+      expect(details.rolesCount).toBe(8);
+      expect(details.force).toBe(false);
+      expect(details.resultado).toBe('seeded');
+      expect(details.fecha).toBeDefined();
+      expect(details.actor).toMatchObject({
+        cid: USERS.manager.cid,
+        uid: USERS.manager.uid,
+        role: 'manager'
+      });
+
+      // 5. Idempotencia: re-sembrado sin force no duplica ni corrompe
+      const reseedRes = await H.callFunction('seedOpportunityContactRolesAdmin', { dbSuffix: SUFFIX }, state.tokens.manager);
+      expect(reseedRes.httpStatus).toBe(200);
+      expect(reseedRes.result.status).toBe('already-seeded');
+
+      // 6. Sembrado forzado (force: true): regenera catálogo y registra nueva auditoría con force: true
+      const forceRes = await H.callFunction('seedOpportunityContactRolesAdmin', { force: true, dbSuffix: SUFFIX }, state.tokens.manager);
+      expect(forceRes.httpStatus).toBe(200);
+      expect(forceRes.result.status).toBe('seeded');
+
+      const auditEntriesAfter = await H.listDocs('commercialAudit_local');
+      const forceAudits = auditEntriesAfter.filter(a => a.data.action === 'seedOpportunityContactRoles' && a.data.details && a.data.details.force === true);
+      expect(forceAudits.length).toBeGreaterThanOrEqual(1);
+      const forceAudit = forceAudits[0];
+      expect(forceAudit.data.details.rolesCount).toBe(8);
+      expect(forceAudit.data.details.resultado).toBe('seeded');
+    });
+  });
 });

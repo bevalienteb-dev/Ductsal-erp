@@ -218,12 +218,33 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
         svc.seedOpportunityContactRoles({ caller: { uid: 'uid-ges', cid: GES, role: 'gestor' } })
       ).rejects.toThrow('Solo un gerente puede inicializar el catálogo de roles');
 
-      // Manager allowed
-      const seeded = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
+      // Manager allowed: seeds roles and writes atomic audit entry
+      const seeded = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' } });
       expect(seeded.status).toBe('seeded');
       expect(seeded.count).toBe(8);
+      expect(seeded.auditId).toBeDefined();
 
-      // Re-seeding without force reports already-seeded
+      // Verify audit document in commercialAudit_prod
+      const auditDocs = Object.keys(state.docs)
+        .filter(k => k.startsWith('commercialAudit_prod/'))
+        .map(k => state.docs[k]);
+      const seedAudit = auditDocs.find(a => a.action === 'seedOpportunityContactRoles');
+      expect(seedAudit).toBeDefined();
+      expect(seedAudit.targetId).toBe('opportunity_contact_roles_prod');
+      expect(seedAudit.userId).toBe(MGR);
+      expect(seedAudit.userName).toBe('Gerente General');
+      expect(seedAudit.userRole).toBe('manager');
+      expect(seedAudit.details).toMatchObject({
+        action: 'seedOpportunityContactRoles',
+        entidad: 'opportunity_contact_roles_prod',
+        entorno: '_prod',
+        rolesCount: 8,
+        force: false,
+        resultado: 'seeded',
+        roleIds: expect.arrayContaining(['decisor', 'comprador_economico'])
+      });
+
+      // Re-seeding without force reports already-seeded idempotently
       const reseed = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       expect(reseed.status).toBe('already-seeded');
 
@@ -240,6 +261,41 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
         'Compras',
         'Otro'
       ]);
+    });
+
+    test('seedOpportunityContactRoles with force:true overwrites catalogue and generates transactional audit', async () => {
+      // First seed
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' } });
+
+      // Modify a role name
+      await svc.manageOpportunityContactRole({
+        caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' },
+        roleId: 'decisor',
+        name: 'Rol Alterado'
+      });
+      const checkModified = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(checkModified.roles.find(r => r.id === 'decisor').name).toBe('Rol Alterado');
+
+      // Re-seed with force: true
+      const forceRes = await svc.seedOpportunityContactRoles({
+        caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' },
+        force: true
+      });
+      expect(forceRes.status).toBe('seeded');
+      expect(forceRes.count).toBe(8);
+
+      // Decisor role was restored to original
+      const checkRestored = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(checkRestored.roles.find(r => r.id === 'decisor').name).toBe('Decisor');
+
+      // Audit trail contains force: true record
+      const auditDocs = Object.keys(state.docs)
+        .filter(k => k.startsWith('commercialAudit_prod/'))
+        .map(k => state.docs[k]);
+      const forceAudit = auditDocs.find(a => a.action === 'seedOpportunityContactRoles' && a.details && a.details.force === true);
+      expect(forceAudit).toBeDefined();
+      expect(forceAudit.details.rolesCount).toBe(8);
+      expect(forceAudit.details.resultado).toBe('seeded');
     });
 
     test('restricts role creation and update to managers only', async () => {

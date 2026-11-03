@@ -138,34 +138,60 @@ function createOpportunityContactsService({
       timestamp: now().toISOString()
     };
     tx.set(ref, entry);
+    return entry;
   }
 
   // =====================================================================================================
   // 1. Role Catalogue (`opportunity_contact_roles_${suffix}`)
   // =====================================================================================================
 
-
   async function seedOpportunityContactRoles({ caller, force = false }) {
     await requireManager(caller, 'inicializar el catálogo de roles');
-    const snap = await col('opportunityContactRoles').limit(1).get();
-    if (!snap.empty && !force) {
-      const existing = await col('opportunityContactRoles').get();
-      return {
-        status: 'already-seeded',
-        message: 'El catálogo de roles ya contiene elementos',
-        count: existing.size
-      };
-    }
     const at = now().toISOString();
-    for (const r of INITIAL_ROLES) {
-      await col('opportunityContactRoles').doc(r.id).set({
-        ...r,
-        createdAt: at,
-        updatedAt: at,
-        createdBy: caller.cid
-      }, { merge: true });
-    }
-    return { status: 'seeded', count: INITIAL_ROLES.length };
+
+    return db.runTransaction(async tx => {
+      const snap = await tx.get(col('opportunityContactRoles').limit(1));
+      if (!snap.empty && !force) {
+        const existing = await tx.get(col('opportunityContactRoles'));
+        return {
+          status: 'already-seeded',
+          message: 'El catálogo de roles ya contiene elementos',
+          count: existing.size
+        };
+      }
+
+      for (const r of INITIAL_ROLES) {
+        tx.set(col('opportunityContactRoles').doc(r.id), {
+          ...r,
+          createdAt: at,
+          updatedAt: at,
+          createdBy: caller.cid
+        }, { merge: true });
+      }
+
+      const auditEntry = addAudit(tx, caller, 'seedOpportunityContactRoles', names.opportunityContactRoles, {
+        actor: {
+          uid: caller.uid,
+          cid: caller.cid,
+          name: caller.name || '',
+          role: caller.role
+        },
+        action: 'seedOpportunityContactRoles',
+        entidad: names.opportunityContactRoles,
+        fecha: at,
+        entorno: suffix,
+        rolesCount: INITIAL_ROLES.length,
+        force: Boolean(force),
+        resultado: 'seeded',
+        roleIds: INITIAL_ROLES.map(r => r.id)
+      });
+
+      return {
+        status: 'seeded',
+        count: INITIAL_ROLES.length,
+        auditId: auditEntry ? auditEntry.id : undefined
+      };
+    });
   }
 
   async function listOpportunityContactRoles({ caller, includeInactive = false }) {
