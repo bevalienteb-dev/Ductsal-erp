@@ -2149,9 +2149,9 @@ exports.updateContactAdmin = functions.https.onCall((data, context) => runContac
 exports.getContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
   (service, caller, d) => service.getContact({ caller, contactId: d.contactId })));
 
-/** { q, limit?, dbSuffix? } -> { results: [...] } */
+/** { q, limit?, excludeAccountId?, dbSuffix? } -> { results: [...] } */
 exports.searchContactsAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
-  (service, caller, d) => service.searchContacts({ caller, q: d.q, limit: d.limit })));
+  (service, caller, d) => service.searchContacts({ caller, q: d.q, limit: d.limit, excludeAccountId: d.excludeAccountId })));
 
 /** { accountId, contactId, cargo, telefono_corporativo?, extension?, correo_corporativo?, opId?, dbSuffix? } -> { status: linked|reactivated, accountContact, period, persona } */
 exports.linkContactToAccountAdmin = functions.https.onCall((data, context) => runContactOp(data, context,

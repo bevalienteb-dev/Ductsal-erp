@@ -698,17 +698,30 @@
             if (!crmContacts || !fb) return;
 
             try {
+                const activeContactPersonIds = new Set(
+                    currentContactsList
+                        .filter(rel => rel.activo === true && rel.eliminado !== true)
+                        .map(rel => rel.contactId || (rel.person && rel.person.id) || (rel.persona && rel.persona.id))
+                        .filter(Boolean)
+                );
+
                 const res = await crmContacts.searchContacts(fb, {
                     q,
                     limit: 10,
+                    excludeAccountId: activeAccountId,
                     dbSuffix: _deps.getDbSuffix()
                 });
 
-                const contacts = (res && (res.contacts || res.results)) || [];
+                const rawContacts = (res && (res.contacts || res.results)) || [];
+                const contacts = rawContacts.filter(c => !activeContactPersonIds.has(c.id));
+
                 if (contacts.length === 0) {
+                    const msg = rawContacts.length > 0
+                        ? `Las personas encontradas ya cuentan con una relación laboral activa en esta cuenta.`
+                        : `No se encontraron personas con "${_deps.esc(q)}".`;
                     resultsBox.innerHTML = `
                         <div style="padding:1rem; text-align:center; color:var(--text-muted); font-size:0.85rem;">
-                            No se encontraron personas con "${_deps.esc(q)}".
+                            ${msg}
                             <button type="button" class="btn-secondary" style="margin-left: 8px; font-size: 0.78rem; padding: 3px 8px;" onclick="ContactsUI.openCreatePersonView()">+ Crear Nueva Persona</button>
                         </div>
                     `;

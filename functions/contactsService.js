@@ -187,11 +187,16 @@ function createContactsService({
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
     const cId = reqDocId(contactId, 'contactId');
     const docRef = col('contacts').doc(cId);
+    const authFilter = await getAuthorizedContactIds(caller);
 
     return db.runTransaction(async tx => {
       const snap = await tx.get(docRef);
       if (!snap.exists) throw new ServiceError('not-found', 'La persona especificada no existe');
       const cur = snap.data() || {};
+
+      if (authFilter !== null && !authFilter.isAuthorized(cur)) {
+        throw new ServiceError('permission-denied', 'No tiene permisos para modificar los datos de esta persona');
+      }
 
       const at = now().toISOString();
       const patch = {
@@ -245,11 +250,21 @@ function createContactsService({
       });
     }));
 
+    // Privileged creators (managers, gestores, sistema) whose contacts belong to corporate directory
+    const privilegedUserIds = new Set(['sistema']);
+    const [managersSnap, gestoresSnap] = await Promise.all([
+      col('users').where('role', '==', 'manager').get(),
+      col('users').where('role', '==', 'gestor').get()
+    ]);
+    managersSnap.docs.forEach(d => privilegedUserIds.add(d.id));
+    gestoresSnap.docs.forEach(d => privilegedUserIds.add(d.id));
+
     return {
       isAuthorized: (contact) => {
         if (!contact) return false;
         if (contact.createdBy === caller.cid) return true;
         if (authorizedContactIds.has(contact.id)) return true;
+        if (contact.createdBy && privilegedUserIds.has(contact.createdBy)) return true;
         return false;
       }
     };
@@ -279,7 +294,7 @@ function createContactsService({
     };
   }
 
-  async function searchContacts({ caller, q = '', limit = 20 }) {
+  async function searchContacts({ caller, q = '', limit = 20, excludeAccountId = null }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
     const authFilter = await getAuthorizedContactIds(caller);
 
@@ -290,6 +305,19 @@ function createContactsService({
     // Apply portfolio filter before matching or returning
     if (authFilter !== null) {
       all = all.filter(c => authFilter.isAuthorized(c));
+    }
+
+    if (excludeAccountId) {
+      const existingRels = await col('accountContacts')
+        .where('accountId', '==', String(excludeAccountId))
+        .where('activo', '==', true)
+        .get();
+      const excludedContactIds = new Set();
+      existingRels.docs.forEach(d => {
+        const data = d.data() || {};
+        if (data.contactId && data.eliminado !== true) excludedContactIds.add(data.contactId);
+      });
+      all = all.filter(c => !excludedContactIds.has(c.id));
     }
 
     if (term) {
@@ -335,6 +363,8 @@ function createContactsService({
     const ext = sanitizeStr(extension, 20);
     const emailCorp = sanitizeEmail(correo_corporativo);
 
+    const authFilter = await getAuthorizedContactIds(caller);
+
     const relationId = `AC_${aId}_${cId}`;
     const relationRef = col('accountContacts').doc(relationId);
     // Pre-generate document reference with auto ID for the new period
@@ -346,6 +376,10 @@ function createContactsService({
       const personSnap = await tx.get(col('contacts').doc(cId));
       if (!personSnap.exists) throw new ServiceError('not-found', 'La persona especificada no existe');
       const person = personSnap.data() || {};
+
+      if (authFilter !== null && !authFilter.isAuthorized(person)) {
+        throw new ServiceError('permission-denied', 'No tiene permisos para vincular esta persona');
+      }
 
       const relSnap = await tx.get(relationRef);
       const isExisting = relSnap.exists;

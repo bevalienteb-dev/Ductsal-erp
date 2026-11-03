@@ -118,6 +118,16 @@ describe('CrmContacts Client Callable Wrappers', () => {
     expect(res.periods).toEqual([]);
     expect(calls[0].name).toBe('listContactPeriodsAdmin');
   });
+
+  test('searchContacts passes query, limit, and excludeAccountId to searchContactsAdmin', async () => {
+    const { fb, calls } = fbWith(() => ({ results: [] }));
+    const res = await CrmContacts.searchContacts(fb, { q: 'Carlos', limit: 10, excludeAccountId: 'ACC_1', dbSuffix: '_prod' });
+    expect(res.results).toEqual([]);
+    expect(calls[0].name).toBe('searchContactsAdmin');
+    expect(calls[0].payload.q).toBe('Carlos');
+    expect(calls[0].payload.limit).toBe(10);
+    expect(calls[0].payload.excludeAccountId).toBe('ACC_1');
+  });
 });
 
 describe('Static Architecture & UI Integration (Phase 2 Block 1)', () => {
