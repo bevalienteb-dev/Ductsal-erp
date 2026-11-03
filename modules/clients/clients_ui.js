@@ -336,6 +336,9 @@
             const emailStr = c.correo ? `<a href="mailto:${esc(c.correo)}" class="cell-ellipsis" style="display:inline-block; max-width:210px; color:var(--text-secondary); text-decoration:none;" title="${esc(c.correo)}">${esc(c.correo)}</a>` : '<span style="color:var(--text-muted);">-</span>';
 
             let actionsHtml = `<div class="table-btn-group">
+                <button type="button" class="btn-table-action" onclick="ContactsUI.openAccountContactsModal('${c.id}')" title="Ver y gestionar personas vinculadas a esta cuenta (Hub & Spoke)" style="background:rgba(56,189,248,0.15); color:#38bdf8; border-color:rgba(56,189,248,0.3);">
+                    👥 Contactos
+                </button>
                 <button type="button" class="btn-table-action btn-table-edit" onclick="openClientModal('${c.id}')" title="Editar datos y ver expediente de ${esc(mainName)}">
                     ✏️ Editar
                 </button>`;
@@ -451,6 +454,8 @@
                     if (gcEl) gcEl.checked = c.is_gran_contribuyente === true;
                 }
                 _deps.renderClientExpedienteSection(c);
+                const btnContacts = document.getElementById('btn-client-modal-contacts');
+                if (btnContacts) btnContacts.style.display = 'inline-block';
             }
         } else {
             if (typeof window !== 'undefined') window._activeClientBaseDocs = null;
@@ -464,6 +469,8 @@
             if (expEl) expEl.checked = false;
             toggleClientFields();
             _deps.renderClientExpedienteSection(null);
+            const btnContacts = document.getElementById('btn-client-modal-contacts');
+            if (btnContacts) btnContacts.style.display = 'none';
         }
 
         const modal = document.getElementById('clientModal');

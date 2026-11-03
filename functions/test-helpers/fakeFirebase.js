@@ -116,6 +116,8 @@ function buildAdminFake() {
     const path = `${col}/${id}`;
     return {
       path,
+      id,
+      collection: subcol => firestore().collection(`${path}/${subcol}`),
       async create(data) {
         if (state.hooks.beforeCreate) state.hooks.beforeCreate(path);
         if (state.docs[path]) {
@@ -128,11 +130,11 @@ function buildAdminFake() {
       },
       async get() {
         if (state.hooks.beforeGet) state.hooks.beforeGet(path);
-        if (state.docs[path]) return { exists: true, data: () => cloneDoc(state.docs[path]) };
+        if (state.docs[path]) return { exists: true, id, data: () => cloneDoc(state.docs[path]) };
         if (path.endsWith('/__default_mgr__') && state.allowVirtualManager === true && !state.unlinkedManager) {
-          return { exists: true, data: () => ({ id: '__default_mgr__', authUid: 'managerUid', role: 'manager', activo: true, nombre: 'Default Manager', email: 'manager@ductsal-test.invalid' }) };
+          return { exists: true, id: '__default_mgr__', data: () => ({ id: '__default_mgr__', authUid: 'managerUid', role: 'manager', activo: true, nombre: 'Default Manager', email: 'manager@ductsal-test.invalid' }) };
         }
-        return { exists: false, data: () => undefined };
+        return { exists: false, id, data: () => undefined };
       },
       async set(data, opts = {}) { applySet(path, data, opts); },
       async update(data) {
@@ -151,16 +153,20 @@ function buildAdminFake() {
       const defaultMgr = { id: '__default_mgr__', authUid: 'managerUid', role: 'manager', activo: true, nombre: 'Default Manager', email: 'manager@ductsal-test.invalid' };
       const hasMgr = () => {
         const prefix = `${col}/`;
-        return Object.keys(state.docs).some(k => k.startsWith(prefix) && (state.docs[k] || {}).authUid === 'managerUid');
+        return Object.keys(state.docs).some(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/') && (state.docs[k] || {}).authUid === 'managerUid');
       };
 
-      const queryApi = (filters = []) => ({
-        where: (field, op, val) => queryApi([...filters, { field, op, val }]),
+      const queryApi = (filters = [], limitCount = null) => ({
+        where: (field, op, val) => queryApi([...filters, { field, op, val }], limitCount),
+        limit: n => queryApi(filters, n),
         async get() {
           const prefix = `${col}/`;
-          let matches = Object.keys(state.docs).filter(k => k.startsWith(prefix));
+          let matches = Object.keys(state.docs).filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'));
           for (const f of filters) {
             matches = matches.filter(k => state.docs[k] && state.docs[k][f.field] === f.val);
+          }
+          if (typeof limitCount === 'number') {
+            matches = matches.slice(0, limitCount);
           }
           const docs = matches.map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
@@ -171,6 +177,7 @@ function buildAdminFake() {
           }
           return {
             empty: docs.length === 0,
+            size: docs.length,
             docs
           };
         }
@@ -178,15 +185,16 @@ function buildAdminFake() {
       return {
         doc: id => makeRef(col, id === undefined ? `auto_${++autoId}` : id),
         where: (field, op, val) => queryApi([{ field, op, val }]),
+        limit: n => queryApi([], n),
         async get() {
           const prefix = `${col}/`;
           const docs = Object.keys(state.docs)
-            .filter(k => k.startsWith(prefix))
+            .filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'))
             .map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
             docs.push({ id: '__default_mgr__', data: () => defaultMgr });
           }
-          return { empty: docs.length === 0, docs };
+          return { empty: docs.length === 0, size: docs.length, docs };
         },
         async add(data) {
           const autoKey = `auto_${++autoId}`;

@@ -2107,6 +2107,109 @@ exports.getSecureDownloadUrlAdmin = functions
   }
 });
 
+// ======================================================================================================
+// Contacts operations (persons, account-contact relations, periods history - Phase 2 Block 1)
+// ======================================================================================================
+const { createContactsService } = require('./contactsService');
+
+const contactsServiceCache = {};
+function contactsServiceFor(suffix) {
+  if (!contactsServiceCache[suffix]) {
+    contactsServiceCache[suffix] = createContactsService({
+      db,
+      FieldValue: firestoreStatics().FieldValue,
+      suffix
+    });
+  }
+  return contactsServiceCache[suffix];
+}
+
+async function runContactOp(data, context, op) {
+  try {
+    assertEmulatorIsolated();
+    data = data || {};
+    const suffix = resolveDbSuffix(data.dbSuffix);
+    const service = contactsServiceFor(suffix);
+    const caller = await service.resolveCaller(context);
+    return await op(service, caller, data);
+  } catch (e) {
+    throw toHttpsError(e);
+  }
+}
+
+/** { contact, opId?, dbSuffix? } -> { status: created, contact } */
+exports.createContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.createContact({ caller, contact: d.contact, opId: d.opId })));
+
+/** { contactId, contact, dbSuffix? } -> { status: updated, contact } */
+exports.updateContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.updateContact({ caller, contactId: d.contactId, contact: d.contact })));
+
+/** { contactId, dbSuffix? } -> { contact } */
+exports.getContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.getContact({ caller, contactId: d.contactId })));
+
+/** { q, limit?, dbSuffix? } -> { results: [...] } */
+exports.searchContactsAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.searchContacts({ caller, q: d.q, limit: d.limit })));
+
+/** { accountId, contactId, cargo, telefono_corporativo?, extension?, correo_corporativo?, opId?, dbSuffix? } -> { status: linked|reactivated, accountContact, period, persona } */
+exports.linkContactToAccountAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.linkContactToAccount({
+    caller,
+    accountId: d.accountId,
+    contactId: d.contactId,
+    cargo: d.cargo,
+    telefono_corporativo: d.telefono_corporativo,
+    extension: d.extension,
+    correo_corporativo: d.correo_corporativo
+  })));
+
+/** { accountContactId, cargo?, telefono_corporativo?, extension?, correo_corporativo?, dbSuffix? } -> { status: updated, accountContact } */
+exports.updateAccountContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.updateAccountContact({
+    caller,
+    accountContactId: d.accountContactId,
+    cargo: d.cargo,
+    telefono_corporativo: d.telefono_corporativo,
+    extension: d.extension,
+    correo_corporativo: d.correo_corporativo
+  })));
+
+/** { accountContactId, motivo_salida?, dbSuffix? } -> { status: deactivated|unchanged, accountContact } */
+exports.deactivateAccountContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.deactivateAccountContact({
+    caller,
+    accountContactId: d.accountContactId,
+    motivo_salida: d.motivo_salida
+  })));
+
+/** { accountContactId, cargo, motivo_reingreso?, telefono_corporativo?, extension?, correo_corporativo?, dbSuffix? } -> { status: reactivated, accountContact, period } */
+exports.reactivateAccountContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.reactivateAccountContact({
+    caller,
+    accountContactId: d.accountContactId,
+    cargo: d.cargo,
+    motivo_reingreso: d.motivo_reingreso,
+    telefono_corporativo: d.telefono_corporativo,
+    extension: d.extension,
+    correo_corporativo: d.correo_corporativo
+  })));
+
+/** { accountId, includeInactive?, dbSuffix? } -> { contacts: [...] } */
+exports.listAccountContactsAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.listAccountContacts({
+    caller,
+    accountId: d.accountId,
+    includeInactive: d.includeInactive !== false
+  })));
+
+/** { accountContactId, dbSuffix? } -> { accountContactId, accountId, contactId, periods: [...] } */
+exports.listContactPeriodsAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
+  (service, caller, d) => service.listContactPeriods({
+    caller,
+    accountContactId: d.accountContactId
+  })));
 
 // Keeps clients.visibleTo (portfolio of the sellers) in step with the opportunities. Guarded: the unit-test
 // fakes of firebase-functions only implement https.onCall.

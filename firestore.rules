@@ -88,6 +88,22 @@ service cloud.firestore {
       }
     }
 
+    // ---------- contacts (persons and account relations - Phase 2 Block 1) ----------
+    match /contacts_prod/{contactId} {
+      allow read: if validSession();
+      allow write: if false;
+    }
+
+    match /account_contacts_prod/{accountContactId} {
+      allow get, list: if isPrivileged() || (isVendedor() && clientVisible(get(/databases/$(database)/documents/clients_prod/$(resource.data.accountId)).data));
+      allow write: if false;
+
+      match /periods_prod/{periodId} {
+        allow get, list: if isPrivileged() || (isVendedor() && clientVisible(get(/databases/$(database)/documents/clients_prod/$(get(/databases/$(database)/documents/account_contacts_prod/$(accountContactId)).data.accountId)).data));
+        allow write: if false;
+      }
+    }
+
     // ---------- prospects (opportunities / projects) ----------
     function prospectMine(d) {
       return d.get('vendedorId', '') == me()
