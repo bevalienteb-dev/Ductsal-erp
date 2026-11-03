@@ -152,6 +152,17 @@ service cloud.firestore {
       }
     }
 
+    // ---------- opportunity contacts and roles (Phase 2 Block 2) ----------
+    match /opportunity_contact_roles_prod/{roleId} {
+      allow get, list: if validSession();
+      allow write: if false;
+    }
+
+    match /opportunity_contacts_prod/{ocId} {
+      allow get, list: if isPrivileged() || (isVendedor() && prospectVisible(get(/databases/$(database)/documents/prospects_prod/$(resource.data.opportunityId)).data));
+      allow write: if false;
+    }
+
     // ---------- settings / audit ----------
     match /system_prod/{docId} {
       allow read: if validSession();

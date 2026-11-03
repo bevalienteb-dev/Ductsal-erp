@@ -2149,9 +2149,9 @@ exports.updateContactAdmin = functions.https.onCall((data, context) => runContac
 exports.getContactAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
   (service, caller, d) => service.getContact({ caller, contactId: d.contactId })));
 
-/** { q, limit?, dbSuffix? } -> { results: [...] } */
+/** { q, limit?, excludeAccountId?, dbSuffix? } -> { results: [...] } */
 exports.searchContactsAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
-  (service, caller, d) => service.searchContacts({ caller, q: d.q, limit: d.limit })));
+  (service, caller, d) => service.searchContacts({ caller, q: d.q, limit: d.limit, excludeAccountId: d.excludeAccountId })));
 
 /** { accountId, contactId, cargo, telefono_corporativo?, extension?, correo_corporativo?, opId?, dbSuffix? } -> { status: linked|reactivated, accountContact, period, persona } */
 exports.linkContactToAccountAdmin = functions.https.onCall((data, context) => runContactOp(data, context,
@@ -2209,6 +2209,106 @@ exports.listContactPeriodsAdmin = functions.https.onCall((data, context) => runC
   (service, caller, d) => service.listContactPeriods({
     caller,
     accountContactId: d.accountContactId
+  })));
+
+// ======================================================================================================
+// Opportunity Contacts & Roles operations (Phase 2 Block 2)
+// ======================================================================================================
+const { createOpportunityContactsService } = require('./opportunityContactsService');
+
+const opportunityContactsServiceCache = {};
+function opportunityContactsServiceFor(suffix) {
+  if (!opportunityContactsServiceCache[suffix]) {
+    opportunityContactsServiceCache[suffix] = createOpportunityContactsService({
+      db,
+      FieldValue: firestoreStatics().FieldValue,
+      suffix,
+      verifyManager: liveManagerCheck
+    });
+  }
+  return opportunityContactsServiceCache[suffix];
+}
+
+async function runOpportunityContactOp(data, context, op) {
+  try {
+    assertEmulatorIsolated();
+    data = data || {};
+    const suffix = resolveDbSuffix(data.dbSuffix);
+    const service = opportunityContactsServiceFor(suffix);
+    const caller = await service.resolveCaller(context);
+    return await op(service, caller, data);
+  } catch (e) {
+    throw toHttpsError(e);
+  }
+}
+
+/** { includeInactive?, dbSuffix? } -> { roles: [...] } */
+exports.listOpportunityContactRolesAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.listOpportunityContactRoles({ caller, includeInactive: d.includeInactive === true })));
+
+/** { roleId?, name?, activo?, orden?, action?, dbSuffix? } -> { status, role } */
+exports.manageOpportunityContactRoleAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.manageOpportunityContactRole({
+    caller,
+    roleId: d.roleId,
+    name: d.name,
+    activo: d.activo,
+    orden: d.orden,
+    action: d.action
+  })));
+
+/** { opportunityId, accountContactId, roleId, notes?, isPrimary?, dbSuffix? } -> { status: created, participant } */
+exports.addOpportunityContactAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.addOpportunityContact({
+    caller,
+    opportunityId: d.opportunityId,
+    accountContactId: d.accountContactId,
+    roleId: d.roleId,
+    notes: d.notes,
+    isPrimary: d.isPrimary === true
+  })));
+
+/** { opportunityContactId, roleId?, notes?, dbSuffix? } -> { status: updated, participant } */
+exports.updateOpportunityContactRoleAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.updateOpportunityContactRole({
+    caller,
+    opportunityContactId: d.opportunityContactId,
+    roleId: d.roleId,
+    notes: d.notes
+  })));
+
+/** { opportunityId, opportunityContactId, expectedVersion?, dbSuffix? } -> { status: updated, primaryOpportunityContactId, version } */
+exports.setOpportunityPrimaryContactAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.setOpportunityPrimaryContact({
+    caller,
+    opportunityId: d.opportunityId,
+    opportunityContactId: d.opportunityContactId,
+    expectedVersion: d.expectedVersion
+  })));
+
+/** { opportunityContactId, motivo?, dbSuffix? } -> { status: deactivated, opportunityContactId, clearedPrimary } */
+exports.removeOpportunityContactAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.removeOpportunityContact({
+    caller,
+    opportunityContactId: d.opportunityContactId,
+    motivo: d.motivo
+  })));
+
+/** { opportunityId, includeInactive?, dbSuffix? } -> { contacts: [...], primaryOpportunityContactId } */
+exports.listOpportunityContactsAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.listOpportunityContacts({
+    caller,
+    opportunityId: d.opportunityId,
+    includeInactive: d.includeInactive === true
+  })));
+
+/** { opportunityId, newAccountId, motivo?, dbSuffix? } -> { status: updated, opportunityId, newAccountId, version } */
+exports.changeOpportunityAccountAdmin = functions.https.onCall((data, context) => runOpportunityContactOp(data, context,
+  (service, caller, d) => service.changeOpportunityAccount({
+    caller,
+    opportunityId: d.opportunityId,
+    newAccountId: d.newAccountId,
+    motivo: d.motivo
   })));
 
 // Keeps clients.visibleTo (portfolio of the sellers) in step with the opportunities. Guarded: the unit-test

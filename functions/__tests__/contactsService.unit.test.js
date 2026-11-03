@@ -212,10 +212,32 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
       await expect(svc.getContact({ caller: callerV1, contactId: contactV2.id }))
         .rejects.toThrow('No tiene permisos para consultar los datos de esta persona');
 
+      // V1 attempts to modify contactV2 -> rejected with permission-denied
+      await expect(svc.updateContact({
+        caller: callerV1,
+        contactId: contactV2.id,
+        contact: { nombres: 'Hacker' }
+      })).rejects.toThrow('No tiene permisos para modificar los datos de esta persona');
+
+      // V1 attempts to link contactV2 to V1's account C1 -> rejected with permission-denied
+      await expect(svc.linkContactToAccount({
+        caller: callerV1,
+        accountId: 'C1',
+        contactId: contactV2.id,
+        cargo: 'Espía Corporativo'
+      })).rejects.toThrow('No tiene permisos para vincular esta persona');
+
       // Manager CAN search and find contactV2
       const mgrSearch = await svc.searchContacts({ caller: callerMgr, q: 'Banderas' });
       expect(mgrSearch.results.length).toBeGreaterThanOrEqual(1);
       expect(mgrSearch.results.some(c => c.id === contactV2.id)).toBe(true);
+
+      // excludeAccountId excludes persons already linked actively to that account
+      const mgrExcludeC2 = await svc.searchContacts({ caller: callerMgr, q: 'Banderas', excludeAccountId: 'C2' });
+      expect(mgrExcludeC2.results.some(c => c.id === contactV2.id)).toBe(false);
+
+      const mgrExcludeC1 = await svc.searchContacts({ caller: callerMgr, q: 'Banderas', excludeAccountId: 'C1' });
+      expect(mgrExcludeC1.results.some(c => c.id === contactV2.id)).toBe(true);
 
       // Verify data minimization: result fields must only expose safe commercial fields
       const item = mgrSearch.results.find(c => c.id === contactV2.id);

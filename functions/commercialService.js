@@ -53,7 +53,8 @@ function namesFor(suffix) {
     auditLogs: `audit_logs${suffix}`,       // the manager's audit panel (deletions)
     audit: `commercialAudit${suffix}`,       // server-only trail of the other sensitive operations
     ops: `prospectOps${suffix}`,
-    counters: `prospectCounters${suffix}`
+    counters: `prospectCounters${suffix}`,
+    opportunityContacts: `opportunity_contacts${suffix}`
   };
 }
 

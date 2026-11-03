@@ -851,6 +851,11 @@
                     <!-- Injected dynamically by renderClientContactCard(p) -->
                 </div>
 
+                <!-- Participantes Comerciales de la Oportunidad (Fase 2 Bloque B2) -->
+                <div id="opportunity-participants-card" class="opportunity-participants-card glass-panel mb-3" style="display: none;">
+                    <!-- Injected dynamically by renderOpportunityParticipants(p) -->
+                </div>
+
                 <!-- Resumen Comercial / KPI Hero (Prioridad 2) -->
                 <div class="commercial-hero-banner glass-panel mb-4" id="commercial-hero-banner">
                     <div class="kpi-banner-grid">
@@ -1092,6 +1097,871 @@
                                 <button class="btn-secondary mt-1" onclick="addLog()">Guardar Nota Interna</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================================================= -->
+            <!-- VISTAS OPERATIVAS FULL-SCREEN: PARTICIPANTES COMERCIALES (FASE 2 B2)      -->
+            <!-- ========================================================================= -->
+
+            <!-- Vista 1: Agregar Participante a Oportunidad -->
+            <section id="add-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: white; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>👥</span> Asignar Participante Comercial
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Selecciona una persona vinculada activamente a la cuenta y define su rol de decisión o compra en el proyecto.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto de la Oportunidad y Cuenta -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto / Código</span>
+                            <strong id="add-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                            <span id="add-opp-context-code" class="badge bg-neutral ml-1" style="font-size: 0.72rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial (Cliente)</span>
+                            <strong id="add-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Etapa Comercial</span>
+                            <span id="add-opp-context-stage" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; text-transform: capitalize;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Responsable / Vendedor</span>
+                            <strong id="add-opp-context-vendor" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario Completo -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="add-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-add-opportunity-contact" onsubmit="submitAddOpportunityContact(event)">
+                        <input type="hidden" id="add-opp-contact-opp-id">
+                        <input type="hidden" id="add-opp-contact-acc-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Contacto de la Cuenta *</label>
+                            <select id="add-opp-contact-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando contactos...</option>
+                            </select>
+                            <small style="color: var(--text-muted); display: block; margin-top: 6px; font-size: 0.8rem;">
+                                Solo se listan relaciones activas de la cuenta. No se pueden crear personas desde la oportunidad.
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Rol Comercial / Rol de Compra *</label>
+                            <select id="add-opp-contact-role-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando roles...</option>
+                            </select>
+                            <small style="color: var(--text-muted); display: block; margin-top: 6px; font-size: 0.8rem;">
+                                Define el papel que desempeña el participante en este proceso comercial (Decisor, Comprador, Evaluador Técnico, etc.).
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-3" style="background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 0.85rem 1rem;">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: white; margin: 0;">
+                                <input type="checkbox" id="add-opp-contact-is-primary" style="width: 18px; height: 18px; accent-color: var(--brand-gold);">
+                                <span style="font-size: 0.92rem;">⭐ <strong>Designar como Contacto Principal</strong> de la oportunidad</span>
+                            </label>
+                            <small style="color: var(--text-secondary); display: block; margin-top: 6px; margin-left: 28px; font-size: 0.8rem; line-height: 1.4;">
+                                La oportunidad solo puede tener un contacto principal a la vez. Si ya existe un contacto principal, será sustituido de forma atómica.
+                            </small>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Notas Comerciales / Especificaciones Técnicas (Opcional)</label>
+                            <textarea id="add-opp-contact-notes" rows="3" placeholder="Ej. Valida especificaciones técnicas de ductos, horarios de visita a obra y requerimientos de cotización..." style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-add-opp-contact" style="font-weight: 600;">Asignar a Oportunidad</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 2: Editar Rol y Notas de Participante -->
+            <section id="edit-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: white; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>✏️</span> Modificar Rol Comercial de Participante
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Actualiza la responsabilidad comercial, el rol de compra o las notas internas de seguimiento para este participante.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="edit-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="edit-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Participante</span>
+                            <strong id="edit-opp-contact-name" style="color: #60a5fa; font-size: 0.95rem;">-</strong>
+                            <div id="edit-opp-contact-cargo" style="font-size: 0.8rem; color: var(--text-secondary);">-</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Condición</span>
+                            <span id="edit-opp-contact-badge-primary" class="badge" style="background: rgba(212, 175, 55, 0.2); color: var(--brand-gold); display: none;">⭐ Contacto Principal</span>
+                            <span id="edit-opp-contact-badge-sec" class="badge bg-neutral">Participante Comercial</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="edit-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-edit-opportunity-contact" onsubmit="submitEditOpportunityContactRole(event)">
+                        <input type="hidden" id="edit-opp-contact-id">
+                        <input type="hidden" id="edit-opp-contact-opp-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Nuevo Rol Comercial *</label>
+                            <select id="edit-opp-contact-role-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando roles...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Notas / Observaciones de Participación</label>
+                            <textarea id="edit-opp-contact-notes" rows="3" placeholder="Notas sobre la participación comercial..." style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-edit-opp-contact" style="font-weight: 600;">Guardar Cambios</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 3: Designar o Cambiar Contacto Principal -->
+            <section id="set-opportunity-primary-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: var(--brand-gold); font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>⭐</span> Designar Contacto Comercial Principal
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Establece el interlocutor comercial principal responsable de la interacción en esta oportunidad.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="set-primary-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="set-primary-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Comparativa y Confirmación -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="set-primary-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.5rem;" id="set-primary-comparison-grid">
+                        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem;">
+                            <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 6px;">Contacto Principal Actual</span>
+                            <div id="set-primary-current-box">
+                                <strong id="set-primary-current-name" style="color: white; font-size: 1rem; display: block;">(Ninguno)</strong>
+                                <span id="set-primary-current-cargo" style="color: var(--text-secondary); font-size: 0.82rem; display: block; margin-top: 2px;">Sin designación previa</span>
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(212, 175, 55, 0.08); border: 1px solid var(--brand-gold); border-radius: 8px; padding: 1rem;">
+                            <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; display: block; margin-bottom: 6px;">Nuevo Principal Propuesto</span>
+                            <div>
+                                <strong id="set-primary-target-name" style="color: white; font-size: 1.05rem; display: block;">-</strong>
+                                <span id="set-primary-target-cargo" style="color: var(--text-secondary); font-size: 0.82rem; display: block; margin-top: 2px;">-</span>
+                                <span id="set-primary-target-role" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; font-size: 0.72rem; margin-top: 6px; display: inline-block;">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 1.5rem; font-size: 0.84rem; color: #93c5fd; line-height: 1.45;">
+                        ℹ️ <strong>Regla de negocio:</strong> La oportunidad mantiene exactamente un contacto principal a la vez. Al confirmar, la fuente de verdad (SSOT) se actualizará de forma atómica bajo control de concurrencia y las proyecciones se sincronizarán inmediatamente.
+                    </div>
+
+                    <input type="hidden" id="set-primary-opp-id">
+                    <input type="hidden" id="set-primary-part-id">
+
+                    <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                        <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                        <button type="button" class="btn-primary" id="btn-confirm-set-primary" onclick="confirmSetOpportunityPrimaryContact()" style="background: var(--brand-gold); color: var(--brand-blue); border-color: var(--brand-gold); font-weight: 700;">
+                            ⭐ Confirmar Contacto Principal
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Vista 4: Retirar Participante de Oportunidad -->
+            <section id="remove-opportunity-contact-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: #ef4444; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>🛑</span> Retirar Participante de la Oportunidad
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Desvincula a este participante del seguimiento comercial de la oportunidad conservando la trazabilidad.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="remove-opp-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Comercial</span>
+                            <strong id="remove-opp-context-account" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Participante a Desvincular</span>
+                            <strong id="remove-opp-contact-name" style="color: white; font-size: 0.95rem;">-</strong>
+                            <div id="remove-opp-contact-cargo" style="font-size: 0.8rem; color: var(--text-secondary);">-</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Rol Asignado</span>
+                            <span id="remove-opp-contact-role" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulario de Retiro -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="remove-opp-contact-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <div id="remove-opp-primary-warning" style="display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 1.25rem; color: #fca5a5; font-size: 0.85rem; line-height: 1.45;">
+                        ⚠️ <strong>Advertencia Crítica:</strong> Este participante es actualmente el <strong>Contacto Principal</strong> de la oportunidad. Al retirarlo, la oportunidad quedará sin contacto principal asignado. El sistema no reasignará automáticamente a otro participante para evitar falsas asunciones.
+                    </div>
+
+                    <form id="form-remove-opportunity-contact" onsubmit="confirmRemoveOpportunityContact(event)">
+                        <input type="hidden" id="remove-opp-contact-id">
+                        <input type="hidden" id="remove-opp-contact-opp-id">
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Motivo obligatorio del retiro / desvinculación *</label>
+                            <textarea id="remove-opp-contact-motivo" rows="3" placeholder="Explique por qué se desvincula este participante (ej. Cambio de responsabilidades en la constructora, salida de la empresa, ya no interviene en decisiones de compra)..." required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-danger" id="btn-confirm-remove-contact" style="background: #dc2626; border-color: #ef4444; font-weight: 700;">
+                                🛑 Confirmar Retiro de Participante
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 5: Cambiar Cuenta Comercial de la Oportunidad -->
+            <section id="change-opportunity-account-view" class="view-section">
+                <header class="header-flex mb-3">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
+                        <h1 style="color: #60a5fa; font-size: 1.6rem; display: flex; align-items: center; gap: 8px;">
+                            <span>🔄</span> Cambiar Cuenta Comercial de la Oportunidad
+                        </h1>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                            Reasigna esta oportunidad en etapa temprana a otra cuenta de tu cartera de clientes.
+                        </p>
+                    </div>
+                </header>
+
+                <!-- Contexto -->
+                <div class="glass-panel mb-3 opp-context-banner" style="background: rgba(44, 53, 83, 0.35); border: 1px solid var(--panel-border); padding: 1rem 1.25rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Proyecto</span>
+                            <strong id="change-acc-context-project" style="color: white; font-size: 0.95rem;">-</strong>
+                            <span id="change-acc-context-code" class="badge bg-neutral ml-1" style="font-size: 0.72rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Cuenta Actual</span>
+                            <strong id="change-acc-context-current-account" style="color: #fca5a5; font-size: 0.95rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); display: block;">Etapa Comercial</span>
+                            <span id="change-acc-context-stage" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; text-transform: capitalize;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reglas de Negocio -->
+                <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; font-size: 0.85rem; line-height: 1.5; color: #fca5a5; max-width: 800px;">
+                    <strong>⚠️ Reglas de Gobernanza Comercial:</strong>
+                    <ul style="margin: 6px 0 0 1.25rem; padding: 0;">
+                        <li>Esta operación está permitida exclusivamente en la etapa inicial <strong>"prospecto"</strong>.</li>
+                        <li>No debe existir ninguna <strong>cotización, oferta formal ni cuadro de costos</strong> activo.</li>
+                        <li>Al transferir la oportunidad, <strong>todos los participantes asignados a la cuenta anterior se archivarán como registros históricos inactivos</strong>.</li>
+                        <li>El contacto principal actual será removido y la visibilidad de la nueva cuenta se sincronizará automáticamente.</li>
+                    </ul>
+                </div>
+
+                <!-- Formulario -->
+                <div class="glass-panel" style="max-width: 800px;">
+                    <div id="change-opp-acc-status" class="opp-contact-status-banner" style="display: none; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.88rem;"></div>
+
+                    <form id="form-change-opportunity-account" onsubmit="submitChangeOpportunityAccount(event)">
+                        <input type="hidden" id="change-opp-acc-opp-id">
+
+                        <div class="form-group mb-3">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Nueva Cuenta Comercial (Cliente Destino) *</label>
+                            <select id="change-opp-acc-client-select" required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <option value="">Cargando cuentas...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label style="color: white; font-weight: 600; display: block; margin-bottom: 6px;">Motivo obligatorio de la transferencia de cuenta *</label>
+                            <textarea id="change-opp-acc-motivo" rows="3" placeholder="Explique la justificación comercial para transferir este proyecto a una nueva cuenta..." required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="cancelOpportunityContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-change-opp-acc" style="background: #2563eb; border-color: #3b82f6; font-weight: 600;">Confirmar Cambio de Cuenta</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- ===================================================================== -->
+            <!-- FASE 2 BLOQUE 1 (B1): VISTAS FULL-SCREEN DE PERSONAS Y CUENTAS        -->
+            <!-- ===================================================================== -->
+
+            <!-- Vista 1: Directorio y Gestión de Contactos de la Cuenta (Hub & Spoke) -->
+            <section id="account-contacts-view" class="view-section">
+                <div class="view-header" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+                    <div>
+                        <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.returnToClientsView()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                            ← Volver al Directorio de Cuentas
+                        </button>
+                        <h2 style="color: white; margin: 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                            <span>👥</span> Contactos y Relaciones de la Cuenta
+                        </h2>
+                        <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                            Directorio corporativo de personas, cargos vigentes e historial de períodos bajo el modelo Hub &amp; Spoke.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Context Card de la Cuenta -->
+                <div id="acc-contacts-view-context" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        🏢 Cuenta Comercial Seleccionada
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Nombre / Razón Social:</span>
+                            <strong id="acc-contacts-account-name" style="color: white; font-size: 1.05rem;">Cargando cuenta...</strong>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Código de Cuenta:</span>
+                            <span id="acc-contacts-account-id" class="badge" style="background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); border: 1px solid rgba(255, 204, 77, 0.3); font-family: monospace; font-size: 0.85rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Tipo de Persona:</span>
+                            <span id="acc-contacts-account-type" style="color: var(--text-primary); font-size: 0.9rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Identificación Fiscal:</span>
+                            <span id="acc-contacts-account-tax-id" style="color: var(--text-primary); font-size: 0.9rem;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="acc-contacts-view-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <!-- Barra de Acciones y Filtros -->
+                <div class="glass-panel mb-4" style="padding: 1rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span id="acc-contacts-count-badge" class="badge bg-neutral" style="font-size: 0.85rem; font-weight: 600;">0 contactos</span>
+                        <button type="button" id="btn-toggle-inactive-contacts" class="btn-secondary active" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;" onclick="ContactsUI.toggleInactiveContactsFilter()">
+                            👁️ Mostrando Inactivos
+                        </button>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" class="btn-secondary" style="font-size: 0.85rem; padding: 0.45rem 0.9rem;" onclick="ContactsUI.openCreatePersonView()">
+                            + Registrar Persona Global
+                        </button>
+                        <button type="button" class="btn-primary" style="font-size: 0.85rem; padding: 0.45rem 1rem;" onclick="ContactsUI.openLinkContactView()">
+                            🔗 Vincular Persona a Cuenta
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Contenedor de la Tabla de Contactos -->
+                <div id="acc-contacts-list-container" style="min-height: 250px;">
+                    <!-- Renderizado dinámicamente por ContactsUI -->
+                </div>
+            </section>
+
+            <!-- Vista 2: Registrar Nueva Persona Global (contacts_prod) -->
+            <section id="create-person-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">➕ Registrar Identidad Personal</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Crea la identidad global de una persona física (contacts_prod). Es independiente de cualquier cuenta y puede ser vinculada a múltiples empresas comerciales.
+                    </p>
+                </div>
+
+                <div id="create-person-context-card" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.35rem;">
+                        Contexto Operativo
+                    </div>
+                    <div style="color: var(--text-secondary); font-size: 0.85rem;">
+                        Cuenta comercial de origen: <strong id="create-person-account-context-name" style="color: white;">-</strong>
+                    </div>
+                </div>
+
+                <div id="create-person-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-create-person" onsubmit="ContactsUI.submitCreatePerson(event)">
+                        <div style="font-size: 0.85rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.75rem;">
+                            1. Identidad Personal (contacts_prod)
+                        </div>
+                        <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+                            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                                ℹ️ La identidad es única por persona. <strong>No se requiere DUI ni NIT</strong> para contactos comerciales ordinarios.
+                            </p>
+                            <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                                <div class="form-group">
+                                    <label for="create-person-nombres" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Nombres <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                    <input type="text" id="create-person-nombres" placeholder="Ej. Roberto Alexander" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="create-person-apellidos" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Apellidos <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                    <input type="text" id="create-person-apellidos" placeholder="Ej. Portillo Castro" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="create-person-telefono" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Personal <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="text" id="create-person-telefono" placeholder="Ej. 7890-1234" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="create-person-correo" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Personal <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="email" id="create-person-correo" placeholder="Ej. roberto.portillo@gmail.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Opción de vincular inmediatamente a la cuenta actual -->
+                        <div id="create-person-link-box" style="margin-bottom: 1.5rem;">
+                            <label style="display: flex; align-items: center; gap: 8px; color: white; font-size: 0.9rem; cursor: pointer;">
+                                <input type="checkbox" id="create-person-link-now" checked onchange="document.getElementById('create-person-account-fields').style.display = this.checked ? 'block' : 'none';" style="accent-color: var(--brand-gold); width: 16px; height: 16px;">
+                                <strong>Vincular inmediatamente a la cuenta actual con cargo laboral</strong>
+                            </label>
+                        </div>
+
+                        <div id="create-person-account-fields" style="background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.75rem;">
+                                2. Relación y Cargo en esta Cuenta (account_contacts_prod)
+                            </div>
+                            <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                                <div class="form-group" style="grid-column: 1 / -1;">
+                                    <label for="create-person-cargo" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Cargo en la Empresa <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                    <input type="text" id="create-person-cargo" placeholder="Ej. Gerente de Compras / Director de Obra" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="create-person-tel-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="text" id="create-person-tel-corp" placeholder="Ej. 2222-3333" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="create-person-ext" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Extensión <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="text" id="create-person-ext" placeholder="Ej. 104" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group" style="grid-column: 1 / -1;">
+                                    <label for="create-person-correo-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="email" id="create-person-correo-corp" placeholder="Ej. compras@constructora.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-create-person" style="font-weight: 600; padding: 0.6rem 1.5rem;">Guardar Persona</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 3: Editar Identidad Personal (contacts_prod) -->
+            <section id="edit-person-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">👤 Modificar Identidad Personal</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Actualiza nombres, apellidos y medios de comunicación personales de la identidad física registrada en contacts_prod.
+                    </p>
+                </div>
+
+                <div id="edit-person-context-card" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        Persona en Edición
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Identificador Persona:</span>
+                            <span id="edit-person-contact-id" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-family: monospace; font-size: 0.85rem;">-</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Cuenta Comercial:</span>
+                            <strong id="edit-person-account-name" style="color: white; font-size: 0.95rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="edit-person-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-edit-person" onsubmit="ContactsUI.submitEditPerson(event)">
+                        <input type="hidden" id="edit-person-id-val">
+                        <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                            <div class="form-group">
+                                <label for="edit-person-nombres" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Nombres <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                <input type="text" id="edit-person-nombres" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-person-apellidos" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Apellidos <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                <input type="text" id="edit-person-apellidos" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-person-telefono" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Personal <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="text" id="edit-person-telefono" placeholder="Ej. 7890-1234" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-person-correo" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Personal <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="email" id="edit-person-correo" placeholder="Ej. roberto.portillo@gmail.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-edit-person" style="font-weight: 600; padding: 0.6rem 1.5rem;">Guardar Cambios</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 4: Vincular Persona Existente a la Cuenta -->
+            <section id="link-contact-account-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">🔗 Vincular Persona a la Cuenta</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Busca una persona existente en la base global o inicia un registro nuevo para asignarle cargo y datos corporativos en esta cuenta.
+                    </p>
+                </div>
+
+                <div id="link-contact-context-card" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        Cuenta Destino
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.5rem;">🏢</span>
+                        <div>
+                            <strong id="link-contact-target-account" style="color: white; font-size: 1.1rem;">-</strong>
+                            <div style="color: var(--text-secondary); font-size: 0.8rem;">Modelo Hub &amp; Spoke: La relación se creará en account_contacts_prod</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="link-contact-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-link-contact-account" onsubmit="ContactsUI.submitLinkContact(event)">
+                        <div class="form-group mb-4">
+                            <label for="input-search-person-fs" style="color: white; font-weight: 600; font-size: 0.88rem; display: block; margin-bottom: 6px;">
+                                🔍 Buscar Persona Registrada (Nombres, Apellidos, Correo o Teléfono)
+                            </label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="input-search-person-fs" placeholder="Escribe al menos 2 caracteres para buscar en la base global de contactos..." oninput="ContactsUI.onPersonSearchInput(this.value)" style="flex: 1; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem;">
+                                <button type="button" class="btn-secondary" onclick="ContactsUI.openCreatePersonView()" style="white-space: nowrap; font-size: 0.85rem;">
+                                    + Crear Nueva Persona
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="person-search-results-fs" style="background: rgba(0,0,0,0.25); border: 1px solid var(--panel-border); border-radius: 6px; margin-bottom: 1.25rem; min-height: 50px;">
+                            <p style="padding: 0.85rem; color: var(--text-muted); font-size: 0.85rem; margin: 0; text-align: center;">Escribe al menos 2 caracteres para buscar personas...</p>
+                        </div>
+
+                        <div style="font-size: 0.82rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                            Persona Seleccionada
+                        </div>
+                        <div id="selected-person-preview-fs" style="margin-bottom: 1.25rem;">
+                            <!-- Actualizado por JS -->
+                        </div>
+
+                        <div id="link-existing-relation-fields-fs" style="display: none; background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem;">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.75rem;">
+                                Cargo y Datos Corporativos en esta Cuenta
+                            </div>
+                            <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                                <div class="form-group" style="grid-column: 1 / -1;">
+                                    <label for="link-exist-cargo-fs" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Cargo en la Empresa <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                                    <input type="text" id="link-exist-cargo-fs" placeholder="Ej. Gerente de Operaciones / Jefe de Mantenimiento" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="link-exist-tel-corp-fs" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="text" id="link-exist-tel-corp-fs" placeholder="Ej. 2255-0000" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group">
+                                    <label for="link-exist-ext-fs" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Extensión <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="text" id="link-exist-ext-fs" placeholder="Ej. 201" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                                <div class="form-group" style="grid-column: 1 / -1;">
+                                    <label for="link-exist-correo-corp-fs" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                    <input type="email" id="link-exist-correo-corp-fs" placeholder="Ej. rportillo@constructora.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-link-person" style="font-weight: 600; padding: 0.6rem 1.5rem;">Vincular Persona a la Cuenta</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 5: Editar Cargo y Datos Corporativos en la Cuenta -->
+            <section id="edit-account-contact-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">✏️ Modificar Cargo y Datos Corporativos</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Actualiza la posición laboral y los canales corporativos específicos de este contacto en la cuenta.
+                    </p>
+                </div>
+
+                <div id="edit-account-contact-context-card" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        Relación en Edición
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Persona:</span>
+                            <strong id="edit-acc-contact-person-name" style="color: white; font-size: 1.05rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Cuenta Comercial:</span>
+                            <span id="edit-acc-contact-account-name" style="color: var(--brand-gold); font-size: 0.95rem;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="edit-account-contact-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-edit-account-contact" onsubmit="ContactsUI.submitEditAccountContact(event)">
+                        <div class="form-group mb-3">
+                            <label for="edit-acc-cargo" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Cargo Actual en la Empresa <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                            <input type="text" id="edit-acc-cargo" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                        </div>
+                        <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                            <div class="form-group">
+                                <label for="edit-acc-tel-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="text" id="edit-acc-tel-corp" placeholder="Ej. 2222-3333" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="edit-acc-ext" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Extensión <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="text" id="edit-acc-ext" placeholder="Ej. 102" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                        </div>
+                        <div class="form-group mb-4">
+                            <label for="edit-acc-correo-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                            <input type="email" id="edit-acc-correo-corp" placeholder="Ej. contacto@empresa.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-primary" id="btn-submit-edit-acc-contact" style="font-weight: 600; padding: 0.6rem 1.5rem;">Guardar Cambios</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 6: Registrar Baja de Contacto (Cierre de Período) -->
+            <section id="deactivate-account-contact-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">⛔ Registrar Baja de Contacto en la Cuenta</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Cierre formal del período laboral activo. El historial de cargos y la identidad de la persona permanecen intactos.
+                    </p>
+                </div>
+
+                <div id="deact-contact-context-card" class="card mb-4" style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 1.25rem; border-left: 4px solid var(--danger);">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--danger); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        ⚠️ Advertencia de Baja Laboral
+                    </div>
+                    <div style="color: var(--text-primary); font-size: 0.9rem; margin-bottom: 0.5rem;">
+                        Se cerrará el período laboral activo de <strong id="deact-contact-person-name" style="color: white;">-</strong> en la cuenta <strong id="deact-contact-account-name" style="color: var(--brand-gold);">-</strong>.
+                    </div>
+                    <small style="color: var(--text-secondary); display: block;">
+                        La relación pasará a estado inactivo (activo: false) y se asentará la fecha de salida en periods_prod. Si la persona reingresa en el futuro, podrá ser reactivada con un nuevo período sin alterar el historial.
+                    </small>
+                </div>
+
+                <div id="deact-contact-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-deactivate-contact" onsubmit="ContactsUI.submitDeactivateContact(event)">
+                        <div class="form-group mb-4">
+                            <label for="deact-contact-motive" style="color: white; font-weight: 600; font-size: 0.88rem; display: block; margin-bottom: 6px;">
+                                Motivo Obligatorio de Salida <span class="required-indicator" style="color: var(--danger);">*</span>
+                            </label>
+                            <textarea id="deact-contact-motive" rows="4" placeholder="Ej. Renuncia voluntaria, cambio de empresa, reestructuración departamental, desvinculación..." required style="width: 100%; padding: 0.65rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.9rem; resize: vertical;"></textarea>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-danger" id="btn-submit-deact-contact" style="font-weight: 600; padding: 0.6rem 1.5rem;">Confirmar Baja y Cerrar Período</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 7: Reactivar Contacto en la Cuenta (Nuevo Período) -->
+            <section id="reactivate-account-contact-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">🔄 Reactivar Contacto en la Cuenta</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Reincorporación laboral de la persona. Se abrirá un nuevo período vigente en periods_prod sin sobrescribir los períodos históricos anteriores.
+                    </p>
+                </div>
+
+                <div id="react-contact-context-card" class="card mb-4" style="background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 1.25rem; border-left: 4px solid var(--success);">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--success); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        ℹ️ Reingreso Corporativo
+                    </div>
+                    <div style="color: var(--text-primary); font-size: 0.9rem; margin-bottom: 0.5rem;">
+                        Reactivando a <strong id="react-contact-person-name" style="color: white;">-</strong> en la cuenta <strong id="react-contact-account-name" style="color: var(--brand-gold);">-</strong>.
+                    </div>
+                    <small style="color: var(--text-secondary); display: block;">
+                        Se creará un nuevo período con fecha de inicio actual y fecha de fin abierta. Los períodos históricos de cargos anteriores se conservan íntegros.
+                    </small>
+                </div>
+
+                <div id="react-contact-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <form id="form-reactivate-contact" onsubmit="ContactsUI.submitReactivateContact(event)">
+                        <div class="form-group mb-3">
+                            <label for="react-contact-cargo" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Nuevo Cargo en la Cuenta <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                            <input type="text" id="react-contact-cargo" required placeholder="Ej. Director General / Gerente de Planta" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label for="react-contact-motive" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Motivo Obligatorio de Reingreso <span class="required-indicator" style="color: var(--danger);">*</span></label>
+                            <input type="text" id="react-contact-motive" required placeholder="Ej. Recontratación, regreso a la gerencia, nuevo proyecto..." style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                        </div>
+                        <div class="form-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                            <div class="form-group">
+                                <label for="react-contact-tel-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Teléfono Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="text" id="react-contact-tel-corp" placeholder="Ej. 2222-4444" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="react-contact-ext" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Extensión <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                                <input type="text" id="react-contact-ext" placeholder="Ej. 105" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                            </div>
+                        </div>
+                        <div class="form-group mb-4">
+                            <label for="react-contact-correo-corp" style="color: white; font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 4px;">Correo Corporativo <span style="color: var(--text-muted); font-size: 0.78rem;">(Opcional)</span></label>
+                            <input type="email" id="react-contact-correo-corp" placeholder="Ej. direccion@empresa.com" style="width: 100%; padding: 0.6rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--panel-border); font-size: 0.88rem;">
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid var(--panel-border); padding-top: 1.25rem;">
+                            <button type="button" class="btn-secondary" onclick="ContactsUI.cancelContactOperation()">Cancelar</button>
+                            <button type="submit" class="btn-success" id="btn-submit-react-contact" style="font-weight: 600; padding: 0.6rem 1.5rem;">Reactivar y Abrir Período</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Vista 8: Historial de Cargos y Períodos Laborales (periods_prod) -->
+            <section id="contact-periods-view" class="view-section">
+                <div class="view-header" style="margin-bottom: 1.5rem;">
+                    <button type="button" class="btn-secondary mb-2" onclick="ContactsUI.cancelContactOperation()" style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; padding: 6px 12px;">
+                        ← Volver a Contactos
+                    </button>
+                    <h2 style="color: white; margin: 0; font-size: 1.4rem;">🕒 Historial de Cargos y Períodos Laborales</h2>
+                    <p style="color: var(--text-secondary); margin: 4px 0 0 0; font-size: 0.88rem;">
+                        Trazabilidad cronológica de períodos de asignación (subcolección periods_prod) de la persona dentro de esta cuenta.
+                    </p>
+                </div>
+
+                <div id="periods-contact-context-card" class="card mb-4" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.25rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--brand-gold); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
+                        Persona y Cuenta Asociada
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Persona:</span>
+                            <strong id="periods-contact-person-name" style="color: white; font-size: 1.1rem;">-</strong>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-secondary); font-size: 0.78rem; display: block;">Cuenta Comercial:</span>
+                            <strong id="periods-contact-account-name" style="color: var(--brand-gold); font-size: 1rem;">-</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="periods-view-status" class="alert-feedback-banner" style="display: none; margin-bottom: 1rem;"></div>
+
+                <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--panel-border); border-radius: 8px; padding: 1.5rem;">
+                    <div id="periods-list-container" style="min-height: 200px;">
+                        <!-- Renderizado dinámicamente por ContactsUI -->
                     </div>
                 </div>
             </section>
@@ -1403,314 +2273,6 @@
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <!-- ===================================================================== -->
-    <!-- FASE 2 BLOQUE 1 (B1): MODALES DE PERSONAS, RELACIONES Y PERÍODOS     -->
-    <!-- ===================================================================== -->
-
-    <!-- Modal 1: Directorio de Contactos de la Cuenta (Hub & Spoke) -->
-    <div id="accountContactsModal" class="modal" style="z-index: 120;">
-        <div class="modal-content glass-panel" style="max-width: 860px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; padding: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 1rem;">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 1.8rem; background: rgba(56, 189, 248, 0.15); padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3);">👥</span>
-                    <div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <h2 style="margin: 0; font-size: 1.25rem; color: white;" id="acc-contacts-account-name">Contactos de la Cuenta</h2>
-                            <span id="acc-contacts-account-id" class="badge" style="background: rgba(255, 204, 77, 0.15); color: var(--brand-gold); border: 1px solid rgba(255, 204, 77, 0.3); font-family: monospace;">-</span>
-                        </div>
-                        <p style="margin: 3px 0 0 0; font-size: 0.82rem; color: var(--text-secondary);">
-                            Personas y relaciones laborales activas e históricas (Modelo Hub &amp; Spoke)
-                        </p>
-                    </div>
-                </div>
-                <span class="close" onclick="ContactsUI.closeAccountContactsModal()" style="font-size: 24px; cursor: pointer; color: var(--text-secondary);" title="Cerrar">&times;</span>
-            </div>
-
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <span id="acc-contacts-count-badge" class="badge bg-neutral" style="font-size: 0.8rem; font-weight: 600;">0 contactos</span>
-                    <button type="button" id="btn-toggle-inactive-contacts" class="btn-secondary active" style="font-size: 0.75rem; padding: 0.35rem 0.75rem;" onclick="ContactsUI.toggleInactiveContactsFilter()">
-                        👁️ Mostrando Inactivos
-                    </button>
-                </div>
-                <button type="button" class="btn-primary" style="font-size: 0.85rem; padding: 0.5rem 1rem;" onclick="ContactsUI.openLinkContactModal()">
-                    + Vincular Persona
-                </button>
-            </div>
-
-            <div id="acc-contacts-list-container" style="overflow-y: auto; flex: 1; min-height: 250px;">
-                <!-- Populated dynamically by ContactsUI -->
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--panel-border);">
-                <button type="button" class="btn-secondary" onclick="ContactsUI.closeAccountContactsModal()">Cerrar</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal 2: Vincular Contacto a Cuenta (Nueva Persona o Existente) -->
-    <div id="linkContactModal" class="modal" style="z-index: 130;">
-        <div class="modal-content glass-panel" style="max-width: 650px; width: 95%; max-height: 90vh; overflow-y: auto; padding: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
-                <div>
-                    <h2 style="margin: 0; font-size: 1.2rem; color: white;">Vincular Persona a la Cuenta</h2>
-                    <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-secondary);">
-                        Cuenta destino: <strong id="link-contact-target-account" style="color: var(--brand-gold);">-</strong>
-                    </p>
-                </div>
-                <span class="close" onclick="ContactsUI.closeLinkContactModal()" style="font-size: 24px; cursor: pointer; color: var(--text-secondary);" title="Cerrar">&times;</span>
-            </div>
-
-            <!-- Tabs de modo -->
-            <div style="display: flex; gap: 8px; margin-bottom: 1.25rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 8px;">
-                <button type="button" id="tab-link-create-mode" class="filter-pill active" style="font-size: 0.85rem;" onclick="ContactsUI.setLinkContactMode('create')">
-                    ➕ Crear Nueva Persona
-                </button>
-                <button type="button" id="tab-link-select-mode" class="filter-pill" style="font-size: 0.85rem;" onclick="ContactsUI.setLinkContactMode('select')">
-                    🔍 Seleccionar Persona Existente
-                </button>
-            </div>
-
-            <!-- Formulario Modo 1: Crear Nueva Persona y Vincular -->
-            <div id="section-link-create-person">
-                <form id="form-create-and-link-person" onsubmit="ContactsUI.submitLinkContact(event)">
-                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
-                        1. Identidad Personal (contacts_prod)
-                    </div>
-                    <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
-                        <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
-                            ℹ️ La identidad es independiente de la cuenta. <strong>No se requiere DUI ni NIT</strong> para contactos comerciales ordinarios.
-                        </p>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="link-new-nombres">Nombres <span class="required-indicator">*</span></label>
-                                <input type="text" id="link-new-nombres" placeholder="Ej. Roberto Alexander" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="link-new-apellidos">Apellidos <span class="required-indicator">*</span></label>
-                                <input type="text" id="link-new-apellidos" placeholder="Ej. Portillo Castro" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="link-new-telefono">Teléfono Personal <span class="optional-tag">(Opcional)</span></label>
-                                <input type="text" id="link-new-telefono" placeholder="Ej. 7890-1234">
-                            </div>
-                            <div class="form-group">
-                                <label for="link-new-correo">Correo Personal <span class="optional-tag">(Opcional)</span></label>
-                                <input type="email" id="link-new-correo" placeholder="Ej. roberto.portillo@gmail.com">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
-                        2. Relación y Cargo en esta Cuenta (account_contacts_prod)
-                    </div>
-                    <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
-                        <div class="form-grid">
-                            <div class="form-group full-width">
-                                <label for="link-new-cargo">Cargo en la Empresa <span class="required-indicator">*</span></label>
-                                <input type="text" id="link-new-cargo" placeholder="Ej. Gerente de Compras / Director de Obra" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="link-new-tel-corp">Teléfono Corporativo <span class="optional-tag">(Opcional)</span></label>
-                                <input type="text" id="link-new-tel-corp" placeholder="Ej. 2222-3333">
-                            </div>
-                            <div class="form-group">
-                                <label for="link-new-ext">Extensión <span class="optional-tag">(Opcional)</span></label>
-                                <input type="text" id="link-new-ext" placeholder="Ej. 104">
-                            </div>
-                            <div class="form-group full-width">
-                                <label for="link-new-correo-corp">Correo Corporativo <span class="optional-tag">(Opcional)</span></label>
-                                <input type="email" id="link-new-correo-corp" placeholder="Ej. compras@constructora.com">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1rem;">
-                        <button type="button" class="btn-secondary" onclick="ContactsUI.closeLinkContactModal()">Cancelar</button>
-                        <button type="submit" class="btn-primary">Crear y Vincular Persona</button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- Formulario Modo 2: Seleccionar Persona Existente -->
-            <div id="section-link-select-person" style="display: none;">
-                <form id="form-link-existing-person" onsubmit="ContactsUI.submitLinkContact(event)">
-                    <div class="form-group">
-                        <label for="input-search-person">Buscar Persona Registrada</label>
-                        <input type="text" id="input-search-person" placeholder="🔍 Escribe nombre, apellido, correo o teléfono..." oninput="ContactsUI.onPersonSearchInput(this.value)">
-                    </div>
-
-                    <div id="person-search-results" style="background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); border-radius: 6px; margin-bottom: 1rem; min-height: 50px;">
-                        <p style="padding: 0.75rem; color: var(--text-muted); font-size: 0.82rem; margin: 0;">Escribe al menos 2 caracteres para buscar personas...</p>
-                    </div>
-
-                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
-                        Persona Seleccionada
-                    </div>
-                    <div id="selected-person-preview" style="margin-bottom: 1rem;">
-                        <!-- Updated by JS -->
-                    </div>
-
-                    <div id="link-existing-relation-fields" style="display: none; background: rgba(0,0,0,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
-                        <div style="font-size: 0.82rem; font-weight: 700; color: var(--brand-gold); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem;">
-                            Cargo y Datos Corporativos en esta Cuenta
-                        </div>
-                        <div class="form-grid">
-                            <div class="form-group full-width">
-                                <label for="link-exist-cargo">Cargo en la Empresa <span class="required-indicator">*</span></label>
-                                <input type="text" id="link-exist-cargo" placeholder="Ej. Gerente de Operaciones">
-                            </div>
-                            <div class="form-group">
-                                <label for="link-exist-tel-corp">Teléfono Corporativo <span class="optional-tag">(Opcional)</span></label>
-                                <input type="text" id="link-exist-tel-corp" placeholder="Ej. 2255-0000">
-                            </div>
-                            <div class="form-group">
-                                <label for="link-exist-ext">Extensión <span class="optional-tag">(Opcional)</span></label>
-                                <input type="text" id="link-exist-ext" placeholder="Ej. 201">
-                            </div>
-                            <div class="form-group full-width">
-                                <label for="link-exist-correo-corp">Correo Corporativo <span class="optional-tag">(Opcional)</span></label>
-                                <input type="email" id="link-exist-correo-corp" placeholder="Ej. rportillo@constructora.com">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1rem;">
-                        <button type="button" class="btn-secondary" onclick="ContactsUI.closeLinkContactModal()">Cancelar</button>
-                        <button type="submit" class="btn-primary">Vincular Persona a la Cuenta</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal 3: Modificar Cargo y Datos Corporativos -->
-    <div id="editAccountContactModal" class="modal" style="z-index: 130;">
-        <div class="modal-content glass-panel" style="max-width: 500px; width: 92%; padding: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem;">
-                <h3 style="margin: 0; color: white;">Editar Cargo y Datos Corporativos</h3>
-                <span class="close" onclick="ContactsUI.closeEditAccountContactModal()" style="font-size: 22px; cursor: pointer; color: var(--text-secondary);">&times;</span>
-            </div>
-            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-                Persona: <strong id="edit-acc-contact-person-name" style="color: white;">-</strong>
-            </p>
-            <form onsubmit="ContactsUI.submitEditAccountContact(event)">
-                <div class="form-group">
-                    <label for="edit-acc-cargo">Cargo Actual <span class="required-indicator">*</span></label>
-                    <input type="text" id="edit-acc-cargo" required>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label for="edit-acc-tel-corp">Teléfono Corporativo</label>
-                        <input type="text" id="edit-acc-tel-corp" placeholder="Ej. 2222-3333">
-                    </div>
-                    <div class="form-group">
-                        <label for="edit-acc-ext">Extensión</label>
-                        <input type="text" id="edit-acc-ext" placeholder="Ej. 102">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="edit-acc-correo-corp">Correo Corporativo</label>
-                    <input type="email" id="edit-acc-correo-corp" placeholder="Ej. contacto@empresa.com">
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="ContactsUI.closeEditAccountContactModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary">Guardar Cambios</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal 4: Registrar Baja (Cerrar Período Vigente) -->
-    <div id="deactivateContactModal" class="modal" style="z-index: 130;">
-        <div class="modal-content glass-panel" style="max-width: 480px; width: 92%; padding: 1.5rem; border-top: 4px solid var(--danger);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                <h3 style="margin: 0; color: white;">Registrar Baja de Contacto</h3>
-                <span class="close" onclick="ContactsUI.closeDeactivateContactModal()" style="font-size: 22px; cursor: pointer; color: var(--text-secondary);">&times;</span>
-            </div>
-            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-                Se cerrará el período laboral activo de <strong id="deact-contact-person-name" style="color: white;">-</strong> en esta cuenta. La identidad y el historial permanecerán intactos para trazabilidad futura.
-            </p>
-            <form onsubmit="ContactsUI.submitDeactivateContact(event)">
-                <div class="form-group">
-                    <label for="deact-contact-motive">Motivo de Salida <span class="required-indicator">*</span></label>
-                    <textarea id="deact-contact-motive" rows="3" placeholder="Ej. Renuncia voluntaria, cambio de empresa, reestructuración departamental..." required style="width: 100%; resize: vertical;"></textarea>
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="ContactsUI.closeDeactivateContactModal()">Cancelar</button>
-                    <button type="submit" class="btn-danger">Confirmar Baja y Cerrar Período</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal 5: Reactivar Contacto (Nuevo Período) -->
-    <div id="reactivateContactModal" class="modal" style="z-index: 130;">
-        <div class="modal-content glass-panel" style="max-width: 520px; width: 92%; padding: 1.5rem; border-top: 4px solid var(--success);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                <h3 style="margin: 0; color: white;">Reactivar Contacto en la Cuenta</h3>
-                <span class="close" onclick="ContactsUI.closeReactivateContactModal()" style="font-size: 22px; cursor: pointer; color: var(--text-secondary);">&times;</span>
-            </div>
-            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-                Reingreso de <strong id="react-contact-person-name" style="color: white;">-</strong> a esta cuenta. Se creará un nuevo período abierto sin sobrescribir los períodos históricos anteriores.
-            </p>
-            <form onsubmit="ContactsUI.submitReactivateContact(event)">
-                <div class="form-group">
-                    <label for="react-contact-cargo">Nuevo Cargo en la Cuenta <span class="required-indicator">*</span></label>
-                    <input type="text" id="react-contact-cargo" required placeholder="Ej. Director General / Gerente de Planta">
-                </div>
-                <div class="form-group">
-                    <label for="react-contact-motive">Motivo de Reingreso <span class="required-indicator">*</span></label>
-                    <input type="text" id="react-contact-motive" required placeholder="Ej. Recontratación, regreso a la gerencia, nuevo proyecto...">
-                </div>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label for="react-contact-tel-corp">Teléfono Corporativo <span class="optional-tag">(Opcional)</span></label>
-                        <input type="text" id="react-contact-tel-corp" placeholder="Ej. 2222-4444">
-                    </div>
-                    <div class="form-group">
-                        <label for="react-contact-ext">Extensión <span class="optional-tag">(Opcional)</span></label>
-                        <input type="text" id="react-contact-ext" placeholder="Ej. 105">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="react-contact-correo-corp">Correo Corporativo <span class="optional-tag">(Opcional)</span></label>
-                    <input type="email" id="react-contact-correo-corp" placeholder="Ej. direccion@empresa.com">
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.25rem;">
-                    <button type="button" class="btn-secondary" onclick="ContactsUI.closeReactivateContactModal()">Cancelar</button>
-                    <button type="submit" class="btn-success">Reactivar y Abrir Período</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal 6: Historial de Cargos y Períodos (Subcolección periods_prod) -->
-    <div id="contactPeriodsModal" class="modal" style="z-index: 130;">
-        <div class="modal-content glass-panel" style="max-width: 680px; width: 95%; max-height: 88vh; display: flex; flex-direction: column; padding: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="font-size: 1.6rem; background: rgba(56, 189, 248, 0.15); padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3);">🕒</span>
-                    <div>
-                        <h3 style="margin: 0; color: white;" id="periods-contact-person-name">Historial de Períodos</h3>
-                        <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-secondary);">
-                            Cuenta: <strong id="periods-contact-account-name" style="color: var(--brand-gold);">-</strong>
-                        </p>
-                    </div>
-                </div>
-                <span class="close" onclick="ContactsUI.closeContactPeriodsModal()" style="font-size: 24px; cursor: pointer; color: var(--text-secondary);">&times;</span>
-            </div>
-
-            <div id="periods-list-container" style="flex: 1; overflow-y: auto; min-height: 200px;">
-                <!-- Filled dynamically by ContactsUI -->
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--panel-border);">
-                <button type="button" class="btn-secondary" onclick="ContactsUI.closeContactPeriodsModal()">Cerrar</button>
-            </div>
         </div>
     </div>
 
@@ -2214,6 +2776,7 @@
         </div>
     </div>
 
+
     <!-- Loading Spinner Overlay -->
     <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
         <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
@@ -2231,6 +2794,7 @@
     <script src="crm_auth.js?v=3"></script>
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_contacts.js?v=1"></script>
+    <script src="crm_opportunity_contacts.js?v=1"></script>
     <script src="crm_commercial.js?v=3"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>
@@ -2245,6 +2809,7 @@
     <script src="modules/clients/contacts_ui.js?v=1"></script>
     <script src="modules/clients/clients_ui.js?v=1"></script>
     <script src="modules/opportunities/opportunities_controller.js?v=1"></script>
+    <script src="modules/opportunities/opportunity_contacts_ui.js?v=1"></script>
     <script src="modules/opportunities/opportunities_ui.js?v=1"></script>
     <script src="modules/finance/finance_calculations.js?v=1"></script>
     <script src="modules/finance/finance_change_orders.js?v=1"></script>

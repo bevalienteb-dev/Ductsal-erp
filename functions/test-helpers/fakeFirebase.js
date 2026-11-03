@@ -215,6 +215,31 @@ function buildAdminFake() {
         }
       };
     },
+    batch() {
+      const writes = [];
+      return {
+        set: (ref, data, opts = {}) => { writes.push({ kind: 'set', ref, data, opts }); },
+        create: (ref, data) => { writes.push({ kind: 'create', ref, data }); },
+        update: (ref, data) => { writes.push({ kind: 'update', ref, data }); },
+        delete: ref => { writes.push({ kind: 'delete', ref }); },
+        async commit() {
+          for (const w of writes) {
+            if (w.kind === 'set') applySet(w.ref.path, w.data, w.opts);
+            else if (w.kind === 'create') {
+              if (state.docs[w.ref.path]) { const err = new Error('ALREADY_EXISTS'); err.code = 6; throw err; }
+              state.docs[w.ref.path] = { ...w.data };
+            } else if (w.kind === 'update') {
+              if (!state.docs[w.ref.path]) throw new Error('NOT_FOUND');
+              const cur = cloneDoc(state.docs[w.ref.path] || {});
+              applyUpdate(cur, w.data);
+              state.docs[w.ref.path] = cur;
+            } else if (w.kind === 'delete') {
+              delete state.docs[w.ref.path];
+            }
+          }
+        }
+      };
+    },
     // Writes are buffered and committed together when the callback returns, like the real SDK: the failure hooks run
     // for ALL writes first, so a failing write leaves nothing applied (atomic). Supports concurrency conflict retry.
     async runTransaction(fn) {

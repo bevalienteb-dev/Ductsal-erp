@@ -73,8 +73,8 @@
         return r.data;
     }
 
-    async function searchContacts(fb, { q, limit, dbSuffix }) {
-        const r = await fb.functions().httpsCallable('searchContactsAdmin')({ q, limit, dbSuffix });
+    async function searchContacts(fb, { q, limit, excludeAccountId, dbSuffix }) {
+        const r = await fb.functions().httpsCallable('searchContactsAdmin')({ q, limit, excludeAccountId, dbSuffix });
         return r.data;
     }
 
