@@ -87,7 +87,7 @@ describe('Step 6.2 — Suite de Pruebas Obligatorias del Backend de Usuarios e I
     const authUser = state.authUsers[email];
     expect(authUser).toBeDefined();
     expect(authUser.uid).toBe(res.uid);
-    expect(authUser.claims).toEqual({ role: 'vendedor' });
+    expect(authUser.claims).toEqual({ role: 'vendedor', cid: res.id });
 
     // Check Firestore profile: sentCount must NOT be incremented prematurely
     const profile = state.docs[`users_prod/${res.id}`];

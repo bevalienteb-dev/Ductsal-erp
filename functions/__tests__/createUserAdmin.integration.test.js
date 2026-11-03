@@ -80,9 +80,9 @@ describe('roles: only real CRM roles without privilege', () => {
     expect(Object.keys(state.docs)).toHaveLength(0); // no operation or profile written
   });
 
-  test('the only claim granted is the informational role; never `manager` or any privileged claim', async () => {
-    await createUserAdmin(payloadFor('claims@x.com', { role: 'gestor' }), ctx);
-    expect(state.authUsers['claims@x.com'].claims).toEqual({ role: 'gestor' });
+  test('the only claim granted is the informational role and cid; never `manager` or any privileged claim', async () => {
+    const res = await createUserAdmin(payloadFor('claims@x.com', { role: 'gestor' }), ctx);
+    expect(state.authUsers['claims@x.com'].claims).toEqual({ role: 'gestor', cid: res.id });
   });
 });
 

@@ -235,7 +235,7 @@ describe('createUserAdmin – success and idempotency keys', () => {
     const result = await createUserAdmin(payloadFor('new@example.com', 'op5', { nombre: 'New User' }), ctx);
     expect(result).toHaveProperty('uid', state.authUsers['new@example.com'].uid);
     expect(state.docs['userOps/op5']).toMatchObject({ status: 'succeeded', uid: result.uid });
-    expect(state.authUsers['new@example.com'].claims).toEqual({ role: 'vendedor' });
+    expect(state.authUsers['new@example.com'].claims).toEqual({ role: 'vendedor', cid: result.id });
     // CRM profile schema: keyed by the historical id; the Auth UID is kept separately; no password.
     expect(state.docs[`users_prod/${result.id}`]).toMatchObject({
       id: result.id, authUid: result.uid, email: 'new@example.com', nombre: 'New User', role: 'vendedor', activo: true

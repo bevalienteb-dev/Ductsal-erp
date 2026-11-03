@@ -114,9 +114,14 @@ describe('A. createUserAdmin over the callable protocol (real emulators)', () =>
     // Auth, queried directly: exactly one account with that email, same uid, not a manager.
     const accounts = byEmail(await H.listAuthUsers(), emailA);
     expect(accounts).toHaveLength(1);
-    expect(accounts[0].uid).toBe(state.created.uid);
     expect(accounts[0].claims.manager).not.toBe(true);
+    expect(accounts[0].claims.role).toBe('vendedor');
+    expect(accounts[0].claims.cid).toBe(state.created.id);
     expect(accounts[0].disabled).toBe(false);
+
+    // Existing manager account claims remain intact and unmodified
+    const existingMgr = (await H.listAuthUsers()).find(u => u.uid === H.SEED.uid);
+    expect(existingMgr.claims).toEqual({ role: 'manager', manager: true, cid: H.SEED.profileId });
 
     // Firestore, queried directly: exactly one profile, linked by authUid, distinct commercial id.
     const profiles = await profilesByEmail(emailA);

@@ -2096,13 +2096,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                             activo: true
                         };
                         localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
-                        checkAuth();
+
+                        try {
+                            checkAuth();
+                        } catch (uiErr) {
+                            console.error('[CRM] Error no fatal en checkAuth durante onAuthStateChanged:', uiErr);
+                        }
 
                         // Centralized subscription: attach data listeners exclusively under a confirmed session
                         if (typeof attachDataListeners === 'function') {
-                            attachDataListeners(role, cid);
+                            try {
+                                attachDataListeners(role, cid);
+                            } catch (subErr) {
+                                console.error('[CRM] Error al suscribir listeners en onAuthStateChanged:', subErr);
+                            }
                         }
-                        reRenderApp();
+
+                        try {
+                            reRenderApp();
+                        } catch (renderErr) {
+                            console.error('[CRM] Error no fatal en reRenderApp durante onAuthStateChanged:', renderErr);
+                        }
                     } catch (e) {
                         console.warn('[CRM] Error al verificar token en onAuthStateChanged:', e);
                         processLogout();
@@ -2324,20 +2338,28 @@ function goBackFromDetail() {
 }
 
 function checkAuth() {
+    const mainApp = document.getElementById('main-app');
+    const loginScreen = document.getElementById('login-screen');
+    const setupScreen = document.getElementById('setup-screen');
+    const nameEl = document.getElementById('ui-user-name');
+    const roleEl = document.getElementById('ui-user-role');
+
     if (!currentUser) {
-        document.getElementById('main-app').style.display = 'none';
-        document.getElementById('login-screen').style.display = 'flex';
-        document.getElementById('setup-screen').style.display = 'none';
+        if (mainApp && mainApp.style) mainApp.style.display = 'none';
+        if (loginScreen && loginScreen.style) loginScreen.style.display = 'flex';
+        if (setupScreen && setupScreen.style) setupScreen.style.display = 'none';
     } else {
-        document.getElementById('main-app').style.display = 'flex';
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('setup-screen').style.display = 'none';
+        if (mainApp && mainApp.style) mainApp.style.display = 'flex';
+        if (loginScreen && loginScreen.style) loginScreen.style.display = 'none';
+        if (setupScreen && setupScreen.style) setupScreen.style.display = 'none';
 
-        document.getElementById('ui-user-name').textContent = currentUser.nombre;
+        if (nameEl) nameEl.textContent = currentUser.nombre || currentUser.email || currentUser.id || '';
         const rName = currentUser.role === 'manager' ? 'Gerente' : (currentUser.role === 'gestor' ? 'Gestor de Ventas' : 'Vendedor');
-        document.getElementById('ui-user-role').textContent = rName;
+        if (roleEl) roleEl.textContent = rName;
 
-        applyRolePermissions();
+        if (typeof applyRolePermissions === 'function') {
+            applyRolePermissions();
+        }
     }
 }
 
@@ -2460,14 +2482,23 @@ async function processDirectFirebaseAuthLogin(email, pass) {
                 CrmAuth.purgeHistoricalPassword(firebase, { id: cid, dbSuffix: DB_SUFFIX }).catch(() => {});
             }
         } catch (dbErr) {
+            console.error('[CRM] Error al verificar perfil comercial en Firestore:', dbErr);
             await firebase.auth().signOut();
             return alert("Error al verificar perfil comercial en la base de datos.");
         }
         currentUser = profile;
         localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
         if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
-        checkAuth();
-        reRenderApp();
+        try {
+            checkAuth();
+        } catch (uiErr) {
+            console.error('[CRM] Error no fatal en checkAuth tras login:', uiErr);
+        }
+        try {
+            reRenderApp();
+        } catch (renderErr) {
+            console.error('[CRM] Error no fatal en reRenderApp tras login:', renderErr);
+        }
 
         // FASE 6.4: Limpiar estado y banner de retorno de activación tras login exitoso
         try {

@@ -493,21 +493,6 @@ exports.createUserAdmin = functions.https.onCall(async (data, context) => {
       throw manualReviewError('Auth account created but its UID could not be persisted');
     }
 
-    // ---------- Set custom claims ----------
-    try {
-      await admin.auth().setCustomUserClaims(newAuthUser.uid, { role });
-    } catch (e) {
-      // Rollback: this account was created by this very request (UID persisted above).
-      try {
-        await admin.auth().deleteUser(newAuthUser.uid);
-      } catch (delErr) {
-        await markManualReview('Failed to set custom claims and rollback failed', { uid: newAuthUser.uid, rollbackError: delErr.message });
-        throw manualReviewError(`Failed to assign role and could not delete user: ${delErr.message}`);
-      }
-      await recordFailure(OP_STATUS.ERROR, 'Failed to set custom claims', { rolledBack: true });
-      throw new functions.https.HttpsError('internal', 'Failed to assign role');
-    }
-
     // ---------- Write Firestore profile ----------
     // CRM schema: key === id (historical format); Auth UID stored separately as `authUid`;
     // no `password` field (the credential lives only in Firebase Authentication). `create()`
@@ -567,6 +552,39 @@ exports.createUserAdmin = functions.https.onCall(async (data, context) => {
       }
       await recordFailure(OP_STATUS.ERROR, 'Failed to write Firestore profile', { rolledBack: true });
       throw new functions.https.HttpsError('internal', 'Failed to persist user profile');
+    }
+
+    // ---------- Set custom claims ----------
+    try {
+      await admin.auth().setCustomUserClaims(newAuthUser.uid, { role, cid: profileId });
+    } catch (e) {
+      // Rollback: this account was created by this very request (UID persisted above).
+      let profileDeleteFailed = false;
+      try {
+        await db.collection(names.users).doc(profileId).delete();
+      } catch (profDelErr) {
+        profileDeleteFailed = true;
+      }
+      try {
+        await admin.auth().deleteUser(newAuthUser.uid);
+      } catch (delErr) {
+        await markManualReview('Failed to set custom claims and rollback failed', {
+          uid: newAuthUser.uid,
+          profileId,
+          rollbackError: delErr.message,
+          profileDeleteFailed
+        });
+        throw manualReviewError(`Failed to assign role and could not delete user: ${delErr.message}`);
+      }
+      if (profileDeleteFailed) {
+        await markManualReview('Failed to set custom claims: Auth user deleted but profile delete failed', {
+          uid: newAuthUser.uid,
+          profileId
+        });
+        throw manualReviewError('Failed to assign role and profile cleanup failed');
+      }
+      await recordFailure(OP_STATUS.ERROR, 'Failed to set custom claims', { rolledBack: true });
+      throw new functions.https.HttpsError('internal', 'Failed to assign role');
     }
 
     // ---------- Backend Ticket Authority: Pre-register Invitation Ticket (Write-Ahead) ----------

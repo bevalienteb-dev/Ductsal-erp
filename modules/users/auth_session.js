@@ -209,6 +209,7 @@
                     CrmAuth.purgeHistoricalPassword(fb, { id: cid, dbSuffix }).catch(() => {});
                 }
             } catch (err) {
+                console.error('[CRM] Error al verificar perfil comercial en Firestore:', err);
                 await fb.auth().signOut();
                 return resolvedDeps.notify("Error al verificar perfil comercial en la base de datos.");
             }
@@ -220,8 +221,16 @@
             if (typeof resolvedDeps.attachDataListeners === 'function') {
                 resolvedDeps.attachDataListeners(profile.role, profile.id);
             }
-            if (typeof resolvedDeps.checkAuth === 'function') resolvedDeps.checkAuth();
-            if (typeof resolvedDeps.reRenderApp === 'function') resolvedDeps.reRenderApp();
+            try {
+                if (typeof resolvedDeps.checkAuth === 'function') resolvedDeps.checkAuth();
+            } catch (uiErr) {
+                console.error('[CRM] Error no fatal en checkAuth tras login:', uiErr);
+            }
+            try {
+                if (typeof resolvedDeps.reRenderApp === 'function') resolvedDeps.reRenderApp();
+            } catch (renderErr) {
+                console.error('[CRM] Error no fatal en reRenderApp tras login:', renderErr);
+            }
         } catch (e) {
             const reason = (CrmAuth && typeof CrmAuth.normalizeCode === 'function') ? CrmAuth.normalizeCode(e) : (e && e.code);
             const msg = (CrmAuth && typeof CrmAuth.loginErrorMessage === 'function')
