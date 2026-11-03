@@ -591,6 +591,20 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
     test('vendedor CANNOT access or link contacts to an account outside their portfolio', async () => {
       // C2 is owned by V2, V1 has no rights on C2
       const callerV1 = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const callerV2 = { uid: 'uid-v2', cid: V2, role: 'vendedor', name: 'Vendedor Dos' };
+      const callerMgr = { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' };
+      const callerGes = { uid: 'uid-ges', cid: GES, role: 'gestor', name: 'Gestor Comercial' };
+
+      // Link person to C2 by V2 first
+      const linkRes = await svc.linkContactToAccount({
+        caller: callerV2,
+        accountId: 'C2',
+        contactId: person.id,
+        cargo: 'Auditor Externo'
+      });
+      const relIdC2 = linkRes.accountContact.id;
+
+      // 1. Vendedor V1 intentando vincular contacto a cuenta de V2
       await expect(svc.linkContactToAccount({
         caller: callerV1,
         accountId: 'C2',
@@ -598,10 +612,37 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
         cargo: 'Auditor'
       })).rejects.toThrow('No tiene permisos para acceder a esta cuenta');
 
+      // 2. Vendedor V1 intentando listar relaciones de cuentas de V2
       await expect(svc.listAccountContacts({
         caller: callerV1,
         accountId: 'C2'
       })).rejects.toThrow('No tiene permisos para acceder a esta cuenta');
+
+      // 3. Vendedor V1 intentando leer/modificar una relación por ID de una cuenta de V2
+      await expect(svc.updateAccountContact({
+        caller: callerV1,
+        accountContactId: relIdC2,
+        cargo: 'Intento de Modificación'
+      })).rejects.toThrow('No tiene permisos para acceder a esta cuenta');
+
+      // 4. Vendedor V1 intentando listar períodos de esa relación
+      await expect(svc.listContactPeriods({
+        caller: callerV1,
+        accountContactId: relIdC2
+      })).rejects.toThrow('No tiene permisos para acceder a esta cuenta');
+
+      // 5. Manager y gestor accediendo a los mismos datos de C2
+      const mgrList = await svc.listAccountContacts({ caller: callerMgr, accountId: 'C2' });
+      expect(mgrList.contacts.length).toBe(1);
+
+      const mgrPeriods = await svc.listContactPeriods({ caller: callerMgr, accountContactId: relIdC2 });
+      expect(mgrPeriods.periods.length).toBe(1);
+
+      const gesList = await svc.listAccountContacts({ caller: callerGes, accountId: 'C2' });
+      expect(gesList.contacts.length).toBe(1);
+
+      const gesPeriods = await svc.listContactPeriods({ caller: callerGes, accountContactId: relIdC2 });
+      expect(gesPeriods.periods.length).toBe(1);
     });
 
     test('vendedor CAN access and link contacts to an account in their portfolio', async () => {

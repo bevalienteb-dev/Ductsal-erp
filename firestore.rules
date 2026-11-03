@@ -64,7 +64,7 @@ service cloud.firestore {
     // searchClientsCatalog callable, which returns id / name / masked hint only.
     function clientVisible(d) {
       return isPrivileged()
-        || (isVendedor() && (d.createdBy == me() || me() in d.get('visibleTo', [])));
+        || (isVendedor() && (d.createdBy == me() || me() in d.get('visibleTo', []) || d.get('vendedor_asignado', '') == me()));
     }
     // Identity fields (type, NIT, DUI) can only change through updateClientAdmin, which keeps the
     // clientIdentifiers index consistent. Clients are created ONLY through createClientAdmin.
@@ -100,7 +100,7 @@ service cloud.firestore {
       allow write: if false;
 
       match /periods_prod/{periodId} {
-        allow get, list: if isPrivileged() || (isVendedor() && clientVisible(get(/databases/$(database)/documents/clients_prod/$(get(/databases/$(database)/documents/account_contacts_prod/$(accountContactId)).data.accountId)).data));
+        allow get, list: if isPrivileged() || (isVendedor() && clientVisible(get(/databases/$(database)/documents/clients_prod/$(resource.data.accountId)).data));
         allow write: if false;
       }
     }

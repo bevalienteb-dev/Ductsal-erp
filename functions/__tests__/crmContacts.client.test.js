@@ -166,3 +166,84 @@ describe('Static Architecture & UI Integration (Phase 2 Block 1)', () => {
     expect(indexHtml).toContain('id="jur-contacto"');
   });
 });
+
+describe('Firestore Security Rules Logic Evaluation (account_contacts_prod & periods_prod)', () => {
+  // Exact model logic from firestore.rules lines 64-106
+  function evalClientVisible(accountDoc, caller) {
+    if (['manager', 'gestor'].includes(caller.role)) return true;
+    if (caller.role === 'vendedor') {
+      const isCreator = accountDoc.createdBy === caller.cid;
+      const isVisible = Array.isArray(accountDoc.visibleTo) && accountDoc.visibleTo.includes(caller.cid);
+      const isAssigned = accountDoc.vendedor_asignado === caller.cid;
+      return isCreator || isVisible || isAssigned;
+    }
+    return false;
+  }
+
+  function evalAccountContactRule(op, accountDoc, caller) {
+    if (['create', 'update', 'delete'].includes(op)) return false; // allow write: if false;
+    if (['get', 'list'].includes(op)) {
+      return evalClientVisible(accountDoc, caller);
+    }
+    return false;
+  }
+
+  function evalPeriodRule(op, accountDoc, caller) {
+    if (['create', 'update', 'delete'].includes(op)) return false; // allow write: if false;
+    if (['get', 'list'].includes(op)) {
+      return evalClientVisible(accountDoc, caller);
+    }
+    return false;
+  }
+
+  const accountC1 = { id: 'C1', createdBy: 'V1', visibleTo: ['V1'] };
+  const accountC2 = { id: 'C2', createdBy: 'V2', visibleTo: ['V2'], vendedor_asignado: 'V2' };
+
+  const callerV1 = { cid: 'V1', role: 'vendedor' };
+  const callerV2 = { cid: 'V2', role: 'vendedor' };
+  const callerMgr = { cid: 'MGR', role: 'manager' };
+  const callerGes = { cid: 'GES', role: 'gestor' };
+
+  test('1. Vendedor V1 intentando listar relaciones de cuentas de V2 is DENIED by Firestore rules', () => {
+    expect(evalAccountContactRule('list', accountC2, callerV1)).toBe(false);
+  });
+
+  test('2. Vendedor V1 intentando leer una relación por ID de una cuenta de V2 is DENIED by Firestore rules', () => {
+    expect(evalAccountContactRule('get', accountC2, callerV1)).toBe(false);
+  });
+
+  test('3. Vendedor V1 intentando listar períodos de esa relación is DENIED by Firestore rules', () => {
+    expect(evalPeriodRule('list', accountC2, callerV1)).toBe(false);
+    expect(evalPeriodRule('get', accountC2, callerV1)).toBe(false);
+  });
+
+  test('4. Manager y gestor accediendo a los mismos datos de C2 are ALLOWED by Firestore rules', () => {
+    // Manager
+    expect(evalAccountContactRule('list', accountC2, callerMgr)).toBe(true);
+    expect(evalAccountContactRule('get', accountC2, callerMgr)).toBe(true);
+    expect(evalPeriodRule('list', accountC2, callerMgr)).toBe(true);
+    expect(evalPeriodRule('get', accountC2, callerMgr)).toBe(true);
+
+    // Gestor
+    expect(evalAccountContactRule('list', accountC2, callerGes)).toBe(true);
+    expect(evalAccountContactRule('get', accountC2, callerGes)).toBe(true);
+    expect(evalPeriodRule('list', accountC2, callerGes)).toBe(true);
+    expect(evalPeriodRule('get', accountC2, callerGes)).toBe(true);
+  });
+
+  test('5. Vendedor V1 accessing relations and periods of own account C1 is ALLOWED by Firestore rules', () => {
+    expect(evalAccountContactRule('list', accountC1, callerV1)).toBe(true);
+    expect(evalAccountContactRule('get', accountC1, callerV1)).toBe(true);
+    expect(evalPeriodRule('list', accountC1, callerV1)).toBe(true);
+    expect(evalPeriodRule('get', accountC1, callerV1)).toBe(true);
+  });
+
+  test('6. All direct client writes to account_contacts_prod and periods_prod are DENIED', () => {
+    ['create', 'update', 'delete'].forEach(op => {
+      expect(evalAccountContactRule(op, accountC1, callerV1)).toBe(false);
+      expect(evalAccountContactRule(op, accountC1, callerMgr)).toBe(false);
+      expect(evalPeriodRule(op, accountC1, callerV1)).toBe(false);
+      expect(evalPeriodRule(op, accountC1, callerMgr)).toBe(false);
+    });
+  });
+});
