@@ -233,7 +233,7 @@ Para no atribuir erróneamente al navegador pruebas o restricciones que se evalu
 | **Advertencia y retiro de contacto principal** | **SÍ** | No | SÍ | Capturas `b1_b2_12` y `b1_b2_13` (SSOT pasa a `null`). |
 | **Bloqueo de cambio de cuenta con cotización** | **SÍ (UI)** | No | SÍ | Oportunidad P2 oculta botón de cambio; backend lanza error si se fuerza. |
 | **Transferencia de cuenta e inactivación previa** | **SÍ** | No | SÍ | Captura `b1_b2_15` (P1 reasignada a C2, participantes de C1 archivados). |
-| **Carrera de concurrencia OCC multi-cliente** | No | No | **SÍ (Memoria)** | `opportunityContacts.unit.test.js:L558` (Deuda técnica en emulador). |
+| **Carrera de concurrencia OCC multi-cliente** | No | **SÍ (100% PASS)** | SÍ | Suite [`b1_b2_concurrency.emu.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/emulator-tests/b1_b2_concurrency.emu.js): 14 carreras multi-cliente reales contra Firestore 8080 y Functions 5001. |
 
 ### 7.4 Análisis de la Asignación de Contactos Ajenos a la Cuenta (Prueba Negativa)
 - **Comportamiento en Navegador Real:** En la interfaz de usuario, la lista desplegable de selección de contactos (`#add-opp-contact-select`) se alimenta dinámicamente llamando a `listAccountContactsAdmin({ accountId: opp.clientId })`. Por diseño arquitectónico preventivo, **un contacto que pertenece exclusivamente a otra cuenta (como C2) nunca aparece disponible para ser seleccionado en una oportunidad de C1**.
@@ -245,27 +245,51 @@ Para no atribuir erróneamente al navegador pruebas o restricciones que se evalu
   ```
 ---
 
-## 8. DEUDAS TÉCNICAS Y OBSERVACIONES CONSERVADAS
+## 8. RESOLUCIÓN Y VALIDACIÓN OBLIGATORIA DE LAS TRES DEUDAS TÉCNICAS (RATIFICACIÓN DE DIRECCIÓN)
 
-En cumplimiento de las directrices y decisiones de Dirección, se conservan formalmente inventariados y categorizados los tres hallazgos técnicos:
+En estricto cumplimiento de la instrucción mandatoria de Dirección ("INSTRUCCIÓN DE DIRECCIÓN — EJECUCIÓN OBLIGATORIA DE LAS TRES DEUDAS TÉCNICAS B1/B2"), las tres tareas técnicas han sido implementadas, verificadas con pruebas reproducibles contra el Firestore Emulator Suite y organizadas en commits separados:
 
-### 8.1 Concurrencia Real Multi-Cliente en Firestore Emulator: Pendiente antes del Lanzamiento General
-- **Clasificación Oficial:** **Pendiente antes del lanzamiento general.**
-- **Descripción:** Las pruebas de carreras de asignación simultánea de contacto principal (`Promise.all` con control de concurrencia optimista `_version`) se ejecutan actualmente sobre `FakeFirebase` en memoria. No existe un arnés de pruebas de estrés con múltiples clientes concurrentes contra el motor binario de Firestore Emulator.
-- **Impacto en PR #8:** No bloqueante para el cierre de Fase 2. La lógica de control de versiones y transacciones ACID está probada unitariamente.
-- **Plan de Acción:** Desarrollar e integrar en el arnés global de pruebas de estrés concurrente previo a la salida a producción.
+### 8.1 Concurrencia Real Multi-Cliente en Firestore Emulator
+- **Clasificación Original de Dirección:** Pendiente antes del lanzamiento general.
+- **Estado Actual:** **RESUELTA Y VALIDADA AL 100% (PASS)**
+- **Commit SHA:** `a472e3b` (`test(concurrency): implement real multi-client Firestore Emulator concurrency suite for Phase 2 B1/B2`)
+- **Suite Implementada:** [`functions/emulator-tests/b1_b2_concurrency.emu.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/emulator-tests/b1_b2_concurrency.emu.js)
+- **Comando de Reproducción:** `npm run test:concurrency` (dentro de `functions/`)
+- **Arnés de Prueba:** Instancias independientes de Firebase Admin SDK (`dbA`, `dbB`), sesiones autenticadas independientes en Auth Emulator (`seller1`, `seller2`, `manager`), barrera de sincronización `createBarrier(N)` con `Promise.all` y validación de invariantes leyendo directamente desde la API REST de Firestore Emulator (`http://127.0.0.1:8080`).
+- **Resultados de los 4 Escenarios Oficiales (14 iteraciones multi-cliente, 100% aprobadas):**
+  1. **Designación Concurrente de Contacto Principal (5 iteraciones):** Dos clientes (`seller1` y `manager`) invocan simultáneamente `setOpportunityPrimaryContactAdmin` designando a diferentes participantes. Verificado que el SSOT en `prospects_local.primaryOpportunityContactId` y la proyección `isPrimary` en `opportunity_contacts_local` concuerdan exactamente, existe a lo sumo 1 contacto principal activo, el contacto perdedor queda desmarcado (`isPrimary: false`) y el número de versión `_version` refleja la serialización transaccional.
+  2. **Retiro de Principal vs Designación de Nuevo Principal (3 iteraciones):** Cliente 1 invoca `removeOpportunityContactAdmin` sobre el titular actual mientras Cliente 2 promueve simultáneamente a un segundo participante mediante `setOpportunityPrimaryContactAdmin`. Verificado que el contacto saliente queda desactivado (`estado_participacion: inactivo`, `isPrimary: false`), el nuevo contacto asume la titularidad y la oportunidad jamás queda en estado huérfano ni desincronizado.
+  3. **Modificaciones Simultáneas de Períodos B1 (3 iteraciones):** Desactivación concurrente de relación de cuenta (`deactivateAccountContactAdmin`) compitiendo con actualización corporativa de cargo (`updateAccountContactAdmin`). Verificado que la subcolección `periods_local` nunca contiene más de 1 período abierto (`fecha_fin: null`), si la relación queda inactiva `periodo_actual_id` es `null`, y el historial cronológico de períodos es 100% preservado.
+  4. **Asignación Simultánea Duplicada de Participantes (3 iteraciones):** Dos clientes intentan agregar al mismo contacto simultáneamente a la oportunidad (`addOpportunityContactAdmin`). La transacción en Firestore detecta la colisión mediante ID determinista `OC_${oppId}_${acId}`; exactamente un cliente recibe respuesta 200 (`status: created`) y el otro es rechazado con código 400 (`failed-precondition: El contacto ya participa activamente en esta oportunidad`). Se confirmó la existencia de exactamente 1 documento en `opportunity_contacts_local`.
+  5. **Driver Multi-SDK (1 iteración):** Dos instancias independientes del SDK Firestore (`dbA` y `dbB`) compitiendo transaccionalmente. OCC resuelve la carrera sin deadlocks ni estados inconsistentes.
 
-### 8.2 Helper Residual `seedInitialRolesIfEmpty`: Limpieza Técnica Menor
-- **Clasificación Oficial:** **Limpieza técnica menor.**
-- **Descripción:** La función auxiliar interna declarada en [functions/opportunityContactsService.js:L147-160](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/opportunityContactsService.js#L147-L160) y exportada en L776 permanece sin invocadores activos tras el desacoplamiento de la consulta de roles (P-07).
-- **Impacto en PR #8:** Muy bajo (código muerto). Cero riesgo de seguridad al no estar expuesta a ninguna Cloud Function HTTPS ni punto de entrada cliente.
-- **Plan de Acción:** Depuración programada en el siguiente ciclo de mantenimiento o refactorización.
+### 8.2 Helper Residual `seedInitialRolesIfEmpty`
+- **Clasificación Original de Dirección:** Limpieza técnica menor.
+- **Estado Actual:** **RESUELTA Y VALIDADA (ELIMINADO DEFINITIVAMENTE)**
+- **Commit SHA:** `25dfcd6` (`refactor(crm): remove unused residual helper seedInitialRolesIfEmpty`)
+- **Archivos Modificados:** [`functions/opportunityContactsService.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/opportunityContactsService.js), [`functions/__tests__/opportunityContacts.unit.test.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/__tests__/opportunityContacts.unit.test.js)
+- **Acción Ejecutada:** Comprobación rigurosa de ausencia de consumidores legítimos en todo el repositorio. Eliminada la declaración de la función y de su exportación. Sustituidas todas las invocaciones en las suites de prueba unitaria por el flujo explícito autorizado `seedOpportunityContactRoles({ caller })`. Confirmado que `listOpportunityContactRoles` es estrictamente de solo lectura y no genera mutaciones en Firestore.
 
-### 8.3 Auditoría del Sembrado Masivo de Roles: Mejora de Trazabilidad
-- **Clasificación Oficial:** **Mejora de trazabilidad.**
-- **Descripción:** La Cloud Function administrativa `seedOpportunityContactRoles` actualiza los 8 roles iniciales grabando el campo `createdBy: caller.cid` en cada documento de rol, pero no inserta un registro en la colección de auditoría `audit_prod` (a diferencia de `manageOpportunityContactRole`).
-- **Impacto en PR #8:** Muy bajo. La autoría queda registrada en los documentos de rol creados.
-- **Plan de Acción:** Agregar inserción en la colección `audit_prod` durante la próxima revisión menor de Cloud Functions.
+### 8.3 Auditoría del Sembrado Masivo de Roles
+- **Clasificación Original de Dirección:** Mejora de trazabilidad.
+- **Estado Actual:** **RESUELTA Y VALIDADA AL 100% (ATÓMICA Y TRANSACCIONAL)**
+- **Commit SHA:** `21ec384` (`feat(audit): record atomic transactional audit entry on role catalogue initialization`)
+- **Archivos Modificados:** [`functions/opportunityContactsService.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/opportunityContactsService.js), [`functions/__tests__/opportunityContacts.unit.test.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/__tests__/opportunityContacts.unit.test.js), [`functions/emulator-tests/b1_b2_concurrency.emu.js`](file:///Users/Benjamin/Documents/DUCTSAL/sales-reporting-system-release/functions/emulator-tests/b1_b2_concurrency.emu.js)
+- **Acción Ejecutada:** La Cloud Function administrativa `seedOpportunityContactRoles` ahora opera dentro de una transacción ACID (`db.runTransaction`) que escribe atómicamente los 8 roles del catálogo y un registro en la colección de auditoría del sistema (`commercialAudit_${suffix}`).
+- **Estructura del Registro de Auditoría Generado:**
+  * **Actor:** Identifica al usuario que ejecuta la acción (`userId`, `userName`, `userRole`, `userUid`).
+  * **Acción:** `'seedOpportunityContactRoles'`.
+  * **Entidad:** `names.opportunityContactRoles` (`opportunity_contact_roles_prod` o `_local`).
+  * **Fecha:** Marca de tiempo ISO del servidor (`timestamp`).
+  * **Entorno:** `suffix` (`_prod` o `_local`).
+  * **Cantidad de Roles:** `rolesCount: 8`.
+  * **Resultado:** `'seeded'`.
+  * **Bandera Force:** `force: Boolean(force)`.
+- **Casos Verificados en Emulador y Pruebas Unitarias:**
+  * Permisos: Invocación por usuarios no-manager (`vendedor`, `gestor`) es rechazada con `permission-denied` (cero roles y cero auditorías grabadas).
+  * Idempotencia: Invocación sobre catálogo ya poblado sin `force` retorna `already-seeded` sin duplicar registros ni mutar el catálogo.
+  * Forzado (`force: true`): Reestablece el catálogo oficial y graba un nuevo documento de auditoría identificando `force: true`.
+  * Atomicidad ante fallos: Si la transacción es interrumpida, se produce rollback total (cero escrituras parciales).
 
 ---
 
@@ -294,5 +318,5 @@ Certifico formalmente que durante la ejecución de este trabajo:
 - [x] **NO** se realizaron despliegues a Cloud Functions, Vercel ni Firebase Hosting.
 - [x] **NO** se ejecutaron conexiones, lecturas ni escrituras sobre el entorno de producción (`ductsal-erp`).
 - [x] **NO** se inició el desarrollo del Bloque B3.
-- [x] Los archivos rastreados en git permanecen intactos en el commit `9f85c2d75402385562e0086a21b03a45531dda3e`.
+- [x] Los cambios técnicos autorizados se incorporaron en commits separados y trazables (`a472e3b`, `25dfcd6`, `21ec384`).
 - [x] El Pull Request #8 permanece **ABIERTO**, en estado limpio y listo para la decisión final de Dirección.
