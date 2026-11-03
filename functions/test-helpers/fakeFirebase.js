@@ -68,6 +68,50 @@ function buildAdminFake() {
     state.docs[path] = opts.merge ? { ...(state.docs[path] || {}), ...data } : { ...data };
   };
 
+  const applyUpdate = (target, data) => {
+    for (const k in data) {
+      const v = data[k];
+      let cur = target;
+      let finalKey = k;
+      if (k.includes('.')) {
+        const parts = k.split('.');
+        for (let i = 0; i < parts.length - 1; i++) {
+          const p = parts[i];
+          if (!cur[p] || typeof cur[p] !== 'object') cur[p] = {};
+          cur = cur[p];
+        }
+        finalKey = parts[parts.length - 1];
+      }
+      if (v === '__FIELD_DELETE__') {
+        delete cur[finalKey];
+      } else if (v && v.__op === 'arrayUnion') {
+        const arr = Array.isArray(cur[finalKey]) ? cur[finalKey] : [];
+        cur[finalKey] = Array.from(new Set([...arr, ...v.elements]));
+      } else if (v && v.__op === 'arrayRemove') {
+        const arr = Array.isArray(cur[finalKey]) ? cur[finalKey] : [];
+        cur[finalKey] = arr.filter(x => !v.elements.includes(x));
+      } else {
+        cur[finalKey] = v;
+      }
+    }
+  };
+
+  const cloneDoc = doc => {
+    if (doc === null || typeof doc !== 'object') return doc;
+    if (typeof doc.toDate === 'function') {
+      const d = doc.toDate();
+      return { toDate: () => new Date(d.getTime()) };
+    }
+    if (Array.isArray(doc)) {
+      return doc.map(cloneDoc);
+    }
+    const copy = {};
+    for (const key of Object.keys(doc)) {
+      copy[key] = cloneDoc(doc[key]);
+    }
+    return copy;
+  };
+
   const makeRef = (col, id) => {
     const path = `${col}/${id}`;
     return {
@@ -84,7 +128,7 @@ function buildAdminFake() {
       },
       async get() {
         if (state.hooks.beforeGet) state.hooks.beforeGet(path);
-        if (state.docs[path]) return { exists: true, data: () => state.docs[path] };
+        if (state.docs[path]) return { exists: true, data: () => cloneDoc(state.docs[path]) };
         if (path.endsWith('/__default_mgr__') && state.allowVirtualManager === true && !state.unlinkedManager) {
           return { exists: true, data: () => ({ id: '__default_mgr__', authUid: 'managerUid', role: 'manager', activo: true, nombre: 'Default Manager', email: 'manager@ductsal-test.invalid' }) };
         }
@@ -94,11 +138,9 @@ function buildAdminFake() {
       async update(data) {
         if (state.hooks.beforeUpdate) state.hooks.beforeUpdate(path);
         if (!state.docs[path]) throw new Error('NOT_FOUND');
-        const merged = { ...state.docs[path], ...data };
-        for (const k in merged) {
-          if (merged[k] === '__FIELD_DELETE__') delete merged[k];
-        }
-        state.docs[path] = merged;
+        const cur = cloneDoc(state.docs[path]);
+        applyUpdate(cur, data);
+        state.docs[path] = cur;
       },
       async delete() { delete state.docs[path]; }
     };
@@ -120,7 +162,7 @@ function buildAdminFake() {
           for (const f of filters) {
             matches = matches.filter(k => state.docs[k] && state.docs[k][f.field] === f.val);
           }
-          const docs = matches.map(k => ({ id: k.slice(prefix.length), data: () => state.docs[k] }));
+          const docs = matches.map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
             const match = filters.every(f => defaultMgr[f.field] === f.val);
             if (match) {
@@ -140,7 +182,7 @@ function buildAdminFake() {
           const prefix = `${col}/`;
           const docs = Object.keys(state.docs)
             .filter(k => k.startsWith(prefix))
-            .map(k => ({ id: k.slice(prefix.length), data: () => state.docs[k] }));
+            .map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
             docs.push({ id: '__default_mgr__', data: () => defaultMgr });
           }
@@ -181,22 +223,9 @@ function buildAdminFake() {
         if (w.kind === 'set') applySet(w.ref.path, w.data, w.opts);
         else if (w.kind === 'create') state.docs[w.ref.path] = { ...w.data };
         else if (w.kind === 'update') {
-          const cur = state.docs[w.ref.path] || {};
-          const merged = { ...cur };
-          for (const k in w.data) {
-            const v = w.data[k];
-            if (v === '__FIELD_DELETE__') delete merged[k];
-            else if (v && v.__op === 'arrayUnion') {
-              const arr = Array.isArray(cur[k]) ? cur[k] : [];
-              merged[k] = Array.from(new Set([...arr, ...v.elements]));
-            } else if (v && v.__op === 'arrayRemove') {
-              const arr = Array.isArray(cur[k]) ? cur[k] : [];
-              merged[k] = arr.filter(x => !v.elements.includes(x));
-            } else {
-              merged[k] = v;
-            }
-          }
-          state.docs[w.ref.path] = merged;
+          const cur = cloneDoc(state.docs[w.ref.path] || {});
+          applyUpdate(cur, w.data);
+          state.docs[w.ref.path] = cur;
         }
         else delete state.docs[w.ref.path];
       }
@@ -265,6 +294,23 @@ function buildAdminFake() {
       state.updateUserCalls.push({ uid, attrs });
       const base = state.requesters[uid] || defaultRequesters[uid] || { customClaims: {} };
       state.requesters[uid] = { ...base, ...attrs };
+      const user = Object.values(state.authUsers).find(u => u.uid === uid);
+      if (user) {
+        if (attrs.email && attrs.email !== user.email) {
+          delete state.authUsers[user.email];
+          user.email = attrs.email;
+          state.authUsers[attrs.email] = user;
+        }
+        Object.assign(user, attrs);
+      }
+    },
+    async generatePasswordResetLink(email, actionCodeSettings) {
+      state.passwordResetLinks = state.passwordResetLinks || [];
+      state.passwordResetLinks.push({ email, actionCodeSettings });
+      if (state.hooks && state.hooks.generatePasswordResetLink) {
+        return state.hooks.generatePasswordResetLink(email, actionCodeSettings);
+      }
+      return `https://ductsal-erp.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=fake_oob_${Date.now()}&email=${encodeURIComponent(email)}`;
     },
     async revokeRefreshTokens(uid) {
       if (state.hooks.beforeRevokeTokens) state.hooks.beforeRevokeTokens(uid);

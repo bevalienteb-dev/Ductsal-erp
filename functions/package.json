@@ -2,11 +2,22 @@
   "name": "ductsal-functions",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "lint": "eslint .",
     "test": "jest",
+    "test:unit": "jest --testPathPattern='__tests__/' --runInBand",
+    "test:arch-verify": "jest __tests__/nativeArchitectureVerification.unit.test.js --runInBand",
+    "test:emulator": "jest -c jest.emulator.config.js --runInBand",
+    "test:auth-env": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=authEmulatorIsolation.emu.js --runInBand\"",
+    "test:native-auth": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=nativeAuthFlow.emu.js --runInBand\"",
+    "test:ownership": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=authTicketOwnership.emu.js --runInBand\"",
+    "test:client-sdk": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"node --experimental-websocket ../scripts/verify_client_sdk_and_ui_flows.js\"",
+    "test:e2e-matrix": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"node --experimental-websocket ../scripts/verify_phase6_5_e2e_matrix.js\"",
+    "test:clean": "node scripts/cleanEmulatorData.js",
+    "emulators:start": "npx firebase-tools emulators:start --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions",
+    "emulators:exec": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions",
     "start": "firebase emulators:start --only functions"
   },
   "dependencies": {

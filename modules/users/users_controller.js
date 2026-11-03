@@ -12,6 +12,7 @@
 
     let adminUsersLoading = false;
     let userSaveInFlight = false;
+    const resetPassInFlight = new Set();
 
     function getAdminUsersLoading() {
         return adminUsersLoading;
@@ -27,6 +28,10 @@
 
     function setUserSaveInFlight(v) {
         userSaveInFlight = !!v;
+    }
+
+    function getResetPassInFlight(id) {
+        return id ? resetPassInFlight.has(id) : resetPassInFlight.size > 0;
     }
 
     async function fetchAdminUsers(options = {}) {
@@ -323,8 +328,12 @@
             }
             if (!confirmed) return;
 
+            if (resetPassInFlight.has(target.id)) return;
+            resetPassInFlight.add(target.id);
+
             const authModule = typeof resolvedDeps.getCrmAuth === 'function' ? resolvedDeps.getCrmAuth() : (resolvedDeps.getCrmAuth || null);
             if (!authModule) {
+                resetPassInFlight.delete(target.id);
                 error("No se pudo cargar el módulo de autenticación. Recarga la página.");
                 return;
             }
@@ -333,18 +342,56 @@
                 const dbSuffix = typeof resolvedDeps.getDbSuffix === 'function' ? resolvedDeps.getDbSuffix() : (resolvedDeps.getDbSuffix || '_prod');
 
                 let targetEmail = target.email;
+                let requestId = null;
                 if (typeof authModule.resendInvitationViaFunction === 'function') {
                     const res = await authModule.resendInvitationViaFunction(fb, { id: target.id, dbSuffix });
-                    if (res && res.delivery === 'client') {
+                    if (res) {
                         targetEmail = res.email || target.email;
-                    } else if (res && res.sent === true) {
+                        requestId = res.requestId;
+                    }
+                    if (res && res.sent === true) {
                         success("Invitación enviada por el servidor.");
                         return;
                     }
                 }
 
-                await authModule.sendPasswordSetupEmail(fb, targetEmail);
-                success("Correo de restablecimiento enviado.");
+                // Write-Ahead Local Outbox persistence
+                const currentMgrUid = (fb && fb.auth && fb.auth().currentUser && fb.auth().currentUser.uid) || 'manager';
+                const outbox = typeof CrmOutbox !== 'undefined' ? CrmOutbox : (typeof authModule.getOutbox === 'function' ? authModule.getOutbox() : null);
+                if (requestId && outbox) {
+                    try {
+                        outbox.enqueue({
+                            requestId,
+                            userId: target.id,
+                            recipientEmail: targetEmail,
+                            operation: 'resend_invitation',
+                            outcome: 'unknown',
+                            managerAuthUid: currentMgrUid
+                        });
+                    } catch (_) {}
+                }
+
+                try {
+                    await authModule.sendPasswordSetupEmail(fb, targetEmail);
+                    if (requestId && typeof authModule.recordInvitationOutcomeViaFunction === 'function') {
+                        if (outbox) outbox.update(requestId, { outcome: 'accepted' });
+                        try {
+                            await authModule.recordInvitationOutcomeViaFunction(fb, { requestId, userId: target.id, outcome: 'accepted', dbSuffix });
+                            if (outbox) outbox.dequeue(requestId);
+                        } catch (_) {}
+                    }
+                    success("Correo de restablecimiento enviado.");
+                } catch (emailErr) {
+                    const errorCode = outbox ? outbox.sanitizeErrorCode(emailErr) : 'UNKNOWN_CLIENT_ERROR';
+                    if (requestId && typeof authModule.recordInvitationOutcomeViaFunction === 'function') {
+                        if (outbox) outbox.update(requestId, { outcome: 'failed', errorCode });
+                        try {
+                            await authModule.recordInvitationOutcomeViaFunction(fb, { requestId, userId: target.id, outcome: 'failed', errorCode, dbSuffix });
+                            if (outbox) outbox.dequeue(requestId);
+                        } catch (_) {}
+                    }
+                    throw emailErr;
+                }
             } catch (err) {
                 const code = authModule && typeof authModule.normalizeCode === 'function' ? authModule.normalizeCode(err) : (err && err.code);
                 let msg = "No se pudo enviar el correo de restablecimiento.";
@@ -355,6 +402,8 @@
                 else if (code === 'too-many-requests') msg = "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.";
                 else if (err && err.message) msg = err.message;
                 error(msg);
+            } finally {
+                resetPassInFlight.delete(target.id);
             }
             return;
         }
@@ -367,6 +416,7 @@
         setAdminUsersLoading,
         getUserSaveInFlight,
         setUserSaveInFlight,
+        getResetPassInFlight,
         fetchAdminUsers,
         saveUser,
         toggleUserStatus,

@@ -533,15 +533,16 @@ describe('3. Flujo completo de reenvío de invitaciones (resendInvitationAdmin)'
     });
   });
 
-  test('resendInvitationAdmin respuesta autorizada: sent es false y delivery es client, sin exponer links ni contraseñas', async () => {
+  test('resendInvitationAdmin respuesta autorizada: sent es false y delivery es client_sdk sin enlaces generados por Admin SDK', async () => {
     const res = await resendInvitationAdmin({
       id: 'user_active_auth'
     }, ctxManager);
 
-    expect(res.sent).toBe(false); // Garantía: el servidor NO envía el correo
-    expect(res.delivery).toBe('client'); // Autorización para que el cliente envíe
+    expect(res.sent).toBe(false);
+    expect(res.delivery).toBe('client_sdk');
     expect(res.email).toBe('active@ductsal.com');
-    expect(res.link).toBeUndefined(); // Sin exposición de token
+    expect(res.link).toBeNull();
+    expect(res.requestId).toBeDefined();
     expect(res.password).toBeUndefined();
   });
 

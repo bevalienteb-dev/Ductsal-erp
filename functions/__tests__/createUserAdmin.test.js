@@ -155,6 +155,10 @@ jest.mock('firebase-admin', () => {
       Object.keys(state.authUsers).forEach(e => {
         if (state.authUsers[e].uid === uid) delete state.authUsers[e];
       });
+    },
+    async generatePasswordResetLink(email, actionCodeSettings) {
+      if (state.hooks && state.hooks.generatePasswordResetLink) return state.hooks.generatePasswordResetLink(email, actionCodeSettings);
+      return `https://ductsal-erp.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=fake_oob_${Date.now()}&email=${encodeURIComponent(email)}`;
     }
   });
 

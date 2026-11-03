@@ -8,6 +8,10 @@ admin.initializeApp();
 const db = admin.firestore();
 const crypto = require('crypto');
 const { emulatorIsolationProblems } = require('./emulatorGuard');
+const {
+  INVITATION_STATUS,
+  buildInitialInvitation
+} = require('./invitationService');
 
 /**
  * FieldValue / Timestamp. Found with the real emulators: the Firebase CLI's Functions emulator replaces
@@ -20,6 +24,22 @@ function firestoreStatics() {
   const ns = admin.firestore;
   if (ns && ns.FieldValue && ns.Timestamp) return ns;
   return require('firebase-admin/firestore');
+}
+
+/**
+ * Robust Timestamp creator compatible with both real Firestore SDK and unit-test fakes.
+ */
+function createTimestamp(ms) {
+  const statics = firestoreStatics();
+  if (statics && statics.Timestamp) {
+    if (typeof statics.Timestamp.fromMillis === 'function') {
+      return statics.Timestamp.fromMillis(ms);
+    }
+    if (typeof statics.Timestamp.fromDate === 'function') {
+      return statics.Timestamp.fromDate(new Date(ms));
+    }
+  }
+  return new Date(ms);
 }
 
 /**
@@ -70,7 +90,8 @@ function collectionNamesFor(dbSuffix) {
     ops: dbSuffix === '_prod' ? 'userOps' : `userOps${dbSuffix}`,
     locks: dbSuffix === '_prod' ? 'userOpsLocks' : `userOpsLocks${dbSuffix}`,
     // Same server-only trail as the commercial operations (commercialService.namesFor).
-    audit: `commercialAudit${dbSuffix}`
+    audit: `commercialAudit${dbSuffix}`,
+    invitationOps: dbSuffix === '_prod' ? 'invitationOps' : `invitationOps${dbSuffix}`
   };
 }
 
@@ -357,7 +378,23 @@ exports.createUserAdmin = functions.https.onCall(async (data, context) => {
       // persisted state, never assumed.
       switch (existingData.status) {
         case OP_STATUS.SUCCEEDED:
-          return { uid: existingData.uid, id: existingData.profileId, message: 'operation already completed' };
+          return {
+            uid: existingData.uid,
+            id: existingData.profileId,
+            email,
+            status: 'created',
+            requestId: existingData.requestId || null,
+            link: null, // Security invariant: never expose or retrieve stored sensitive link on replay
+            invitation: {
+              status: (existingData.invitation && existingData.invitation.status) || 'pending',
+              lastRequestStatus: (existingData.invitation && existingData.invitation.lastRequestStatus) || 'pending',
+              delivery: (existingData.invitation && existingData.invitation.delivery) || 'prepared',
+              sent: false,
+              linkGenerated: !!(existingData.invitation && existingData.invitation.linkGenerated),
+              recipientEmail: email
+            },
+            message: 'operation already completed'
+          };
         case OP_STATUS.CONFLICT:
           throw new functions.https.HttpsError('already-exists', existingData.message || 'Conflict detected');
         case OP_STATUS.ERROR:
@@ -490,7 +527,8 @@ exports.createUserAdmin = functions.https.onCall(async (data, context) => {
             nombre,
             email,
             role,
-            activo: true
+            activo: true,
+            invitation: buildInitialInvitation(email)
           });
           profileId = candidate;
         } catch (createErr) {
@@ -531,16 +569,78 @@ exports.createUserAdmin = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('internal', 'Failed to persist user profile');
     }
 
+    // ---------- Backend Ticket Authority: Pre-register Invitation Ticket (Write-Ahead) ----------
+    const requestId = crypto.randomUUID();
+    const ticketTtlMs = 24 * 60 * 60 * 1000;
+    const expiresAt = createTimestamp(Date.now() + ticketTtlMs);
+    try {
+      const invCol = db.collection(names.invitationOps);
+      if (invCol && typeof invCol.doc === 'function') {
+        const ticketDoc = invCol.doc(requestId);
+        if (ticketDoc && typeof ticketDoc.set === 'function') {
+          await ticketDoc.set({
+            status: 'ISSUED',
+            userId: profileId,
+            recipientEmail: email,
+            requestedBy: context.auth.uid,
+            operation: 'create_user',
+            createdAt: firestoreStatics().FieldValue.serverTimestamp(),
+            expiresAt
+          });
+        }
+      }
+    } catch (_) { /* Best effort logging */ }
+
+    // ---------- Native Architecture: No Admin SDK Link Generation ----------
+    // In accordance with Step 6.3.2 and Step 6.3.4.4, link generation via Admin SDK
+    // is completely removed in both production and emulator environments.
+    // The client SDK executes the single dispatch (sendPasswordResetEmail).
+
     // ---------- Finalize operation ----------
     try {
-      // Mark operation as succeeded
-      await updateOp({ status: OP_STATUS.SUCCEEDED, uid: newAuthUser.uid, profileId, message: 'User created' });
+      // Mark operation as succeeded.
+      // Invariant: NEVER persist raw invitation link or sensitive action code in Firestore userOps.
+      await updateOp({
+        status: OP_STATUS.SUCCEEDED,
+        uid: newAuthUser.uid,
+        profileId,
+        requestId,
+        message: 'User created',
+        invitation: {
+          status: INVITATION_STATUS.PENDING,
+          lastRequestStatus: 'pending',
+          delivery: 'client_sdk',
+          sent: false,
+          linkGenerated: false,
+          error: null
+        }
+      });
     } catch (e) {
       await markManualReview('Failed to finalize operation', { uid: newAuthUser.uid, profileId, finalizeError: e.message });
       throw manualReviewError('Auth account and profile exist but the operation could not be finalized');
     }
 
-    return { uid: newAuthUser.uid, id: profileId };
+    return {
+      uid: newAuthUser.uid,
+      id: profileId,
+      email,
+      status: 'created',
+      requestId,
+      link: null,
+      invitation: {
+        status: INVITATION_STATUS.PENDING,
+        lastRequestStatus: 'pending',
+        lastRequestAt: null,
+        lastAcceptedAt: null,
+        delivery: 'client_sdk',
+        sent: false,
+        preparedCount: 0,
+        sentCount: 0,
+        recipientEmail: email,
+        error: null
+      },
+      message: 'User created'
+    };
   } finally {
     // Release lock if we still own it (never throws).
     await releaseLock();
@@ -678,7 +778,7 @@ exports.toggleUserStatusAdmin = functions.https.onCall(async (data, context) => 
 //  - Audit: `commercialAudit<suffix>` (before / after of nombre, role, claims summary; never credentials).
 // ---------------------------------------------------------------------------------------------------------------------
 const USER_ADMIN_ROLES = ['vendedor', 'gestor'];
-const USER_UPDATE_FIELDS = ['id', 'nombre', 'role', 'opId', 'dbSuffix'];
+const USER_UPDATE_FIELDS = ['id', 'nombre', 'role', 'email', 'opId', 'dbSuffix'];
 const ROLE_LOCK_KEY = 'role.change.global'; // contains '.', so it can never collide with an opId (plain token)
 
 async function acquireRoleLock(names, ownerUid) {
@@ -720,7 +820,7 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
   await assertManager(context, 'Only managers can update users');
   data = data || {};
   if (typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(k => !USER_UPDATE_FIELDS.includes(k))) {
-    throw new functions.https.HttpsError('invalid-argument', 'Only id, nombre, role and opId can be sent (use toggleUserStatusAdmin for activation)');
+    throw new functions.https.HttpsError('invalid-argument', 'Only id, nombre, role, email and opId can be sent (use toggleUserStatusAdmin for activation)');
   }
   const { id, opId } = data;
   if (!isToken(id) || !isToken(opId)) {
@@ -728,7 +828,8 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
   }
   const hasName = data.nombre !== undefined;
   const hasRole = data.role !== undefined;
-  if (!hasName && !hasRole) throw new functions.https.HttpsError('invalid-argument', 'Nothing to change: send nombre and/or role');
+  const hasEmail = data.email !== undefined;
+  if (!hasName && !hasRole && !hasEmail) throw new functions.https.HttpsError('invalid-argument', 'Nothing to change: send nombre, role and/or email');
   let nombre = null;
   if (hasName) {
     nombre = typeof data.nombre === 'string' ? data.nombre.trim() : '';
@@ -740,12 +841,21 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('permission-denied', 'Only the roles vendedor and gestor can be assigned');
   }
   const role = hasRole ? data.role : null;
+
+  let email = null;
+  if (hasEmail) {
+    email = normalizeEmail(data.email);
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Invalid email format');
+    }
+  }
+
   const names = collectionNamesFor(resolveDbSuffix(data.dbSuffix));
   const requesterUid = context.auth.uid;
   const requester = await assertRequesterProfileActive(names, requesterUid);
   const actor = { uid: requesterUid, cid: requester && requester.id, name: requester && requester.nombre };
 
-  const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ id, nombre, role })).digest('hex');
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ id, nombre, role, email })).digest('hex');
   const opRef = db.collection(names.ops).doc(opId);
   const opSnap = await opRef.get();
   if (opSnap.exists) {
@@ -790,6 +900,34 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
     if (hasRole && profile.authUid === requesterUid) {
       throw await refuse(OP_STATUS.ERROR, 'Self role change refused', 'permission-denied', 'You cannot change your own role');
     }
+    if (hasEmail && profile.authUid === requesterUid) {
+      throw await refuse(OP_STATUS.ERROR, 'Self email change refused', 'permission-denied', 'You cannot change your own email via user administration');
+    }
+
+    const currentEmail = (profile.email || '').trim().toLowerCase();
+    const emailChanges = hasEmail && email !== currentEmail;
+
+    if (emailChanges) {
+      // Uniqueness in Firebase Auth
+      let existingAuth = null;
+      try {
+        existingAuth = await admin.auth().getUserByEmail(email);
+      } catch (e) {
+        if (e && e.code !== 'auth/user-not-found') {
+          throw await refuse(OP_STATUS.ERROR, e.message, 'internal', 'Error checking Auth accounts');
+        }
+      }
+      if (existingAuth && existingAuth.uid !== profile.authUid) {
+        throw await refuse(OP_STATUS.CONFLICT, 'Auth account already exists for this email', 'already-exists', 'An authentication account already exists for the supplied email');
+      }
+
+      // Uniqueness in Firestore profile collection
+      const usersSnap = await db.collection(names.users).get();
+      const emailTaken = usersSnap.docs.some(d => d.id !== id && String((d.data() || {}).email || '').trim().toLowerCase() === email);
+      if (emailTaken) {
+        throw await refuse(OP_STATUS.CONFLICT, 'A user profile already exists for this email', 'already-exists', 'A user profile already exists for the supplied email');
+      }
+    }
 
     let target;
     try {
@@ -804,6 +942,9 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
       activo: profile.activo === true,
       claims: { role: currentClaims.role === undefined ? null : currentClaims.role, cid: currentClaims.cid === undefined ? null : currentClaims.cid, manager: currentClaims.manager === true }
     };
+    if (emailChanges) {
+      before.email = profile.email === undefined ? null : profile.email;
+    }
     let nextClaims = null;
     if (hasRole) {
       nextClaims = { ...currentClaims };
@@ -814,8 +955,8 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
     const nameChanges = hasName && nombre !== (profile.nombre === undefined ? '' : profile.nombre);
     const claimsChange = hasRole && JSON.stringify(sortedKeys(nextClaims)) !== JSON.stringify(sortedKeys(currentClaims));
     const roleChanges = hasRole && (profile.role !== role || claimsChange);
-    if (!nameChanges && !roleChanges) {
-      const result = { status: 'unchanged', id, nombre: before.nombre, role: before.role };
+    if (!nameChanges && !roleChanges && !emailChanges) {
+      const result = { status: 'unchanged', id, nombre: before.nombre, role: before.role, ...(emailChanges ? { email: before.email } : {}) };
       await logOperation(names, opId, { status: OP_STATUS.SUCCEEDED, message: 'Nothing to change', result });
       return result;
     }
@@ -826,9 +967,12 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
       activo: before.activo,
       claims: roleChanges ? { role, cid: id, manager: false } : before.claims
     };
-    const fields = [nameChanges ? 'nombre' : null, roleChanges ? 'role' : null].filter(Boolean);
+    if (emailChanges) {
+      after.email = email;
+    }
+    const fields = [nameChanges ? 'nombre' : null, roleChanges ? 'role' : null, emailChanges ? 'email' : null].filter(Boolean);
 
-    // Step 1 (role change only): Auth claims.
+    // Step 1: Auth claims (role changes)
     const restoreClaims = async () => {
       try { await admin.auth().setCustomUserClaims(profile.authUid, currentClaims); return true; } catch (_) { return false; }
     };
@@ -836,7 +980,6 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
       try {
         await admin.auth().setCustomUserClaims(profile.authUid, nextClaims);
       } catch (e) {
-        // Whether the claims were applied is unknown: put the previous ones back before answering.
         if (!(await restoreClaims())) {
           await logOperation(names, opId, { status: OP_STATUS.MANUAL_REVIEW, message: 'Setting claims failed and restore failed', uid: profile.authUid, before, after });
           throw new functions.https.HttpsError('failed-precondition', `Manual review required for operation ${opId}: Auth claims may be out of sync`);
@@ -846,20 +989,44 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
       }
     }
 
+    // Step 1b: Auth email (email changes)
+    const restoreEmail = async () => {
+      try { await admin.auth().updateUser(profile.authUid, { email: profile.email }); return true; } catch (_) { return false; }
+    };
+    if (emailChanges) {
+      try {
+        await admin.auth().updateUser(profile.authUid, { email });
+      } catch (e) {
+        if (claimsChange) await restoreClaims();
+        await logOperation(names, opId, { status: OP_STATUS.ERROR, message: 'Failed to update Auth email' });
+        throw new functions.https.HttpsError('internal', `Failed to update email in authentication: ${e.message}`);
+      }
+    }
+
     // Step 2: profile + audit in one transaction, only if the profile is still the one we validated.
     try {
       await db.runTransaction(async tx => {
         const cur = await tx.get(userRef);
         const c = cur.exists ? (cur.data() || {}) : null;
-        if (!c || c.authUid !== profile.authUid || c.role !== profile.role || (c.nombre === undefined ? '' : c.nombre) !== (profile.nombre === undefined ? '' : profile.nombre)) {
+        if (!c || c.authUid !== profile.authUid || c.role !== profile.role ||
+            (c.nombre === undefined ? '' : c.nombre) !== (profile.nombre === undefined ? '' : profile.nombre) ||
+            (c.email === undefined ? '' : c.email.toLowerCase()) !== (profile.email === undefined ? '' : profile.email.toLowerCase())) {
           const conflict = new Error('Profile changed while updating');
           conflict.userConflict = true;
           throw conflict;
         }
-        tx.update(userRef, { ...(nameChanges ? { nombre } : {}), ...(roleChanges ? { role } : {}) });
+        tx.update(userRef, {
+          ...(nameChanges ? { nombre } : {}),
+          ...(roleChanges ? { role } : {}),
+          ...(emailChanges ? { email, 'invitation.recipientEmail': email } : {})
+        });
         tx.create(db.collection(names.audit).doc(), userAuditEntry(actor, 'updateUser', id, { opId, fields, before, after }));
       });
     } catch (e) {
+      if (emailChanges && !(await restoreEmail())) {
+        await logOperation(names, opId, { status: OP_STATUS.MANUAL_REVIEW, message: 'Profile update failed and email restore failed', uid: profile.authUid, before, after });
+        throw new functions.https.HttpsError('failed-precondition', `Manual review required for operation ${opId}: Auth email and profile are out of sync`);
+      }
       if (claimsChange && !(await restoreClaims())) {
         await logOperation(names, opId, { status: OP_STATUS.MANUAL_REVIEW, message: 'Profile update failed and claims restore failed', uid: profile.authUid, before, after });
         throw new functions.https.HttpsError('failed-precondition', `Manual review required for operation ${opId}: Auth claims and profile are out of sync`);
@@ -872,10 +1039,10 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
 
     // Step 3 (best effort): end the target's existing sessions so the new claims apply at once.
     let sessionsRevoked = false;
-    if (roleChanges) {
+    if (roleChanges || emailChanges) {
       try { await admin.auth().revokeRefreshTokens(profile.authUid); sessionsRevoked = true; } catch (_) { /* claims + profile already applied */ }
     }
-    const result = { status: 'updated', id, nombre: after.nombre, role: after.role, fields, sessionsRevoked };
+    const result = { status: 'updated', id, nombre: after.nombre, role: after.role, email: after.email, fields, sessionsRevoked };
     await logOperation(names, opId, { status: OP_STATUS.SUCCEEDED, message: 'User updated', result, before, after });
     return result;
   } finally {
@@ -884,24 +1051,26 @@ exports.updateUserAdmin = functions.https.onCall(async (data, context) => {
 });
 
 /**
- * Password setup / reset for a linked user.
- * Expected data: { id, dbSuffix? }
- * The server has no mail transport and NEVER returns a reset link (that would let a manager take
- * over the account), so this function does not send anything: it validates and answers
- * `{ sent: false, delivery: 'client' }`. The client sends the official Firebase email with
- * `sendPasswordResetEmail`.
+ * Re-send activation / password setup invitation for a linked user.
+ * Expected data: { id, opId?, dbSuffix? }
+ * Generates a fresh password setup link via Firebase Admin Auth and dispatches the
+ * invitation through the decoupled invitation dispatcher.
  */
 exports.resendInvitationAdmin = functions.https.onCall(async (data, context) => {
   await assertManager(context, 'Only managers can resend invitations');
   data = data || {};
-  const { id } = data;
+  if (data.id && data.userId && data.id !== data.userId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Ambiguous id and userId provided');
+  }
+  const id = data.id || data.userId;
   if (!isToken(id)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing or invalid id');
   }
   const names = collectionNamesFor(resolveDbSuffix(data.dbSuffix));
-  await assertRequesterProfileActive(names, context.auth.uid);
+  const requester = await assertRequesterProfileActive(names, context.auth.uid);
 
-  const userSnap = await db.collection(names.users).doc(id).get();
+  const userRef = db.collection(names.users).doc(id);
+  const userSnap = await userRef.get();
   if (!userSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'User profile does not exist');
   }
@@ -912,12 +1081,342 @@ exports.resendInvitationAdmin = functions.https.onCall(async (data, context) => 
   if (!profile.activo) {
     throw new functions.https.HttpsError('failed-precondition', 'The profile is inactive');
   }
-  return {
-    sent: false,
-    delivery: 'client',
-    email: profile.email,
-    message: 'No email was sent by the server. Use Firebase sendPasswordResetEmail from the client.'
+
+  // Verify Auth account exists and is not disabled
+  let authUser;
+  try {
+    authUser = await admin.auth().getUser(profile.authUid);
+  } catch (e) {
+    if (e && e.code === 'auth/user-not-found') {
+      throw new functions.https.HttpsError('not-found', 'Linked authentication account does not exist');
+    }
+    throw new functions.https.HttpsError('internal', `Error reading Auth account: ${e ? e.message : 'unknown'}`);
+  }
+  if (authUser.disabled) {
+    throw new functions.https.HttpsError('failed-precondition', 'The authentication account is disabled');
+  }
+
+  // Handle email changed in Auth: synchronize with profile
+  const targetEmail = (authUser.email || profile.email || '').trim().toLowerCase();
+  if (targetEmail && profile.email && targetEmail !== profile.email.toLowerCase()) {
+    await userRef.update({
+      email: targetEmail,
+      'invitation.recipientEmail': targetEmail
+    });
+    profile.email = targetEmail;
+  }
+
+  // Pre-register re-send ticket in invitationOps (Backend Ticket Authority)
+  const requestId = crypto.randomUUID();
+  const ticketTtlMs = 24 * 60 * 60 * 1000;
+  const expiresAt = createTimestamp(Date.now() + ticketTtlMs);
+  try {
+    const invCol = db.collection(names.invitationOps);
+    if (invCol && typeof invCol.doc === 'function') {
+      const ticketDoc = invCol.doc(requestId);
+      if (ticketDoc && typeof ticketDoc.set === 'function') {
+        await ticketDoc.set({
+          status: 'ISSUED',
+          userId: id,
+          recipientEmail: profile.email,
+          requestedBy: context.auth.uid,
+          operation: 'resend_invitation',
+          createdAt: firestoreStatics().FieldValue.serverTimestamp(),
+          expiresAt
+        });
+      }
+    }
+  } catch (_) { /* Best effort logging */ }
+
+  // Update invitation state in profile.
+  // Invariant: NEVER revert an already 'activated' user to 'pending' or 'prepared'.
+  const currentStatus = (profile.invitation && profile.invitation.status) || INVITATION_STATUS.PENDING;
+  const newStatus = currentStatus === INVITATION_STATUS.ACTIVATED
+    ? INVITATION_STATUS.ACTIVATED
+    : currentStatus;
+
+  const profileUpdate = {
+    'invitation.status': newStatus,
+    'invitation.recipientEmail': profile.email,
+    'invitation.lastError': null
   };
+
+  await userRef.update(profileUpdate);
+
+  // Record audit entry: never log raw link or action code
+  const actor = { uid: context.auth.uid, cid: requester && requester.id, name: requester && requester.nombre };
+  try {
+    await db.collection(names.audit).doc().create(
+      userAuditEntry(actor, 'resendInvitation', id, {
+        email: profile.email,
+        requestId,
+        delivery: 'client_sdk',
+        sent: false,
+        linkGenerated: false
+      })
+    );
+  } catch (_) { /* Audit write is best-effort */ }
+
+  return {
+    authorized: true,
+    id: profile.id,
+    email: profile.email,
+    currentStatus: newStatus,
+    requestId,
+    link: null,
+    sent: false,
+    delivery: 'client_sdk',
+    status: newStatus,
+    invitation: {
+      status: newStatus,
+      lastRequestStatus: (profile.invitation && profile.invitation.lastRequestStatus) || 'pending',
+      delivery: 'client_sdk',
+      sent: false,
+      preparedCount: (profile.invitation && profile.invitation.preparedCount) || 0,
+      sentCount: (profile.invitation && profile.invitation.sentCount) || 0,
+      recipientEmail: profile.email
+    },
+    message: 'Ticket de reenvío emitido para despacho nativo.'
+  };
+});
+
+const ALLOWED_ERROR_CODES = Object.freeze([
+  'TOO_MANY_REQUESTS',
+  'NETWORK_ERROR',
+  'UNAUTHORIZED_DOMAIN',
+  'INVALID_RECIPIENT',
+  'CLIENT_TIMEOUT',
+  'NETWORK_DISCONNECTED_IN_FLIGHT',
+  'UNKNOWN_CLIENT_ERROR'
+]);
+
+/**
+ * Record the outcome of a client-side Firebase Auth email request (Step 6.3.2 / 6.3.4).
+ * Expected data: { requestId, userId, outcome, errorCode?, dbSuffix? }
+ * Zero-Trust validation:
+ *  - Must be authenticated as active manager.
+ *  - Ticket invitationOps/<requestId> must exist with status 'ISSUED'.
+ *  - Idempotent: repeated calls on 'RECORDED' ticket return duplicate: true without mutations.
+ *  - Validates ticket corresponds to userId and is within 24h TTL.
+ *  - Sanitizes errorCode against whitelist.
+ *  - Atomically updates ticket, user profile, and commercialAudit.
+ */
+exports.recordInvitationOutcomeAdmin = functions.https.onCall(async (data, context) => {
+  await assertManager(context, 'Only managers can record invitation outcomes');
+  data = data || {};
+  const { requestId, userId, outcome, errorCode } = data;
+
+  if (!isToken(requestId) || !isToken(userId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing or invalid requestId or userId');
+  }
+
+  if (!['accepted', 'failed', 'unknown'].includes(outcome)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Invalid outcome: must be accepted, failed, or unknown');
+  }
+
+  const allowedErrorSet = new Set(ALLOWED_ERROR_CODES);
+  let sanitizedErrorCode = null;
+  if (errorCode !== undefined && errorCode !== null && errorCode !== '') {
+    if (typeof errorCode !== 'string' || !allowedErrorSet.has(errorCode)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Invalid or unwhitelisted errorCode');
+    }
+    sanitizedErrorCode = errorCode;
+  }
+
+  if (outcome !== 'accepted' && !sanitizedErrorCode) {
+    sanitizedErrorCode = outcome === 'unknown' ? 'CLIENT_TIMEOUT' : 'UNKNOWN_CLIENT_ERROR';
+  }
+
+  const names = collectionNamesFor(resolveDbSuffix(data.dbSuffix));
+  await assertRequesterProfileActive(names, context.auth.uid);
+
+  return db.runTransaction(async (transaction) => {
+    // 1. Validation of prior issuance by backend
+    const opRef = db.collection(names.invitationOps).doc(requestId);
+    const opSnap = await transaction.get(opRef);
+
+    if (!opSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Identificador de solicitud no registrado o inexistente.');
+    }
+
+    const opData = opSnap.data() || {};
+
+    // 2. Strict ticket ownership check (Zero-Trust SEC: context.auth.uid === ticket.requestedBy)
+    // Non-repudiable: only the exact manager who issued the ticket is authorized to report its outcome.
+    if (!opData.requestedBy || opData.requestedBy !== context.auth.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'No tienes autorización para registrar el resultado de este ticket (propiedad exclusiva del emisor).');
+    }
+
+    // 3. Idempotency control: Has ticket already been closed?
+    if (opData.status === 'RECORDED') {
+      return {
+        recorded: true,
+        duplicate: true,
+        reconciled: false,
+        requestId,
+        userId: opData.userId,
+        sentCount: opData.sentCountAtTime || 0,
+        lastRequestStatus: opData.outcome
+      };
+    }
+
+    // 3. User match check
+    if (opData.userId !== userId) {
+      throw new functions.https.HttpsError('permission-denied', 'El ticket no corresponde al usuario indicado.');
+    }
+
+    // 4. Expiration check (TTL 24h)
+    if (opData.expiresAt) {
+      const expiresMs = typeof opData.expiresAt.toMillis === 'function'
+        ? opData.expiresAt.toMillis()
+        : new Date(opData.expiresAt).getTime();
+      if (expiresMs < Date.now()) {
+        throw new functions.https.HttpsError('failed-precondition', 'El ticket de solicitud ha caducado (TTL superado).');
+      }
+    }
+
+    // 5. Read user profile
+    const userRef = db.collection(names.users).doc(userId);
+    const userSnap = await transaction.get(userRef);
+    if (!userSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Perfil de usuario no encontrado.');
+    }
+    const user = userSnap.data() || {};
+
+    const currentSentCount = (user.invitation && user.invitation.sentCount) || 0;
+    const currentStatus = (user.invitation && user.invitation.lastRequestStatus) || 'pending';
+
+    // 6. Application of rules depending on outcome
+    const updates = {
+      'invitation.lastRequestAt': firestoreStatics().FieldValue.serverTimestamp(),
+      'invitation.updatedAt': firestoreStatics().FieldValue.serverTimestamp()
+    };
+
+    let newSentCount = currentSentCount;
+    let resolvedRequestStatus = currentStatus;
+
+    if (outcome === 'accepted') {
+      newSentCount = currentSentCount + 1;
+      updates['invitation.lastRequestStatus'] = 'accepted';
+      updates['invitation.sentCount'] = firestoreStatics().FieldValue.increment(1);
+      updates['invitation.lastAcceptedAt'] = firestoreStatics().FieldValue.serverTimestamp();
+      updates['invitation.lastError'] = null;
+      resolvedRequestStatus = 'accepted';
+    } else if (outcome === 'failed') {
+      updates['invitation.lastRequestStatus'] = 'failed';
+      updates['invitation.lastError'] = sanitizedErrorCode;
+      resolvedRequestStatus = 'failed';
+    } else if (outcome === 'unknown') {
+      // CRITICAL UNKNOWN RULE:
+      // Does NOT increment sentCount.
+      // Does NOT overwrite a previously confirmed 'accepted' status.
+      if (currentStatus !== 'accepted') {
+        updates['invitation.lastRequestStatus'] = 'unknown';
+        resolvedRequestStatus = 'unknown';
+      }
+      updates['invitation.lastError'] = sanitizedErrorCode || 'CLIENT_TIMEOUT';
+    }
+
+    // 7. Close ticket (status = 'RECORDED')
+    transaction.update(opRef, {
+      status: 'RECORDED',
+      outcome,
+      errorCode: sanitizedErrorCode || null,
+      closedBy: context.auth.uid,
+      closedAt: firestoreStatics().FieldValue.serverTimestamp(),
+      sentCountAtTime: newSentCount
+    });
+
+    // 8. Atomic update on user profile (invitation.status is untouched!)
+    transaction.update(userRef, updates);
+
+    // 9. Commercial audit entry
+    const auditRef = db.collection(names.audit).doc();
+    transaction.set(auditRef, {
+      action: 'recordInvitationOutcome',
+      targetType: 'user',
+      targetId: userId,
+      targetEmail: opData.recipientEmail,
+      operation: opData.operation,
+      outcome,
+      errorCode: sanitizedErrorCode || null,
+      requestId,
+      actorUid: context.auth.uid,
+      actorRole: 'manager',
+      at: firestoreStatics().FieldValue.serverTimestamp(),
+      atIso: new Date().toISOString()
+    });
+
+    return {
+      recorded: true,
+      duplicate: false,
+      reconciled: outcome === 'unknown',
+      requestId,
+      userId,
+      sentCount: newSentCount,
+      lastRequestStatus: resolvedRequestStatus
+    };
+  });
+});
+
+/**
+ * Confirm and seal user activation in Firestore (Step 6.3.2 / 6.3.4).
+ * Must be called by the authenticated user after first login.
+ * Atomic, idempotent, irreversible.
+ */
+exports.confirmUserActivation = functions.https.onCall(async (data, context) => {
+  if (!context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debe estar autenticado.');
+  }
+
+  const authUid = context.auth.uid;
+  const names = collectionNamesFor(resolveDbSuffix(data && data.dbSuffix));
+
+  const userQuery = await db.collection(names.users)
+    .where('authUid', '==', authUid)
+    .limit(1)
+    .get();
+
+  if (userQuery.empty) {
+    throw new functions.https.HttpsError('not-found', 'Perfil de usuario no encontrado.');
+  }
+
+  const userDoc = userQuery.docs[0];
+  const userData = userDoc.data() || {};
+
+  if (userData.activo === false) {
+    throw new functions.https.HttpsError('permission-denied', 'Usuario desactivado en la plataforma.');
+  }
+
+  // GUARDA CRÍTICA DE IDEMPOTENCIA
+  if (userData.invitation && userData.invitation.status === 'activated') {
+    return { activated: true, alreadyActive: true };
+  }
+
+  // Transición atómica de activación
+  const batch = db.batch();
+
+  batch.update(userDoc.ref, {
+    'invitation.status': 'activated',
+    'invitation.activatedAt': firestoreStatics().FieldValue.serverTimestamp(),
+    'invitation.updatedAt': firestoreStatics().FieldValue.serverTimestamp()
+  });
+
+  const auditRef = db.collection(names.audit).doc();
+  batch.set(auditRef, {
+    action: 'userActivated',
+    targetType: 'user',
+    targetId: userDoc.id,
+    authUid: authUid,
+    email: userData.email,
+    role: userData.role,
+    at: firestoreStatics().FieldValue.serverTimestamp(),
+    atIso: new Date().toISOString()
+  });
+
+  await batch.commit();
+
+  return { activated: true, newlyActivated: true };
 });
 
 // Export a helper for external reconciliation (optional).

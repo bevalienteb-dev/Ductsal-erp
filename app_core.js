@@ -2038,6 +2038,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     } catch (e) { /* storage unavailable: nothing to detect */ }
 
+    // FASE 6.4: Handle return from Firebase Action Code (e.g. password setup/activation return)
+    if (typeof CrmAuth !== 'undefined' && typeof CrmAuth.handleActivationReturn === 'function') {
+        try {
+            CrmAuth.handleActivationReturn();
+        } catch (e) {
+            console.warn('[CRM] Error al procesar retorno de activación:', e && e.message);
+        }
+    }
+
+    // FASE 6.4: Keyboard accessibility - close forgot password modal on Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.keyCode === 27) {
+            const forgotModal = document.getElementById('forgot-password-modal');
+            if (forgotModal && forgotModal.style.display === 'flex') {
+                closeForgotPasswordModal();
+            }
+        }
+    });
+
     // Attach Listeners
     // SEC-03: Firebase Authentication session guard.
     // Ensure currentUser and listeners are strictly synchronized with a verified Firebase Auth session.
@@ -2323,11 +2342,31 @@ function checkAuth() {
 }
 
 let pendingSetupUser = null;
+let loginInFlight = false;
 
 function processLogin(e) {
-    e.preventDefault();
-    const email = document.getElementById('login-email').value.trim();
-    const pass = document.getElementById('login-password').value;
+    if (e && e.preventDefault) e.preventDefault();
+    if (loginInFlight) return;
+
+    const emailInput = document.getElementById('login-email');
+    const passInput = document.getElementById('login-password');
+    const email = emailInput ? emailInput.value.trim() : '';
+    const pass = passInput ? passInput.value : '';
+
+    const submitBtn = document.getElementById('btn-login-submit');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Ingresando...';
+    }
+    loginInFlight = true;
+
+    const restoreBtn = () => {
+        loginInFlight = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Ingresar al Sistema';
+        }
+    };
 
     const user = (typeof CrmAuth !== 'undefined') ? CrmAuth.findLoginUser(users, email) : users.find(u => u.email === email && u.activo);
     if (!user) {
@@ -2335,6 +2374,7 @@ function processLogin(e) {
         if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function' && pass) {
             return processDirectFirebaseAuthLogin(email, pass);
         }
+        restoreBtn();
         return alert("Usuario no encontrado o inactivo.");
     }
 
@@ -2346,6 +2386,7 @@ function processLogin(e) {
         return processDirectFirebaseAuthLogin(email, pass);
     }
 
+    restoreBtn();
     return alert("Esta cuenta histórica requiere vinculación a Firebase Authentication por un administrador antes de ingresar.");
 }
 
@@ -2354,9 +2395,21 @@ async function processDirectFirebaseAuthLogin(email, pass) {
         const cred = await firebase.auth().signInWithEmailAndPassword(email, pass);
         if (!cred || !cred.user) return alert("Error al iniciar sesión.");
         const tok = await cred.user.getIdTokenResult();
-        const cid = tok.claims && tok.claims.cid;
-        const role = tok.claims && tok.claims.role;
+        let cid = tok.claims && tok.claims.cid;
+        let role = tok.claims && tok.claims.role;
         const managerClaim = tok && tok.claims && tok.claims.manager === true;
+
+        if ((!cid || !role) && cred.user.uid && db && typeof db.collection === 'function') {
+            try {
+                const uQuery = await db.collection(`users${DB_SUFFIX}`).where('authUid', '==', cred.user.uid).limit(1).get();
+                if (!uQuery.empty) {
+                    const uDoc = uQuery.docs[0];
+                    const uData = uDoc.data() || {};
+                    if (!cid) cid = uDoc.id;
+                    if (!role) role = uData.role;
+                }
+            } catch (_) {}
+        }
 
         const validCrmRoles = ['manager', 'gestor', 'vendedor'];
         if (!cid || !role || !validCrmRoles.includes(role)) {
@@ -2415,52 +2468,195 @@ async function processDirectFirebaseAuthLogin(email, pass) {
         if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
         checkAuth();
         reRenderApp();
+
+        // FASE 6.4: Limpiar estado y banner de retorno de activación tras login exitoso
+        try {
+            if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.removeItem('ductsal_activation_return');
+            }
+            const actBanner = document.getElementById('activation-return-banner');
+            if (actBanner) actBanner.style.display = 'none';
+        } catch (_) {}
+
+        if (typeof CrmAuth !== 'undefined') {
+            if (typeof CrmAuth.confirmUserActivationViaFunction === 'function') {
+                CrmAuth.confirmUserActivationViaFunction(firebase, { dbSuffix: DB_SUFFIX }).catch(() => {});
+            }
+            if (currentUser && currentUser.role === 'manager' && typeof CrmAuth.reconcileOutbox === 'function') {
+                CrmAuth.reconcileOutbox(firebase, { dbSuffix: DB_SUFFIX }).catch(() => {});
+            }
+        }
     } catch (e) {
         const reason = (typeof CrmAuth !== 'undefined') ? CrmAuth.normalizeCode(e) : (e && e.code);
         alert((typeof CrmAuth !== 'undefined') ? CrmAuth.loginErrorMessage(reason) : "Correo o contraseña incorrectos.");
+    } finally {
+        loginInFlight = false;
+        const submitBtn = document.getElementById('btn-login-submit');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Ingresar al Sistema';
+        }
     }
 }
 
 async function processFirebaseLogin(user, pass) {
-    if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
-    if (!pass) return alert("Ingresa tu contraseña.");
-    const res = await CrmAuth.loginWithFirebase(firebase, user, pass);
-    if (!res.ok) return alert(CrmAuth.loginErrorMessage(res.reason));
-    currentUser = user;
-    localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
-    if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
-    checkAuth();
-    reRenderApp();
+    try {
+        if (typeof CrmAuth === 'undefined') return alert("No se pudo cargar el módulo de autenticación. Recarga la página.");
+        if (!pass) return alert("Ingresa tu contraseña.");
+        const res = await CrmAuth.loginWithFirebase(firebase, user, pass);
+        if (!res.ok) return alert(CrmAuth.loginErrorMessage(res.reason));
+        currentUser = user;
+        localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+        if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
+        checkAuth();
+        reRenderApp();
 
-    // Requirement 6: purge plaintext password from Firestore profile once successful login is verified
-    if (user.password !== undefined && user.password !== null && user.password !== "" && typeof CrmAuth.purgeHistoricalPassword === 'function') {
-        CrmAuth.purgeHistoricalPassword(firebase, { id: user.id, dbSuffix: DB_SUFFIX })
-            .then(() => {
-                delete user.password;
-                if (currentUser) delete currentUser.password;
-                localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
-            })
-            .catch(err => {
-                console.warn('[CRM] No se pudo purgar contraseña histórica tras login verificado:', err && err.message);
+        // FASE 6.4: Limpiar estado y banner de retorno de activación tras login exitoso
+        try {
+            if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.removeItem('ductsal_activation_return');
+            }
+            const actBanner = document.getElementById('activation-return-banner');
+            if (actBanner) actBanner.style.display = 'none';
+        } catch (_) {}
+
+        if (typeof CrmAuth !== 'undefined') {
+            if (typeof CrmAuth.confirmUserActivationViaFunction === 'function') {
+                CrmAuth.confirmUserActivationViaFunction(firebase, { dbSuffix: DB_SUFFIX }).catch(() => {});
+            }
+            if (currentUser && currentUser.role === 'manager' && typeof CrmAuth.reconcileOutbox === 'function') {
+                CrmAuth.reconcileOutbox(firebase, { dbSuffix: DB_SUFFIX }).catch(() => {});
+            }
+        }
+
+        // Requirement 6: purge plaintext password from Firestore profile once successful login is verified
+        if (user.password !== undefined && user.password !== null && user.password !== "" && typeof CrmAuth.purgeHistoricalPassword === 'function') {
+            CrmAuth.purgeHistoricalPassword(firebase, { id: user.id, dbSuffix: DB_SUFFIX })
+                .then(() => {
+                    delete user.password;
+                    if (currentUser) delete currentUser.password;
+                    localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
+                })
+                .catch(err => {
+                    console.warn('[CRM] No se pudo purgar contraseña histórica tras login verificado:', err && err.message);
+                });
+        }
+    } finally {
+        loginInFlight = false;
+        const submitBtn = document.getElementById('btn-login-submit');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Ingresar al Sistema';
+        }
+    }
+}
+
+// Step 6.3.2 / 6.3.4 Password Recovery with Strict Anti-Enumeration Defense
+function openForgotPasswordModal(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const modal = document.getElementById('forgot-password-modal');
+    if (!modal) return;
+    const input = document.getElementById('forgot-password-email');
+    if (input) input.value = '';
+    const feedback = document.getElementById('forgot-password-feedback');
+    if (feedback) feedback.style.display = 'none';
+    const submitBtn = document.getElementById('btn-submit-forgot-password');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Enviar Enlace';
+    }
+    modal.style.display = 'flex';
+}
+
+function closeForgotPasswordModal() {
+    const modal = document.getElementById('forgot-password-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+let forgotPasswordInFlight = false;
+
+async function processForgotPassword(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (forgotPasswordInFlight) return;
+
+    const input = document.getElementById('forgot-password-email');
+    const feedback = document.getElementById('forgot-password-feedback');
+    const submitBtn = document.getElementById('btn-submit-forgot-password');
+    if (!input || !feedback) return;
+
+    const email = String(input.value || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+        feedback.style.display = 'block';
+        feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+        feedback.style.color = '#ef4444';
+        feedback.innerText = 'Por favor ingresa un correo electrónico válido.';
+        return;
+    }
+
+    forgotPasswordInFlight = true;
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Enviando...';
+    }
+
+    const NEUTRAL_SUCCESS_MESSAGE = 'Si el correo corresponde a una cuenta activa en DUCTSAL ERP, recibirás un enlace de restablecimiento en breve. Revisa tu carpeta de spam.';
+
+    try {
+        if (typeof CrmAuth !== 'undefined' && typeof CrmAuth.sendPasswordSetupEmail === 'function') {
+            await CrmAuth.sendPasswordSetupEmail(firebase, email);
+        } else if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function') {
+            const auth = firebase.auth();
+            try { auth.languageCode = 'es'; } catch (_) {}
+            const isLocal = typeof window !== 'undefined' && window.location &&
+                (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0');
+            const returnUrl = isLocal
+                ? `${window.location.protocol}//${window.location.host}/login?mode=activate`
+                : 'https://erp.ductsal.com/login?mode=activate';
+            await auth.sendPasswordResetEmail(email, {
+                url: returnUrl,
+                handleCodeInApp: false
             });
+        }
+        // Case 1: Account exists in Firebase Auth -> Promise resolves
+        feedback.style.display = 'block';
+        feedback.style.background = 'rgba(34, 197, 94, 0.15)';
+        feedback.style.color = '#22c55e';
+        feedback.innerText = NEUTRAL_SUCCESS_MESSAGE;
+    } catch (err) {
+        const code = (err && err.code) || '';
+        // Case 2: Account does NOT exist in Auth (auth/user-not-found) -> Show SAME neutral message!
+        if (code === 'auth/user-not-found') {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(34, 197, 94, 0.15)';
+            feedback.style.color = '#22c55e';
+            feedback.innerText = NEUTRAL_SUCCESS_MESSAGE;
+        } else if (code === 'auth/too-many-requests') {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(234, 179, 8, 0.15)';
+            feedback.style.color = '#eab308';
+            feedback.innerText = 'Demasiadas solicitudes en poco tiempo. Por seguridad, Firebase ha pausado los envíos temporalmente. Espera unos minutos.';
+        } else if (code === 'auth/network-request-failed') {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+            feedback.style.color = '#ef4444';
+            feedback.innerText = 'No se pudo conectar con el servicio de autenticación. Verifica tu conexión a internet e inténtalo de nuevo.';
+        } else {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+            feedback.style.color = '#ef4444';
+            feedback.innerText = 'El servicio no está disponible temporalmente por un error de configuración. Contacta a soporte técnico.';
+        }
+    } finally {
+        forgotPasswordInFlight = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Enviar Enlace';
+        }
     }
 }
 
 function processFirstTimeSetup(e) {
-    e.preventDefault();
-    const p1 = document.getElementById('setup-password').value;
-    const p2 = document.getElementById('setup-password-confirm').value;
-    if (p1 !== p2) return alert("Las contraseñas no coinciden.");
-    if (p1.length < 4) return alert("La contraseña debe tener al menos 4 caracteres.");
-
-    pendingSetupUser.password = p1;
-    saveUserToDB(pendingSetupUser);
-
-    currentUser = pendingSetupUser;
-    localStorage.setItem('ductsal_current_user', JSON.stringify(currentUser));
-    if (typeof attachDataListeners === 'function') attachDataListeners(currentUser.role, currentUser.id);
-    checkAuth();
-    reRenderApp();
+    if (e && e.preventDefault) e.preventDefault();
 }
 
 function processLogout() {
@@ -4189,6 +4385,9 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.processLogin = typeof processLogin !== 'undefined' ? processLogin : undefined;
     module.exports.processDirectFirebaseAuthLogin = typeof processDirectFirebaseAuthLogin !== 'undefined' ? processDirectFirebaseAuthLogin : undefined;
     module.exports.processFirebaseLogin = typeof processFirebaseLogin !== 'undefined' ? processFirebaseLogin : undefined;
+    module.exports.openForgotPasswordModal = typeof openForgotPasswordModal !== 'undefined' ? openForgotPasswordModal : undefined;
+    module.exports.closeForgotPasswordModal = typeof closeForgotPasswordModal !== 'undefined' ? closeForgotPasswordModal : undefined;
+    module.exports.processForgotPassword = typeof processForgotPassword !== 'undefined' ? processForgotPassword : undefined;
     module.exports.renderUsersTable = typeof renderUsersTable !== 'undefined' ? renderUsersTable : undefined;
     module.exports.AppState = typeof AppState !== 'undefined' ? AppState : undefined;
     module.exports.AppRouter = typeof AppRouter !== 'undefined' ? AppRouter : undefined;
@@ -4238,6 +4437,9 @@ if (typeof window !== 'undefined') {
     window.checkAuth = typeof checkAuth !== 'undefined' ? checkAuth : undefined;
     window.processLogin = typeof processLogin !== 'undefined' ? processLogin : undefined;
     window.processLogout = typeof processLogout !== 'undefined' ? processLogout : undefined;
+    window.openForgotPasswordModal = typeof openForgotPasswordModal !== 'undefined' ? openForgotPasswordModal : undefined;
+    window.closeForgotPasswordModal = typeof closeForgotPasswordModal !== 'undefined' ? closeForgotPasswordModal : undefined;
+    window.processForgotPassword = typeof processForgotPassword !== 'undefined' ? processForgotPassword : undefined;
     window.applyRolePermissions = typeof applyRolePermissions !== 'undefined' ? applyRolePermissions : undefined;
     window.renderUsersTable = typeof renderUsersTable !== 'undefined' ? renderUsersTable : undefined;
     window.showView = typeof showView !== 'undefined' ? showView : undefined;

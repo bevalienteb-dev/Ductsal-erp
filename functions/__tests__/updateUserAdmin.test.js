@@ -66,7 +66,7 @@ describe('updateUserAdmin: payload validation (no false success)', () => {
     ['activo', { activo: false }],
     ['authUid', { authUid: 'x' }],
     ['password', { password: '123' }],
-    ['email', { email: 'a@b.com' }],
+    ['extraField', { extraField: 'unexpected' }],
     ['claims', { claims: { manager: true } }],
     ['manager', { manager: true }]
   ])('an unexpected field (%s) is refused before anything is read or written', async (_n, extra) => {

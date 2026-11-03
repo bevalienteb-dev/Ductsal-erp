@@ -42,7 +42,7 @@ describe('admin.firestore without static members (Functions emulator)', () => {
 
   test('createUserAdmin still creates exactly one account and one profile, using the modular statics', async () => {
     const r = await createUserAdmin({ email: 'Emu.Static@Ductsal-Test.invalid', nombre: 'Estático', role: 'vendedor', opId: 'op_statics_1' }, ctx);
-    expect(r).toEqual({ uid: expect.any(String), id: expect.any(String) });
+    expect(r).toMatchObject({ uid: expect.any(String), id: expect.any(String) });
     expect(state.createUserCalls).toBe(1);
     const profile = state.docs[`users_prod/${r.id}`];
     expect(profile).toMatchObject({ authUid: r.uid, role: 'vendedor', email: 'emu.static@ductsal-test.invalid' });

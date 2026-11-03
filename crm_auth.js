@@ -16,6 +16,56 @@
         root.CrmAuth = api;
     }
 })(typeof window !== 'undefined' ? window : globalThis, function () {
+    const CrmOutbox = (typeof window !== 'undefined' && window.CrmOutbox) ||
+                      (typeof globalThis !== 'undefined' && globalThis.CrmOutbox) ||
+                      (typeof require === 'function' ? require('./crm_outbox') : null);
+
+    const PRODUCTION_ACTION_CODE_SETTINGS = Object.freeze({
+        url: 'https://erp.ductsal.com/login?mode=activate',
+        handleCodeInApp: false
+    });
+
+    const LOCAL_DEV_PORT = '8123';
+    const LOCAL_ACTION_CODE_SETTINGS = Object.freeze({
+        url: 'http://127.0.0.1:' + LOCAL_DEV_PORT + '/login?mode=activate',
+        handleCodeInApp: false
+    });
+
+    function isLocalEnvironment() {
+        if (typeof window !== 'undefined' && window.location) {
+            const h = window.location.hostname;
+            return h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0';
+        }
+        if (typeof process !== 'undefined' && process.env) {
+            return process.env.NODE_ENV === 'test' ||
+                   process.env.FUNCTIONS_EMULATOR === 'true' ||
+                   process.env.FIREBASE_AUTH_EMULATOR_HOST !== undefined;
+        }
+        return false;
+    }
+
+    function getActionCodeSettings() {
+        if (isLocalEnvironment()) {
+            if (typeof window !== 'undefined' && window.location && window.location.host) {
+                return Object.freeze({
+                    url: window.location.protocol + '//' + window.location.host + '/login?mode=activate',
+                    handleCodeInApp: false
+                });
+            }
+            return LOCAL_ACTION_CODE_SETTINGS;
+        }
+        return PRODUCTION_ACTION_CODE_SETTINGS;
+    }
+
+    const ACTION_CODE_SETTINGS = Object.freeze({
+        get url() {
+            return getActionCodeSettings().url;
+        },
+        get handleCodeInApp() {
+            return false;
+        }
+    });
+
     // Roles the CRM recognises that the Cloud Function is allowed to create. `manager` is excluded
     // on purpose: privileged accounts are never created automatically.
     const CREATABLE_ROLES = ['vendedor', 'gestor'];
@@ -115,8 +165,14 @@
 
     // ---------- Password setup / reset ----------
     // Firebase sends the email and hosts the password form: the password never touches the CRM.
-    function sendPasswordSetupEmail(fb, email) {
-        return fb.auth().sendPasswordResetEmail(email);
+    function sendPasswordSetupEmail(fb, email, actionCodeSettings) {
+        if (!fb || typeof fb.auth !== 'function') return Promise.reject(new Error('Auth SDK unavailable'));
+        const auth = fb.auth();
+        try {
+            auth.languageCode = 'es';
+        } catch (_) {}
+        const settings = actionCodeSettings || getActionCodeSettings();
+        return auth.sendPasswordResetEmail(email, settings);
     }
 
     // ---------- Admin creation ----------
@@ -262,17 +318,52 @@
             notify(NO_MANAGER_SESSION_MESSAGE);
             return 'unavailable';
         }
+        let createRes;
         try {
-            await createUserViaFunction(fb, { email, nombre, role, dbSuffix });
+            createRes = await createUserViaFunction(fb, { email, nombre, role, dbSuffix });
         } catch (e) {
             notify(createErrorMessage(e));
             return 'failed';
         }
+
         const normalized = String(email || '').trim().toLowerCase();
+        const requestId = createRes && createRes.requestId;
+        const userId = createRes && createRes.id;
+        const currentManagerUid = (fb && fb.auth && fb.auth().currentUser && fb.auth().currentUser.uid) || 'manager';
+
+        // Write-Ahead Local Outbox persistence BEFORE calling network
+        if (requestId && userId && CrmOutbox) {
+            try {
+                CrmOutbox.enqueue({
+                    requestId,
+                    userId,
+                    recipientEmail: normalized,
+                    operation: 'create_user',
+                    outcome: 'unknown',
+                    managerAuthUid: currentManagerUid
+                });
+            } catch (_) {}
+        }
+
         try {
             await sendPasswordSetupEmail(fb, normalized);
+            if (requestId && userId) {
+                if (CrmOutbox) CrmOutbox.update(requestId, { outcome: 'accepted' });
+                try {
+                    await recordInvitationOutcomeViaFunction(fb, { requestId, userId, outcome: 'accepted', dbSuffix });
+                    if (CrmOutbox) CrmOutbox.dequeue(requestId);
+                } catch (_) { /* Retained in outbox for background reconciliation */ }
+            }
             notify('Usuario creado. Se envió un correo a ' + normalized + ' para que establezca su contraseña.');
         } catch (e) {
+            const errorCode = CrmOutbox ? CrmOutbox.sanitizeErrorCode(e) : 'UNKNOWN_CLIENT_ERROR';
+            if (requestId && userId) {
+                if (CrmOutbox) CrmOutbox.update(requestId, { outcome: 'failed', errorCode });
+                try {
+                    await recordInvitationOutcomeViaFunction(fb, { requestId, userId, outcome: 'failed', errorCode, dbSuffix });
+                    if (CrmOutbox) CrmOutbox.dequeue(requestId);
+                } catch (_) { /* Retained in outbox */ }
+            }
             notify('Usuario creado, pero no se pudo enviar el correo para establecer la contraseña. Usa "Reset Pass" para reenviarlo.');
         }
         return 'created';
@@ -341,8 +432,119 @@
         });
     }
 
+    async function recordInvitationOutcomeViaFunction(fb, { requestId, userId, outcome, errorCode, dbSuffix }) {
+        if (!fb || typeof fb.functions !== 'function') throw new Error('functions-unavailable');
+        const fn = fb.functions().httpsCallable('recordInvitationOutcomeAdmin');
+        const res = await fn({ requestId, userId, outcome, errorCode, dbSuffix });
+        return res.data;
+    }
+
+    async function confirmUserActivationViaFunction(fb, { dbSuffix } = {}) {
+        if (!fb || typeof fb.functions !== 'function') throw new Error('functions-unavailable');
+        const fn = fb.functions().httpsCallable('confirmUserActivation');
+        const res = await fn({ dbSuffix });
+        return res.data;
+    }
+
+    async function reconcileOutbox(fb, { dbSuffix } = {}) {
+        if (!CrmOutbox || !fb || typeof fb.auth !== 'function') return [];
+        const currentUid = fb.auth().currentUser && fb.auth().currentUser.uid;
+        if (!currentUid) return [];
+        const pending = CrmOutbox.listPending(currentUid);
+        const results = [];
+        for (const item of pending) {
+            try {
+                const res = await recordInvitationOutcomeViaFunction(fb, {
+                    requestId: item.requestId,
+                    userId: item.userId,
+                    outcome: item.outcome,
+                    errorCode: item.errorCode,
+                    dbSuffix
+                });
+                CrmOutbox.dequeue(item.requestId);
+                results.push({ requestId: item.requestId, success: true, res });
+            } catch (err) {
+                results.push({ requestId: item.requestId, success: false, error: err && err.message });
+            }
+        }
+        return results;
+    }
+
+    function handleActivationReturn(options = {}) {
+        const loc = options.location || (typeof window !== 'undefined' ? window.location : null);
+        const doc = options.document || (typeof document !== 'undefined' ? document : null);
+        const storage = options.storage || (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+        const history = options.history || (typeof window !== 'undefined' ? window.history : null);
+
+        if (!loc || !loc.search) return { isReturn: false, mode: null, email: null, sensitiveCleaned: false };
+
+        let params;
+        try {
+            params = new URLSearchParams(loc.search);
+        } catch (_) {
+            return { isReturn: false, mode: null, email: null, sensitiveCleaned: false };
+        }
+
+        const mode = params.get('mode');
+        const email = params.get('email');
+        const isReturn = (mode === 'activate' || mode === 'resetPassword');
+
+        if (isReturn && doc) {
+            const banner = doc.getElementById('activation-return-banner');
+            if (banner) {
+                banner.style.display = 'block';
+                banner.innerHTML = '<strong>¡Contraseña configurada con éxito!</strong><br/>Inicia sesión con tu nueva contraseña para acceder y activar tu cuenta.';
+            }
+            if (email) {
+                const emailInput = doc.getElementById('login-email');
+                if (emailInput && !emailInput.value) {
+                    emailInput.value = email.trim();
+                    const passInput = doc.getElementById('login-password');
+                    if (passInput && typeof passInput.focus === 'function') passInput.focus();
+                }
+            }
+            if (storage && typeof storage.setItem === 'function') {
+                try {
+                    storage.setItem('ductsal_activation_return', 'true');
+                } catch (_) {}
+            }
+        }
+
+        // Clean up sensitive / operational parameters from the address bar to prevent leakage
+        // via HTTP Referer, browser history, or shoulder-surfing:
+        const sensitiveParams = ['mode', 'oobCode', 'apiKey', 'email', 'lang', 'continueUrl'];
+        let hasSensitive = false;
+        sensitiveParams.forEach(p => {
+            if (params.has(p)) {
+                params.delete(p);
+                hasSensitive = true;
+            }
+        });
+
+        if (hasSensitive && history && typeof history.replaceState === 'function') {
+            const newSearch = params.toString() ? ('?' + params.toString()) : '';
+            const newUrl = (loc.pathname || '/') + newSearch + (loc.hash || '');
+            try {
+                history.replaceState({}, (doc && doc.title) || '', newUrl);
+            } catch (_) {}
+        }
+
+        return {
+            isReturn,
+            mode,
+            email: email ? email.trim() : null,
+            sensitiveCleaned: hasSensitive
+        };
+    }
+
     return {
         CREATABLE_ROLES,
+        ACTION_CODE_SETTINGS,
+        PRODUCTION_ACTION_CODE_SETTINGS,
+        LOCAL_ACTION_CODE_SETTINGS,
+        getActionCodeSettings,
+        isLocalEnvironment,
+        handleActivationReturn,
         loginWithFirebase,
         loginErrorMessage,
         findLoginUser,
@@ -356,6 +558,10 @@
         purgeHistoricalPassword,
         listUsersViaFunction,
         resendInvitationViaFunction,
+        recordInvitationOutcomeViaFunction,
+        confirmUserActivationViaFunction,
+        reconcileOutbox,
+        getOutbox: () => CrmOutbox,
         createErrorMessage,
         statusErrorMessage,
         updateErrorMessage,

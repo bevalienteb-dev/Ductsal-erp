@@ -26,23 +26,34 @@
             <div class="hexagon-logo fallback" style="display:none; margin: 0 auto 1rem;"></div>
             <h2>Ingresar al Sistema</h2>
             <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Ductsal ERP Financials</p>
+            <div id="activation-return-banner" style="display:none; margin-bottom: 1.25rem; padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.85rem; line-height: 1.4; background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.3); color: #22c55e; text-align: center;"></div>
             <form id="login-form" onsubmit="processLogin(event)">
                 <div class="form-group"><input type="email" id="login-email" placeholder="Correo electrónico" required style="text-align:center;"></div>
                 <div class="form-group"><input type="password" id="login-password" placeholder="Contraseña" style="text-align:center;"></div>
-                <button type="submit" class="btn-primary" style="width:100%;">Iniciar Sesión</button>
+                <button type="submit" id="btn-login-submit" class="btn-primary" style="width:100%;">Iniciar Sesión</button>
+                <div style="margin-top: 1.25rem;">
+                    <a href="#" id="link-forgot-password" onclick="openForgotPasswordModal(event)" style="color: var(--brand-gold, #c5a059); font-size: 0.85rem; text-decoration: none;">¿Olvidaste tu contraseña?</a>
+                </div>
             </form>
         </div>
     </div>
 
-    <!-- First Time Setup Screen -->
-    <div id="setup-screen" class="modal" style="display:none; z-index: 1000; background: var(--bg-dark);">
-        <div class="modal-content glass-panel" style="max-width: 400px; width: 92%; text-align: center; margin: auto;">
-            <h2 style="color:var(--brand-gold);">Bienvenido a Ductsal</h2>
-            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Como es tu primera vez iniciando sesión, por favor configura tu contraseña.</p>
-            <form id="setup-form" onsubmit="processFirstTimeSetup(event)">
-                <div class="form-group"><input type="password" id="setup-password" placeholder="Nueva Contraseña" required style="text-align:center;"></div>
-                <div class="form-group"><input type="password" id="setup-password-confirm" placeholder="Confirmar Contraseña" required style="text-align:center;"></div>
-                <button type="submit" class="btn-success" style="width:100%;">Guardar y Entrar</button>
+    <!-- Forgot Password Modal (Step 6.3.2 / 6.3.4 Autoservicio de Recuperación con Anti-Enumeración) -->
+    <div id="forgot-password-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" onclick="if (event.target === this) closeForgotPasswordModal()" style="display:none; z-index: 1100; background: rgba(0,0,0,0.85);">
+        <div class="modal-content glass-panel" style="max-width: 420px; width: 92%; text-align: center; margin: auto; padding: 2rem;">
+            <h3 id="forgot-password-title" style="margin-bottom: 0.5rem; color: #fff;">Recuperar Contraseña</h3>
+            <p style="color: var(--text-secondary, #a0aec0); font-size: 0.85rem; margin-bottom: 1.5rem;">
+                Ingresa tu correo registrado para recibir un enlace seguro de restablecimiento.
+            </p>
+            <form id="forgot-password-form" onsubmit="processForgotPassword(event)">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <input type="email" id="forgot-password-email" placeholder="correo@ejemplo.com" required style="text-align: center; width: 100%;">
+                </div>
+                <div id="forgot-password-feedback" style="display: none; font-size: 0.85rem; margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px;"></div>
+                <div style="display: flex; gap: 0.5rem; justify-content: center;">
+                    <button type="button" class="btn-secondary" onclick="closeForgotPasswordModal()" style="flex: 1;">Cancelar</button>
+                    <button type="submit" id="btn-submit-forgot-password" class="btn-primary" style="flex: 1;">Enviar Enlace</button>
+                </div>
             </form>
         </div>
     </div>
@@ -1901,6 +1912,7 @@
 
     <script src="crm_env.js?v=1"></script>
     <script src="crm_staging_config.js?v=1"></script>
+    <script src="crm_outbox.js?v=1"></script>
     <script src="crm_auth.js?v=3"></script>
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_commercial.js?v=3"></script>

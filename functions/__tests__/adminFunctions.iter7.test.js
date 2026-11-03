@@ -283,10 +283,30 @@ describe('resendInvitationAdmin', () => {
     await expect(resend({}, { auth: { uid: 'roleOnlyManagerUid' } })).rejects.toMatchObject({ code: 'permission-denied' });
   });
 
-  test('does not pretend to send: tells the client to use Firebase sendPasswordResetEmail, and returns no link', async () => {
+  test('emite ticket de reenvío para despacho nativo en cliente y link es null', async () => {
     const r = await resend();
-    expect(r).toMatchObject({ sent: false, delivery: 'client', email: 't@x.com' });
-    expect(JSON.stringify(r)).not.toMatch(/https?:\/\//);
+    expect(r).toMatchObject({ sent: false, delivery: 'client_sdk', email: 't@x.com', link: null });
+    expect(r.requestId).toBeDefined();
+  });
+
+  test('soporta data.userId de forma equivalente a data.id resolviendo al mismo usuario', async () => {
+    const r = await resendInvitationAdmin({ userId: '5000' }, ctx);
+    expect(r).toMatchObject({ sent: false, delivery: 'client_sdk', email: 't@x.com', link: null });
+    expect(r.requestId).toBeDefined();
+
+    const rBoth = await resendInvitationAdmin({ id: '5000', userId: '5000' }, ctx);
+    expect(rBoth).toMatchObject({ sent: false, delivery: 'client_sdk', email: 't@x.com' });
+  });
+
+  test('rechaza ambigüedad si se proveen id y userId distintos', async () => {
+    await expect(resendInvitationAdmin({ id: '5000', userId: '6000' }, ctx))
+      .rejects.toMatchObject({ code: 'invalid-argument', message: expect.stringMatching(/Ambiguous id and userId/) });
+  });
+
+  test('rechaza si faltan id y userId o no son tokens válidos', async () => {
+    await expect(resendInvitationAdmin({}, ctx)).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(resendInvitationAdmin({ id: '' }, ctx)).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(resendInvitationAdmin({ userId: 'bad/token' }, ctx)).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
   test('historical, inactive and unknown profiles are refused; environment-scoped', async () => {

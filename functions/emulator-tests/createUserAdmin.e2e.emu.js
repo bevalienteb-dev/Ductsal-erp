@@ -28,8 +28,44 @@ const profilesByEmail = async (email) => (await H.listDocs(USERS)).filter(d => S
 beforeAll(async () => {
   await H.assertEmulatorsUp();
   // The seeded manager must exist (Auth account with the manager claim + linked profile).
-  const mgr = (await H.listAuthUsers()).find(u => u.uid === H.SEED.uid);
-  if (!mgr || mgr.claims.manager !== true) throw new Error('Seeded test manager missing: run scripts/seedEmulatorManager.js against the emulators first');
+  let mgr = (await H.listAuthUsers()).find(u => u.uid === H.SEED.uid);
+  if (!mgr || mgr.claims.manager !== true) {
+    // Self-provision if missing or wiped by prior tests
+    await fetch(`${H.AUTH}/identitytoolkit.googleapis.com/v1/projects/${H.PROJECT}/accounts`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        localId: H.SEED.uid,
+        email: H.SEED.email,
+        password: mgrPassword,
+        displayName: 'Gerente de Prueba (emulador)'
+      })
+    });
+    await fetch(`${H.AUTH}/identitytoolkit.googleapis.com/v1/projects/${H.PROJECT}/accounts:update`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        localId: H.SEED.uid,
+        customAttributes: JSON.stringify({ role: 'manager', manager: true, cid: H.SEED.profileId })
+      })
+    });
+    await fetch(`${H.FIRESTORE}/v1/projects/${H.PROJECT}/databases/(default)/documents/${USERS}/${H.SEED.profileId}`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          id: { stringValue: H.SEED.profileId },
+          authUid: { stringValue: H.SEED.uid },
+          authProvider: { stringValue: 'firebase' },
+          nombre: { stringValue: 'Gerente de Prueba (emulador)' },
+          email: { stringValue: H.SEED.email },
+          role: { stringValue: 'manager' },
+          activo: { booleanValue: true }
+        }
+      })
+    });
+    mgr = (await H.listAuthUsers()).find(u => u.uid === H.SEED.uid);
+  }
   const profile = await H.getDoc(USERS, H.SEED.profileId);
   if (!profile || profile.data.authUid !== H.SEED.uid) throw new Error('Seeded manager profile missing in users_local');
   // The seed password was random and never shown: set a new one on the EMULATOR account only.
@@ -45,14 +81,35 @@ describe('A. createUserAdmin over the callable protocol (real emulators)', () =>
     expect(claims.user_id || claims.sub).toBe(H.SEED.uid);
   });
 
-  test('creates one vendedor; Auth and Firestore agree', async () => {
+  test('creates one vendedor; Auth and Firestore agree without Admin SDK link', async () => {
     state.opId = 'op-' + tag + '-a';
     state.payload = { email: emailA, nombre: 'Vendedor Ficticio ' + tag, role: 'vendedor', opId: state.opId, dbSuffix: SUFFIX };
     const r = await H.callFunction('createUserAdmin', state.payload, state.manager.idToken);
     expect(r.error).toBeUndefined();
     expect(r.httpStatus).toBe(200);
-    expect(r.result).toEqual({ uid: expect.any(String), id: expect.any(String) });
+    expect(r.result).toMatchObject({
+      uid: expect.any(String),
+      id: expect.any(String),
+      email: emailA,
+      status: 'created',
+      requestId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+      link: null,
+      invitation: expect.objectContaining({ status: 'pending', delivery: 'client_sdk', sent: false })
+    });
+    expect(r.result.link).toBeNull();
     state.created = r.result;
+
+    // Check that NO OOB code was generated for emailA in Auth emulator (Admin SDK link generation eliminated)
+    const oobA = (await H.listOobCodes()).filter(c => c.email === emailA);
+    expect(oobA).toHaveLength(0);
+
+    // Ticket pre-registration verification in Firestore (invitationOps_local)
+    const ticketDoc = await H.getDoc(`invitationOps${SUFFIX}`, state.created.requestId);
+    expect(ticketDoc).toBeTruthy();
+    expect(ticketDoc.data.status).toBe('ISSUED');
+    expect(ticketDoc.data.userId).toBe(state.created.id);
+    expect(ticketDoc.data.recipientEmail).toBe(emailA);
+    expect(ticketDoc.data.operation).toBe('create_user');
 
     // Auth, queried directly: exactly one account with that email, same uid, not a manager.
     const accounts = byEmail(await H.listAuthUsers(), emailA);
@@ -71,6 +128,10 @@ describe('A. createUserAdmin over the callable protocol (real emulators)', () =>
     expect(p.id).not.toBe(p.authUid);
     expect(p.role).toBe('vendedor');
     expect(p.activo).toBe(true);
+    expect(p.invitation.status).toBe('pending');
+    expect(p.invitation.lastRequestStatus).toBe('pending');
+    expect(p.invitation.sentCount).toBe(0);
+    expect(p.invitation.preparedCount).toBe(0);
     expect(Object.keys(p).some(k => /pass/i.test(k))).toBe(false);
     // The manager profile is untouched.
     expect((await H.getDoc(USERS, H.SEED.profileId)).data.role).toBe('manager');
@@ -165,8 +226,8 @@ describe('B. password setup, login and logout with the real crm_auth.js (REST st
     const early = await CrmAuth.loginWithFirebase(fbV.fb, state.profileB, H.randomSecret());
     expect(early.ok).toBe(false);
     const codes = (await H.listOobCodes()).filter(c => c.email === emailB && c.requestType === 'PASSWORD_RESET');
-    expect(codes.length).toBeGreaterThan(0);
-    state.oobCode = codes[codes.length - 1].oobCode;
+    expect(codes).toHaveLength(1);
+    state.oobCode = codes[0].oobCode;
   });
 
   test('completing the password-reset action sets the password; login works and is linked by authUid', async () => {

@@ -586,15 +586,16 @@ describe('3. Seguridad de Cloud Functions administrativas', () => {
       }, ctxManager)).rejects.toMatchObject({ code: 'failed-precondition' });
     });
 
-    test('Respuesta segura: no envía enlaces ni contraseñas por backend, delega en cliente seguro', async () => {
+    test('Respuesta segura: emite ticket de reenvío para despacho nativo sin generar enlaces en servidor ni exponer contraseñas', async () => {
       const res = await resendInvitationAdmin({
         id: 'target_invitee'
       }, ctxManager);
 
       expect(res.sent).toBe(false);
-      expect(res.delivery).toBe('client');
+      expect(res.delivery).toBe('client_sdk');
       expect(res.email).toBe('invitee@test.com');
-      expect(res.link).toBeUndefined();
+      expect(res.link).toBeNull();
+      expect(res.requestId).toBeDefined();
       expect(res.password).toBeUndefined();
     });
   });
