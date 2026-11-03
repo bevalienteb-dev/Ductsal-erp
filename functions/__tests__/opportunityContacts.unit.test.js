@@ -300,7 +300,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
     });
 
     test('preserves historical roleName snapshot in participant when catalogue role is renamed', async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
 
       // Assign participant with role 'decisor'
       const assigned = await svc.addOpportunityContact({
@@ -330,7 +330,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Model & Authorization', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
     });
 
     test('valid assignment captures contactSnapshot and creates deterministic ID', async () => {
@@ -463,7 +463,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Primary Contact Lifecycle', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
     });
 
     test('designating initial primary contact updates prospect SSOT and synchronizes projection', async () => {
@@ -645,7 +645,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Opportunity Account Change', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       // Add participants to OPP_1
       await svc.addOpportunityContact({
         caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
@@ -780,7 +780,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Logical Deletion Cascades', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       await svc.addOpportunityContact({
         caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
         opportunityId: 'OPP_1',

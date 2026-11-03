@@ -144,20 +144,6 @@ function createOpportunityContactsService({
   // 1. Role Catalogue (`opportunity_contact_roles_${suffix}`)
   // =====================================================================================================
 
-  async function seedInitialRolesIfEmpty() {
-    const snap = await col('opportunityContactRoles').limit(1).get();
-    if (snap.empty) {
-      const at = now().toISOString();
-      for (const r of INITIAL_ROLES) {
-        await col('opportunityContactRoles').doc(r.id).set({
-          ...r,
-          createdAt: at,
-          updatedAt: at,
-          createdBy: 'sistema'
-        }, { merge: true });
-      }
-    }
-  }
 
   async function seedOpportunityContactRoles({ caller, force = false }) {
     await requireManager(caller, 'inicializar el catálogo de roles');
@@ -773,7 +759,6 @@ function createOpportunityContactsService({
     names,
     resolveCaller,
     seedOpportunityContactRoles,
-    seedInitialRolesIfEmpty,
     listOpportunityContactRoles,
     manageOpportunityContactRole,
     addOpportunityContact,
