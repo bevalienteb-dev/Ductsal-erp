@@ -131,27 +131,80 @@ describe('Static Architecture & UI Integration (Phase 2 Block 1)', () => {
     expect(posContactsUi).toBeGreaterThan(posContactsJs);
   });
 
-  test('index.html contains required Hub & Spoke B1 modals', () => {
-    expect(indexHtml).toContain('id="accountContactsModal"');
-    expect(indexHtml).toContain('id="linkContactModal"');
-    expect(indexHtml).toContain('id="editAccountContactModal"');
-    expect(indexHtml).toContain('id="deactivateContactModal"');
-    expect(indexHtml).toContain('id="reactivateContactModal"');
-    expect(indexHtml).toContain('id="contactPeriodsModal"');
+  test('index.html replaces legacy B1 modals with 8 full-screen view sections', () => {
+    // 1. Modals eradicated
+    expect(indexHtml).not.toContain('id="accountContactsModal"');
+    expect(indexHtml).not.toContain('id="linkContactModal"');
+    expect(indexHtml).not.toContain('id="editAccountContactModal"');
+    expect(indexHtml).not.toContain('id="deactivateContactModal"');
+    expect(indexHtml).not.toContain('id="reactivateContactModal"');
+    expect(indexHtml).not.toContain('id="contactPeriodsModal"');
+
+    // 2. Full-screen view sections present
+    expect(indexHtml).toContain('id="account-contacts-view"');
+    expect(indexHtml).toContain('id="create-person-view"');
+    expect(indexHtml).toContain('id="edit-person-view"');
+    expect(indexHtml).toContain('id="link-contact-account-view"');
+    expect(indexHtml).toContain('id="edit-account-contact-view"');
+    expect(indexHtml).toContain('id="deactivate-account-contact-view"');
+    expect(indexHtml).toContain('id="reactivate-account-contact-view"');
+    expect(indexHtml).toContain('id="contact-periods-view"');
   });
 
-  test('clients_ui.js links to openAccountContactsModal in clients table and modal', () => {
+  test('all 8 full-screen B1 views contain context cards, headers, actions, and status banners', () => {
+    const requiredViews = [
+      'account-contacts-view',
+      'create-person-view',
+      'edit-person-view',
+      'link-contact-account-view',
+      'edit-account-contact-view',
+      'deactivate-account-contact-view',
+      'reactivate-account-contact-view',
+      'contact-periods-view'
+    ];
+
+    requiredViews.forEach(vId => {
+      expect(indexHtml).toContain(`id="${vId}"`);
+      const sectionHtml = indexHtml.substring(indexHtml.indexOf(`id="${vId}"`), indexHtml.indexOf(`</section>`, indexHtml.indexOf(`id="${vId}"`)));
+      expect(sectionHtml).toContain('class="view-header"');
+      expect(sectionHtml).toContain('card');
+      expect(sectionHtml).toContain('alert-feedback-banner');
+      expect(sectionHtml).toContain('ContactsUI.');
+    });
+  });
+
+  test('clients_ui.js links to openAccountContactsModal / openAccountContactsView', () => {
     expect(clientsUi).toContain('ContactsUI.openAccountContactsModal');
     expect(clientsUi).toContain('btn-client-modal-contacts');
   });
 
-  test('contacts_ui.js exposes the required public API', () => {
+  test('contacts_ui.js exposes full-screen navigation and preservation of context', () => {
+    expect(contactsUi).toContain('openAccountContactsView');
+    expect(contactsUi).toContain('returnToClientsView');
+    expect(contactsUi).toContain('cancelContactOperation');
+    expect(contactsUi).toContain('openCreatePersonView');
+    expect(contactsUi).toContain('submitCreatePerson');
+    expect(contactsUi).toContain('openEditPersonView');
+    expect(contactsUi).toContain('submitEditPerson');
+    expect(contactsUi).toContain('openLinkContactView');
+    expect(contactsUi).toContain('openEditAccountContactView');
+    expect(contactsUi).toContain('openDeactivateContactView');
+    expect(contactsUi).toContain('openReactivateContactView');
+    expect(contactsUi).toContain('openContactPeriodsView');
+
+    // Backward-compatible aliases
     expect(contactsUi).toContain('openAccountContactsModal');
     expect(contactsUi).toContain('openLinkContactModal');
-    expect(contactsUi).toContain('submitLinkContact');
-    expect(contactsUi).toContain('openContactPeriodsModal');
+    expect(contactsUi).toContain('openEditAccountContactModal');
     expect(contactsUi).toContain('openDeactivateContactModal');
     expect(contactsUi).toContain('openReactivateContactModal');
+    expect(contactsUi).toContain('openContactPeriodsModal');
+  });
+
+  test('contacts_ui.js does not use blocking browser popups (window.alert/confirm/prompt)', () => {
+    expect(contactsUi).not.toContain('window.confirm(');
+    expect(contactsUi).not.toContain('window.prompt(');
+    expect(contactsUi).not.toContain('alert(');
   });
 
   test('firestore.rules protects contacts_prod, account_contacts_prod and periods_prod', () => {

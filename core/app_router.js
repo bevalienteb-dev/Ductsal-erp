@@ -228,7 +228,20 @@
 
         // 2. Registro del Historial de Navegación
         const previousSection = _deps.getLastViewedSection();
-        if (viewId !== 'detail-view' && !viewId.includes('opportunity-contact') && !viewId.includes('opportunity-account')) {
+        const isSubView = (
+            viewId === 'detail-view' ||
+            viewId.includes('opportunity-contact') ||
+            viewId.includes('opportunity-account') ||
+            viewId === 'account-contacts-view' ||
+            viewId === 'create-person-view' ||
+            viewId === 'edit-person-view' ||
+            viewId === 'link-contact-account-view' ||
+            viewId === 'edit-account-contact-view' ||
+            viewId === 'deactivate-account-contact-view' ||
+            viewId === 'reactivate-account-contact-view' ||
+            viewId === 'contact-periods-view'
+        );
+        if (!isSubView) {
             _deps.setLastViewedSection(viewId);
         }
         if (typeof _deps.setCurrentView === 'function') {

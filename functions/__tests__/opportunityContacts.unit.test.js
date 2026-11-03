@@ -946,4 +946,153 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
       expect(removeRes.clearedPrimary).toBe(true);
     });
   });
+
+  // =========================================================================
+  // 7. Canonical Fields Consistency & Deleted Opportunity Exclusion
+  // =========================================================================
+  describe('Canonical Fields Consistency & Deleted Opportunity Exclusion', () => {
+    test('immediately excludes deleted opportunities from all subordinate operations and listings', async () => {
+      // First, create an active participant on OPP_1
+      await addOpportunityContactAdmin({
+        opportunityId: 'OPP_1',
+        accountContactId: 'AC_DELTA_CARLOS',
+        roleId: 'decisor',
+        isPrimary: true,
+        dbSuffix: '_prod'
+      }, ctx('uid-v1', { cid: V1 }));
+
+      // Soft delete OPP_1 directly
+      state.docs['prospects_prod/OPP_1'].eliminado = true;
+      state.docs['prospects_prod/OPP_1'].motivo_eliminacion = 'Test exclusion';
+
+      // 1. Listing throws not-found with 'La oportunidad fue eliminada', immediately excluding it
+      await expect(
+        listOpportunityContactsAdmin({
+          opportunityId: 'OPP_1',
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+
+      // 2. addOpportunityContactAdmin fails immediately
+      await expect(
+        addOpportunityContactAdmin({
+          opportunityId: 'OPP_1',
+          accountContactId: 'AC_DELTA_ANA',
+          roleId: 'compras',
+          isPrimary: false,
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+
+      // 3. updateOpportunityContactRoleAdmin fails immediately
+      await expect(
+        updateOpportunityContactRoleAdmin({
+          opportunityContactId: 'OC_OPP_1_AC_DELTA_CARLOS',
+          roleId: 'evaluador_tecnico',
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+
+      // 4. setOpportunityPrimaryContactAdmin fails immediately
+      await expect(
+        setOpportunityPrimaryContactAdmin({
+          opportunityId: 'OPP_1',
+          opportunityContactId: 'OC_OPP_1_AC_DELTA_CARLOS',
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+
+      // 5. removeOpportunityContactAdmin fails immediately
+      await expect(
+        removeOpportunityContactAdmin({
+          opportunityContactId: 'OC_OPP_1_AC_DELTA_CARLOS',
+          motivo: 'Intento en eliminada',
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+
+      // 6. changeOpportunityAccountAdmin fails immediately
+      await expect(
+        changeOpportunityAccountAdmin({
+          opportunityId: 'OPP_1',
+          newAccountId: 'ACC_GAMMA',
+          motivo: 'Intento en eliminada',
+          dbSuffix: '_prod'
+        }, ctx('uid-v1', { cid: V1 }))
+      ).rejects.toThrow('La oportunidad fue eliminada');
+    });
+
+    test('verifies single source of truth for primary contact and canonical field structures', async () => {
+      // Add a primary contact
+      const res = await addOpportunityContactAdmin({
+        opportunityId: 'OPP_1',
+        accountContactId: 'AC_DELTA_CARLOS',
+        roleId: 'decisor',
+        isPrimary: true,
+        dbSuffix: '_prod'
+      }, ctx('uid-v1', { cid: V1 }));
+
+      expect(res.status).toBe('created');
+
+      const opp = state.docs['prospects_prod/OPP_1'];
+      const participant = state.docs['opportunity_contacts_prod/OC_OPP_1_AC_DELTA_CARLOS'];
+
+      // SSOT in prospect:
+      expect(opp.primaryOpportunityContactId).toBe('OC_OPP_1_AC_DELTA_CARLOS');
+      expect(opp.primaryContactSnapshot).toEqual({
+        contactId: 'CT_CARLOS',
+        nombre: 'Carlos Roberto Mendoza Gómez',
+        cargo: 'Gerente de Mantenimiento',
+        correo: 'c.mendoza@constructora-delta.com',
+        telefono: '2200-3333',
+        extension: '104'
+      });
+
+      // No parallel truth fields in prospect document:
+      expect(opp.primaryContactId).toBeUndefined();
+      expect(opp.primaryContactName).toBeUndefined();
+      expect(opp.primaryContactEmail).toBeUndefined();
+      expect(opp.primaryContactPhone).toBeUndefined();
+
+      // Participant projection:
+      expect(participant.isPrimary).toBe(true);
+
+      // Canonical participation state:
+      expect(participant.estado_participacion).toBe('activo');
+      expect(participant.eliminado).toBe(false);
+      // Ensure 'activo' is NOT improperly set or overriding estado_participacion on opportunity_contacts
+      expect(participant.activo).toBeUndefined();
+
+      // Remove contact: deactivates participation and clears primary snapshot, preserves historical record
+      await removeOpportunityContactAdmin({
+        opportunityContactId: 'OC_OPP_1_AC_DELTA_CARLOS',
+        motivo: 'Salida de la empresa',
+        dbSuffix: '_prod'
+      }, ctx('uid-v1', { cid: V1 }));
+
+      const updatedOpp = state.docs['prospects_prod/OPP_1'];
+      const updatedPart = state.docs['opportunity_contacts_prod/OC_OPP_1_AC_DELTA_CARLOS'];
+
+      expect(updatedOpp.primaryOpportunityContactId).toBeNull();
+      expect(updatedOpp.primaryContactSnapshot).toBeNull();
+      expect(updatedPart.isPrimary).toBe(false);
+      expect(updatedPart.estado_participacion).toBe('inactivo');
+      expect(updatedPart.eliminado).toBe(false);
+
+      // Deleting the entire prospect cascades logical deletion (eliminado: true)
+      await deleteProspectAdmin(
+        { prospectId: 'OPP_1', motivo: 'Cierre de proyecto' },
+        ctx('uid-mgr', { manager: true, cid: MGR })
+      );
+
+      const cascadedOpp = state.docs['prospects_prod/OPP_1'];
+      const cascadedPart = state.docs['opportunity_contacts_prod/OC_OPP_1_AC_DELTA_CARLOS'];
+
+      expect(cascadedOpp.eliminado).toBe(true);
+      expect(cascadedPart.eliminado).toBe(true);
+      expect(cascadedPart.estado_participacion).toBe('inactivo');
+      expect(cascadedPart.isPrimary).toBe(false);
+    });
+  });
 });
+

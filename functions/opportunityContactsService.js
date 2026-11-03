@@ -268,6 +268,10 @@ function createOpportunityContactsService({
       const p = prospectSnap.data() || {};
       requireOpportunityAccess(caller, p);
 
+      if (p.eliminado === true) {
+        throw new ServiceError('failed-precondition', 'No se pueden asignar participantes a una oportunidad eliminada');
+      }
+
       const acSnap = await tx.get(acRef);
       if (!acSnap.exists) throw new ServiceError('not-found', 'La relación persona-cuenta especificada no existe');
       const accountContact = acSnap.data() || {};
@@ -401,6 +405,10 @@ function createOpportunityContactsService({
       const p = prospectSnap.data() || {};
       requireOpportunityAccess(caller, p);
 
+      if (p.eliminado === true) {
+        throw new ServiceError('failed-precondition', 'La oportunidad asociada está eliminada');
+      }
+
       const patch = {
         updatedAt: at,
         updatedBy: caller.cid,
@@ -444,6 +452,10 @@ function createOpportunityContactsService({
       if (!prospectSnap.exists) throw new ServiceError('not-found', 'La oportunidad especificada no existe');
       const p = prospectSnap.data() || {};
       requireOpportunityAccess(caller, p);
+
+      if (p.eliminado === true) {
+        throw new ServiceError('failed-precondition', 'No se puede designar contacto principal en una oportunidad eliminada');
+      }
 
       // OCC validation if client supplied expectedVersion
       if (expectedVersion !== undefined && p._version !== undefined && Number(p._version) !== Number(expectedVersion)) {
@@ -546,6 +558,10 @@ function createOpportunityContactsService({
       const p = prospectSnap.data() || {};
       requireOpportunityAccess(caller, p);
 
+      if (p.eliminado === true) {
+        throw new ServiceError('failed-precondition', 'La oportunidad asociada está eliminada');
+      }
+
       if (oc.estado_participacion === 'inactivo' && oc.isPrimary === false) {
         return { status: 'unchanged', opportunityContactId: ocId };
       }
@@ -635,8 +651,8 @@ function createOpportunityContactsService({
 
       // Invariants:
       // a) Allowed ONLY in initial stage 'prospecto' and active state
-      if (p.estado !== 'activo' || p.etapa !== 'prospecto') {
-        throw new ServiceError('failed-precondition', 'El cambio de cuenta solo está permitido en la etapa inicial "prospecto"');
+      if (p.eliminado === true || p.estado !== 'activo' || p.etapa !== 'prospecto') {
+        throw new ServiceError('failed-precondition', 'El cambio de cuenta solo está permitido en la etapa inicial "prospecto" activa');
       }
 
       // b) Forbidden if active quotation exists across all ERP quotation sources
