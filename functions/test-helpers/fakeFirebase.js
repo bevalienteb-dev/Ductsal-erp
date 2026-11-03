@@ -163,7 +163,17 @@ function buildAdminFake() {
           const prefix = `${col}/`;
           let matches = Object.keys(state.docs).filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'));
           for (const f of filters) {
-            matches = matches.filter(k => state.docs[k] && state.docs[k][f.field] === f.val);
+            matches = matches.filter(k => {
+              const doc = state.docs[k];
+              if (!doc) return false;
+              if (f.op === 'array-contains') {
+                return Array.isArray(doc[f.field]) && doc[f.field].includes(f.val);
+              }
+              if (f.op === 'in') {
+                return Array.isArray(f.val) && f.val.includes(doc[f.field]);
+              }
+              return doc[f.field] === f.val;
+            });
           }
           if (typeof limitCount === 'number') {
             matches = matches.slice(0, limitCount);
@@ -206,38 +216,66 @@ function buildAdminFake() {
       };
     },
     // Writes are buffered and committed together when the callback returns, like the real SDK: the failure hooks run
-    // for ALL writes first, so a failing write leaves nothing applied (atomic).
+    // for ALL writes first, so a failing write leaves nothing applied (atomic). Supports concurrency conflict retry.
     async runTransaction(fn) {
-      const writes = [];
-      const t = {
-        get: ref => ref.get(),
-        set: (ref, data, opts = {}) => { writes.push({ kind: 'set', ref, data, opts }); },
-        create: (ref, data) => { writes.push({ kind: 'create', ref, data }); },
-        update: (ref, data) => { writes.push({ kind: 'update', ref, data }); },
-        delete: ref => { writes.push({ kind: 'delete', ref }); }
-      };
-      if (state.hooks.beforeTransaction) state.hooks.beforeTransaction();
-      const result = await fn(t);
-      for (const w of writes) {
-        if (w.kind === 'create') {
-          if (state.hooks.beforeCreate) state.hooks.beforeCreate(w.ref.path);
-          if (state.docs[w.ref.path]) { const err = new Error('ALREADY_EXISTS'); err.code = 6; throw err; }
-        } else if (w.kind === 'update') {
-          if (state.hooks.beforeUpdate) state.hooks.beforeUpdate(w.ref.path);
-          if (!state.docs[w.ref.path]) throw new Error('NOT_FOUND');
+      if (!state.docVersions) state.docVersions = {};
+      let attempts = 0;
+      const maxAttempts = 5;
+      while (attempts < maxAttempts) {
+        attempts++;
+        const readVersions = {};
+        const writes = [];
+        const t = {
+          get: async ref => {
+            const snap = await ref.get();
+            readVersions[ref.path] = state.docVersions[ref.path] || 0;
+            return snap;
+          },
+          set: (ref, data, opts = {}) => { writes.push({ kind: 'set', ref, data, opts }); },
+          create: (ref, data) => { writes.push({ kind: 'create', ref, data }); },
+          update: (ref, data) => { writes.push({ kind: 'update', ref, data }); },
+          delete: ref => { writes.push({ kind: 'delete', ref }); }
+        };
+        if (state.hooks.beforeTransaction) state.hooks.beforeTransaction();
+        const result = await fn(t);
+
+        // Conflict check: if any read document was modified by a concurrent write, retry transaction
+        let hasConflict = false;
+        for (const [p, ver] of Object.entries(readVersions)) {
+          if ((state.docVersions[p] || 0) !== ver) {
+            hasConflict = true;
+            break;
+          }
         }
-      }
-      for (const w of writes) {
-        if (w.kind === 'set') applySet(w.ref.path, w.data, w.opts);
-        else if (w.kind === 'create') state.docs[w.ref.path] = { ...w.data };
-        else if (w.kind === 'update') {
-          const cur = cloneDoc(state.docs[w.ref.path] || {});
-          applyUpdate(cur, w.data);
-          state.docs[w.ref.path] = cur;
+        if (hasConflict) {
+          continue;
         }
-        else delete state.docs[w.ref.path];
+
+        for (const w of writes) {
+          if (w.kind === 'create') {
+            if (state.hooks.beforeCreate) state.hooks.beforeCreate(w.ref.path);
+            if (state.docs[w.ref.path]) { const err = new Error('ALREADY_EXISTS'); err.code = 6; throw err; }
+          } else if (w.kind === 'update') {
+            if (state.hooks.beforeUpdate) state.hooks.beforeUpdate(w.ref.path);
+            if (!state.docs[w.ref.path]) throw new Error('NOT_FOUND');
+          }
+        }
+        for (const w of writes) {
+          state.docVersions[w.ref.path] = (state.docVersions[w.ref.path] || 0) + 1;
+          if (w.kind === 'set') applySet(w.ref.path, w.data, w.opts);
+          else if (w.kind === 'create') state.docs[w.ref.path] = { ...w.data };
+          else if (w.kind === 'update') {
+            const cur = cloneDoc(state.docs[w.ref.path] || {});
+            applyUpdate(cur, w.data);
+            state.docs[w.ref.path] = cur;
+          }
+          else delete state.docs[w.ref.path];
+        }
+        return result;
       }
-      return result;
+      const err = new Error('Transaction failed after maximum retries due to concurrent conflicts');
+      err.code = 10;
+      throw err;
     }
   });
   firestore.FieldValue = {

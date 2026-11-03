@@ -212,19 +212,85 @@ function createContactsService({
     });
   }
 
+  // ---------- portfolio ids for contacts ----------
+  async function getAuthorizedContactIds(caller) {
+    if (PRIVILEGED.includes(caller.role)) return null;
+
+    const authorizedAccountIds = new Set();
+    const [createdClients, visibleClients, assignedClients] = await Promise.all([
+      col('clients').where('createdBy', '==', caller.cid).get(),
+      col('clients').where('visibleTo', 'array-contains', caller.cid).get(),
+      col('clients').where('vendedor_asignado', '==', caller.cid).get()
+    ]);
+
+    createdClients.docs.forEach(d => authorizedAccountIds.add(d.id));
+    visibleClients.docs.forEach(d => authorizedAccountIds.add(d.id));
+    assignedClients.docs.forEach(d => authorizedAccountIds.add(d.id));
+
+    const oppsSnap = await col('prospects').where('vendedorId', '==', caller.cid).get();
+    oppsSnap.docs.forEach(d => {
+      const data = d.data() || {};
+      if (data.eliminado !== true && data.clientId) {
+        authorizedAccountIds.add(data.clientId);
+      }
+    });
+
+    const authorizedContactIds = new Set();
+    const accountIds = Array.from(authorizedAccountIds);
+    await Promise.all(accountIds.map(async aId => {
+      const relsSnap = await col('accountContacts').where('accountId', '==', aId).get();
+      relsSnap.docs.forEach(d => {
+        const data = d.data() || {};
+        if (data.contactId) authorizedContactIds.add(data.contactId);
+      });
+    }));
+
+    return {
+      isAuthorized: (contact) => {
+        if (!contact) return false;
+        if (contact.createdBy === caller.cid) return true;
+        if (authorizedContactIds.has(contact.id)) return true;
+        return false;
+      }
+    };
+  }
+
   async function getContact({ caller, contactId }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
     const cId = reqDocId(contactId, 'contactId');
     const snap = await col('contacts').doc(cId).get();
     if (!snap.exists) throw new ServiceError('not-found', 'La persona especificada no existe');
-    return { contact: snap.data() };
+    const contact = { id: snap.id, ...snap.data() };
+
+    const authFilter = await getAuthorizedContactIds(caller);
+    if (authFilter !== null && !authFilter.isAuthorized(contact)) {
+      throw new ServiceError('permission-denied', 'No tiene permisos para consultar los datos de esta persona');
+    }
+
+    return {
+      contact: {
+        id: contact.id,
+        nombres: contact.nombres || '',
+        apellidos: contact.apellidos || '',
+        nombre_completo: `${contact.nombres || ''} ${contact.apellidos || ''}`.trim(),
+        correo: contact.correo || null,
+        telefono: contact.telefono || null
+      }
+    };
   }
 
   async function searchContacts({ caller, q = '', limit = 20 }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
+    const authFilter = await getAuthorizedContactIds(caller);
+
     const term = String(q || '').trim().toLowerCase();
     const snap = await col('contacts').get();
     let all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Apply portfolio filter before matching or returning
+    if (authFilter !== null) {
+      all = all.filter(c => authFilter.isAuthorized(c));
+    }
 
     if (term) {
       all = all.filter(c => {
@@ -237,7 +303,15 @@ function createContactsService({
     }
 
     const max = Math.min(Math.max(1, parseInt(limit, 10) || 20), 50);
-    const sliced = all.slice(0, max);
+    const sliced = all.slice(0, max).map(c => ({
+      id: c.id,
+      nombres: c.nombres || '',
+      apellidos: c.apellidos || '',
+      nombre_completo: `${c.nombres || ''} ${c.apellidos || ''}`.trim(),
+      correo: c.correo || null,
+      telefono: c.telefono || null
+    }));
+
     return { results: sliced, contacts: sliced };
   }
 

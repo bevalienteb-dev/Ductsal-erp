@@ -165,6 +165,64 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
       expect(resPhone.results.length).toBe(1);
       expect(resPhone.results[0].apellidos).toBe('Navarro');
     });
+
+    test('searchContacts isolates contacts by commercial portfolio and prevents unauthorized discovery', async () => {
+      const callerV1 = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const callerV2 = { uid: 'uid-v2', cid: V2, role: 'vendedor', name: 'Vendedor Dos' };
+      const callerMgr = { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' };
+
+      // V2 creates a contact and links to C2 (exclusive to V2's portfolio)
+      const resV2 = await svc.createContact({
+        caller: callerV2,
+        contact: {
+          nombres: 'Esteban',
+          apellidos: 'Banderas',
+          correo: 'esteban.banderas@omega.com',
+          telefono: '7999-5555'
+        }
+      });
+      const contactV2 = resV2.contact;
+      await svc.linkContactToAccount({
+        caller: callerV2,
+        accountId: 'C2',
+        contactId: contactV2.id,
+        cargo: 'Gerente de Logística'
+      });
+
+      // V1 searches using various search tactics (name, partial, email, phone, case variations, spaces)
+      const tactics = [
+        'Esteban',
+        'Banderas',
+        'esteban',
+        'ESTEBAN',
+        '  esteban  ',
+        'banderas@omega',
+        'esteban.banderas@omega.com',
+        '79995555',
+        '7999-5555'
+      ];
+
+      for (const query of tactics) {
+        const searchRes = await svc.searchContacts({ caller: callerV1, q: query });
+        expect(searchRes.results).toHaveLength(0);
+        expect(searchRes.contacts).toHaveLength(0);
+      }
+
+      // V1 attempts direct getContact for contactV2 -> rejected with permission-denied
+      await expect(svc.getContact({ caller: callerV1, contactId: contactV2.id }))
+        .rejects.toThrow('No tiene permisos para consultar los datos de esta persona');
+
+      // Manager CAN search and find contactV2
+      const mgrSearch = await svc.searchContacts({ caller: callerMgr, q: 'Banderas' });
+      expect(mgrSearch.results.length).toBeGreaterThanOrEqual(1);
+      expect(mgrSearch.results.some(c => c.id === contactV2.id)).toBe(true);
+
+      // Verify data minimization: result fields must only expose safe commercial fields
+      const item = mgrSearch.results.find(c => c.id === contactV2.id);
+      expect(Object.keys(item).sort()).toEqual(['apellidos', 'correo', 'id', 'nombre_completo', 'nombres', 'telefono'].sort());
+      expect(item.createdBy).toBeUndefined();
+      expect(item.fecha_creacion).toBeUndefined();
+    });
   });
 
   // ===========================================================================
@@ -429,6 +487,89 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
       const periodsRes = await svc.listContactPeriods({ caller, accountContactId: relId });
       expect(periodsRes.periods.length).toBe(1);
       expect(periodsRes.periods[0].cargo).toBe('Gerente General');
+    });
+
+    test('overlapping concurrent linkContactToAccount operations coordinate atomically via parent document', async () => {
+      const caller = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const relId = `AC_C1_${person.id}`;
+
+      // Execute two simultaneous link operations on the exact same person and account
+      const p1 = svc.linkContactToAccount({
+        caller,
+        accountId: 'C1',
+        contactId: person.id,
+        cargo: 'Asesor Técnico A'
+      });
+      const p2 = svc.linkContactToAccount({
+        caller,
+        accountId: 'C1',
+        contactId: person.id,
+        cargo: 'Asesor Técnico B'
+      });
+
+      const [r1, r2] = await Promise.allSettled([p1, p2]);
+
+      // Exactly one operation must succeed, and the conflicting one must be rejected
+      const fulfilled = [r1, r2].filter(r => r.status === 'fulfilled');
+      const rejected = [r1, r2].filter(r => r.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(fulfilled[0].value.status).toBe('linked');
+      expect(rejected[0].reason.message).toMatch(/ya posee una relación activa|concurrent conflicts/i);
+
+      // Verify parent document state integrity
+      const parentDoc = state.docs[`account_contacts_prod/${relId}`];
+      expect(parentDoc).toBeDefined();
+      expect(parentDoc.activo).toBe(true);
+      expect(parentDoc.total_periodos).toBe(1);
+      expect(parentDoc.periodo_actual_id).toBeDefined();
+
+      // Verify periods subcollection has exactly 1 document and exactly 1 open period
+      const prefix = `account_contacts_prod/${relId}/periods_prod/`;
+      const periodKeys = Object.keys(state.docs).filter(k => k.startsWith(prefix));
+      expect(periodKeys).toHaveLength(1);
+
+      const periodDoc = state.docs[periodKeys[0]];
+      expect(periodDoc.fecha_fin).toBeNull();
+      expect(periodDoc.id).toBe(parentDoc.periodo_actual_id);
+    });
+
+    test('overlapping concurrent deactivation operations resolve atomically without leaving multiple open periods', async () => {
+      const caller = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const relId = `AC_C1_${person.id}`;
+
+      // First link
+      await svc.linkContactToAccount({
+        caller,
+        accountId: 'C1',
+        contactId: person.id,
+        cargo: 'Supervisor'
+      });
+
+      // Execute two simultaneous deactivations
+      const d1 = svc.deactivateAccountContact({ caller, accountContactId: relId, motivo_salida: 'Causa 1' });
+      const d2 = svc.deactivateAccountContact({ caller, accountContactId: relId, motivo_salida: 'Causa 2' });
+
+      const [r1, r2] = await Promise.allSettled([d1, d2]);
+
+      // Both should settle without throwing unhandled exceptions
+      expect(r1.status).toBe('fulfilled');
+      expect(r2.status).toBe('fulfilled');
+
+      const statuses = [r1.value.status, r2.value.status];
+      expect(statuses).toContain('deactivated');
+
+      // Parent doc state: inactive, no current period
+      const parentDoc = state.docs[`account_contacts_prod/${relId}`];
+      expect(parentDoc.activo).toBe(false);
+      expect(parentDoc.periodo_actual_id).toBeNull();
+
+      // Subcollection: period closed with fecha_fin
+      const prefix = `account_contacts_prod/${relId}/periods_prod/`;
+      const periodKeys = Object.keys(state.docs).filter(k => k.startsWith(prefix));
+      expect(periodKeys).toHaveLength(1);
+      expect(state.docs[periodKeys[0]].fecha_fin).not.toBeNull();
     });
   });
 
