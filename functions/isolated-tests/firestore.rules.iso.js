@@ -43,6 +43,23 @@ beforeAll(async () => {
   await fsApi.seed('alertas_maquinas', 'AL1', { id: 'AL1', estado: 'abierta' });
   await fsApi.seed('clients_prod/C1/document_versions', 'V_C1_1', { versionId: 'V_C1_1', docKey: 'dui', estado: 'vigente', versionNumber: 1 });
   await fsApi.seed('prospects_prod/P1/document_versions', 'V_P1_1', { versionId: 'V_P1_1', docKey: 'doc_oferta', estado: 'vigente', versionNumber: 1 });
+
+  // Phase 2 Block B1: contacts_prod & account_contacts_prod
+  await fsApi.seed('contacts_prod', 'CT_1', { id: 'CT_1', nombres: 'Carlos', apellidos: 'Perez', correo: 'carlos@test.invalid' });
+  await fsApi.seed('account_contacts_prod', 'AC_1', { id: 'AC_1', accountId: 'C1', contactId: 'CT_1', activo: true });
+  await fsApi.seed('account_contacts_prod', 'AC_3', { id: 'AC_3', accountId: 'C2', contactId: 'CT_1', activo: true });
+  await fsApi.seed('account_contacts_prod/AC_1/periods_prod', 'PR_1', { id: 'PR_1', accountId: 'C1', cargo: 'Gerente' });
+
+  // Additional contacts for IDOR isolation verification:
+  await fsApi.seed('contacts_prod', 'CT_B', { id: 'CT_B', nombres: 'Bernardo', apellidos: 'Ajeno', correo: 'bernardo@test.invalid', createdBy: V3 });
+  await fsApi.seed('account_contacts_prod', 'AC_B2', { id: 'AC_B2', accountId: 'C2', contactId: 'CT_B', activo: true });
+  await fsApi.seed('contacts_prod', 'CT_D', { id: 'CT_D', nombres: 'David', apellidos: 'SinCuenta', correo: 'david@test.invalid', createdBy: V3 });
+  await fsApi.seed('contacts_prod', 'CT_E', { id: 'CT_E', nombres: 'Elena', apellidos: 'Historica', correo: 'elena@test.invalid', createdBy: V3 });
+
+  // Phase 2 Block B2: opportunity_contacts_prod & opportunity_contact_roles_prod
+  await fsApi.seed('opportunity_contact_roles_prod', 'decisor', { id: 'decisor', name: 'Decisor', activo: true });
+  await fsApi.seed('opportunity_contacts_prod', 'OC_P1', { id: 'OC_P1', opportunityId: 'P1', accountContactId: 'AC_1', isPrimary: true });
+  await fsApi.seed('opportunity_contacts_prod', 'OC_PV3', { id: 'OC_PV3', opportunityId: 'PV3', accountContactId: 'AC_3', isPrimary: true });
 });
 
 describe('A. unauthenticated / unlinked / inactive identities', () => {
@@ -269,4 +286,41 @@ describe('H. document_versions: auditable version history (read-only for clients
   deny('Manager writes directly to document_versions on prospect P1 (Functions only)', () => fsApi.set('prospects_prod/P1/document_versions', 'V_P1_EVIL', { versionId: 'V_P1_EVIL', estado: 'vigente' }, T.mgr));
   deny('V1 deletes document_versions on client C1', () => fsApi.del('clients_prod/C1/document_versions', 'V_C1_1', T.v1));
   deny('Manager deletes document_versions on client C1', () => fsApi.del('clients_prod/C1/document_versions', 'V_C1_1', T.mgr));
+});
+
+describe('I. Phase 2 Block B1 and B2: Contacts and Opportunity Contacts Security Rules', () => {
+  // B1: contacts_prod — Closed IDOR: direct reads & lists restricted to isPrivileged()
+  deny('V1 cannot read contact CT_1 directly even in own portfolio (must use getContactAdmin)', () => fsApi.get('contacts_prod', 'CT_1', T.v1));
+  deny('V1 cannot read alien contact CT_B directly (V2/V3 portfolio)', () => fsApi.get('contacts_prod', 'CT_B', T.v1));
+  deny('V1 cannot read shared contact CT_1 directly on alien context (must use getContactAdmin)', () => fsApi.get('contacts_prod', 'CT_1', T.v2));
+  deny('V1 cannot read orphan contact CT_D directly', () => fsApi.get('contacts_prod', 'CT_D', T.v1));
+  deny('V1 cannot read alien opportunity contact CT_E directly', () => fsApi.get('contacts_prod', 'CT_E', T.v1));
+  deny('Anon reads contact CT_1', () => fsApi.get('contacts_prod', 'CT_1', T.anon));
+  deny('V1 lists contacts_prod directly (must use searchContactsAdmin)', () => fsApi.query('contacts_prod', null, T.v1));
+  allow('Manager reads individual contact CT_1 directly (isPrivileged)', () => fsApi.get('contacts_prod', 'CT_1', T.mgr));
+  allow('Manager reads alien contact CT_B directly (isPrivileged)', () => fsApi.get('contacts_prod', 'CT_B', T.mgr));
+  allow('Manager lists contacts_prod (isPrivileged)', () => fsApi.query('contacts_prod', null, T.mgr));
+  deny('V1 writes directly to contacts_prod (Cloud Functions only)', () => fsApi.set('contacts_prod', 'CT_EVIL', { id: 'CT_EVIL', nombres: 'Evil' }, T.v1));
+  deny('Manager writes directly to contacts_prod (Cloud Functions only)', () => fsApi.set('contacts_prod', 'CT_EVIL', { id: 'CT_EVIL', nombres: 'Evil' }, T.mgr));
+
+  // B1: account_contacts_prod
+  allow('V1 reads account contact for visible client C1', () => fsApi.get('account_contacts_prod', 'AC_1', T.v1));
+  deny('V1 reads account contact for alien client C2 (outside portfolio)', () => fsApi.get('account_contacts_prod', 'AC_3', T.v1));
+  allow('Manager reads account contact for alien client C2', () => fsApi.get('account_contacts_prod', 'AC_3', T.mgr));
+  deny('V1 writes directly to account_contacts_prod (Cloud Functions only)', () => fsApi.set('account_contacts_prod', 'AC_EVIL', { id: 'AC_EVIL', accountId: 'C1' }, T.v1));
+  allow('V1 reads period subcollection of visible client C1', () => fsApi.get('account_contacts_prod/AC_1/periods_prod', 'PR_1', T.v1));
+
+  // B2: opportunity_contact_roles_prod
+  allow('V1 reads role catalog (validSession)', () => fsApi.get('opportunity_contact_roles_prod', 'decisor', T.v1));
+  allow('V1 queries role catalog list (validSession)', () => fsApi.query('opportunity_contact_roles_prod', null, T.v1));
+  deny('Anon reads role catalog', () => fsApi.get('opportunity_contact_roles_prod', 'decisor', T.anon));
+  deny('V1 writes directly to role catalog (Cloud Functions only)', () => fsApi.set('opportunity_contact_roles_prod', 'role_evil', { id: 'role_evil', name: 'Evil' }, T.v1));
+  deny('Manager writes directly to role catalog (Cloud Functions only)', () => fsApi.set('opportunity_contact_roles_prod', 'role_evil', { id: 'role_evil', name: 'Evil' }, T.mgr));
+
+  // B2: opportunity_contacts_prod
+  allow('V1 reads opportunity contact for assigned prospect P1', () => fsApi.get('opportunity_contacts_prod', 'OC_P1', T.v1));
+  deny('V1 reads opportunity contact for alien prospect PV3 (outside portfolio)', () => fsApi.get('opportunity_contacts_prod', 'OC_PV3', T.v1));
+  allow('Manager reads opportunity contact for any prospect (isPrivileged)', () => fsApi.get('opportunity_contacts_prod', 'OC_PV3', T.mgr));
+  deny('V1 writes directly to opportunity_contacts_prod (Cloud Functions only)', () => fsApi.set('opportunity_contacts_prod', 'OC_EVIL', { id: 'OC_EVIL', opportunityId: 'P1' }, T.v1));
+  deny('Manager writes directly to opportunity_contacts_prod (Cloud Functions only)', () => fsApi.set('opportunity_contacts_prod', 'OC_EVIL', { id: 'OC_EVIL', opportunityId: 'P1' }, T.mgr));
 });

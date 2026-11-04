@@ -12,6 +12,7 @@ const {
   ServiceError
 } = require('../opportunityContactsService');
 const {
+  seedOpportunityContactRolesAdmin,
   listOpportunityContactRolesAdmin,
   manageOpportunityContactRoleAdmin,
   addOpportunityContactAdmin,
@@ -198,10 +199,59 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 1. Roles Catalogue
   // =========================================================================
   describe('Roles Catalogue', () => {
-    test('seeds initial 8 roles automatically if catalogue is empty', async () => {
+    test('listOpportunityContactRoles is strictly read-only and does not write to Firestore when catalogue is empty', async () => {
       const res = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
-      expect(res.roles).toHaveLength(8);
-      expect(res.roles.map(r => r.name)).toEqual([
+      expect(res.roles).toEqual([]);
+      // Zero writes verification: no role documents in state
+      const roleDocs = Object.keys(state.docs).filter(k => k.startsWith('opportunity_contact_roles_prod/'));
+      expect(roleDocs).toHaveLength(0);
+    });
+
+    test('seedOpportunityContactRoles explicitly seeds initial 8 roles and restricts to managers', async () => {
+      // Vendedor rejected
+      await expect(
+        svc.seedOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } })
+      ).rejects.toThrow('Solo un gerente puede inicializar el catálogo de roles');
+
+      // Gestor rejected
+      await expect(
+        svc.seedOpportunityContactRoles({ caller: { uid: 'uid-ges', cid: GES, role: 'gestor' } })
+      ).rejects.toThrow('Solo un gerente puede inicializar el catálogo de roles');
+
+      // Manager allowed: seeds roles and writes atomic audit entry
+      const seeded = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' } });
+      expect(seeded.status).toBe('seeded');
+      expect(seeded.count).toBe(8);
+      expect(seeded.auditId).toBeDefined();
+
+      // Verify audit document in commercialAudit_prod
+      const auditDocs = Object.keys(state.docs)
+        .filter(k => k.startsWith('commercialAudit_prod/'))
+        .map(k => state.docs[k]);
+      const seedAudit = auditDocs.find(a => a.action === 'seedOpportunityContactRoles');
+      expect(seedAudit).toBeDefined();
+      expect(seedAudit.targetId).toBe('opportunity_contact_roles_prod');
+      expect(seedAudit.userId).toBe(MGR);
+      expect(seedAudit.userName).toBe('Gerente General');
+      expect(seedAudit.userRole).toBe('manager');
+      expect(seedAudit.details).toMatchObject({
+        action: 'seedOpportunityContactRoles',
+        entidad: 'opportunity_contact_roles_prod',
+        entorno: '_prod',
+        rolesCount: 8,
+        force: false,
+        resultado: 'seeded',
+        roleIds: expect.arrayContaining(['decisor', 'comprador_economico'])
+      });
+
+      // Re-seeding without force reports already-seeded idempotently
+      const reseed = await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
+      expect(reseed.status).toBe('already-seeded');
+
+      // Query now returns 8 roles
+      const list = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(list.roles).toHaveLength(8);
+      expect(list.roles.map(r => r.name)).toEqual([
         'Decisor',
         'Comprador Económico',
         'Evaluador Técnico',
@@ -211,6 +261,41 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
         'Compras',
         'Otro'
       ]);
+    });
+
+    test('seedOpportunityContactRoles with force:true overwrites catalogue and generates transactional audit', async () => {
+      // First seed
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' } });
+
+      // Modify a role name
+      await svc.manageOpportunityContactRole({
+        caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' },
+        roleId: 'decisor',
+        name: 'Rol Alterado'
+      });
+      const checkModified = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(checkModified.roles.find(r => r.id === 'decisor').name).toBe('Rol Alterado');
+
+      // Re-seed with force: true
+      const forceRes = await svc.seedOpportunityContactRoles({
+        caller: { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' },
+        force: true
+      });
+      expect(forceRes.status).toBe('seeded');
+      expect(forceRes.count).toBe(8);
+
+      // Decisor role was restored to original
+      const checkRestored = await svc.listOpportunityContactRoles({ caller: { uid: 'uid-v1', cid: V1, role: 'vendedor' } });
+      expect(checkRestored.roles.find(r => r.id === 'decisor').name).toBe('Decisor');
+
+      // Audit trail contains force: true record
+      const auditDocs = Object.keys(state.docs)
+        .filter(k => k.startsWith('commercialAudit_prod/'))
+        .map(k => state.docs[k]);
+      const forceAudit = auditDocs.find(a => a.action === 'seedOpportunityContactRoles' && a.details && a.details.force === true);
+      expect(forceAudit).toBeDefined();
+      expect(forceAudit.details.rolesCount).toBe(8);
+      expect(forceAudit.details.resultado).toBe('seeded');
     });
 
     test('restricts role creation and update to managers only', async () => {
@@ -243,6 +328,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
     });
 
     test('permits activating and deactivating roles in catalogue', async () => {
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       await svc.listOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
 
       // Deactivate 'otro'
@@ -270,7 +356,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
     });
 
     test('preserves historical roleName snapshot in participant when catalogue role is renamed', async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
 
       // Assign participant with role 'decisor'
       const assigned = await svc.addOpportunityContact({
@@ -300,7 +386,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Model & Authorization', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
     });
 
     test('valid assignment captures contactSnapshot and creates deterministic ID', async () => {
@@ -433,7 +519,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Primary Contact Lifecycle', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
     });
 
     test('designating initial primary contact updates prospect SSOT and synchronizes projection', async () => {
@@ -615,7 +701,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Opportunity Account Change', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       // Add participants to OPP_1
       await svc.addOpportunityContact({
         caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
@@ -750,7 +836,7 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // =========================================================================
   describe('Logical Deletion Cascades', () => {
     beforeEach(async () => {
-      await svc.seedInitialRolesIfEmpty();
+      await svc.seedOpportunityContactRoles({ caller: { uid: 'uid-mgr', cid: MGR, role: 'manager' } });
       await svc.addOpportunityContact({
         caller: { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' },
         opportunityId: 'OPP_1',
@@ -882,6 +968,10 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 6. Cloud Functions Callables Integration
   // =========================================================================
   describe('Cloud Functions Callables Integration', () => {
+    beforeEach(async () => {
+      await seedOpportunityContactRolesAdmin({ dbSuffix: '_prod' }, ctx('uid-mgr', { manager: true, cid: MGR }));
+    });
+
     test('addOpportunityContactAdmin, setOpportunityPrimaryContactAdmin, and listOpportunityContactsAdmin', async () => {
       // 1. Add participant
       const addRes = await addOpportunityContactAdmin({
@@ -951,6 +1041,10 @@ describe('Opportunity Contacts & Roles — Backend Unit Tests (Phase 2 Block B2)
   // 7. Canonical Fields Consistency & Deleted Opportunity Exclusion
   // =========================================================================
   describe('Canonical Fields Consistency & Deleted Opportunity Exclusion', () => {
+    beforeEach(async () => {
+      await seedOpportunityContactRolesAdmin({ dbSuffix: '_prod' }, ctx('uid-mgr', { manager: true, cid: MGR }));
+    });
+
     test('immediately excludes deleted opportunities from all subordinate operations and listings', async () => {
       // First, create an active participant on OPP_1
       await addOpportunityContactAdmin({

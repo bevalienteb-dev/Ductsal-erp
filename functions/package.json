@@ -13,6 +13,7 @@
     "test:auth-env": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=authEmulatorIsolation.emu.js --runInBand\"",
     "test:native-auth": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=nativeAuthFlow.emu.js --runInBand\"",
     "test:ownership": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=authTicketOwnership.emu.js --runInBand\"",
+    "test:concurrency": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"jest -c jest.emulator.config.js --testPathPattern=b1_b2_concurrency.emu.js --runInBand\"",
     "test:client-sdk": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"node --experimental-websocket ../scripts/verify_client_sdk_and_ui_flows.js\"",
     "test:e2e-matrix": "npx firebase-tools emulators:exec --config ../firebase.emulator.json --project demo-ductsal-local --only auth,firestore,functions \"node --experimental-websocket ../scripts/verify_phase6_5_e2e_matrix.js\"",
     "test:clean": "node scripts/cleanEmulatorData.js",

@@ -27,6 +27,24 @@ function fbWith(impl) {
 }
 
 describe('CrmOpportunityContacts Client Callable Wrappers', () => {
+  test('seedOpportunityContactRoles calls seedOpportunityContactRolesAdmin', async () => {
+    const { fb, calls } = fbWith((name, payload) => ({
+      status: 'seeded',
+      count: 8
+    }));
+
+    const res = await CrmOpportunityContacts.seedOpportunityContactRoles(fb, {
+      force: true,
+      dbSuffix: '_prod'
+    });
+
+    expect(res.status).toBe('seeded');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('seedOpportunityContactRolesAdmin');
+    expect(calls[0].payload.force).toBe(true);
+    expect(calls[0].payload.dbSuffix).toBe('_prod');
+  });
+
   test('listOpportunityContactRoles calls listOpportunityContactRolesAdmin with filters', async () => {
     const { fb, calls } = fbWith((name, payload) => ({
       roles: [{ id: 'decisor', name: 'Decisor', activo: true }]
