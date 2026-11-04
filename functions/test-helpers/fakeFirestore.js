@@ -234,7 +234,8 @@ function createFakeFirestore({ clock = () => new Date('2026-03-15T12:00:00.000Z'
     seed(path, data) {
       let col, id;
       const parts = path.split('/');
-      if (parts.length === 4 && parts[2] === 'document_versions') {
+      const KNOWN_SUBCOLLECTIONS = ['document_versions', 'legal_representative_terms', 'contract_powers', 'biennial_confirmations', 'periods_prod', 'periods_local', 'periods'];
+      if (parts.length === 4 && KNOWN_SUBCOLLECTIONS.includes(parts[2])) {
         col = `${parts[0]}/${parts[1]}/${parts[2]}`;
         id = parts[3];
       } else {

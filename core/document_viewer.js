@@ -147,7 +147,7 @@
         const allowedPathPattern = new RegExp(
             `^${prefix}/(` +
             `prospects/[a-zA-Z0-9_-]+/(proyectos|facturas|pagos|ordenes_cambio)/.+|` +
-            `clients/[a-zA-Z0-9_-]+/(identificacion|legal)/.+|` +
+            `clients/[a-zA-Z0-9_-]+/(identificacion|legal|poderes)/.+|` +
             `clients/[a-zA-Z0-9_-]+/[^/]+|` +
             `(clientes|proyectos|facturas|pagos|ordenes_cambio)/.+` +
             `)$`

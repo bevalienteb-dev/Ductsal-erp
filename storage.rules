@@ -163,7 +163,7 @@ service firebase.storage {
     function maxBytesForFolder(f) {
       return (f == 'proyectos' || plantFolder(f)) ? 100 * 1024 * 1024
            : f == 'ordenes_cambio'                ? 35 * 1024 * 1024
-           : f == 'legal'                         ? 25 * 1024 * 1024
+           : (f == 'legal' || f == 'poderes')     ? 25 * 1024 * 1024
            : (f == 'facturas' || f == 'clientes') ? 15 * 1024 * 1024
            : 10 * 1024 * 1024; // identificacion, pagos, etc.
     }
@@ -182,9 +182,9 @@ service firebase.storage {
     // - proyectos & plantFolder: Full technical & commercial dossier (CAD, Revit, PDF, Office, Images, ZIP).
     // - ordenes_cambio: Commercial addenda (PDF, Office, Images).
     // - facturas: Invoices & tax records (PDF, Images, Excel).
-    // - identificacion, legal, pagos: Identity scans & banking receipts (PDF, Images).
+    // - identificacion, legal, poderes, pagos: Identity scans & banking receipts (PDF, Images).
     function allowedExtensionFor(f, file) {
-      return (f == 'identificacion' || f == 'legal' || f == 'pagos')
+      return (f == 'identificacion' || f == 'legal' || f == 'poderes' || f == 'pagos')
         ? file.matches('(?i).*\\.(pdf|jpg|jpeg|png|webp|tif|tiff)$')
         : (f == 'facturas')
         ? file.matches('(?i).*\\.(pdf|jpg|jpeg|png|webp|tif|tiff|xlsx|xls)$')
@@ -215,9 +215,19 @@ service firebase.storage {
     // ---------- Client: Sensitive Legal files (Escritura, Credencial, NIT, NRC) ----------
     match /prod_files/clients/{cid}/legal/{file} {
       allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
       allow create: if isNew() && sizeOkFor('legal')
         && typeOk() && allowedExtensionFor('legal', file)
+        && isAuthorizedLegalUpload(cid);
+      allow list, update, delete: if false;
+    }
+
+    // ---------- Client: Contract Powers files (Phase 2 Block B3) ----------
+    match /prod_files/clients/{cid}/poderes/{file} {
+      allow get: if isPrivileged()
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+      allow create: if isNew() && sizeOkFor('poderes')
+        && typeOk() && allowedExtensionFor('poderes', file)
         && isAuthorizedLegalUpload(cid);
       allow list, update, delete: if false;
     }

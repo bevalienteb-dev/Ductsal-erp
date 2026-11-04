@@ -48,6 +48,10 @@ const storage = firebase.storage();
 const isLocal = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const DB_SUFFIX = (isLocal && !CRM_STAGING_MODE) ? '_local' : '_prod';
 const STORAGE_PREFIX = (isLocal && !CRM_STAGING_MODE) ? 'local_files' : 'prod_files';
+if (typeof window !== 'undefined') {
+    window.DB_SUFFIX = DB_SUFFIX;
+    window.STORAGE_PREFIX = STORAGE_PREFIX;
+}
 
 if (CRM_STAGING_MODE) {
     console.warn("🧪 ENTORNO DE STAGING REMOTO ACTIVADO: Conectado a ductsal-erp-staging (colecciones _prod).");
@@ -644,7 +648,7 @@ async function uploadFileToStorage(file, folderName, options = {}) {
         if (options.prospectId) {
             fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${Date.now()}_${safeName}`;
         } else if (options.clientId) {
-            const subfolder = options.isLegal ? 'legal' : 'identificacion';
+            const subfolder = (options.subfolder === 'poderes' || options.isPoder) ? 'poderes' : (options.isLegal ? 'legal' : 'identificacion');
             fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${Date.now()}_${safeName}`;
         } else if (options.reservationId) {
             const subfolder = options.isLegal ? 'legal' : 'identificacion';

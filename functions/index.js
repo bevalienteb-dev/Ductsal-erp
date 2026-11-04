@@ -2315,6 +2315,115 @@ exports.changeOpportunityAccountAdmin = functions.https.onCall((data, context) =
     motivo: d.motivo
   })));
 
+// ======================================================================================================
+// Account Documents, Legal Representation & Powers (Phase 2 Block 3)
+// ======================================================================================================
+const { createAccountDocumentsService } = require('./accountDocumentsService');
+
+const accountDocumentsServiceCache = {};
+function accountDocumentsServiceFor(suffix) {
+  if (!accountDocumentsServiceCache[suffix]) {
+    accountDocumentsServiceCache[suffix] = createAccountDocumentsService({
+      db,
+      FieldValue: firestoreStatics().FieldValue,
+      suffix
+    });
+  }
+  return accountDocumentsServiceCache[suffix];
+}
+
+async function runAccountDocumentOp(data, context, op) {
+  try {
+    assertEmulatorIsolated();
+    data = data || {};
+    const suffix = resolveDbSuffix(data.dbSuffix);
+    const service = accountDocumentsServiceFor(suffix);
+    const caller = await service.resolveCaller(context);
+    return await op(service, caller, data);
+  } catch (e) {
+    throw toHttpsError(e);
+  }
+}
+
+/** { accountId, contactId?, nombre, fechaEleccion, fechaInicio?, fechaVencimiento?, credencialDoc, duiDoc, opId?, dbSuffix? } -> { status: registered, term, invalidatedPowersCount, previousTermClosed } */
+exports.registerLegalRepresentativeTermAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.registerLegalRepresentativeTerm({
+    caller,
+    accountId: d.accountId,
+    contactId: d.contactId,
+    nombre: d.nombre,
+    fechaEleccion: d.fechaEleccion,
+    fechaInicio: d.fechaInicio,
+    fechaVencimiento: d.fechaVencimiento,
+    credencialDoc: d.credencialDoc,
+    duiDoc: d.duiDoc,
+    opId: d.opId
+  })));
+
+/** { accountId, contactId, documentoDoc?, documento?, notas?, opId?, dbSuffix? } -> { status: granted, power } */
+exports.grantContractPowerAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.grantContractPower({
+    caller,
+    accountId: d.accountId,
+    contactId: d.contactId,
+    documento: d.documento || d.documentoDoc,
+    documentoDoc: d.documentoDoc || d.documento,
+    notas: d.notas,
+    opId: d.opId
+  })));
+
+/** { accountId, powerId, motivo, opId?, dbSuffix? } -> { status: revoked, powerId, motivo } */
+exports.revokeContractPowerAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.revokeContractPower({
+    caller,
+    accountId: d.accountId,
+    powerId: d.powerId,
+    motivo: d.motivo,
+    opId: d.opId
+  })));
+
+/** { accountId, docKey, documentVersionId, confirmationType, confirmedNoChanges, opportunityId?, dbSuffix? } -> { success: true, confirmationId, ... } */
+exports.recordBiennialConfirmationAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.recordBiennialConfirmation({
+    caller,
+    accountId: d.accountId,
+    docKey: d.docKey,
+    documentVersionId: d.documentVersionId,
+    confirmationType: d.confirmationType,
+    confirmedNoChanges: d.confirmedNoChanges === true,
+    opportunityId: d.opportunityId
+  })));
+
+/** { accountId, docKey, doc, motivoSustitucion?, fechaEmision?, fechaVencimiento?, opId?, dbSuffix? } -> { status: updated, docKey, version, ... } */
+exports.saveAccountDocumentAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.saveAccountDocument({
+    caller,
+    accountId: d.accountId,
+    docKey: d.docKey,
+    doc: d.doc,
+    motivoSustitucion: d.motivoSustitucion,
+    fechaEmision: d.fechaEmision,
+    fechaVencimiento: d.fechaVencimiento,
+    opId: d.opId
+  })));
+
+/** { accountId, prospectId, requiereContrato?, firmante?, dbSuffix? } -> { valid, validationId, blockingReasons, documentsMissing, documentsExpired, documentsRequiringReview, signerValidation, ... } */
+exports.validateAccountDocumentsForOpportunityCloseAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.validateAccountDocumentsForOpportunityClose({
+    caller,
+    accountId: d.accountId,
+    prospectId: d.prospectId,
+    requiereContrato: d.requiereContrato === true,
+    firmante: d.firmante
+  })));
+
+/** { accountId, dbSuffix? } -> { accountId, tipoPersona, documentosVigentes, activeRL, rlTermsHistory, activePowers, historicalPowers, biennialConfirmations, biennialReviews, documentVersions } */
+exports.getAccountDossierAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
+  (service, caller, d) => service.getAccountDossier({
+    caller,
+    accountId: d.accountId
+  })));
+
 // Keeps clients.visibleTo (portfolio of the sellers) in step with the opportunities. Guarded: the unit-test
 // fakes of firebase-functions only implement https.onCall.
 if (functions.firestore && typeof functions.firestore.document === 'function') {

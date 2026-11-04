@@ -86,6 +86,21 @@ service cloud.firestore {
         allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
         allow write: if false;
       }
+
+      match /legal_representative_terms/{termId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
+
+      match /contract_powers/{powerId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
+
+      match /biennial_confirmations/{confId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
     }
 
     // ---------- contacts (persons and account relations - Phase 2 Block 1) ----------

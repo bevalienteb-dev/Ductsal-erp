@@ -795,6 +795,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (data.notas_cierre) {
         datos.notas_cierre = optString(data.notas_cierre, 'Notas de cierre', 500);
       }
+      if (data.requiere_contrato !== undefined) {
+        patch.requiere_contrato = data.requiere_contrato === true;
+        datos.requiere_contrato = data.requiere_contrato === true;
+      }
+      if (data.firmante_cierre !== undefined) {
+        patch.firmante_cierre = data.firmante_cierre;
+        datos.firmante_cierre = data.firmante_cierre;
+      }
 
       const itemsToVersion = [];
       if (data.doc_firmado) {
@@ -1056,6 +1064,72 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
+      const patch = {};
+
+      // Block B3: Validación de contratos, poderes y vencimientos
+      // Dirección: "La condición de requerir contrato debe ser un dato explícito de la oportunidad, administrado mediante un campo controlado y validado por backend. No inferirla únicamente a partir del nombre, monto o descripción de la oportunidad."
+      const explicitContractRequirement = input.requiere_contrato !== undefined
+        ? (input.requiere_contrato === true)
+        : (p.requiere_contrato === true || datos.requiere_contrato === true);
+      const isContractual = explicitContractRequirement === true;
+
+      if (isContractual) {
+        if (client && client.tipo === 'juridica' && !(docs.escritura && docs.credencial && docs.nit && docs.nrc)) {
+          throw precondition('Para cerrar con contrato hay que adjuntar antes los documentos legales de la empresa (Escritura, Credencial, NIT, NRC)');
+        }
+
+        const firmante = input.firmante_cierre || p.firmante_cierre || datos.firmante_cierre || null;
+        if (!firmante || !firmante.tipo) {
+          throw precondition('La oportunidad requiere contrato: debe seleccionar quién firmará (Representante Legal o Apoderado acreditado)');
+        }
+        if (firmante.tipo === 'representante_legal') {
+          const rl = client && client.representanteLegalVigente;
+          if (!rl || rl.estado !== 'vigente') {
+            throw precondition('El firmante seleccionado es Representante Legal, pero la cuenta no tiene un nombramiento vigente registrado');
+          }
+        } else if (firmante.tipo === 'apoderado') {
+          const powerId = firmante.powerId || firmante.id;
+          if (!powerId) {
+            throw precondition('Debe especificar el poder que acredita al apoderado seleccionado');
+          }
+          if (p.clientId) {
+            const powerSnap = await tx.get(col('clients').doc(p.clientId).collection('contract_powers').doc(String(powerId)));
+            if (!powerSnap.exists) {
+              throw precondition('El poder notarial seleccionado no existe en el expediente de la cuenta');
+            }
+            const pData = powerSnap.data() || {};
+            if (pData.estado !== 'vigente') {
+              throw precondition(`El poder del apoderado '${pData.nombreApoderado || 'desconocido'}' no está vigente (estado: ${pData.estado})`);
+            }
+            const activeRL = client && client.representanteLegalVigente;
+            if (!activeRL || pData.termId !== activeRL.termId) {
+              throw precondition(`El poder del apoderado '${pData.nombreApoderado || 'desconocido'}' fue invalidado por una nueva elección de Representante Legal`);
+            }
+          }
+        } else {
+          throw precondition(`Tipo de firmante '${firmante.tipo}' no reconocido. Debe ser 'representante_legal' o 'apoderado'`);
+        }
+
+        if (input.requiere_contrato !== undefined) {
+          patch.requiere_contrato = input.requiere_contrato === true;
+          datos.requiere_contrato = input.requiere_contrato === true;
+        }
+        if (input.firmante_cierre !== undefined) {
+          patch.firmante_cierre = input.firmante_cierre;
+          datos.firmante_cierre = input.firmante_cierre;
+        }
+      }
+
+      // Check expired documents on client
+      if (client && client.documentos && typeof client.documentos === 'object') {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        for (const [k, d] of Object.entries(client.documentos)) {
+          if (d && typeof d === 'object' && d.fechaVencimiento && d.fechaVencimiento < todayStr) {
+            throw precondition(`El documento '${k}' de la cuenta venció el ${d.fechaVencimiento}. Debe renovarse en el expediente antes de cerrar.`);
+          }
+        }
+      }
+
       const encargado = input.encargado || p.encargado || datos.encargado;
       if (p.tipo_proyecto === 'Fabricación e instalación' && !encargado) {
         throw bad('Debe asignar un Encargado de Instalación');
@@ -1081,7 +1155,6 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       const at = iso();
-      const patch = {};
       if (approvalInvalidation && approvalInvalidation.invalidated) {
         patch.aprobacion_sin_contrato = approvalInvalidation.aprobacionRecord;
       }

@@ -2276,6 +2276,172 @@
         </div>
     </div>
 
+    <!-- Phase 2 Block B3: Modal de Registro de Nueva Elección de Representante Legal -->
+    <div id="b3RLElectionModal" class="modal" style="display:none; z-index: 125;">
+        <div class="modal-content glass-panel" style="width: 90vw; max-width: 650px; max-height: 90vh; overflow-y: auto; padding: 1.5rem;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
+                <div>
+                    <h3 style="margin:0; font-size:1.2rem; color:white; display:flex; align-items:center; gap:8px;">
+                        <span>⚖️</span> Nueva Elección de Representante Legal
+                    </h3>
+                    <p style="margin:4px 0 0 0; font-size:0.8rem; color:var(--text-secondary);" id="b3-rl-account-name-subtitle">
+                        Registro oficial de nombramiento para el expediente societario
+                    </p>
+                </div>
+                <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="closeModal('b3RLElectionModal')">✖</button>
+            </div>
+
+            <div style="background:rgba(239, 68, 68, 0.12); border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin-bottom: 1.25rem;">
+                <div style="font-weight:700; font-size:0.85rem; color:#f87171; display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                    <span>⚠️</span> REGLA FUNDAMENTAL DE VIGENCIA DE PODERES
+                </div>
+                <p style="margin:0; font-size:0.78rem; color:#fecaca; line-height:1.4;">
+                    Toda nueva elección constituye un nuevo período de nombramiento e <strong>invalida automáticamente todos los poderes para firma de contratos</strong> otorgados durante el nombramiento anterior, aun cuando los socios reelijan a la misma persona.
+                </p>
+            </div>
+
+            <form id="b3-rl-election-form" onsubmit="event.preventDefault(); ClientDocuments.submitLegalRepresentativeElection();">
+                <input type="hidden" id="b3-rl-account-id">
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Persona / Contacto Vinculado <span style="color:#f87171;">*</span>
+                    </label>
+                    <select id="b3-rl-contact-select" style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem;" onchange="ClientDocuments.onRLContactSelected(this.value)">
+                        <option value="">-- Seleccionar de los contactos de la cuenta o ingresar manual --</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="b3-rl-nombre" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Nombre Completo del Representante Legal <span style="color:#f87171;">*</span>
+                    </label>
+                    <input type="text" id="b3-rl-nombre" required placeholder="Ej. Juan Carlos Pérez Morales" style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem;">
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label for="b3-rl-fecha-eleccion" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                            Fecha de Elección <span style="color:#f87171;">*</span>
+                        </label>
+                        <input type="date" id="b3-rl-fecha-eleccion" required style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem;">
+                        <small style="font-size:0.72rem; color:var(--text-muted);">Fecha de la Asamblea que eligió al RL</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="b3-rl-fecha-vencimiento" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                            Fecha de Vencimiento de Credencial
+                        </label>
+                        <input type="date" id="b3-rl-fecha-vencimiento" style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem;">
+                        <small style="font-size:0.72rem; color:var(--text-muted);">Vencimiento del período o credencial</small>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="b3-rl-file-credencial" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Credencial de Elección de Representante Legal (PDF/Imagen) <span style="color:#f87171;">*</span>
+                    </label>
+                    <input type="file" id="b3-rl-file-credencial" required accept=".pdf,.png,.jpg,.jpeg" style="width:100%; padding:0.4rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.82rem;">
+                    <small style="font-size:0.72rem; color:var(--text-muted);">Documento que acredita la personería jurídica inscrita</small>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label for="b3-rl-file-dui" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        DUI del Representante Legal (PDF/Imagen) <span style="color:#f87171;">*</span>
+                    </label>
+                    <input type="file" id="b3-rl-file-dui" required accept=".pdf,.png,.jpg,.jpeg" style="width:100%; padding:0.4rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.82rem;">
+                    <small style="font-size:0.72rem; color:var(--text-muted);">Documento de identidad vigente del representante</small>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--panel-border); padding-top:1rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('b3RLElectionModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="b3-btn-submit-rl" style="background:#ef4444; border-color:#dc2626;">
+                        Registrar Elección e Invalidar Poderes Anteriores
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Phase 2 Block B3: Modal de Otorgamiento de Poder para Firma de Contratos -->
+    <div id="b3PowerModal" class="modal" style="display:none; z-index: 125;">
+        <div class="modal-content glass-panel" style="width: 90vw; max-width: 600px; max-height: 90vh; overflow-y: auto; padding: 1.5rem;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
+                <div>
+                    <h3 style="margin:0; font-size:1.2rem; color:white; display:flex; align-items:center; gap:8px;">
+                        <span>📜</span> Otorgar Poder para Firma de Contratos
+                    </h3>
+                    <p style="margin:4px 0 0 0; font-size:0.8rem; color:var(--text-secondary);">
+                        Acreditación de apoderado facultado para contratos comerciales
+                    </p>
+                </div>
+                <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="closeModal('b3PowerModal')">✖</button>
+            </div>
+
+            <div style="background:rgba(56, 189, 248, 0.1); border: 1px solid #0284c7; border-radius: 8px; padding: 12px; margin-bottom: 1.25rem;">
+                <p style="margin:0; font-size:0.78rem; color:#bae6fd; line-height:1.4;">
+                    ℹ️ El poder quedará vinculado automáticamente al nombramiento de Representante Legal vigente. La vigencia del poder es controlada automáticamente por el sistema y se anulará cuando ocurra una nueva elección de RL.
+                </p>
+            </div>
+
+            <form id="b3-power-grant-form" onsubmit="event.preventDefault(); ClientDocuments.submitGrantContractPower();">
+                <input type="hidden" id="b3-power-account-id">
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="b3-power-contact-select" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Persona Apoderada (Catálogo Contactos) <span style="color:#f87171;">*</span>
+                    </label>
+                    <select id="b3-power-contact-select" required style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem;">
+                        <option value="">-- Seleccionar persona vinculada a la cuenta --</option>
+                    </select>
+                    <small style="font-size:0.72rem; color:var(--text-muted);">Debe ser una persona registrada en los contactos de la cuenta</small>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="b3-power-file-documento" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Escritura Pública / Testimonio de Poder Notarial (PDF/Imagen) <span style="color:#f87171;">*</span>
+                    </label>
+                    <input type="file" id="b3-power-file-documento" required accept=".pdf,.png,.jpg,.jpeg" style="width:100%; padding:0.4rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.82rem;">
+                    <small style="font-size:0.72rem; color:var(--text-muted);">Documento que faculta expresamente para firmar contratos</small>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label for="b3-power-notas" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">
+                        Notas / Datos Notariales <span style="font-size:0.75rem; color:var(--text-muted);">(Opcional)</span>
+                    </label>
+                    <textarea id="b3-power-notas" rows="2" placeholder="Ej. Notario autorizante, protocolo, folio o facultades específicas" style="width:100%; padding:0.5rem; background:rgba(0,0,0,0.3); border:1px solid var(--panel-border); border-radius:6px; color:white; font-size:0.85rem; resize:vertical;"></textarea>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--panel-border); padding-top:1rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal('b3PowerModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary" id="b3-btn-submit-power">
+                        Otorgar y Acreditar Poder
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Phase 2 Block B3: Modal de Historial Completo de Expediente, RL y Poderes -->
+    <div id="b3DossierHistoryModal" class="modal" style="display:none; z-index: 130;">
+        <div class="modal-content glass-panel" style="width: 92vw; max-width: 900px; max-height: 90vh; overflow-y: auto; padding: 1.5rem;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 1rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
+                <div>
+                    <h3 style="margin:0; font-size:1.25rem; color:white; display:flex; align-items:center; gap:8px;">
+                        <span>🗂️</span> Expediente Societario, Representación y Poderes
+                    </h3>
+                    <p style="margin:4px 0 0 0; font-size:0.82rem; color:var(--text-secondary);" id="b3-history-account-subtitle">
+                        Trazabilidad completa, períodos de nombramiento, poderes y revisiones bienales
+                    </p>
+                </div>
+                <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="closeModal('b3DossierHistoryModal')">✖ Cerrar</button>
+            </div>
+
+            <div id="b3-history-modal-body">
+                <div style="text-align:center; padding:2rem; color:var(--text-muted);">Cargando expediente...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Document & Excel Preview Modal -->
     <div id="docPreviewModal" class="modal" style="z-index: 150;">
         <div class="modal-content glass-panel" style="width: 92vw; max-width: 1100px; height: 88vh; max-height: 900px; display: flex; flex-direction: column; padding: 1.25rem;">
@@ -2795,6 +2961,7 @@
     <script src="crm_clients.js?v=1"></script>
     <script src="crm_contacts.js?v=1"></script>
     <script src="crm_opportunity_contacts.js?v=1"></script>
+    <script src="crm_account_documents.js?v=1"></script>
     <script src="crm_commercial.js?v=3"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>

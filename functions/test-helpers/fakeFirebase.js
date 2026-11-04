@@ -159,6 +159,7 @@ function buildAdminFake() {
       const queryApi = (filters = [], limitCount = null) => ({
         where: (field, op, val) => queryApi([...filters, { field, op, val }], limitCount),
         limit: n => queryApi(filters, n),
+        orderBy: (field, dir) => queryApi(filters, limitCount),
         async get() {
           const prefix = `${col}/`;
           let matches = Object.keys(state.docs).filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'));
@@ -178,17 +179,18 @@ function buildAdminFake() {
           if (typeof limitCount === 'number') {
             matches = matches.slice(0, limitCount);
           }
-          const docs = matches.map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
+          const docs = matches.map(k => ({ id: k.slice(prefix.length), ref: makeRef(col, k.slice(prefix.length)), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
             const match = filters.every(f => defaultMgr[f.field] === f.val);
             if (match) {
-              docs.push({ id: '__default_mgr__', data: () => defaultMgr });
+              docs.push({ id: '__default_mgr__', ref: makeRef(col, '__default_mgr__'), data: () => defaultMgr });
             }
           }
           return {
             empty: docs.length === 0,
             size: docs.length,
-            docs
+            docs,
+            forEach: fn => docs.forEach(fn)
           };
         }
       });
@@ -196,15 +198,16 @@ function buildAdminFake() {
         doc: id => makeRef(col, id === undefined ? `auto_${++autoId}` : id),
         where: (field, op, val) => queryApi([{ field, op, val }]),
         limit: n => queryApi([], n),
+        orderBy: (field, dir) => queryApi([], null),
         async get() {
           const prefix = `${col}/`;
           const docs = Object.keys(state.docs)
             .filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'))
-            .map(k => ({ id: k.slice(prefix.length), data: () => cloneDoc(state.docs[k]) }));
+            .map(k => ({ id: k.slice(prefix.length), ref: makeRef(col, k.slice(prefix.length)), data: () => cloneDoc(state.docs[k]) }));
           if (col.startsWith('users') && state.allowVirtualManager === true && !state.unlinkedManager && !hasMgr()) {
-            docs.push({ id: '__default_mgr__', data: () => defaultMgr });
+            docs.push({ id: '__default_mgr__', ref: makeRef(col, '__default_mgr__'), data: () => defaultMgr });
           }
-          return { empty: docs.length === 0, size: docs.length, docs };
+          return { empty: docs.length === 0, size: docs.length, docs, forEach: fn => docs.forEach(fn) };
         },
         async add(data) {
           const autoKey = `auto_${++autoId}`;

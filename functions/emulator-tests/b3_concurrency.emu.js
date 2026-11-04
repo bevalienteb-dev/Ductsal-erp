@@ -1,0 +1,497 @@
+// functions/emulator-tests/b3_concurrency.emu.js
+// ======================================================================================================
+// DUCTSAL ERP — FASE 2 (BLOQUE B3): SUITE DE CONCURRENCIA REAL MULTI-CLIENTE
+// ======================================================================================================
+// Ejecución real contra Firebase Emulator Suite (Auth: 9099, Firestore: 8080, Functions: 5001).
+// NO utiliza mocks ni FakeFirebase: toda operación se procesa a través del motor Firestore real.
+//
+// Escenarios obligatorios de concurrencia B3 evaluados:
+//  1. Otorgamiento de poder concurrente con nueva elección de Representante Legal (invariante de anulación atómica).
+//  2. Elecciones simultáneas concurrentes de Representante Legal (SSOT y estado 'vigente' único).
+//  3. Cierre de oportunidad concurrente con invalidación de poder de firmante.
+//  4. Confirmaciones bienales concurrentes en escritura societaria.
+// ======================================================================================================
+
+const admin = require('firebase-admin');
+const H = require('./helpers');
+const { createAccountDocumentsService } = require('../accountDocumentsService');
+const { createProspectWorkflowService } = require('../prospectWorkflowService');
+const { createCommercialService } = require('../commercialService');
+
+const SUFFIX = '_local';
+const TAG = 'b3_conc_' + Date.now();
+
+const USERS = {
+  admin1: {
+    uid: `uid_b3_adm1_${TAG}`,
+    email: `adm1.${TAG}@ductsal-test.invalid`,
+    password: H.randomSecret(),
+    cid: `1000000000001`,
+    nombre: 'Administrador Conc 1',
+    role: 'manager'
+  },
+  admin2: {
+    uid: `uid_b3_adm2_${TAG}`,
+    email: `adm2.${TAG}@ductsal-test.invalid`,
+    password: H.randomSecret(),
+    cid: `1000000000002`,
+    nombre: 'Administrador Conc 2',
+    role: 'manager'
+  },
+  seller: {
+    uid: `uid_b3_seller_${TAG}`,
+    email: `seller.${TAG}@ductsal-test.invalid`,
+    password: H.randomSecret(),
+    cid: `1792037387205`,
+    nombre: 'Carlos Vendedor B3',
+    role: 'vendedor'
+  }
+};
+
+const state = {
+  tokens: {},
+  appA: null,
+  appB: null,
+  dbA: null,
+  dbB: null,
+  docSvcA: null,
+  docSvcB: null,
+  wfSvcA: null,
+  wfSvcB: null
+};
+
+function createBarrier(count) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let arrived = 0;
+  return {
+    async enter(fn) {
+      arrived++;
+      if (arrived === count) {
+        release();
+      }
+      await gate;
+      return fn();
+    }
+  };
+}
+
+beforeAll(async () => {
+  await H.assertEmulatorsUp();
+
+  process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
+
+  state.appA = admin.initializeApp({ projectId: H.PROJECT }, `b3_client_sdk_a_${TAG}`);
+  state.appB = admin.initializeApp({ projectId: H.PROJECT }, `b3_client_sdk_b_${TAG}`);
+  state.dbA = state.appA.firestore();
+  state.dbB = state.appB.firestore();
+
+  state.docSvcA = createAccountDocumentsService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX });
+  state.docSvcB = createAccountDocumentsService({ db: state.dbB, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX });
+
+  const verifyManager = async () => true;
+  const commSvcA = createCommercialService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX, verifyManager });
+  const commSvcB = createCommercialService({ db: state.dbB, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX, verifyManager });
+
+  state.wfSvcA = createProspectWorkflowService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, kit: commSvcA.kit, suffix: SUFFIX });
+  state.wfSvcB = createProspectWorkflowService({ db: state.dbB, FieldValue: admin.firestore.FieldValue, kit: commSvcB.kit, suffix: SUFFIX });
+
+  for (const [key, u] of Object.entries(USERS)) {
+    await fetch(`${H.AUTH}/identitytoolkit.googleapis.com/v1/projects/${H.PROJECT}/accounts`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        localId: u.uid,
+        email: u.email,
+        password: u.password,
+        displayName: u.nombre
+      })
+    });
+
+    const claims = { role: u.role, cid: u.cid };
+    if (u.role === 'manager') claims.manager = true;
+    await fetch(`${H.AUTH}/identitytoolkit.googleapis.com/v1/projects/${H.PROJECT}/accounts:update`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        localId: u.uid,
+        customAttributes: JSON.stringify(claims)
+      })
+    });
+
+    await H.setDoc('users_local', u.cid, {
+      id: u.cid,
+      authUid: u.uid,
+      authProvider: 'firebase',
+      nombre: u.nombre,
+      email: u.email,
+      role: u.role,
+      activo: true
+    });
+
+    const session = await H.signIn(u.email, u.password);
+    state.tokens[key] = session.idToken;
+  }
+});
+
+afterAll(async () => {
+  if (state.appA) await state.appA.delete().catch(() => null);
+  if (state.appB) await state.appB.delete().catch(() => null);
+});
+
+describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () => {
+
+  // ====================================================================================================
+  // ESCENARIO 1: Otorgamiento de poder vs Nueva Elección de Representante Legal
+  // Invariante estricto: Todo poder del período anterior debe quedar en 'anulado_por_nueva_eleccion'.
+  // Bajo ninguna circunstancia un poder del período previo puede quedar 'vigente'.
+  // ====================================================================================================
+  describe('Escenario 1: Otorgamiento de Poder vs Nueva Elección Concurrente de RL', () => {
+    test('Carrera concurrente: invariante de anulación atómica e integridad de apoderadosVigentes', async () => {
+      const accountId = `CLI_B3_CONC_E1_${TAG}`;
+      const contactAId = `CONT_B3_E1_A_${TAG}`;
+      const contactBId = `CONT_B3_E1_B_${TAG}`;
+
+      // Sembrado inicial de cliente jurídico con Representante Legal Período 1
+      const initialTerm = {
+        termId: `term_init_${TAG}`,
+        nombre: 'Ing. Rodrigo Méndez',
+        cargo: 'Presidente de Junta Directiva',
+        contactId: contactAId,
+        fechaEleccion: '2024-01-15',
+        fechaVencimiento: '2027-01-15',
+        estado: 'vigente',
+        credencialDoc: { name: 'credencial_mendez.pdf', storagePath: 'prod_files/clients/test/legal/c1.pdf' },
+        duiDoc: { name: 'dui_mendez.pdf', storagePath: 'prod_files/clients/test/identificacion/d1.pdf' }
+      };
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación Industrial B3 Concurrente ${TAG}`,
+        tipo: 'juridica',
+        representanteLegalVigente: initialTerm,
+        apoderadosVigentes: [],
+        documentos: {
+          credencial: initialTerm.credencialDoc,
+          dui: initialTerm.duiDoc
+        },
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid, USERS.seller.cid],
+        activo: true
+      });
+
+      // Subcolección con el período inicial
+      await H.setDoc(`clients_local/${accountId}/legal_representative_terms`, initialTerm.termId, initialTerm);
+
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerB = { uid: USERS.admin2.uid, email: USERS.admin2.email, role: 'manager', cid: USERS.admin2.cid, profileId: USERS.admin2.cid, name: USERS.admin2.nombre };
+
+      // Configurar barrera para disparo simultáneo
+      const barrier = createBarrier(2);
+
+      const promisePower = barrier.enter(() =>
+        state.docSvcA.grantContractPower({
+          caller: callerA,
+          accountId,
+          contactId: contactBId,
+          documento: {
+            name: 'poder_morales.pdf',
+            storagePath: 'prod_files/clients/test/poderes/p1.pdf',
+            nombreApoderado: 'Lic. Claudia Morales',
+            tipoPoder: 'especial',
+            facultadFirmaContratos: true,
+            fechaOtorgamiento: '2025-06-01',
+            fechaVencimiento: '2026-12-31',
+            notario: 'Lic. Samuel Rivera'
+          }
+        }).catch(err => ({ error: err.message }))
+      );
+
+      const promiseNewRL = barrier.enter(() =>
+        state.docSvcB.registerLegalRepresentativeTerm({
+          caller: callerB,
+          accountId,
+          contactId: contactBId,
+          nombre: 'Licda. Gabriela Solís',
+          cargo: 'Directora Ejecutiva y Rep. Legal',
+          fechaEleccion: '2026-01-10',
+          fechaVencimiento: '2029-01-10',
+          credencialDoc: { name: 'credencial_solis.pdf', storagePath: 'prod_files/clients/test/legal/c2.pdf' },
+          duiDoc: { name: 'dui_solis.pdf', storagePath: 'prod_files/clients/test/identificacion/d2.pdf' }
+        }).catch(err => ({ error: err.message }))
+      );
+
+      const [resPower, resNewRL] = await Promise.all([promisePower, promiseNewRL]);
+
+      // Verificación directa en Firestore
+      const snap = await H.getDoc('clients_local', accountId);
+      const clientDoc = snap.data;
+      const rlFinal = clientDoc.representanteLegalVigente;
+      const powersFinal = clientDoc.apoderadosVigentes || [];
+
+      expect(resNewRL.error).toBeUndefined();
+      expect(rlFinal).toBeDefined();
+      expect(rlFinal.nombre).toBe('Licda. Gabriela Solís');
+      expect(rlFinal.estado).toBe('vigente');
+
+      // INVARIANTE CRÍTICO B3:
+      // Ningún poder del período anterior (asociado a Rodrigo Méndez) puede quedar como 'vigente'.
+      for (const pw of powersFinal) {
+        expect(pw.termId).toBe(rlFinal.termId);
+      }
+
+      // Si el poder fue otorgado, su estado en subcolección debe ser 'anulado_por_nueva_eleccion' si pertenecía a initialTerm
+      if (!resPower.error && resPower.powerId) {
+        const pwSnap = await H.getDoc(`clients_local/${accountId}/contract_powers`, resPower.powerId);
+        const powerInDb = pwSnap.data;
+        if (powerInDb.termId === initialTerm.termId) {
+          expect(powerInDb.estado).toBe('anulado_por_nueva_eleccion');
+        }
+      }
+    });
+  });
+
+  // ====================================================================================================
+  // ESCENARIO 2: Elecciones concurrentes de Representante Legal
+  // Exactamente una elección debe prevalecer como activa y vigente.
+  // ====================================================================================================
+  describe('Escenario 2: Elecciones Concurrentes de Representante Legal', () => {
+    test('Dos administradores registrando elecciones simultáneamente: exactamente 1 RL vigente y consistente', async () => {
+      const accountId = `CLI_B3_CONC_E2_${TAG}`;
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Distribuidora Salvadoreña ${TAG}`,
+        tipo: 'juridica',
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid],
+        activo: true
+      });
+
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerB = { uid: USERS.admin2.uid, email: USERS.admin2.email, role: 'manager', cid: USERS.admin2.cid, profileId: USERS.admin2.cid, name: USERS.admin2.nombre };
+
+      const barrier = createBarrier(2);
+
+      const promiseA = barrier.enter(() =>
+        state.docSvcA.registerLegalRepresentativeTerm({
+          caller: callerA,
+          accountId,
+          nombre: 'Ing. Carlos Mendoza (Candidato A)',
+          cargo: 'Presidente',
+          fechaEleccion: '2025-01-01',
+          fechaVencimiento: '2028-01-01',
+          credencialDoc: { name: 'cred_a.pdf', storagePath: 'prod_files/clients/test/legal/ca.pdf' },
+          duiDoc: { name: 'dui_a.pdf', storagePath: 'prod_files/clients/test/identificacion/da.pdf' }
+        })
+      );
+
+      const promiseB = barrier.enter(() =>
+        state.docSvcB.registerLegalRepresentativeTerm({
+          caller: callerB,
+          accountId,
+          nombre: 'Dra. Patricia Alfaro (Candidata B)',
+          cargo: 'Presidenta',
+          fechaEleccion: '2025-01-02',
+          fechaVencimiento: '2028-01-02',
+          credencialDoc: { name: 'cred_b.pdf', storagePath: 'prod_files/clients/test/legal/cb.pdf' },
+          duiDoc: { name: 'dui_b.pdf', storagePath: 'prod_files/clients/test/identificacion/db.pdf' }
+        })
+      );
+
+      const [resA, resB] = await Promise.all([promiseA, promiseB]);
+
+      // Ambas transacciones completan secuencialmente vía transacciones de Firestore
+      expect(resA.termId).toBeDefined();
+      expect(resB.termId).toBeDefined();
+
+      const snap = await H.getDoc('clients_local', accountId);
+      const clientDoc = snap.data;
+      const rlFinal = clientDoc.representanteLegalVigente;
+
+      expect(rlFinal).toBeDefined();
+      expect(rlFinal.estado).toBe('vigente');
+      // Debe ser o Candidato A o Candidata B
+      expect(['Ing. Carlos Mendoza (Candidato A)', 'Dra. Patricia Alfaro (Candidata B)']).toContain(rlFinal.nombre);
+    });
+  });
+
+  // ====================================================================================================
+  // ESCENARIO 3: Cierre de oportunidad con invalidación concurrente de poder
+  // ====================================================================================================
+  describe('Escenario 3: Finalización de Oportunidad con Poder Invalidado Concurrentemente', () => {
+    test('finalizeProspect rechaza el cierre si el poder del firmante es invalidado', async () => {
+      const accountId = `CLI_B3_CONC_E3_${TAG}`;
+      const prospectId = `OPP_B3_CONC_E3_${TAG}`;
+      const powerId = `pow_e3_${TAG}`;
+
+      const initialTerm = {
+        termId: `term_e3_init_${TAG}`,
+        nombre: 'Ing. Hugo Rivas',
+        cargo: 'Presidente',
+        fechaEleccion: '2024-01-01',
+        fechaVencimiento: '2027-01-01',
+        estado: 'vigente',
+        credencialDoc: { name: 'cred.pdf', storagePath: 'prod_files/clients/test/legal/c.pdf' },
+        duiDoc: { name: 'dui.pdf', storagePath: 'prod_files/clients/test/identificacion/d.pdf' }
+      };
+
+      const powerDoc = {
+        id: powerId,
+        powerId,
+        termId: initialTerm.termId,
+        nombreApoderado: 'Lic. Fernando Cruz',
+        facultadFirmaContratos: true,
+        estado: 'vigente',
+        testimonioDoc: { name: 'poder.pdf', storagePath: 'prod_files/clients/test/poderes/p.pdf' }
+      };
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Construcciones Industriales ${TAG}`,
+        tipo: 'juridica',
+        contacto: 'Lic. Fernando Cruz',
+        nit: '0614-010180-101-1',
+        nrc: '123456-7',
+        telefono: '7890-1234',
+        correo: 'contacto@construcciones.test',
+        correo_fact: 'facturacion@construcciones.test',
+        representanteLegalVigente: initialTerm,
+        apoderadosVigentes: [powerDoc],
+        documentos: {
+          dui: { name: 'dui.pdf' },
+          escritura: { name: 'escritura.pdf' },
+          credencial: { name: 'cred.pdf' },
+          nit: { name: 'nit.pdf' },
+          nrc: { name: 'nrc.pdf' }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.seller.cid],
+        activo: true
+      });
+
+      await H.setDoc(`clients_local/${accountId}/contract_powers`, powerId, powerDoc);
+
+      await H.setDoc('prospects_local', prospectId, {
+        id: prospectId,
+        nombre: `Proyecto Contrato B3 ${TAG}`,
+        clientId: accountId,
+        etapa: 'cierre',
+        estado: 'activo',
+        vendedorId: USERS.seller.cid,
+        tipo_proyecto: 'Instalación',
+        precio_cotizado: 5000,
+        requiere_contrato: true,
+        firmante_cierre: { tipo: 'apoderado', powerId },
+        datos: {
+          doc_firmado: { name: 'contrato_firmado.pdf', storagePath: 'prod_files/proyectos/c.pdf' },
+          doc_comprobante: { name: 'ccf_anticipo.pdf', storagePath: 'prod_files/facturas/f.pdf' }
+        }
+      });
+
+      const callerAdmin = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerSeller = { uid: USERS.seller.uid, email: USERS.seller.email, role: 'vendedor', cid: USERS.seller.cid, profileId: USERS.seller.cid, name: USERS.seller.nombre };
+
+      // Registrar nueva elección de RL para invalidar todos los poderes
+      await state.docSvcA.registerLegalRepresentativeTerm({
+        caller: callerAdmin,
+        accountId,
+        nombre: 'Lic. Roberto Lemus (Nuevo RL)',
+        cargo: 'Presidente',
+        fechaEleccion: '2026-02-01',
+        fechaVencimiento: '2029-02-01',
+        credencialDoc: { name: 'cred2.pdf', storagePath: 'prod_files/clients/test/legal/c2.pdf' },
+        duiDoc: { name: 'dui2.pdf', storagePath: 'prod_files/clients/test/identificacion/d2.pdf' }
+      });
+
+      // Intentar finalizar la oportunidad con el apoderado del período anterior
+      await expect(
+        state.wfSvcB.finalizeProspect({
+          caller: callerSeller,
+          prospectId,
+          data: {
+            forma_pago: '100% anticipado',
+            factura_anticipo: 'FAC-12345',
+            requiere_contrato: true,
+            firmante_cierre: { tipo: 'apoderado', powerId }
+          }
+        })
+      ).rejects.toThrow(/anulado_por_nueva_eleccion/i);
+    });
+  });
+
+  // ====================================================================================================
+  // ESCENARIO 4: Confirmaciones Bienales Concurrentes
+  // ====================================================================================================
+  describe('Escenario 4: Confirmaciones Bienales Concurrentes', () => {
+    test('Dos usuarios confirmando bienalmente la escritura sin cambios: ambas confirmaciones registradas en auditoría', async () => {
+      const accountId = `CLI_B3_CONC_E4_${TAG}`;
+      const versionId = `v_esc_e4_${TAG}`;
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Inversiones Bienales ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: {
+            name: 'escritura_original.pdf',
+            storagePath: 'prod_files/clients/test/legal/esc.pdf',
+            fechaSubida: '2023-01-10T10:00:00Z',
+            ultimaRevisionBienal: '2023-01-10',
+            versionId
+          }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid],
+        activo: true
+      });
+
+      await H.setDoc(`clients_local/${accountId}/document_versions`, versionId, {
+        id: versionId,
+        versionId,
+        docKey: 'escritura',
+        name: 'escritura_original.pdf',
+        versionNumber: 1
+      });
+
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerB = { uid: USERS.admin2.uid, email: USERS.admin2.email, role: 'manager', cid: USERS.admin2.cid, profileId: USERS.admin2.cid, name: USERS.admin2.nombre };
+
+      const barrier = createBarrier(2);
+
+      const promiseA = barrier.enter(() =>
+        state.docSvcA.recordBiennialConfirmation({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: versionId,
+          notas: 'Confirmación Usuario A: sin reformas al pacto social'
+        })
+      );
+
+      const promiseB = barrier.enter(() =>
+        state.docSvcB.recordBiennialConfirmation({
+          caller: callerB,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: versionId,
+          notas: 'Confirmación Usuario B: verificación notarial periódica'
+        })
+      );
+
+      const [resA, resB] = await Promise.all([promiseA, promiseB]);
+
+      expect(resA.confirmationId).toBeDefined();
+      expect(resB.confirmationId).toBeDefined();
+
+      const snap = await H.getDoc('clients_local', accountId);
+      const clientDoc = snap.data;
+      expect(clientDoc.biennialReviews).toBeDefined();
+      expect(clientDoc.biennialReviews.escritura).toBeDefined();
+      expect(clientDoc.biennialReviews.escritura.lastConfirmedAt).toBeDefined();
+      expect(clientDoc.biennialReviews.escritura.nextReviewAt).toBeDefined();
+
+      const confSnapA = await H.getDoc(`clients_local/${accountId}/biennial_confirmations`, resA.confirmationId);
+      expect(confSnapA.data.confirmedNoChanges).toBe(true);
+      const confSnapB = await H.getDoc(`clients_local/${accountId}/biennial_confirmations`, resB.confirmationId);
+      expect(confSnapB.data.confirmedNoChanges).toBe(true);
+    });
+  });
+});
