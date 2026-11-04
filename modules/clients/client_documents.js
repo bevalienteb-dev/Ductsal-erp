@@ -179,138 +179,194 @@
 
         if (badgeEl) badgeEl.textContent = `${docItems.length} documento${docItems.length === 1 ? '' : 's'}`;
 
-        if (docItems.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:0.75rem; color:var(--text-muted); font-size:0.8rem;">Sin documentos registrados en el expediente.</div>';
-            section.style.display = 'block';
-            return;
-        }
-
         const currentUser = _deps.getCurrentUser();
         const isManager = currentUser && currentUser.role === 'manager';
-        listEl.innerHTML = docItems.map(item => {
-            let fileName = 'Documento';
-            if (typeof item.docRef === 'object' && item.docRef && item.docRef.name) {
-                fileName = String(item.docRef.name);
-            } else if (typeof item.docRef === 'string') {
-                const parts = item.docRef.split('?')[0].split('/');
-                const last = parts[parts.length - 1];
-                fileName = decodeURIComponent(last) || item.label;
-            } else {
-                fileName = item.label;
-            }
 
-            const storeId = 'cdoc_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
-            const store = _deps.getDocStore();
-            if (store && typeof store.set === 'function') {
-                store.set(storeId, {
-                    docRef: item.docRef,
-                    fileName: fileName,
-                    label: item.label,
-                    clientId: c.id,
-                    docKey: item.key,
-                    itemIndex: item.index
-                });
-            }
+        const catalogSpecs = c.tipo === 'natural'
+            ? [{ key: 'dui', label: 'DUI (Persona Natural)' }]
+            : [
+                { key: 'escritura', label: 'Escritura de Constitución' },
+                { key: 'mods_escritura', label: 'Modificación al Pacto Social' },
+                { key: 'credencial', label: 'Credencial de Rep. Legal' },
+                { key: 'dui', label: 'DUI del Representante Legal' },
+                { key: 'nit', label: 'NIT de la Empresa' },
+                { key: 'nrc', label: 'NRC / Tarjeta de IVA' }
+            ];
 
-            const ext = String(fileName).split('.').pop().toUpperCase() || 'DOC';
-            let icon = '📁';
-            if (ext === 'XLSX' || ext === 'XLS') icon = '📊';
-            else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].includes(ext)) icon = '🖼️';
-            else if (ext === 'PDF') icon = '📄';
+        if (docItems.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:0.75rem; color:var(--text-muted); font-size:0.8rem;">Sin documentos registrados aún en el expediente. Utilice los botones inferiores para cargar documentos con control SHA-256.</div>';
+        } else {
+            listEl.innerHTML = docItems.map(item => {
+                let fileName = 'Documento';
+                if (typeof item.docRef === 'object' && item.docRef && item.docRef.name) {
+                    fileName = String(item.docRef.name);
+                } else if (typeof item.docRef === 'string') {
+                    const parts = item.docRef.split('?')[0].split('/');
+                    const last = parts[parts.length - 1];
+                    fileName = decodeURIComponent(last) || item.label;
+                } else {
+                    fileName = item.label;
+                }
 
-            const previewable = _deps.isFormatPreviewable(fileName);
-            const safeName = _deps.escapeHtmlDoc(fileName);
-            const safeLabel = _deps.escapeHtmlDoc(item.label);
+                const storeId = 'cdoc_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+                const store = _deps.getDocStore();
+                if (store && typeof store.set === 'function') {
+                    store.set(storeId, {
+                        docRef: item.docRef,
+                        fileName: fileName,
+                        label: item.label,
+                        clientId: c.id,
+                        docKey: item.key,
+                        itemIndex: item.index
+                    });
+                }
 
-            let viewBtn = '';
-            if (previewable) {
-                viewBtn = `<button type="button" class="btn-table-action btn-table-edit" onclick="viewStoredClientDoc('${storeId}')" title="Previsualizar documento">👁️ Ver</button>`;
-            }
-            const dlBtn = `<button type="button" class="btn-table-action" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar original" style="background:rgba(255,255,255,0.06); color:var(--text-secondary); border:1px solid rgba(255,255,255,0.12);">⬇️ Descargar</button>`;
-            const delBtn = isManager ? `<button type="button" class="btn-table-action btn-table-delete" onclick="deleteStoredClientDoc('${storeId}')" title="Eliminar documento del expediente">🗑️</button>` : '';
+                const ext = String(fileName).split('.').pop().toUpperCase() || 'DOC';
+                let icon = '📁';
+                if (ext === 'XLSX' || ext === 'XLS') icon = '📊';
+                else if (['PNG', 'JPG', 'JPEG', 'WEBP', 'SVG'].includes(ext)) icon = '🖼️';
+                else if (ext === 'PDF') icon = '📄';
 
-            return `
-                <div class="client-doc-card">
-                    <div class="client-doc-info">
-                        <span style="font-size:1.25rem;">${icon}</span>
-                        <div style="min-width:0;">
-                            <div class="client-doc-title">${safeLabel}</div>
-                            <div class="client-doc-meta" title="${safeName}">${safeName}</div>
+                const previewable = _deps.isFormatPreviewable(fileName);
+                const safeName = _deps.escapeHtmlDoc(fileName);
+                const safeLabel = _deps.escapeHtmlDoc(item.label);
+                const shaShort = (item.docRef && item.docRef.sha256) ? ` · SHA-256: ${String(item.docRef.sha256).slice(0, 10)}…` : '';
+                const vencInfo = (item.docRef && item.docRef.fechaVencimiento) ? ` · Vence: ${_deps.escapeHtmlDoc(item.docRef.fechaVencimiento)}` : '';
+
+                let viewBtn = '';
+                if (previewable) {
+                    viewBtn = `<button type="button" class="btn-table-action btn-table-edit" onclick="viewStoredClientDoc('${storeId}')" title="Previsualizar documento">👁️ Ver</button>`;
+                }
+                const dlBtn = `<button type="button" class="btn-table-action" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar original" style="background:rgba(255,255,255,0.06); color:var(--text-secondary); border:1px solid rgba(255,255,255,0.12);">⬇️ Descargar</button>`;
+                const substBtn = `<button type="button" class="btn-table-action" onclick="ClientDocuments.openSubstituteDocView('${c.id}', '${item.key}', '${safeLabel}')" title="Sustituir documento en vista de pantalla completa" style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">🔄 Sustituir</button>`;
+                const histBtn = `<button type="button" class="btn-table-action" onclick="showDocumentVersionHistory('client', '${c.id}', '${item.key}', '${safeLabel}')" title="Consultar historial de versiones en vista de pantalla completa" style="background:rgba(245,158,11,0.12); color:#fbbf24; border:1px solid rgba(245,158,11,0.3);">📜 Versiones</button>`;
+                const delBtn = isManager ? `<button type="button" class="btn-table-action btn-table-delete" onclick="deleteStoredClientDoc('${storeId}')" title="Eliminar documento del expediente">🗑️</button>` : '';
+
+                return `
+                    <div class="client-doc-card" style="flex-wrap:wrap; gap:8px;">
+                        <div class="client-doc-info">
+                            <span style="font-size:1.25rem;">${icon}</span>
+                            <div style="min-width:0;">
+                                <div class="client-doc-title">${safeLabel}</div>
+                                <div class="client-doc-meta" title="${safeName}">${safeName}${shaShort}${vencInfo}</div>
+                            </div>
+                        </div>
+                        <div class="client-doc-actions" style="flex-wrap:wrap; gap:6px;">
+                            <span class="badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:0.65rem; border:1px solid rgba(255,255,255,0.1);">${_deps.escapeHtmlDoc(ext)}</span>
+                            ${viewBtn}
+                            ${dlBtn}
+                            ${substBtn}
+                            ${histBtn}
+                            ${delBtn}
                         </div>
                     </div>
-                    <div class="client-doc-actions">
-                        <span class="badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:0.65rem; border:1px solid rgba(255,255,255,0.1);">${_deps.escapeHtmlDoc(ext)}</span>
-                        ${viewBtn}
-                        ${dlBtn}
-                        ${delBtn}
-                    </div>
+                `;
+            }).join('');
+        }
+
+        // Botones de acceso directo a vista de pantalla completa para Cargar o Sustituir cualquier documento del catálogo
+        const quickUploadHtml = `
+            <div style="margin-top: 0.85rem; padding: 0.85rem; background: rgba(15, 23, 42, 0.45); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 8px;">
+                <div style="font-size: 0.78rem; font-weight: 600; color: #38bdf8; margin-bottom: 0.5rem;">
+                    📤 Cargar o Sustituir Documentos en Vista de Pantalla Completa (Control SHA-256 y Versionado):
                 </div>
-            `;
-        }).join('');
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    ${catalogSpecs.map(sp => {
+                        const exists = !!(c.documentos && c.documentos[sp.key]);
+                        return `<button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px;" onclick="ClientDocuments.openSubstituteDocView('${c.id}', '${sp.key}', '${_deps.escapeHtmlDoc(sp.label)}')">
+                            ${exists ? '🔄 Sustituir' : '➕ Cargar'} ${_deps.escapeHtmlDoc(sp.label)}
+                        </button>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+        listEl.innerHTML += quickUploadHtml;
 
         if (c.tipo === 'juridica') {
             const rl = c.representanteLegalVigente || null;
             const powers = Array.isArray(c.apoderadosVigentes) ? c.apoderadosVigentes : [];
             const b3Html = `
-                <div style="margin-top: 1rem; border-top: 1px solid var(--panel-border); padding-top: 0.75rem;">
+                <div style="margin-top: 1.15rem; border-top: 1px solid var(--panel-border); padding-top: 1rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:0.75rem;">
+                        <h4 style="margin:0; font-size:0.92rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                            <span>🏛️</span> Gobierno Societario y Facultades Contractuales (Bloque B3)
+                        </h4>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px; border-color:rgba(16,185,129,0.4); color:#34d399;" onclick="ClientDocuments.openBiennialConfirmationView('${c.id}')">
+                                🗓️ Confirmación Bienal (Pacto Social)
+                            </button>
+                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px; border-color:rgba(251,191,36,0.4); color:#fbbf24;" onclick="ClientDocuments.openDossierHistoryView('${c.id}')">
+                                🗂️ Historial de Representantes y Poderes
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Representante Legal -->
-                    <div style="background:rgba(15,23,42,0.5); border:1px solid var(--panel-border); border-radius:6px; padding:10px; margin-bottom:8px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                            <div style="font-weight:700; font-size:0.82rem; color:white; display:flex; align-items:center; gap:6px;">
+                    <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:12px; margin-bottom:10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+                            <div style="font-weight:700; font-size:0.85rem; color:white; display:flex; align-items:center; gap:6px;">
                                 <span>⚖️</span> Representante Legal Vigente
                             </div>
-                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; border-color:#ef4444; color:#f87171;" onclick="ClientDocuments.openRLElectionModal('${c.id}')">
-                                ➕ Nueva Elección
+                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px; border-color:#ef4444; color:#f87171;" onclick="ClientDocuments.openRLElectionView('${c.id}')">
+                                ➕ Registrar / Cambiar Representante Legal
                             </button>
                         </div>
                         ${rl && rl.estado === 'vigente' ? `
-                            <div style="font-size:0.78rem; color:#e2e8f0;">
+                            <div style="font-size:0.82rem; color:#e2e8f0;">
                                 👤 <strong>${_deps.escapeHtmlDoc(rl.nombre)}</strong>
-                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.65rem; margin-left:6px;">🟢 Vigente</span>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
-                                    Elección: ${_deps.escapeHtmlDoc(rl.fechaEleccion || '-')} | Vence: ${_deps.escapeHtmlDoc(rl.fechaVencimiento || 'Indefinido')}
+                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.68rem; margin-left:6px;">🟢 Vigente</span>
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;">
+                                    Elección: ${_deps.escapeHtmlDoc(rl.fechaEleccion || '-')} | Vencimiento de Credencial: ${_deps.escapeHtmlDoc(rl.fechaVencimiento || 'Indefinido')}
                                 </div>
                             </div>
                         ` : `
-                            <div style="font-size:0.75rem; color:var(--text-muted);">
-                                ⚠️ Sin nombramiento vigente registrado en el expediente societario.
+                            <div style="font-size:0.78rem; color:var(--text-muted);">
+                                ⚠️ Sin nombramiento vigente registrado en el expediente societario. Utilice el botón superior para registrar al Representante Legal e incorporar su DUI y Credencial.
                             </div>
                         `}
                     </div>
 
                     <!-- Apoderados para Contratos -->
-                    <div style="background:rgba(15,23,42,0.5); border:1px solid var(--panel-border); border-radius:6px; padding:10px; margin-bottom:8px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                            <div style="font-weight:700; font-size:0.82rem; color:white; display:flex; align-items:center; gap:6px;">
+                    <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+                            <div style="font-weight:700; font-size:0.85rem; color:white; display:flex; align-items:center; gap:6px;">
                                 <span>📜</span> Apoderados para Firma de Contratos (${powers.length})
                             </div>
-                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; border-color:#38bdf8; color:#38bdf8;" onclick="ClientDocuments.openGrantPowerModal('${c.id}')">
-                                ➕ Otorgar Poder
+                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px; border-color:#38bdf8; color:#38bdf8;" onclick="ClientDocuments.openGrantPowerView('${c.id}')">
+                                ➕ Registrar Apoderado y Poder
                             </button>
                         </div>
                         ${powers.length > 0 ? `
-                            <div style="display:flex; flex-direction:column; gap:4px;">
-                                ${powers.map(pw => `
-                                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; padding:4px 6px; background:rgba(255,255,255,0.02); border-radius:4px;">
-                                        <div>
-                                            <span>🖋️ <strong>${_deps.escapeHtmlDoc(pw.nombreApoderado)}</strong></span>
-                                            <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.65rem; margin-left:4px;">Vigente</span>
+                            <div style="display:flex; flex-direction:column; gap:6px;">
+                                ${powers.map(pw => {
+                                    const pwId = pw.id || pw.powerId;
+                                    return `
+                                    <div style="font-size:0.78rem; padding:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:6px;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                                            <div>
+                                                <span>🖋️ <strong>${_deps.escapeHtmlDoc(pw.nombreApoderado)}</strong></span>
+                                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.65rem; margin-left:4px;">🟢 Poder Vigente</span>
+                                            </div>
+                                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; color:#f87171; border-color:rgba(239,68,68,0.35);" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">
+                                                Revocar Poder
+                                            </button>
                                         </div>
-                                        <button type="button" class="btn-secondary" style="font-size:0.68rem; padding:1px 6px; color:#f87171;" onclick="ClientDocuments.revokeContractPower('${c.id}', '${pw.id || pw.powerId}', '${_deps.escapeHtmlDoc(pw.nombreApoderado)}')">Revocar</button>
+                                        <div id="b3-inline-revoke-${pwId}" style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed rgba(239,68,68,0.35);">
+                                            <label style="display:block; font-size:0.74rem; color:#fca5a5; margin-bottom:4px;">Motivo de revocación del poder (obligatorio):</label>
+                                            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                                <input type="text" id="b3-revoke-reason-${pwId}" placeholder="Ej. Sustitución de apoderado / Revocatoria por junta directiva" style="flex:1; min-width:200px; padding:4px 8px; font-size:0.76rem; background:rgba(0,0,0,0.35); border:1px solid #ef4444; border-radius:4px; color:white;">
+                                                <button type="button" class="btn-primary" style="font-size:0.74rem; padding:4px 10px; background:#ef4444; border-color:#dc2626;" onclick="ClientDocuments.submitInlineRevokePower('${c.id}', '${pwId}')">Confirmar Revocación</button>
+                                                <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">Cancelar</button>
+                                            </div>
+                                        </div>
                                     </div>
-                                `).join('')}
+                                `;}).join('')}
                             </div>
                         ` : `
-                            <div style="font-size:0.75rem; color:var(--text-muted);">
-                                Sin apoderados con poder vigente. (El RL vigente puede firmar o puede otorgar poderes).
+                            <div style="font-size:0.78rem; color:var(--text-muted);">
+                                Sin apoderados con poder vigente. (El Representante Legal vigente puede suscribir contratos o puede acreditar apoderados).
                             </div>
                         `}
-                    </div>
-
-                    <div style="display:flex; justify-content:flex-end;">
-                        <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:3px 10px;" onclick="ClientDocuments.openDossierHistoryModal('${c.id}')">
-                            📜 Consultar Historial Completo B3
-                        </button>
                     </div>
                 </div>
             `;
@@ -573,14 +629,94 @@
     }
 
     // -------------------------------------------------------------------------
-    // 6. Funcionalidades Fase 2 Bloque B3: Representación Legal, Poderes y Revisiones
+    // 6. Funcionalidades Fase 2 Bloque B3: Vistas de Pantalla Completa
     // -------------------------------------------------------------------------
 
-    function closeModalSafe(modalId) {
-        if (typeof closeModal === 'function') return closeModal(modalId);
-        if (typeof window !== 'undefined' && typeof window.closeModal === 'function') return window.closeModal(modalId);
-        const el = (typeof document !== 'undefined') ? document.getElementById(modalId) : null;
-        if (el) el.style.display = 'none';
+    let _b3CurrentAccountId = null;
+    let _b3OriginContext = { view: 'client-detail-view', prospectId: null };
+
+    function _navigateB3View(viewId) {
+        if (typeof showView === 'function') {
+            showView(viewId);
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView(viewId);
+        }
+        if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+            try { window.scrollTo(0, 0); } catch (_) {}
+        }
+    }
+
+    function _captureB3Origin(clientId, options = {}) {
+        _b3CurrentAccountId = clientId || _b3CurrentAccountId;
+        if (options && options.originView) {
+            _b3OriginContext = {
+                view: options.originView,
+                prospectId: options.prospectId || null
+            };
+            return;
+        }
+        if (typeof document !== 'undefined') {
+            const detailEl = document.getElementById('detail-view');
+            if (detailEl && detailEl.classList && typeof detailEl.classList.contains === 'function' && detailEl.classList.contains('active')) {
+                const pid = (typeof window !== 'undefined' && window.currentDetailId) ? window.currentDetailId : null;
+                _b3OriginContext = { view: 'detail-view', prospectId: pid };
+                return;
+            }
+        }
+        _b3OriginContext = { view: 'client-detail-view', prospectId: null };
+    }
+
+    function getCurrentAccountId() {
+        if (_b3CurrentAccountId) return _b3CurrentAccountId;
+        if (typeof document !== 'undefined') {
+            const editEl = document.getElementById('client-id-edit');
+            if (editEl && editEl.value) return editEl.value;
+        }
+        return null;
+    }
+
+    function returnToClientOrOrigin(overrideAccountId = null) {
+        const accountId = overrideAccountId || getCurrentAccountId();
+        if (_b3OriginContext && _b3OriginContext.view === 'detail-view' && _b3OriginContext.prospectId) {
+            _navigateB3View('detail-view');
+            if (typeof window !== 'undefined' && typeof window.openDetail === 'function') {
+                window.openDetail(_b3OriginContext.prospectId);
+            } else {
+                const p = _deps.getProspects().find(x => x.id === _b3OriginContext.prospectId);
+                if (p) _deps.renderClosingDocumentationPanel(p);
+            }
+            return;
+        }
+        if (accountId) {
+            _deps.openClientModal(accountId);
+        } else {
+            _navigateB3View('clients-view');
+            _deps.renderClientsTable();
+        }
+    }
+
+    async function previewFileHash(inputEl, targetId) {
+        if (typeof document === 'undefined') return;
+        const target = document.getElementById(targetId);
+        if (!target) return;
+        if (!inputEl || !inputEl.files || inputEl.files.length === 0) {
+            target.textContent = '';
+            return;
+        }
+        const file = inputEl.files[0];
+        if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.computeFileSha256 === 'function') {
+            target.textContent = '⏳ Calculando huella criptográfica SHA-256...';
+            try {
+                const sha = await CrmAccountDocuments.computeFileSha256(file);
+                if (sha) {
+                    target.textContent = `🔒 Huella SHA-256 verificada: ${sha}`;
+                } else {
+                    target.textContent = '';
+                }
+            } catch (_) {
+                target.textContent = '';
+            }
+        }
     }
 
     async function loadAccountContactsOptions(accountId, selectEl) {
@@ -612,17 +748,16 @@
         }
     }
 
-    async function openRLElectionModal(clientId) {
+    async function openRLElectionView(clientId, options = {}) {
         if (typeof document === 'undefined') return;
-        const modal = document.getElementById('b3RLElectionModal');
-        if (!modal) return;
+        _captureB3Origin(clientId, options);
         const accIdEl = document.getElementById('b3-rl-account-id');
         if (accIdEl) accIdEl.value = clientId;
 
         const client = _deps.getClients().find(x => x.id === clientId) || {};
         const subtitleEl = document.getElementById('b3-rl-account-name-subtitle');
         if (subtitleEl) {
-            subtitleEl.textContent = `Cuenta: ${client.empresa || client.nombres || clientId} (Persona Jurídica)`;
+            subtitleEl.textContent = `Cuenta Comercial: ${client.empresa || client.nombres || clientId} (Persona Jurídica)`;
         }
 
         const nameEl = document.getElementById('b3-rl-nombre');
@@ -635,12 +770,18 @@
         if (fCred) fCred.value = '';
         const fDui = document.getElementById('b3-rl-file-dui');
         if (fDui) fDui.value = '';
+        const credHash = document.getElementById('b3-rl-credencial-hash-preview');
+        if (credHash) credHash.textContent = '';
+        const duiHash = document.getElementById('b3-rl-dui-hash-preview');
+        if (duiHash) duiHash.textContent = '';
+
+        _navigateB3View('b3-rl-election-view');
 
         const selectEl = document.getElementById('b3-rl-contact-select');
         await loadAccountContactsOptions(clientId, selectEl);
-
-        modal.style.display = 'flex';
     }
+
+    const openRLElectionModal = openRLElectionView;
 
     function onRLContactSelected(contactId) {
         if (typeof document === 'undefined') return;
@@ -714,14 +855,10 @@
                 dbSuffix: _deps.getDbSuffix()
             });
 
-            closeModalSafe('b3RLElectionModal');
-
             const invalidatedCount = (res && res.invalidatedPowersCount) || 0;
             const notice = invalidatedCount > 0
                 ? `\n\n⚠️ REGLA DE VIGENCIA: Se anularon automáticamente ${invalidatedCount} poder(es) de firma de contratos del nombramiento anterior.`
                 : '\n\nNo existían poderes anteriores vinculados.';
-
-            _deps.alert(`✅ Elección de Representante Legal (${nombre}) registrada exitosamente.${notice}`);
 
             // Actualizar cliente localmente
             const client = _deps.getClients().find(x => x.id === accountId);
@@ -729,6 +866,7 @@
                 if (!client.documentos) client.documentos = {};
                 client.documentos.credencial = credRef;
                 client.documentos.dui = duiRef;
+                client.rep_legal = nombre;
                 client.representanteLegalVigente = (res && res.term) || {
                     termId: res.termId,
                     nombre,
@@ -736,9 +874,11 @@
                     fechaVencimiento,
                     estado: 'vigente'
                 };
+                client.apoderadosVigentes = [];
             }
 
-            _deps.openClientModal(accountId);
+            _deps.alert(`✅ Elección de Representante Legal (${nombre}) registrada exitosamente.${notice}`);
+            returnToClientOrOrigin(accountId);
             _deps.renderClientsTable();
         } catch (err) {
             console.error('[ClientDocuments] Error en elección de RL:', err);
@@ -747,28 +887,42 @@
             _deps.hideLoading();
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = origText || 'Registrar Elección';
+                btn.innerHTML = origText || '⚖️ Registrar Elección e Invalidar Poderes Anteriores';
             }
         }
     }
 
-    async function openGrantPowerModal(clientId) {
+    async function openGrantPowerView(clientId, options = {}) {
         if (typeof document === 'undefined') return;
-        const modal = document.getElementById('b3PowerModal');
-        if (!modal) return;
+        _captureB3Origin(clientId, options);
         const accIdEl = document.getElementById('b3-power-account-id');
         if (accIdEl) accIdEl.value = clientId;
+
+        const client = _deps.getClients().find(x => x.id === clientId) || {};
+        const subEl = document.getElementById('b3-power-account-subtitle');
+        if (subEl) {
+            subEl.textContent = `Cuenta Comercial: ${client.empresa || client.nombres || clientId}`;
+        }
+        const rlLabelEl = document.getElementById('b3-power-current-rl-label');
+        if (rlLabelEl) {
+            const rlName = (client.representanteLegalVigente && client.representanteLegalVigente.nombre) || client.rep_legal || 'Representante Legal Vigente';
+            rlLabelEl.textContent = rlName;
+        }
 
         const fDoc = document.getElementById('b3-power-file-documento');
         if (fDoc) fDoc.value = '';
         const notasEl = document.getElementById('b3-power-notas');
         if (notasEl) notasEl.value = '';
+        const hashEl = document.getElementById('b3-power-doc-hash-preview');
+        if (hashEl) hashEl.textContent = '';
+
+        _navigateB3View('b3-grant-power-view');
 
         const selectEl = document.getElementById('b3-power-contact-select');
         await loadAccountContactsOptions(clientId, selectEl);
-
-        modal.style.display = 'flex';
     }
+
+    const openGrantPowerModal = openGrantPowerView;
 
     async function submitGrantContractPower() {
         if (typeof document === 'undefined') return;
@@ -813,10 +967,14 @@
                 dbSuffix: _deps.getDbSuffix()
             });
 
-            closeModalSafe('b3PowerModal');
-            _deps.alert(`✅ Poder notarial para firma de contratos otorgado exitosamente.`);
+            const client = _deps.getClients().find(x => x.id === accountId);
+            if (client && res && res.power) {
+                if (!Array.isArray(client.apoderadosVigentes)) client.apoderadosVigentes = [];
+                client.apoderadosVigentes.push(res.power);
+            }
 
-            _deps.openClientModal(accountId);
+            _deps.alert(`✅ Poder notarial para firma de contratos otorgado exitosamente.`);
+            returnToClientOrOrigin(accountId);
             _deps.renderClientsTable();
         } catch (err) {
             console.error('[ClientDocuments] Error otorgando poder:', err);
@@ -825,15 +983,34 @@
             _deps.hideLoading();
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = origText || 'Otorgar Poder';
+                btn.innerHTML = origText || '📜 Otorgar y Acreditar Poder para Contratos';
             }
         }
     }
 
-    async function revokeContractPower(accountId, powerId, attorneyName) {
-        const motivo = prompt(`¿Desea revocar el poder otorgado a ${attorneyName || 'este apoderado'}?\n\nIngrese el motivo de revocación (obligatorio):`);
-        if (!motivo || !motivo.trim()) {
-            if (motivo !== null) _deps.alert('Debe indicar un motivo para la revocación del poder.');
+    function toggleInlineRevokePower(powerId) {
+        if (typeof document === 'undefined') return;
+        const box = document.getElementById(`b3-inline-revoke-${powerId}`) || document.getElementById(`b3-history-revoke-${powerId}`);
+        if (box) {
+            box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+        }
+    }
+
+    async function submitInlineRevokePower(accountId, powerId, inputIdOverride = null) {
+        if (typeof document === 'undefined') return;
+        const inputEl = document.getElementById(inputIdOverride || `b3-revoke-reason-${powerId}`);
+        const motivo = inputEl ? inputEl.value.trim() : '';
+        if (!motivo) {
+            return _deps.alert('Debe indicar un motivo obligatorio para la revocación del poder.');
+        }
+        await revokeContractPower(accountId, powerId, '', motivo);
+    }
+
+    async function revokeContractPower(accountId, powerId, attorneyName, providedMotivo = null) {
+        let motivo = providedMotivo;
+        if (!motivo || !String(motivo).trim()) {
+            // Si no se proporcionó motivo, desplegar el formulario inline dentro de la vista integrada
+            toggleInlineRevokePower(powerId);
             return;
         }
 
@@ -847,12 +1024,23 @@
             await CrmAccountDocuments.revokeContractPower(fb, {
                 accountId,
                 powerId,
-                motivo: motivo.trim(),
+                motivo: String(motivo).trim(),
                 dbSuffix: _deps.getDbSuffix()
             });
 
+            const client = _deps.getClients().find(x => x.id === accountId);
+            if (client && Array.isArray(client.apoderadosVigentes)) {
+                client.apoderadosVigentes = client.apoderadosVigentes.filter(p => (p.id || p.powerId) !== powerId);
+            }
+
             _deps.alert('✅ Poder notarial revocado exitosamente.');
-            _deps.openClientModal(accountId);
+            // Si estamos en la vista de historial B3, recargarla; de lo contrario volver al cliente/origen
+            const histView = (typeof document !== 'undefined') ? document.getElementById('b3-dossier-history-view') : null;
+            if (histView && histView.classList && histView.classList.contains('active')) {
+                await openDossierHistoryView(accountId, { originView: _b3OriginContext.view, prospectId: _b3OriginContext.prospectId });
+            } else {
+                returnToClientOrOrigin(accountId);
+            }
             _deps.renderClientsTable();
         } catch (err) {
             console.error('[ClientDocuments] Error revocando poder:', err);
@@ -862,11 +1050,143 @@
         }
     }
 
-    async function confirmBiennialReviewWithoutChanges(accountId, docKey) {
-        const docLabel = _deps.formatClientDocLabel(docKey);
-        const ok = _deps.confirm(`¿Confirmas formalmente que NO existen modificaciones a la [${docLabel}] de la sociedad?\n\nEsta acción registrará la confirmación bienal auditable y extenderá la validez documental por dos años adicionales.`);
-        if (!ok) return;
+    function openBiennialConfirmationView(clientId, options = {}) {
+        if (typeof document === 'undefined') return;
+        _captureB3Origin(clientId, options);
+        const accEl = document.getElementById('b3-biennial-account-id');
+        if (accEl) accEl.value = clientId;
 
+        const client = _deps.getClients().find(x => x.id === clientId) || {};
+        const subEl = document.getElementById('b3-biennial-account-subtitle');
+        if (subEl) {
+            subEl.textContent = `Cuenta Comercial: ${client.empresa || client.nombres || clientId}`;
+        }
+
+        const fileEl = document.getElementById('b3-biennial-file');
+        if (fileEl) fileEl.value = '';
+        const upNotesEl = document.getElementById('b3-biennial-upload-notes');
+        if (upNotesEl) upNotesEl.value = '';
+        const confNotesEl = document.getElementById('b3-biennial-confirm-notes');
+        if (confNotesEl) confNotesEl.value = '';
+        const checkEl = document.getElementById('b3-biennial-confirm-check');
+        if (checkEl) checkEl.checked = false;
+        const hashEl = document.getElementById('b3-biennial-hash-preview');
+        if (hashEl) hashEl.textContent = '';
+
+        const summaryEl = document.getElementById('b3-biennial-status-summary');
+        if (summaryEl) {
+            const docs = client.documentos || {};
+            const hasEscritura = !!docs.escritura;
+            const hasMods = !!docs.mods_escritura;
+            summaryEl.innerHTML = `
+                <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <div>
+                        <div style="font-size:0.88rem; font-weight:700; color:white;">Estado actual del Pacto Social en el Expediente</div>
+                        <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">
+                            Escritura de Constitución: <strong>${hasEscritura ? '🟢 Incorporada' : '🔴 Pendiente'}</strong> ·
+                            Modificaciones al Pacto Social: <strong>${hasMods ? '🟢 Incorporadas' : '⚪ Sin modificaciones registradas'}</strong>
+                        </div>
+                    </div>
+                    <span class="badge bg-info" style="font-size:0.75rem;">Ciclo de revisión: 24 meses</span>
+                </div>
+            `;
+        }
+
+        _navigateB3View('b3-biennial-confirmation-view');
+    }
+
+    async function submitBiennialUpload() {
+        if (typeof document === 'undefined') return;
+        const accountId = (document.getElementById('b3-biennial-account-id') || {}).value;
+        const fileInput = document.getElementById('b3-biennial-file');
+        const notes = ((document.getElementById('b3-biennial-upload-notes') || {}).value || '').trim();
+        if (!accountId) return _deps.alert('ID de cuenta faltante');
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+            return _deps.alert('Debe seleccionar el archivo de la Escritura de Modificación al Pacto Social.');
+        }
+        if (!notes) {
+            return _deps.alert('Debe ingresar el detalle de la reforma societaria.');
+        }
+
+        const btn = document.getElementById('b3-btn-biennial-upload');
+        const origText = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Subiendo escritura de modificación...';
+        }
+
+        try {
+            _deps.showLoading('Subiendo modificación al pacto social y registrando revisión bienal...');
+            const file = fileInput.files[0];
+            const [docRef, sha] = await Promise.all([
+                _deps.uploadFileToStorage(file, 'clientes', { clientId: accountId, isLegal: true }),
+                (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.computeFileSha256 === 'function')
+                    ? CrmAccountDocuments.computeFileSha256(file) : null
+            ]);
+            if (sha && docRef) docRef.sha256 = sha;
+
+            const fb = _deps.getFirebase();
+            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.uploadAccountDocumentVersion === 'function') {
+                await CrmAccountDocuments.uploadAccountDocumentVersion(fb, {
+                    accountId,
+                    docKey: 'mods_escritura',
+                    fileMeta: docRef,
+                    motivo: notes,
+                    dbSuffix: _deps.getDbSuffix()
+                });
+            }
+            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.recordBiennialConfirmation === 'function') {
+                await CrmAccountDocuments.recordBiennialConfirmation(fb, {
+                    accountId,
+                    docKey: 'mods_escritura',
+                    documentVersionId: (docRef && docRef.versionId) || 'v_mod_' + Date.now(),
+                    confirmationType: 'modification_uploaded',
+                    confirmedNoChanges: false,
+                    notas: notes,
+                    dbSuffix: _deps.getDbSuffix()
+                });
+            }
+
+            const client = _deps.getClients().find(x => x.id === accountId);
+            if (client) {
+                if (!client.documentos) client.documentos = {};
+                client.documentos.mods_escritura = docRef;
+            }
+
+            _deps.alert('✅ Escritura de Modificación al Pacto Social incorporada y vigencia bienal renovada por 2 años.');
+            returnToClientOrOrigin(accountId);
+        } catch (err) {
+            console.error('[ClientDocuments] Error en carga bienal:', err);
+            _deps.alert('Error al incorporar modificación: ' + (err.message || 'Error desconocido'));
+        } finally {
+            _deps.hideLoading();
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = origText || '📤 Cargar Modificación y Renovar Vigencia Bienal';
+            }
+        }
+    }
+
+    async function submitBiennialExpress() {
+        if (typeof document === 'undefined') return;
+        const accountId = (document.getElementById('b3-biennial-account-id') || {}).value;
+        const notes = ((document.getElementById('b3-biennial-confirm-notes') || {}).value || '').trim();
+        const checked = !!(document.getElementById('b3-biennial-confirm-check') || {}).checked;
+        if (!accountId) return _deps.alert('ID de cuenta faltante');
+        if (!notes) return _deps.alert('Debe registrar las observaciones o medio de verificación con el cliente.');
+        if (!checked) return _deps.alert('Debe marcar la casilla de constancia expresa.');
+
+        await confirmBiennialReviewWithoutChanges(accountId, 'escritura', notes);
+    }
+
+    async function confirmBiennialReviewWithoutChanges(accountId, docKey = 'escritura', providedNotes = null) {
+        if (!providedNotes) {
+            // Abrir vista de pantalla completa en lugar de usar confirm() emergente
+            openBiennialConfirmationView(accountId);
+            return;
+        }
+
+        const docLabel = _deps.formatClientDocLabel(docKey);
         try {
             _deps.showLoading('Registrando confirmación bienal...');
             const fb = _deps.getFirebase();
@@ -884,11 +1204,12 @@
                 documentVersionId: verId,
                 confirmationType: 'biennial_no_changes',
                 confirmedNoChanges: true,
+                notas: providedNotes,
                 dbSuffix: _deps.getDbSuffix()
             });
 
             _deps.alert(`✅ Revisión bienal confirmada exitosamente. Validez extendida por 2 años para [${docLabel}].`);
-            _deps.openClientModal(accountId);
+            returnToClientOrOrigin(accountId);
         } catch (err) {
             console.error('[ClientDocuments] Error en confirmación bienal:', err);
             _deps.alert('Error al confirmar revisión bienal: ' + (err.message || 'Error desconocido'));
@@ -897,19 +1218,199 @@
         }
     }
 
-    async function openDossierHistoryModal(clientId) {
+    function openSubstituteDocView(clientId, docKey, docLabel = '', options = {}) {
         if (typeof document === 'undefined') return;
-        const modal = document.getElementById('b3DossierHistoryModal');
+        _captureB3Origin(clientId, options);
+
+        const label = docLabel || _deps.formatClientDocLabel(docKey);
+        const client = _deps.getClients().find(x => x.id === clientId) || {};
+        const existingDoc = (client.documentos && client.documentos[docKey]) || null;
+
+        const accEl = document.getElementById('b3-subst-account-id');
+        if (accEl) accEl.value = clientId;
+        const keyEl = document.getElementById('b3-subst-doc-key');
+        if (keyEl) keyEl.value = docKey;
+        const lblEl = document.getElementById('b3-subst-doc-label');
+        if (lblEl) lblEl.value = label;
+
+        const titleEl = document.getElementById('b3-subst-view-title');
+        if (titleEl) {
+            titleEl.textContent = existingDoc
+                ? `Sustituir Documento: ${label}`
+                : `Cargar Documento al Expediente: ${label}`;
+        }
+        const subEl = document.getElementById('b3-subst-view-subtitle');
+        if (subEl) {
+            subEl.textContent = `Cuenta Comercial: ${client.empresa || `${client.nombres || ''} ${client.apellidos || ''}`.trim() || clientId}`;
+        }
+
+        const fileEl = document.getElementById('b3-subst-file');
+        if (fileEl) fileEl.value = '';
+        const vencEl = document.getElementById('b3-subst-fecha-vencimiento');
+        if (vencEl) vencEl.value = (existingDoc && existingDoc.fechaVencimiento) || '';
+        const motivoEl = document.getElementById('b3-subst-motivo');
+        if (motivoEl) motivoEl.value = existingDoc ? '' : 'Incorporación inicial al expediente';
+        const feedbackEl = document.getElementById('b3-subst-hash-feedback');
+        if (feedbackEl) feedbackEl.innerHTML = '';
+
+        const currentCard = document.getElementById('b3-subst-current-doc-card');
+        if (currentCard) {
+            if (existingDoc) {
+                const currName = existingDoc.name || label;
+                const currSha = existingDoc.sha256 ? `<code style="color:#38bdf8;">${_deps.escapeHtmlDoc(existingDoc.sha256)}</code>` : '<em>Sin hash previo</em>';
+                currentCard.innerHTML = `
+                    <div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:8px; padding:1rem;">
+                        <div style="font-size:0.85rem; font-weight:700; color:#fbbf24; margin-bottom:4px;">📄 Versión Vigente Actual (Pasará a Historial de Versiones)</div>
+                        <div style="font-size:0.8rem; color:white;">Archivo: <strong>${_deps.escapeHtmlDoc(currName)}</strong></div>
+                        <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">Huella SHA-256 actual: ${currSha}</div>
+                    </div>
+                `;
+            } else {
+                currentCard.innerHTML = `
+                    <div style="background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.3); border-radius:8px; padding:1rem;">
+                        <div style="font-size:0.85rem; font-weight:700; color:#38bdf8;">➕ Primera Incorporación de [${_deps.escapeHtmlDoc(label)}]</div>
+                        <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:2px;">Este documento se registrará como Versión 1 vigente en el expediente de la cuenta.</div>
+                    </div>
+                `;
+            }
+        }
+
+        _navigateB3View('b3-substitute-doc-view');
+    }
+
+    async function onSubstFileChanged(inputEl) {
+        if (typeof document === 'undefined') return;
+        const feedbackEl = document.getElementById('b3-subst-hash-feedback');
+        if (!feedbackEl) return;
+        if (!inputEl || !inputEl.files || inputEl.files.length === 0) {
+            feedbackEl.innerHTML = '';
+            return;
+        }
+        const file = inputEl.files[0];
+        const accountId = (document.getElementById('b3-subst-account-id') || {}).value;
+        const docKey = (document.getElementById('b3-subst-doc-key') || {}).value;
+        const client = _deps.getClients().find(x => x.id === accountId) || {};
+        const existingDoc = (client.documentos && client.documentos[docKey]) || null;
+
+        if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.computeFileSha256 === 'function') {
+            feedbackEl.innerHTML = '<span style="color:#94a3b8;">⏳ Calculando huella SHA-256...</span>';
+            try {
+                const sha = await CrmAccountDocuments.computeFileSha256(file);
+                if (existingDoc && existingDoc.sha256 && sha && existingDoc.sha256 === sha) {
+                    feedbackEl.innerHTML = `<div style="padding:8px 12px; background:rgba(239,68,68,0.15); border:1px solid #ef4444; border-radius:6px; color:#fca5a5;">
+                        ⛔ <strong>Archivo idéntico detectado (Duplicado SHA-256):</strong> La huella <code>${sha.slice(0, 16)}…</code> coincide exactamente con la versión vigente actual. Seleccione un archivo actualizado.
+                    </div>`;
+                } else if (sha) {
+                    feedbackEl.innerHTML = `<div style="padding:8px 12px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); border-radius:6px; color:#6ee7b7;">
+                        ✅ <strong>Huella SHA-256 única verificada:</strong> <code style="font-size:0.76rem;">${sha}</code>
+                    </div>`;
+                }
+            } catch (_) {
+                feedbackEl.innerHTML = '';
+            }
+        }
+    }
+
+    async function submitDocumentSubstitution() {
+        if (typeof document === 'undefined') return;
+        const accountId = (document.getElementById('b3-subst-account-id') || {}).value;
+        const docKey = (document.getElementById('b3-subst-doc-key') || {}).value;
+        const docLabel = (document.getElementById('b3-subst-doc-label') || {}).value || docKey;
+        const fileEl = document.getElementById('b3-subst-file');
+        const fechaVencimiento = ((document.getElementById('b3-subst-fecha-vencimiento') || {}).value || '').trim();
+        const motivo = ((document.getElementById('b3-subst-motivo') || {}).value || '').trim();
+
+        if (!accountId || !docKey) return _deps.alert('Datos de cuenta o tipo de documento incompletos.');
+        if (!fileEl || !fileEl.files || fileEl.files.length === 0) return _deps.alert('Debe seleccionar un archivo.');
+        if (!motivo) return _deps.alert('Debe especificar el motivo de carga o sustitución.');
+
+        const file = fileEl.files[0];
+        const client = _deps.getClients().find(x => x.id === accountId);
+        if (!client) return _deps.alert('Cliente no encontrado.');
+
+        const existingDoc = (client.documentos && client.documentos[docKey]) || null;
+        const btn = document.getElementById('b3-btn-submit-subst');
+        const origText = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Verificando SHA-256 y subiendo...';
+        }
+
+        try {
+            let sha = null;
+            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.computeFileSha256 === 'function') {
+                sha = await CrmAccountDocuments.computeFileSha256(file);
+            }
+            if (existingDoc && existingDoc.sha256 && sha && existingDoc.sha256 === sha) {
+                return _deps.alert('⛔ Archivo duplicado rechazado: el documento seleccionado tiene exactamente el mismo hash SHA-256 que la versión vigente.');
+            }
+
+            _deps.showLoading('Subiendo nueva versión documental a Storage...');
+            const isLegal = ['escritura', 'credencial', 'nit', 'nrc', 'mods_escritura'].includes(docKey);
+            const docRef = await _deps.uploadFileToStorage(file, 'clientes', { clientId: accountId, isLegal });
+            if (sha && docRef) docRef.sha256 = sha;
+            if (fechaVencimiento && docRef) docRef.fechaVencimiento = fechaVencimiento;
+            if (motivo && docRef) docRef.motivoSustitucion = motivo;
+
+            const fb = _deps.getFirebase();
+            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.uploadAccountDocumentVersion === 'function') {
+                await CrmAccountDocuments.uploadAccountDocumentVersion(fb, {
+                    accountId,
+                    docKey,
+                    fileMeta: docRef,
+                    fechaVencimiento: fechaVencimiento || null,
+                    motivo,
+                    dbSuffix: _deps.getDbSuffix()
+                });
+            } else {
+                const clientsModule = _deps.getCrmClients();
+                const clientUpdate = JSON.parse(JSON.stringify(client));
+                clientUpdate.baseDocumentos = (client.documentos && typeof client.documentos === 'object')
+                    ? JSON.parse(JSON.stringify(client.documentos))
+                    : {};
+                if (!clientUpdate.documentos) clientUpdate.documentos = {};
+                clientUpdate.documentos[docKey] = docRef;
+                clientUpdate.motivosSustitucion = { [docKey]: motivo };
+                await clientsModule.updateClient(fb, {
+                    id: accountId,
+                    client: clientUpdate,
+                    dbSuffix: _deps.getDbSuffix(),
+                    confirmReview: false
+                });
+            }
+
+            if (!client.documentos) client.documentos = {};
+            client.documentos[docKey] = docRef;
+
+            _deps.alert(`✅ Documento [${docLabel}] actualizado y versionado exitosamente.`);
+            returnToClientOrOrigin(accountId);
+            _deps.renderClientsTable();
+        } catch (err) {
+            console.error('[ClientDocuments] Error en sustitución documental:', err);
+            _deps.alert('Error al guardar documento: ' + (err.message || 'Error desconocido'));
+        } finally {
+            _deps.hideLoading();
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = origText || '📤 Guardar Nueva Versión Vigente';
+            }
+        }
+    }
+
+    async function openDossierHistoryView(clientId, options = {}) {
+        if (typeof document === 'undefined') return;
+        _captureB3Origin(clientId, options);
         const bodyEl = document.getElementById('b3-history-modal-body');
         const subTitle = document.getElementById('b3-history-account-subtitle');
-        if (!modal || !bodyEl) return;
+        if (!bodyEl) return;
 
         const client = _deps.getClients().find(x => x.id === clientId) || {};
         if (subTitle) {
-            subTitle.textContent = `Cuenta: ${client.empresa || client.nombres || clientId} — Trazabilidad histórica completa`;
+            subTitle.textContent = `Cuenta Comercial: ${client.empresa || client.nombres || clientId} — Trazabilidad histórica completa`;
         }
         bodyEl.innerHTML = '<div style="text-align:center; padding:2.5rem; color:var(--text-muted);"><span style="font-size:1.5rem;">⏳</span><br>Recuperando expediente digital...</div>';
-        modal.style.display = 'flex';
+
+        _navigateB3View('b3-dossier-history-view');
 
         try {
             const fb = _deps.getFirebase();
@@ -923,130 +1424,163 @@
             const confirmations = (dossier && dossier.biennialConfirmations) || [];
 
             bodyEl.innerHTML = `
-                <div style="display:flex; flex-direction:column; gap:1.25rem;">
+                <div style="display:flex; flex-direction:column; gap:1.5rem;">
                     <!-- Nombramientos de Representante Legal -->
-                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1rem;">
-                        <h4 style="margin:0 0 0.75rem 0; font-size:0.95rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
-                            <span>⚖️</span> Períodos de Nombramiento de Representante Legal (${terms.length})
-                        </h4>
-                        ${terms.length === 0 ? '<p style="font-size:0.8rem; color:var(--text-muted); margin:0;">Sin nombramientos registrados.</p>' : `
-                            <table class="table-compact" style="width:100%; font-size:0.78rem; text-align:left;">
-                                <thead>
-                                    <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
-                                        <th style="padding:6px;">Representante</th>
-                                        <th style="padding:6px;">Fecha Elección</th>
-                                        <th style="padding:6px;">Vencimiento</th>
-                                        <th style="padding:6px;">Estado</th>
-                                        <th style="padding:6px;">Documentos</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${terms.map(t => `
-                                        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                                            <td style="padding:6px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(t.nombre)}</td>
-                                            <td style="padding:6px;">${_deps.escapeHtmlDoc(t.fechaEleccion || '-')}</td>
-                                            <td style="padding:6px;">${_deps.escapeHtmlDoc(t.fechaVencimiento || 'Indefinido')}</td>
-                                            <td style="padding:6px;">
-                                                <span class="badge" style="background:${t.estado === 'vigente' ? 'rgba(16,185,129,0.2)' : 'rgba(148,163,184,0.15)'}; color:${t.estado === 'vigente' ? '#34d399' : '#94a3b8'};">
-                                                    ${t.estado === 'vigente' ? '🟢 Vigente' : 'Cerrado/Histórico'}
-                                                </span>
-                                            </td>
-                                            <td style="padding:6px;">
-                                                ${t.credencialDoc ? '<span title="Credencial adjunta">📄 Credencial</span>' : ''}
-                                                ${t.duiDoc ? ' <span title="DUI adjunto">🪪 DUI</span>' : ''}
-                                            </td>
+                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1.25rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:0.85rem;">
+                            <h4 style="margin:0; font-size:1rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                                <span>⚖️</span> Historial de Representantes Legales (${terms.length})
+                            </h4>
+                            <button type="button" class="btn-secondary" style="font-size:0.76rem; padding:4px 10px;" onclick="ClientDocuments.openRLElectionView('${clientId}', { originView: '${_b3OriginContext.view}', prospectId: ${_b3OriginContext.prospectId ? `'${_b3OriginContext.prospectId}'` : 'null'} })">
+                                + Registrar Nueva Elección RL
+                            </button>
+                        </div>
+                        ${terms.length === 0 ? '<p style="font-size:0.84rem; color:var(--text-muted); margin:0;">Sin nombramientos registrados.</p>' : `
+                            <div style="overflow-x:auto;">
+                                <table class="table-compact" style="width:100%; font-size:0.82rem; text-align:left;">
+                                    <thead>
+                                        <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
+                                            <th style="padding:8px;">Representante Legal</th>
+                                            <th style="padding:8px;">Fecha Elección</th>
+                                            <th style="padding:8px;">Vencimiento Credencial</th>
+                                            <th style="padding:8px;">Estado</th>
+                                            <th style="padding:8px;">Respaldo Documental</th>
                                         </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        ${terms.map(t => `
+                                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                                <td style="padding:8px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(t.nombre)}</td>
+                                                <td style="padding:8px;">${_deps.escapeHtmlDoc(t.fechaEleccion || '-')}</td>
+                                                <td style="padding:8px;">${_deps.escapeHtmlDoc(t.fechaVencimiento || 'Indefinido')}</td>
+                                                <td style="padding:8px;">
+                                                    <span class="badge" style="background:${t.estado === 'vigente' ? 'rgba(16,185,129,0.2)' : 'rgba(148,163,184,0.15)'}; color:${t.estado === 'vigente' ? '#34d399' : '#94a3b8'};">
+                                                        ${t.estado === 'vigente' ? '🟢 Vigente' : '⚪ Histórico / Cerrado'}
+                                                    </span>
+                                                </td>
+                                                <td style="padding:8px;">
+                                                    ${t.credencialDoc ? '<span class="badge bg-neutral" style="font-size:0.7rem;">📄 Credencial</span>' : ''}
+                                                    ${t.duiDoc ? ' <span class="badge bg-neutral" style="font-size:0.7rem;">🪪 DUI</span>' : ''}
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
                         `}
                     </div>
 
                     <!-- Poderes para Firma de Contratos -->
-                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1rem;">
-                        <h4 style="margin:0 0 0.75rem 0; font-size:0.95rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
-                            <span>📜</span> Poderes Notariales para Firma de Contratos (${powers.length})
-                        </h4>
-                        ${powers.length === 0 ? '<p style="font-size:0.8rem; color:var(--text-muted); margin:0;">Sin poderes registrados.</p>' : `
-                            <table class="table-compact" style="width:100%; font-size:0.78rem; text-align:left;">
-                                <thead>
-                                    <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
-                                        <th style="padding:6px;">Apoderado</th>
-                                        <th style="padding:6px;">Fecha Registro</th>
-                                        <th style="padding:6px;">Estado de Vigencia</th>
-                                        <th style="padding:6px;">Motivo / Observaciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${powers.map(pw => {
-                                        let badgeColor = '#94a3b8';
-                                        let badgeBg = 'rgba(148,163,184,0.15)';
-                                        let label = pw.estado;
-                                        if (pw.estado === 'vigente') {
-                                            badgeColor = '#34d399';
-                                            badgeBg = 'rgba(16,185,129,0.2)';
-                                            label = '🟢 Vigente';
-                                        } else if (pw.estado === 'anulado_por_nueva_eleccion') {
-                                            badgeColor = '#f87171';
-                                            badgeBg = 'rgba(239,68,68,0.2)';
-                                            label = '🔴 Anulado por nueva elección';
-                                        } else if (pw.estado === 'revocado') {
-                                            badgeColor = '#fbbf24';
-                                            badgeBg = 'rgba(245,158,11,0.2)';
-                                            label = '🟠 Revocado';
-                                        }
-                                        return `
-                                            <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                                                <td style="padding:6px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(pw.nombreApoderado)}</td>
-                                                <td style="padding:6px;">${_deps.escapeHtmlDoc(pw.fechaRegistro || (pw.createdAt ? String(pw.createdAt).slice(0, 10) : '-'))}</td>
-                                                <td style="padding:6px;">
-                                                    <span class="badge" style="background:${badgeBg}; color:${badgeColor};">
-                                                        ${label}
-                                                    </span>
-                                                </td>
-                                                <td style="padding:6px; color:var(--text-muted); font-size:0.72rem;">
-                                                    ${_deps.escapeHtmlDoc(pw.motivoRevocacion || pw.motivoAnulacion || pw.notas || '-')}
-                                                </td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
+                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1.25rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:0.85rem;">
+                            <h4 style="margin:0; font-size:1rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                                <span>📜</span> Historial de Poderes para Firma de Contratos (${powers.length})
+                            </h4>
+                            <button type="button" class="btn-secondary" style="font-size:0.76rem; padding:4px 10px;" onclick="ClientDocuments.openGrantPowerView('${clientId}', { originView: '${_b3OriginContext.view}', prospectId: ${_b3OriginContext.prospectId ? `'${_b3OriginContext.prospectId}'` : 'null'} })">
+                                + Registrar Apoderado
+                            </button>
+                        </div>
+                        ${powers.length === 0 ? '<p style="font-size:0.84rem; color:var(--text-muted); margin:0;">Sin poderes registrados.</p>' : `
+                            <div style="overflow-x:auto;">
+                                <table class="table-compact" style="width:100%; font-size:0.82rem; text-align:left;">
+                                    <thead>
+                                        <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
+                                            <th style="padding:8px;">Apoderado</th>
+                                            <th style="padding:8px;">Fecha Registro</th>
+                                            <th style="padding:8px;">Estado de Vigencia</th>
+                                            <th style="padding:8px;">Trazabilidad / Motivo</th>
+                                            <th style="padding:8px; text-align:right;">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${powers.map(pw => {
+                                            const pwId = pw.id || pw.powerId;
+                                            let badgeColor = '#94a3b8';
+                                            let badgeBg = 'rgba(148,163,184,0.15)';
+                                            let label = pw.estado;
+                                            if (pw.estado === 'vigente') {
+                                                badgeColor = '#34d399';
+                                                badgeBg = 'rgba(16,185,129,0.2)';
+                                                label = '🟢 Vigente';
+                                            } else if (pw.estado === 'anulado_por_nueva_eleccion') {
+                                                badgeColor = '#f87171';
+                                                badgeBg = 'rgba(239,68,68,0.2)';
+                                                label = '🔴 Anulado por nueva elección de RL';
+                                            } else if (pw.estado === 'revocado') {
+                                                badgeColor = '#fbbf24';
+                                                badgeBg = 'rgba(245,158,11,0.2)';
+                                                label = '🟠 Revocado';
+                                            }
+                                            const pwDate = pw.fechaRegistro || (pw.documento && pw.documento.fechaOtorgamiento) || (pw.createdAt && typeof pw.createdAt === 'object' && (pw.createdAt._seconds || pw.createdAt.seconds) ? new Date((pw.createdAt._seconds || pw.createdAt.seconds) * 1000).toISOString().slice(0, 10) : (typeof pw.createdAt === 'string' ? pw.createdAt.slice(0, 10) : '-'));
+                                            return `
+                                                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                                    <td style="padding:8px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(pw.nombreApoderado)}</td>
+                                                    <td style="padding:8px;">${_deps.escapeHtmlDoc(pwDate)}</td>
+                                                    <td style="padding:8px;">
+                                                        <span class="badge" style="background:${badgeBg}; color:${badgeColor};">
+                                                            ${label}
+                                                        </span>
+                                                    </td>
+                                                    <td style="padding:8px; color:var(--text-muted); font-size:0.76rem;">
+                                                        ${_deps.escapeHtmlDoc(pw.motivoRevocacion || pw.motivoAnulacion || pw.notas || '-')}
+                                                    </td>
+                                                    <td style="padding:8px; text-align:right;">
+                                                        ${pw.estado === 'vigente' ? `
+                                                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; color:#f87171;" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">Revocar</button>
+                                                            <div id="b3-history-revoke-${pwId}" style="display:none; margin-top:6px; text-align:left;">
+                                                                <input type="text" id="b3-hist-revoke-reason-${pwId}" placeholder="Motivo de revocación..." style="padding:4px 8px; font-size:0.74rem; background:rgba(0,0,0,0.4); border:1px solid #ef4444; border-radius:4px; color:white; width:180px;">
+                                                                <button type="button" class="btn-primary" style="font-size:0.72rem; padding:3px 8px; background:#ef4444;" onclick="ClientDocuments.submitInlineRevokePower('${clientId}', '${pwId}', 'b3-hist-revoke-reason-${pwId}')">Confirmar</button>
+                                                            </div>
+                                                        ` : '-'}
+                                                    </td>
+                                                </tr>
+                                            `;
+                                        }).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
                         `}
                     </div>
 
                     <!-- Confirmaciones Bienales -->
-                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1rem;">
-                        <h4 style="margin:0 0 0.75rem 0; font-size:0.95rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
-                            <span>📆</span> Revisiones Bienales de Documentos Societarios (${confirmations.length})
-                        </h4>
-                        ${confirmations.length === 0 ? '<p style="font-size:0.8rem; color:var(--text-muted); margin:0;">Sin confirmaciones bienales registradas aún.</p>' : `
-                            <table class="table-compact" style="width:100%; font-size:0.78rem; text-align:left;">
-                                <thead>
-                                    <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
-                                        <th style="padding:6px;">Documento</th>
-                                        <th style="padding:6px;">Fecha Confirmación</th>
-                                        <th style="padding:6px;">Confirmado Por</th>
-                                        <th style="padding:6px;">Próxima Revisión</th>
-                                        <th style="padding:6px;">Resultado</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${confirmations.map(cf => `
-                                        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                                            <td style="padding:6px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(_deps.formatClientDocLabel(cf.docKey))}</td>
-                                            <td style="padding:6px;">${_deps.escapeHtmlDoc(cf.confirmedAt ? cf.confirmedAt.slice(0, 10) : '-')}</td>
-                                            <td style="padding:6px;">${_deps.escapeHtmlDoc(cf.confirmedByName || cf.confirmedBy)}</td>
-                                            <td style="padding:6px; color:#34d399;">${_deps.escapeHtmlDoc(cf.nextReviewAt || '-')}</td>
-                                            <td style="padding:6px;">
-                                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399;">
-                                                    ${cf.confirmedNoChanges ? 'Sin Modificaciones' : 'Modificación Incorporada'}
-                                                </span>
-                                            </td>
+                    <div style="background:rgba(255,255,255,0.02); border:1px solid var(--panel-border); border-radius:8px; padding:1.25rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:0.85rem;">
+                            <h4 style="margin:0; font-size:1rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                                <span>📆</span> Historial de Revisiones Bienales del Pacto Social (${confirmations.length})
+                            </h4>
+                            <button type="button" class="btn-secondary" style="font-size:0.76rem; padding:4px 10px;" onclick="ClientDocuments.openBiennialConfirmationView('${clientId}', { originView: '${_b3OriginContext.view}', prospectId: ${_b3OriginContext.prospectId ? `'${_b3OriginContext.prospectId}'` : 'null'} })">
+                                + Registrar Confirmación Bienal
+                            </button>
+                        </div>
+                        ${confirmations.length === 0 ? '<p style="font-size:0.84rem; color:var(--text-muted); margin:0;">Sin confirmaciones bienales registradas aún.</p>' : `
+                            <div style="overflow-x:auto;">
+                                <table class="table-compact" style="width:100%; font-size:0.82rem; text-align:left;">
+                                    <thead>
+                                        <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
+                                            <th style="padding:8px;">Documento</th>
+                                            <th style="padding:8px;">Fecha Confirmación</th>
+                                            <th style="padding:8px;">Confirmado Por</th>
+                                            <th style="padding:8px;">Próxima Revisión</th>
+                                            <th style="padding:8px;">Resultado</th>
                                         </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        ${confirmations.map(cf => `
+                                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                                                <td style="padding:8px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(_deps.formatClientDocLabel(cf.docKey))}</td>
+                                                <td style="padding:8px;">${_deps.escapeHtmlDoc(cf.confirmedAt ? cf.confirmedAt.slice(0, 10) : '-')}</td>
+                                                <td style="padding:8px;">${_deps.escapeHtmlDoc(cf.confirmedByName || cf.confirmedBy)}</td>
+                                                <td style="padding:8px; color:#34d399;">${_deps.escapeHtmlDoc(cf.nextReviewAt || '-')}</td>
+                                                <td style="padding:8px;">
+                                                    <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399;">
+                                                        ${cf.confirmedNoChanges ? 'Sin Modificaciones' : 'Modificación Incorporada'}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
                         `}
                     </div>
                 </div>
@@ -1056,6 +1590,8 @@
             bodyEl.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--danger);"><p>Error al cargar el expediente: ${_deps.escapeHtmlDoc(e.message || 'Error desconocido')}</p></div>`;
         }
     }
+
+    const openDossierHistoryModal = openDossierHistoryView;
 
     const ClientDocuments = {
         init: initClientDocuments,
@@ -1067,22 +1603,41 @@
         toggleClientDocSubstForm,
         cancelClientDocSubstForm,
         uploadClientDocumentFromClosing,
-        // Block B3 exports
+        // Block B3 Full-Screen Views & Actions
+        getCurrentAccountId,
+        returnToClientOrOrigin,
+        previewFileHash,
+        openRLElectionView,
         openRLElectionModal,
         onRLContactSelected,
         submitLegalRepresentativeElection,
+        openGrantPowerView,
         openGrantPowerModal,
         submitGrantContractPower,
+        toggleInlineRevokePower,
+        submitInlineRevokePower,
         revokeContractPower,
+        openBiennialConfirmationView,
+        submitBiennialUpload,
+        submitBiennialExpress,
         confirmBiennialReviewWithoutChanges,
+        openSubstituteDocView,
+        onSubstFileChanged,
+        submitDocumentSubstitution,
+        openDossierHistoryView,
         openDossierHistoryModal,
         _deps
     };
 
     if (typeof window !== 'undefined') {
-        window.openRLElectionModal = openRLElectionModal;
-        window.openGrantPowerModal = openGrantPowerModal;
-        window.openDossierHistoryModal = openDossierHistoryModal;
+        window.openRLElectionModal = openRLElectionView;
+        window.openRLElectionView = openRLElectionView;
+        window.openGrantPowerModal = openGrantPowerView;
+        window.openGrantPowerView = openGrantPowerView;
+        window.openDossierHistoryModal = openDossierHistoryView;
+        window.openDossierHistoryView = openDossierHistoryView;
+        window.openBiennialConfirmationView = openBiennialConfirmationView;
+        window.openSubstituteDocView = openSubstituteDocView;
         window.revokeContractPower = revokeContractPower;
         window.confirmBiennialReviewWithoutChanges = confirmBiennialReviewWithoutChanges;
         window.onRLContactSelected = onRLContactSelected;

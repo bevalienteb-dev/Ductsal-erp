@@ -401,15 +401,60 @@
         }
     }
 
-    function openClientModal(clientId = null) {
+    let _clientViewOrigin = { view: 'clients-view', prospectId: null, fromNewProspect: false };
+
+    function _navigateView(viewId) {
+        if (typeof showView === 'function') {
+            showView(viewId);
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView(viewId);
+        }
+    }
+
+    function openClientModal(clientId = null, options = {}) {
         if (typeof document === 'undefined') return;
+
+        // Determinar origen de navegación para retorno limpio desde la vista de pantalla completa
+        const newProspectEl = document.getElementById('newProspectModal');
+        const detailViewEl = document.getElementById('detail-view');
+        if (options && options.originView) {
+            _clientViewOrigin = {
+                view: options.originView,
+                prospectId: options.prospectId || null,
+                fromNewProspect: false
+            };
+        } else if (newProspectEl && newProspectEl.style && newProspectEl.style.display === 'block') {
+            _clientViewOrigin = { view: 'list-view', prospectId: null, fromNewProspect: true };
+        } else if (detailViewEl && detailViewEl.classList && typeof detailViewEl.classList.contains === 'function' && detailViewEl.classList.contains('active')) {
+            const currentId = (typeof window !== 'undefined' && window.currentDetailId) ? window.currentDetailId : null;
+            _clientViewOrigin = { view: 'detail-view', prospectId: currentId, fromNewProspect: false };
+        } else {
+            _clientViewOrigin = { view: 'clients-view', prospectId: null, fromNewProspect: false };
+        }
+
         const form = document.getElementById('clientForm');
         if (form && typeof form.reset === 'function') form.reset();
         const idInput = document.getElementById('client-id-edit');
         if (idInput) idInput.value = '';
 
-        const errs = document.querySelectorAll('#clientForm .input-error');
-        if (errs && errs.forEach) errs.forEach(el => el.classList.remove('input-error'));
+        if (typeof document.querySelectorAll === 'function') {
+            const errs = document.querySelectorAll('#clientForm .input-error');
+            if (errs && errs.forEach) errs.forEach(el => el.classList.remove('input-error'));
+        }
+
+        const contextTitleEl = document.getElementById('client-view-context-title');
+        const contextSubEl = document.getElementById('client-view-context-subtitle');
+        const originBadgeBox = document.getElementById('client-view-origin-badge-box');
+        const originBadge = document.getElementById('client-view-origin-badge');
+        const headerContactsBtn = document.getElementById('btn-client-header-contacts');
+        const headerB3HistoryBtn = document.getElementById('btn-client-header-b3-history');
+
+        if (_clientViewOrigin.view === 'detail-view' && _clientViewOrigin.prospectId) {
+            if (originBadgeBox) originBadgeBox.style.display = 'block';
+            if (originBadge) originBadge.textContent = 'Resolución desde Cierre de Oportunidad';
+        } else {
+            if (originBadgeBox) originBadgeBox.style.display = 'none';
+        }
 
         const clientsList = _deps.getClients();
         if (clientId) {
@@ -424,6 +469,16 @@
                 const tipoEl = document.getElementById('client-tipo');
                 if (tipoEl) tipoEl.value = c.tipo;
                 toggleClientFields();
+
+                const displayName = c.tipo === 'natural'
+                    ? `${c.nombres || ''} ${c.apellidos || ''}`.trim()
+                    : (c.empresa || 'Cuenta Comercial');
+                if (contextTitleEl) contextTitleEl.textContent = `${displayName}`;
+                if (contextSubEl) {
+                    contextSubEl.textContent = c.tipo === 'juridica'
+                        ? `Persona Jurídica · NIT: ${c.nit || 'Pendiente'} · NRC: ${c.nrc || 'Pendiente'} · Vista de pantalla completa`
+                        : `Persona Natural · DUI: ${c.dui || 'Pendiente'} · NIT: ${c.nit || 'Pendiente'} · Vista de pantalla completa`;
+                }
 
                 const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
                 setVal('cli-telefono', c.telefono);
@@ -456,11 +511,15 @@
                 _deps.renderClientExpedienteSection(c);
                 const btnContacts = document.getElementById('btn-client-modal-contacts');
                 if (btnContacts) btnContacts.style.display = 'inline-block';
+                if (headerContactsBtn) headerContactsBtn.style.display = 'inline-block';
+                if (headerB3HistoryBtn) headerB3HistoryBtn.style.display = c.tipo === 'juridica' ? 'inline-block' : 'none';
             }
         } else {
             if (typeof window !== 'undefined') window._activeClientBaseDocs = null;
             const titleEl = document.getElementById('client-modal-title');
             if (titleEl) titleEl.textContent = 'Registrar Cliente';
+            if (contextTitleEl) contextTitleEl.textContent = 'Registrar Nuevo Cliente';
+            if (contextSubEl) contextSubEl.textContent = 'Alta de cuenta comercial, régimen fiscal y expediente digital en vista de pantalla completa';
             const tipoEl = document.getElementById('client-tipo');
             if (tipoEl) tipoEl.value = '';
             const gcEl = document.getElementById('jur-gran-contribuyente');
@@ -471,10 +530,34 @@
             _deps.renderClientExpedienteSection(null);
             const btnContacts = document.getElementById('btn-client-modal-contacts');
             if (btnContacts) btnContacts.style.display = 'none';
+            if (headerContactsBtn) headerContactsBtn.style.display = 'none';
+            if (headerB3HistoryBtn) headerB3HistoryBtn.style.display = 'none';
         }
 
         const modal = document.getElementById('clientModal');
         if (modal) modal.style.display = 'block';
+        _navigateView('client-detail-view');
+    }
+
+    function closeClientDetailView() {
+        if (typeof _deps.cancelPendingClientReservation === 'function') {
+            _deps.cancelPendingClientReservation();
+        }
+        if (typeof document !== 'undefined') {
+            const modal = document.getElementById('clientModal');
+            if (modal && modal.style) modal.style.display = 'none';
+        }
+        if (_clientViewOrigin && _clientViewOrigin.fromNewProspect) {
+            _navigateView('list-view');
+        } else if (_clientViewOrigin && _clientViewOrigin.view === 'detail-view' && _clientViewOrigin.prospectId) {
+            _navigateView('detail-view');
+            if (typeof window !== 'undefined' && typeof window.openDetail === 'function') {
+                window.openDetail(_clientViewOrigin.prospectId);
+            }
+        } else {
+            _navigateView((_clientViewOrigin && _clientViewOrigin.view) || 'clients-view');
+            renderClientsTable();
+        }
     }
 
     async function saveClient(e) {
@@ -559,8 +642,15 @@
 
             _deps.closeModal('clientModal');
             if (typeof document !== 'undefined' && document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block') {
+                _navigateView('list-view');
                 selectClientInSelector(c.id, getClientName(c.id));
+            } else if (_clientViewOrigin && _clientViewOrigin.view === 'detail-view' && _clientViewOrigin.prospectId) {
+                _navigateView('detail-view');
+                if (typeof window !== 'undefined' && typeof window.openDetail === 'function') {
+                    window.openDetail(_clientViewOrigin.prospectId);
+                }
             } else {
+                _navigateView('clients-view');
                 renderClientsTable();
             }
         } catch (err) {
@@ -731,6 +821,8 @@
         toggleClientFields,
         setClientFieldError,
         openClientModal,
+        openClientDetailView: openClientModal,
+        closeClientDetailView,
         saveClient,
         renderClientSelect,
         selectClientInSelector,

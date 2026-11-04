@@ -2442,6 +2442,10 @@ function openModal(id) {
 function closeModal(id) {
     if (id === 'clientModal') {
         cancelPendingClientReservation();
+        if (typeof ClientsUI !== 'undefined' && typeof ClientsUI.closeClientDetailView === 'function') {
+            ClientsUI.closeClientDetailView();
+            return;
+        }
     }
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -3067,7 +3071,7 @@ async function runB3CloseValidation(prospectId, accountId) {
             prospectId,
             requiereContrato,
             firmante,
-            dbSuffix: (typeof DB_SUFFIX !== 'undefined' ? DB_SUFFIX : (typeof _deps !== 'undefined' && _deps.getDbSuffix ? _deps.getDbSuffix() : ((typeof window !== 'undefined' && window.DB_SUFFIX) ? window.DB_SUFFIX : '_prod')))
+            dbSuffix: (typeof _deps !== 'undefined' && typeof _deps.getDbSuffix === 'function') ? _deps.getDbSuffix() : ((typeof window !== 'undefined' && window.DB_SUFFIX) ? window.DB_SUFFIX : DB_SUFFIX)
         });
 
         if (res.valid) {
@@ -3078,11 +3082,17 @@ async function runB3CloseValidation(prospectId, accountId) {
             `;
         } else {
             resEl.innerHTML = `
-                <div style="font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; padding:10px; border-radius:6px;">
+                <div style="font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; padding:12px; border-radius:6px;">
                     <div style="font-weight:700; margin-bottom:4px;">⚠️ Validación Backend: Requisitos pendientes para el cierre:</div>
-                    <ul style="margin:0; padding-left:1.2rem; line-height:1.4;">
+                    <ul style="margin:0 0 10px 0; padding-left:1.2rem; line-height:1.4;">
                         ${(res.blockingReasons || []).map(r => `<li>${escapeHtmlDoc(r)}</li>`).join('')}
                     </ul>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; padding-top:8px; border-top:1px dashed rgba(239,68,68,0.4);">
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openRLElectionView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">⚖️ Registrar / Cambiar RL</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openGrantPowerView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">📜 Registrar Apoderado / Poder</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openBiennialConfirmationView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">🗓️ Confirmación Bienal</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="openClientModal('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">✏️ Resolver en Ficha de Cliente</button>
+                    </div>
                 </div>
             `;
         }
@@ -3501,15 +3511,18 @@ function renderClosingDocumentationPanel(p) {
 
         <!-- SECCIÓN 1: EXPEDIENTE DOCUMENTAL DEL CLIENTE (Contextual 4B.4) -->
         <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
                 <div>
                     <h5 style="margin: 0; color: var(--brand-gold); font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
                         <span>📇 Documentación del Cliente</span>
                     </h5>
                     <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
-                        Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel.
+                        Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel o en vista de pantalla completa.
                     </div>
                 </div>
+                <button type="button" class="btn-secondary" style="font-size: 0.75rem; padding: 4px 10px;" onclick="openClientModal('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                    ✏️ Editar Cliente en Vista Completa
+                </button>
             </div>
 
             <!-- Listado de documentos del cliente con estado, consulta e inline upload/substitution -->
@@ -3520,14 +3533,28 @@ function renderClosingDocumentationPanel(p) {
 
         <!-- SECCIÓN B3: REQUERIMIENTO CONTRACTUAL Y PODERES DE FIRMA (Fase 2 - B3) -->
         <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
                 <div>
                     <h5 style="margin: 0; color: #60a5fa; font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
                         <span>⚖️ Control Contractual y Representación Legal (B3)</span>
                     </h5>
                     <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
-                        Definición explícita de suscripción de contrato comercial y acreditación del firmante societario.
+                        Definición explícita de suscripción de contrato comercial y acreditación del firmante societario en vistas de pantalla completa.
                     </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #ef4444; color: #f87171;" onclick="ClientDocuments.openRLElectionView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        ⚖️ Registrar / Cambiar RL
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #38bdf8; color: #38bdf8;" onclick="ClientDocuments.openGrantPowerView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        📜 Registrar Apoderado
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #34d399; color: #34d399;" onclick="ClientDocuments.openBiennialConfirmationView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        🗓️ Confirmación Bienal
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #fbbf24; color: #fbbf24;" onclick="ClientDocuments.openDossierHistoryView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        🗂️ Historial B3
+                    </button>
                 </div>
             </div>
 

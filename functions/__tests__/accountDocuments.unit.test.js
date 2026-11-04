@@ -731,4 +731,52 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       expect(dossier.tipoPersona).toBe('juridica');
     });
   });
+
+  describe('8. Auditoría de UI B3 y Editar Cliente: Prohibición de Popups y Vistas de Pantalla Completa', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const ROOT = path.join(__dirname, '..', '..');
+    const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const clientDocsJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'client_documents.js'), 'utf8');
+    const clientsUiJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
+    const docViewerJs = fs.readFileSync(path.join(ROOT, 'core', 'document_viewer.js'), 'utf8');
+
+    test('index.html integra todas las vistas operativas de B3 y Editar Cliente como .view-section de pantalla completa dentro de <main>', () => {
+      const mainStart = indexHtml.indexOf('<main');
+      const mainEnd = indexHtml.indexOf('</main>');
+      expect(mainStart).toBeGreaterThan(0);
+      expect(mainEnd).toBeGreaterThan(mainStart);
+      const mainContent = indexHtml.slice(mainStart, mainEnd);
+
+      expect(mainContent).toContain('id="client-detail-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-rl-election-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-grant-power-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-dossier-history-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-biennial-confirmation-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-substitute-doc-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-doc-version-history-view" class="view-section"');
+    });
+
+    test('No existen modales flotantes (#b3RLElectionModal, #b3PowerModal, #b3DossierHistoryModal, #docVersionHistoryModal) ni #clientModal con clase .modal', () => {
+      expect(indexHtml).not.toContain('id="b3RLElectionModal"');
+      expect(indexHtml).not.toContain('id="b3PowerModal"');
+      expect(indexHtml).not.toContain('id="b3DossierHistoryModal"');
+      expect(indexHtml).not.toMatch(/<div[^>]+id="clientModal"[^>]+class="[^"]*(?:^|\s)modal(?:\s|")/);
+      expect(clientDocsJs).not.toContain('b3RLElectionModal');
+      expect(clientDocsJs).not.toContain('b3PowerModal');
+      expect(clientDocsJs).not.toContain('b3DossierHistoryModal');
+      expect(docViewerJs).not.toContain('docVersionHistoryModal');
+    });
+
+    test('No se utilizan popups prompt() en la revocación de poderes ni flujos B3, y openClientModal navega a client-detail-view', () => {
+      expect(clientDocsJs).not.toMatch(/\bprompt\s*\(/);
+      expect(clientsUiJs).toContain("_navigateView('client-detail-view')");
+      expect(clientDocsJs).toContain("_navigateB3View('b3-rl-election-view')");
+      expect(clientDocsJs).toContain("_navigateB3View('b3-grant-power-view')");
+      expect(clientDocsJs).toContain("_navigateB3View('b3-dossier-history-view')");
+      expect(clientDocsJs).toContain("_navigateB3View('b3-biennial-confirmation-view')");
+      expect(clientDocsJs).toContain("_navigateB3View('b3-substitute-doc-view')");
+      expect(docViewerJs).toContain("showView('b3-doc-version-history-view')");
+    });
+  });
 });

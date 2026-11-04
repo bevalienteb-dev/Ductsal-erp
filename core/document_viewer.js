@@ -920,42 +920,47 @@
     }
 
     // -------------------------------------------------------------------------
-    // 7. Historial de Versiones Documentales
+    // 7. Historial de Versiones Documentales (Vista de Pantalla Completa)
     // -------------------------------------------------------------------------
+    let _versionHistoryReturnOrigin = { view: 'client-detail-view', entityType: null, entityId: null };
+
     async function showDocumentVersionHistory(entityType, entityId, docKey, label) {
         if (typeof document === 'undefined') return;
-        let modal = document.getElementById('docVersionHistoryModal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'docVersionHistoryModal';
-            modal.className = 'modal';
-            modal.style.zIndex = '160';
-            modal.style.display = 'none';
-            modal.style.position = 'fixed';
-            modal.style.top = '0';
-            modal.style.left = '0';
-            modal.style.width = '100vw';
-            modal.style.height = '100vh';
-            modal.style.background = 'rgba(0, 0, 0, 0.7)';
-            modal.style.alignItems = 'center';
-            modal.style.justifyContent = 'center';
-            modal.innerHTML = `
-                <div class="modal-content glass-panel" style="width: 90vw; max-width: 850px; max-height: 85vh; overflow-y: auto; padding: 1.5rem; background: var(--panel-bg, #1e293b); border: 1px solid var(--panel-border, #334155); border-radius: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border, #334155); padding-bottom: 0.75rem; margin-bottom: 1rem;">
-                        <h3 id="docVersionHistoryTitle" style="margin: 0; color: var(--brand-gold, #d4af37);">📜 Historial de Versiones</h3>
-                        <button type="button" class="btn-secondary" onclick="closeDocumentVersionHistory()" style="padding: 2px 8px; font-size: 0.85rem; cursor: pointer;">✖️ Cerrar</button>
-                    </div>
+
+        // Registrar vista de origen para el botón "← Volver"
+        const detailViewEl = document.getElementById('detail-view');
+        if (detailViewEl && detailViewEl.classList && typeof detailViewEl.classList.contains === 'function' && detailViewEl.classList.contains('active')) {
+            _versionHistoryReturnOrigin = { view: 'detail-view', entityType, entityId };
+        } else {
+            _versionHistoryReturnOrigin = { view: 'client-detail-view', entityType, entityId };
+        }
+
+        let viewSection = document.getElementById('b3-doc-version-history-view');
+        if (!viewSection && document.body && typeof document.createElement === 'function') {
+            viewSection = document.createElement('section');
+            viewSection.id = 'b3-doc-version-history-view';
+            viewSection.className = 'view-section';
+            viewSection.innerHTML = `
+                <div class="card glass-panel" style="padding: 1.5rem;">
+                    <h2 id="docVersionHistoryTitle">📜 Historial de Versiones</h2>
                     <div id="docVersionHistoryBody"></div>
                 </div>
             `;
-            document.body.appendChild(modal);
+            document.body.appendChild(viewSection);
         }
 
         const titleEl = document.getElementById('docVersionHistoryTitle');
         const bodyEl = document.getElementById('docVersionHistoryBody');
         if (titleEl) titleEl.textContent = `📜 Historial de Versiones: ${label}`;
         if (bodyEl) bodyEl.innerHTML = `<div style="text-align:center; padding: 2rem; color: var(--text-secondary, #94a3b8);">⏳ Consultando historial de versiones...</div>`;
-        modal.style.display = 'flex';
+
+        if (typeof showView === 'function') {
+            showView('b3-doc-version-history-view');
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView('b3-doc-version-history-view');
+        } else if (viewSection && viewSection.style) {
+            viewSection.style.display = 'block';
+        }
 
         try {
             const firestoreInstance = (typeof _deps !== 'undefined' && _deps.getFirestore)
@@ -1024,6 +1029,7 @@
                     : `<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #64748b; padding: 2px 6px; border-radius: 4px;">Histórica</span>`;
 
                 const fileName = escapeHtmlDoc(v.name || 'Documento');
+                const shaBadge = v.sha256 ? `<div style="font-size:0.68rem; color:#38bdf8; font-family:monospace;">SHA-256: ${escapeHtmlDoc(String(v.sha256).slice(0, 16))}…</div>` : '';
                 const dateStr = v.creadoEn ? v.creadoEn.replace('T', ' ').slice(0, 16) : '-';
                 const userStr = escapeHtmlDoc(v.subidoPorNombre || v.actualizadoPor || (v.esHeredado ? 'Registro anterior' : 'Comercial'));
                 const motivoStr = escapeHtmlDoc(v.motivoSustitucion || (v.esHeredado ? 'Documento heredado de versiones anteriores' : 'Carga inicial'));
@@ -1042,7 +1048,7 @@
                     <tr style="border-bottom: 1px solid var(--panel-border, #334155); background: ${isVigente ? 'rgba(16, 185, 129, 0.04)' : 'transparent'};">
                         <td style="padding: 8px; font-weight: bold; color: ${isVigente ? 'var(--brand-gold, #d4af37)' : 'var(--text-secondary, #94a3b8)'};">v${v.versionNumber || 1}</td>
                         <td style="padding: 8px;">${statusBadge}</td>
-                        <td style="padding: 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${fileName}">${fileName}</td>
+                        <td style="padding: 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${fileName}">${fileName}${shaBadge}</td>
                         <td style="padding: 8px; white-space: nowrap; color: var(--text-muted, #64748b);">${dateStr}</td>
                         <td style="padding: 8px; color: var(--text-secondary, #94a3b8);">${userStr}</td>
                         <td style="padding: 8px; font-style: ${v.motivoSustitucion ? 'normal' : 'italic'}; color: ${v.motivoSustitucion ? 'var(--text-primary, white)' : 'var(--text-muted, #64748b)'};">${motivoStr}</td>
@@ -1074,8 +1080,15 @@
 
     function closeDocumentVersionHistory() {
         if (typeof document === 'undefined') return;
-        const modal = document.getElementById('docVersionHistoryModal');
-        if (modal) modal.style.display = 'none';
+        const viewSection = document.getElementById('b3-doc-version-history-view');
+        const targetView = (_versionHistoryReturnOrigin && _versionHistoryReturnOrigin.view) || 'client-detail-view';
+        if (typeof showView === 'function') {
+            showView(targetView);
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView(targetView);
+        } else if (viewSection && viewSection.style) {
+            viewSection.style.display = 'none';
+        }
     }
 
     // -------------------------------------------------------------------------

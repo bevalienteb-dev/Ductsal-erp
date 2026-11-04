@@ -15,7 +15,7 @@ const AUTH_PORT = 9099;
 const HTTP_PORT = 8124;
 const CDP_PORT = 9226;
 
-const ARTIFACT_SCREENSHOT_DIR = '/Users/Benjamin/.gemini/antigravity-ide/brain/5dd4ce8f-9e29-4005-a65c-8fbec5f53d33/screenshots';
+const ARTIFACT_SCREENSHOT_DIR = '/Users/Benjamin/.gemini/antigravity/brain/4066da1e-07cd-4566-978a-48601af7384f';
 const DOCS_SCREENSHOT_DIR = path.resolve(__dirname, '../docs/screenshots');
 
 const MIME_TYPES = {
@@ -385,37 +385,63 @@ async function main() {
       loggedIn = await evalScript(`
         (() => {
           const s = document.getElementById('login-screen');
-          return s && s.style.display === 'none';
+          const hasClient = (typeof clients !== 'undefined' && Array.isArray(clients) && clients.some(c => c.id === 'C1'));
+          return s && s.style.display === 'none' && hasClient;
         })()
       `);
       if (loggedIn) break;
     }
-    console.log('  Estado login:', loggedIn ? 'AUTENTICADO' : 'ERROR');
+    console.log('  Estado login y carga de datos:', loggedIn ? 'AUTENTICADO Y SINCRONIZADO' : 'ERROR');
+
+    async function assertFullScreenView(expectedViewId, stepDesc) {
+      const check = await evalScript(`
+        (() => {
+          const viewEl = document.getElementById('${expectedViewId}');
+          const isActive = !!(viewEl && viewEl.classList.contains('active'));
+          const openModals = Array.from(document.querySelectorAll('.modal'))
+            .filter(m => {
+              const st = window.getComputedStyle(m);
+              return st.display !== 'none' && st.visibility !== 'hidden';
+            })
+            .map(m => m.id || m.className);
+          return { isActive, openModals };
+        })()
+      `);
+      if (!check.isActive) {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) La vista de pantalla completa #${expectedViewId} NO está activa.`);
+      }
+      if (check.openModals.length > 0) {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) Se detectaron modales abiertos prohibidos: ${check.openModals.join(', ')}`);
+      }
+      console.log(`  ✅ [AUDITORÍA UI] Vista activa: #${expectedViewId} | Modales abiertos: 0`);
+    }
 
     // =========================================================================
-    // 1. Expediente Documental B3 en Ficha de Cliente
+    // 1. Vista de Pantalla Completa «Editar Cliente» y Expediente Documental B3
     // =========================================================================
-    console.log('\n[PASO 1] Abriendo Ficha del Cliente C1 y Expediente Documental B3...');
+    console.log('\n[PASO 1] Abriendo Vista de Pantalla Completa «Editar Cliente» (C1) y Expediente Documental B3...');
     await evalScript(`
       (() => {
         showView('clients-view');
         openClientModal('C1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_01_expediente_documental_b3.png', 'Expediente Documental B3 de la cuenta en Directorio de Clientes');
+    await new Promise(r => setTimeout(r, 1800));
+    await assertFullScreenView('client-detail-view', 'Editar Cliente y Expediente B3');
+    await saveScreenshot('b3_01_expediente_documental_b3.png', 'Vista de pantalla completa «Editar Cliente» y Expediente Documental B3');
 
     // =========================================================================
-    // 2. Registro de Elección de Representante Legal
+    // 2. Vista de Pantalla Completa: Registrar o Cambiar Representante Legal
     // =========================================================================
-    console.log('\n[PASO 2] Abriendo modal de Nueva Elección de Representante Legal...');
+    console.log('\n[PASO 2] Abriendo Vista de Pantalla Completa de Nueva Elección de Representante Legal...');
     await evalScript(`
       (() => {
-        if (typeof openRLElectionModal === 'function') openRLElectionModal('C1');
+        ClientDocuments.openRLElectionView('C1');
       })()
     `);
     await new Promise(r => setTimeout(r, 1200));
-    await saveScreenshot('b3_02_modal_eleccion_rl.png', 'Modal de Nueva Elección de Representante Legal con advertencia legal B3');
+    await assertFullScreenView('b3-rl-election-view', 'Registrar o Cambiar Representante Legal');
+    await saveScreenshot('b3_02_modal_eleccion_rl.png', 'Vista de pantalla completa para Registrar o Cambiar Representante Legal + DUI y Credencial');
 
     console.log('  Completando datos de nombramiento de RL (Ana Gómez)...');
     await evalScript(`
@@ -425,11 +451,7 @@ async function main() {
           for (let i = 0; i < sel.options.length; i++) {
             if (sel.options[i].value === 'CONT_ANA') { sel.selectedIndex = i; break; }
           }
-          if (typeof ClientDocuments !== 'undefined' && typeof ClientDocuments.onRLContactSelected === 'function') {
-            ClientDocuments.onRLContactSelected('CONT_ANA');
-          } else if (typeof onRLContactSelected === 'function') {
-            onRLContactSelected('CONT_ANA');
-          }
+          ClientDocuments.onRLContactSelected('CONT_ANA');
         }
         const nombreEl = document.getElementById('b3-rl-nombre');
         if (nombreEl) nombreEl.value = 'Ana Gómez';
@@ -438,7 +460,6 @@ async function main() {
         const fVencEl = document.getElementById('b3-rl-fecha-vencimiento');
         if (fVencEl) fVencEl.value = '2027-01-15';
 
-        // Enviar formulario llamando directamente al backend
         const fakeCred = { name: 'Credencial_Ana_Gomez_2024_2027.pdf', storagePath: 'prod_files/clients/C1/legal/credencial_ana.pdf', sha256: 'a1'.repeat(32) };
         const fakeDui = { name: 'DUI_Ana_Gomez.pdf', storagePath: 'prod_files/clients/C1/identificacion/dui_ana.pdf', sha256: 'b1'.repeat(32), fechaVencimiento: '2030-05-20' };
 
@@ -456,25 +477,27 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        // Cerrar modal de elección y recargar ficha de cliente
-        if (typeof closeModal === 'function') closeModal('b3RLElectionModal');
-        if (typeof openClientModal === 'function') openClientModal('C1');
+        openClientModal('C1');
+        const expSec = document.getElementById('client-expediente-section');
+        if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_03_rl_registrado_vigente.png', 'Representante Legal Ana Gómez acreditada con estado vigente en el expediente');
+    await new Promise(r => setTimeout(r, 1800));
+    await assertFullScreenView('client-detail-view', 'RL Registrado Vigente en Ficha de Cliente');
+    await saveScreenshot('b3_03_rl_registrado_vigente.png', 'Representante Legal Ana Gómez acreditada con estado vigente en vista de pantalla completa');
 
     // =========================================================================
-    // 3. Otorgamiento de Poder para Firma de Contratos
+    // 3. Vista de Pantalla Completa: Registrar Apoderado y Poder
     // =========================================================================
-    console.log('\n[PASO 3] Abriendo modal para otorgar poder a Carlos López...');
+    console.log('\n[PASO 3] Abriendo Vista de Pantalla Completa para Registrar Apoderado (Carlos López)...');
     await evalScript(`
       (() => {
-        if (typeof openGrantPowerModal === 'function') openGrantPowerModal('C1');
+        ClientDocuments.openGrantPowerView('C1');
       })()
     `);
     await new Promise(r => setTimeout(r, 1200));
-    await saveScreenshot('b3_04_modal_otorgar_poder.png', 'Modal para otorgar Poder Notarial de Firma de Contratos');
+    await assertFullScreenView('b3-grant-power-view', 'Registrar Apoderados y Documentos de Poder');
+    await saveScreenshot('b3_04_modal_otorgar_poder.png', 'Vista de pantalla completa para Registrar Apoderado e Incorporar Poder Notarial');
 
     console.log('  Completando y registrando poder notarial...');
     await evalScript(`
@@ -500,12 +523,14 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        if (typeof closeModal === 'function') closeModal('b3PowerModal');
-        if (typeof openClientModal === 'function') openClientModal('C1');
+        openClientModal('C1');
+        const expSec = document.getElementById('client-expediente-section');
+        if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_05_poder_vigente_acreditado.png', 'Apoderado Carlos López con poder notarial vigente acreditado bajo el período de Ana Gómez');
+    await new Promise(r => setTimeout(r, 1800));
+    await assertFullScreenView('client-detail-view', 'Poder Vigente Acreditado');
+    await saveScreenshot('b3_05_poder_vigente_acreditado.png', 'Apoderado Carlos López con poder notarial vigente acreditado en vista de pantalla completa');
 
     // =========================================================================
     // 4. Regla Fundamental B3: Nueva Elección Invalida Atómicamente los Poderes
@@ -529,44 +554,47 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        if (typeof closeModal === 'function') closeModal('b3RLElectionModal');
-        if (typeof openClientModal === 'function') openClientModal('C1');
+        openClientModal('C1');
+        const expSec = document.getElementById('client-expediente-section');
+        if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_06_nueva_eleccion_invalida_poderes.png', 'Nueva elección registrada: nuevo RL Mario Santos y 0 poderes vigentes');
+    await new Promise(r => setTimeout(r, 1800));
+    await assertFullScreenView('client-detail-view', 'Nueva Elección Invalida Poderes');
+    await saveScreenshot('b3_06_nueva_eleccion_invalida_poderes.png', 'Nueva elección registrada: nuevo RL Mario Santos y poderes anteriores anulados');
 
-    console.log('  Abriendo modal de Historial Completo B3...');
+    console.log('  Abriendo Vista de Pantalla Completa de Historial de Representantes y Poderes...');
     await evalScript(`
       (() => {
-        if (typeof openDossierHistoryModal === 'function') openDossierHistoryModal('C1');
+        ClientDocuments.openDossierHistoryView('C1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 1500));
-    await saveScreenshot('b3_07_historial_b3_poderes_anulados.png', 'Historial B3 con auditoría de nombramientos concluidos y poderes anulados por nueva elección');
-
-    await evalScript(`
-      (() => {
-        if (typeof closeModal === 'function') closeModal('b3DossierHistoryModal');
-        const m = document.getElementById('b3DossierHistoryModal');
-        if (m) m.style.display = 'none';
-      })()
-    `);
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 400));
+      const ready = await evalScript(`
+        (() => {
+          const el = document.getElementById('b3-history-modal-body');
+          return !!(el && !el.textContent.includes('Recuperando expediente'));
+        })()
+      `);
+      if (ready) break;
+    }
+    await assertFullScreenView('b3-dossier-history-view', 'Consultar Historial de Representantes Legales y Poderes');
+    await saveScreenshot('b3_07_historial_b3_poderes_anulados.png', 'Vista de pantalla completa de Historial de Representantes Legales, Poderes y Revisiones Bienales');
 
     // =========================================================================
     // 5. Control de Requerimiento de Contrato y Firmantes en Cierre de Oportunidad
     // =========================================================================
-    console.log('\n[PASO 5] Navegando a Cierre Comercial de la Oportunidad P1...');
+    console.log('\n[PASO 5] Navegando a Vista de Cierre Comercial de la Oportunidad P1...');
     await evalScript(`
       (() => {
-        if (typeof closeModal === 'function') closeModal('clientModal');
         showView('list-view');
         openDetail('P1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => setTimeout(r, 2000));
+    await assertFullScreenView('detail-view', 'Vista de Cierre de Oportunidad');
 
-    // Activar checkbox de requerimiento de contrato
     console.log('  Marcando Requerimiento de Contrato Formal B3...');
     await evalScript(`
       (() => {
@@ -575,14 +603,14 @@ async function main() {
           chk.checked = true;
           if (typeof toggleClosingContractSection === 'function') toggleClosingContractSection(true);
         }
-        const target = document.getElementById('closing-b3-contract-wrapper') || document.getElementById('closing-contract-control-section');
-        if (target) target.scrollIntoView({ behavior: 'instant', block: 'center' });
+        const panel = document.getElementById('closing-contract-signatory-panel');
+        if (panel) panel.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
     `);
     await new Promise(r => setTimeout(r, 1000));
-    await saveScreenshot('b3_08_cierre_requiere_contrato.png', 'Panel de Cierre con Requerimiento Contractual y Control de Firmantes desplegado');
+    await assertFullScreenView('detail-view', 'Cierre Requiere Contrato');
+    await saveScreenshot('b3_08_cierre_requiere_contrato.png', 'Vista de Cierre con Requerimiento Contractual y botones integrados de resolución en pantalla completa');
 
-    // Probar selección de apoderado (debe mostrar advertencia de sin poderes vigentes)
     console.log('  Probando selección de firmante Apoderado cuando no hay poderes vigentes...');
     await evalScript(`
       (() => {
@@ -594,32 +622,24 @@ async function main() {
       })()
     `);
     await new Promise(r => setTimeout(r, 1000));
-    await saveScreenshot('b3_09_bloqueo_cierre_sin_poder_valido.png', 'Advertencia de firmante: cuenta sin apoderados con poder vigente');
+    await assertFullScreenView('detail-view', 'Bloqueo Cierre Sin Poder Válido');
+    await saveScreenshot('b3_09_bloqueo_cierre_sin_poder_valido.png', 'Advertencia de firmante en vista de cierre: cuenta sin apoderados con poder vigente');
 
-    // Cambiar a Representante Legal vigente (Mario Santos)
-    console.log('  Seleccionando Representante Legal vigente como firmante...');
+    console.log('  Seleccionando Representante Legal vigente como firmante y pre-validando con backend...');
     await evalScript(`
-      (() => {
+      (async () => {
         const sel = document.getElementById('closing-firmante-tipo');
         if (sel) {
           sel.value = 'representante_legal';
           if (typeof onClosingSignatoryTypeChange === 'function') onClosingSignatoryTypeChange('representante_legal', 'C1');
         }
-      })()
-    `);
-    await new Promise(r => setTimeout(r, 1000));
-
-    // Ejecutar pre-validación B3 con el backend
-    console.log('  Ejecutando Pre-validación B3 con el backend...');
-    await evalScript(`
-      (async () => {
         if (typeof runB3CloseValidation === 'function') await runB3CloseValidation('P1', 'C1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_10_prevalidacion_b3_exitosa.png', 'Pre-validación B3 exitosa con backend: expediente y firmante RL al día');
+    await new Promise(r => setTimeout(r, 1800));
+    await assertFullScreenView('detail-view', 'Prevalidación B3 Exitosa');
+    await saveScreenshot('b3_10_prevalidacion_b3_exitosa.png', 'Pre-validación B3 exitosa con backend en vista de pantalla completa');
 
-    // Finalizar oportunidad exitosamente
     console.log('  Finalizando oportunidad con requerimiento de contrato cumplido...');
     await evalScript(`
       (async () => {
@@ -637,20 +657,26 @@ async function main() {
         openDetail('P1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => setTimeout(r, 2000));
+    await assertFullScreenView('detail-view', 'Oportunidad Ganada con Contrato B3');
     await saveScreenshot('b3_11_oportunidad_ganada_con_contrato_b3.png', 'Oportunidad P1 Ganada con suscripción de contrato formal auditada y conforme');
 
     // =========================================================================
-    // 6. Revisión Bienal de Escritura Societaria
+    // 6. Vista de Pantalla Completa: Revisión Bienal de Pacto Social
     // =========================================================================
-    console.log('\n[PASO 6] Realizando confirmación bienal express sin reformas en Ficha de Cliente...');
+    console.log('\n[PASO 6] Abriendo Vista de Pantalla Completa de Confirmación Bienal...');
     await evalScript(`
       (async () => {
-        showView('clients-view');
-        openClientModal('C1');
+        ClientDocuments.openBiennialConfirmationView('C1');
+        const notesEl = document.getElementById('b3-biennial-confirm-notes');
+        if (notesEl) notesEl.value = 'Confirmación expresa con Departamento Legal del cliente: pacto social vigente sin reformas en los últimos 24 meses.';
+        const chkEl = document.getElementById('b3-biennial-confirm-check');
+        if (chkEl) chkEl.checked = true;
       })()
     `);
-    await new Promise(r => setTimeout(r, 1800));
+    await new Promise(r => setTimeout(r, 1200));
+    await assertFullScreenView('b3-biennial-confirmation-view', 'Vista de Confirmación Bienal');
+    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Vista de pantalla completa para Registrar Confirmaciones Bienales (Opción A y Opción B)');
 
     await evalScript(`
       (async () => {
@@ -664,15 +690,38 @@ async function main() {
           notas: 'Confirmación notarial express: estatutos sociales vigentes sin reformas',
           dbSuffix: '_local'
         });
-        if (typeof openClientModal === 'function') openClientModal('C1');
       })()
     `);
-    await new Promise(r => setTimeout(r, 2000));
-    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Confirmación bienal express registrada: período de revisión renovado por 2 años');
+
+    // =========================================================================
+    // 7. Vista de Pantalla Completa: Cargar / Sustituir Documento (SHA-256)
+    // =========================================================================
+    console.log('\n[PASO 7] Abriendo Vista de Pantalla Completa para Cargar / Sustituir Documento...');
+    await evalScript(`
+      (() => {
+        ClientDocuments.openSubstituteDocView('C1', 'escritura', 'Escritura de Constitución');
+      })()
+    `);
+    await new Promise(r => setTimeout(r, 1200));
+    await assertFullScreenView('b3-substitute-doc-view', 'Vista de Carga y Sustitución de Documentos');
+    await saveScreenshot('b3_13_vista_sustitucion_documento.png', 'Vista de pantalla completa para Cargar o Sustituir Documentos con control SHA-256');
+
+    // =========================================================================
+    // 8. Vista de Pantalla Completa: Historial de Versiones Documentales
+    // =========================================================================
+    console.log('\n[PASO 8] Abriendo Vista de Pantalla Completa de Historial de Versiones...');
+    await evalScript(`
+      (() => {
+        showDocumentVersionHistory('client', 'C1', 'escritura', 'Escritura de Constitución');
+      })()
+    `);
+    await new Promise(r => setTimeout(r, 1500));
+    await assertFullScreenView('b3-doc-version-history-view', 'Vista de Historial de Versiones');
+    await saveScreenshot('b3_14_vista_historial_versiones.png', 'Vista de pantalla completa de Historial de Versiones Documentales');
 
     console.log('\n' + '='.repeat(80));
-    console.log('✅ VALIDACIÓN EN NAVEGADOR REAL B3 COMPLETADA EXITOSAMENTE');
-    console.log('   Las 12 evidencias visuales paso a paso han sido capturadas y guardadas.');
+    console.log('✅ VALIDACIÓN EN NAVEGADOR REAL B3 (100% PANTALLA COMPLETA, 0 POPUPS) COMPLETADA');
+    console.log('   Las 14 evidencias visuales paso a paso han sido capturadas y guardadas.');
     console.log('='.repeat(80));
 
   } catch (err) {
