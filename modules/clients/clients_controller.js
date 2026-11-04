@@ -94,13 +94,17 @@
             if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
         },
         alert: (msg) => {
-            if (typeof alert === 'function') return alert(msg);
-            if (typeof window !== 'undefined' && typeof window.alert === 'function') return window.alert(msg);
+            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
+            if (typeof window !== 'undefined' && typeof window.alert === 'function' && !String(window.alert).includes('[native code]')) return window.alert(msg);
+            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+                const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
+                return window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
+            }
             console.warn('[ClientsController Alert]', msg);
         },
         confirm: (msg) => {
-            if (typeof confirm === 'function') return confirm(msg);
-            if (typeof window !== 'undefined' && typeof window.confirm === 'function') return window.confirm(msg);
+            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
+            if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !String(window.confirm).includes('[native code]')) return window.confirm(msg);
             return true;
         }
     };

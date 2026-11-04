@@ -319,9 +319,11 @@ async function main() {
 
     let idCounter = 1;
     const pending = new Map();
+    const nativeDialogsOpened = [];
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.method === 'Page.javascriptDialogOpening') {
+        nativeDialogsOpened.push(msg.params || { type: 'unknown' });
         const id = idCounter++;
         ws.send(JSON.stringify({ id, method: 'Page.handleJavaScriptDialog', params: { accept: true } }));
         return;
@@ -398,22 +400,54 @@ async function main() {
         (() => {
           const viewEl = document.getElementById('${expectedViewId}');
           const isActive = !!(viewEl && viewEl.classList.contains('active'));
+          const tagName = viewEl ? viewEl.tagName : null;
+          const parentTagName = (viewEl && viewEl.parentElement) ? viewEl.parentElement.tagName : null;
+          const viewPosition = viewEl ? window.getComputedStyle(viewEl).position : null;
           const openModals = Array.from(document.querySelectorAll('.modal'))
             .filter(m => {
               const st = window.getComputedStyle(m);
               return st.display !== 'none' && st.visibility !== 'hidden';
             })
             .map(m => m.id || m.className);
-          return { isActive, openModals };
+          const openDialogs = Array.from(document.querySelectorAll('dialog[open]'))
+            .map(d => d.id || 'dialog');
+          const clientContainer = document.getElementById('clientModal');
+          const clientContainerPosition = clientContainer ? window.getComputedStyle(clientContainer).position : null;
+          const clientContainerHasModalClass = clientContainer ? clientContainer.classList.contains('modal') : false;
+          return {
+            isActive,
+            tagName,
+            parentTagName,
+            viewPosition,
+            openModals,
+            openDialogs,
+            clientContainerPosition,
+            clientContainerHasModalClass
+          };
         })()
       `);
       if (!check.isActive) {
         throw new Error(`[UI AUDIT FAIL] (${stepDesc}) La vista de pantalla completa #${expectedViewId} NO está activa.`);
       }
+      if (check.tagName !== 'SECTION' || check.parentTagName !== 'MAIN') {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #${expectedViewId} no es una <section> integrada en <main> (tagName=${check.tagName}, parent=${check.parentTagName}).`);
+      }
+      if (check.viewPosition === 'fixed') {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #${expectedViewId} tiene position:fixed (overlay flotante prohibido).`);
+      }
+      if (expectedViewId === 'client-detail-view' && (check.clientContainerHasModalClass || check.clientContainerPosition === 'fixed')) {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #clientModal sigue comportándose como modal flotante (hasModalClass=${check.clientContainerHasModalClass}, pos=${check.clientContainerPosition}).`);
+      }
       if (check.openModals.length > 0) {
         throw new Error(`[UI AUDIT FAIL] (${stepDesc}) Se detectaron modales abiertos prohibidos: ${check.openModals.join(', ')}`);
       }
-      console.log(`  ✅ [AUDITORÍA UI] Vista activa: #${expectedViewId} | Modales abiertos: 0`);
+      if (check.openDialogs.length > 0) {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) Se detectaron elementos <dialog open> prohibidos: ${check.openDialogs.join(', ')}`);
+      }
+      if (nativeDialogsOpened.length > 0) {
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) Se dispararon diálogos nativos (alert/confirm/prompt) prohibidos: ${JSON.stringify(nativeDialogsOpened)}`);
+      }
+      console.log(`  ✅ [AUDITORÍA UI] Vista activa: <section id="${expectedViewId}"> en <main> | Modales: 0 | <dialog>: 0 | Nativos: 0`);
     }
 
     // =========================================================================
@@ -441,7 +475,7 @@ async function main() {
     `);
     await new Promise(r => setTimeout(r, 1200));
     await assertFullScreenView('b3-rl-election-view', 'Registrar o Cambiar Representante Legal');
-    await saveScreenshot('b3_02_modal_eleccion_rl.png', 'Vista de pantalla completa para Registrar o Cambiar Representante Legal + DUI y Credencial');
+    await saveScreenshot('b3_02_vista_eleccion_rl.png', 'Vista de pantalla completa para Registrar o Cambiar Representante Legal + DUI y Credencial');
 
     console.log('  Completando datos de nombramiento de RL (Ana Gómez)...');
     await evalScript(`
@@ -497,7 +531,7 @@ async function main() {
     `);
     await new Promise(r => setTimeout(r, 1200));
     await assertFullScreenView('b3-grant-power-view', 'Registrar Apoderados y Documentos de Poder');
-    await saveScreenshot('b3_04_modal_otorgar_poder.png', 'Vista de pantalla completa para Registrar Apoderado e Incorporar Poder Notarial');
+    await saveScreenshot('b3_04_vista_otorgar_poder.png', 'Vista de pantalla completa para Registrar Apoderado e Incorporar Poder Notarial');
 
     console.log('  Completando y registrando poder notarial...');
     await evalScript(`
@@ -719,8 +753,102 @@ async function main() {
     await assertFullScreenView('b3-doc-version-history-view', 'Vista de Historial de Versiones');
     await saveScreenshot('b3_14_vista_historial_versiones.png', 'Vista de pantalla completa de Historial de Versiones Documentales');
 
+    // =========================================================================
+    // 9. Validación Funcional Exhaustiva de Retornos Contextuales y Estado
+    // =========================================================================
+    console.log('\n[PASO 9] Verificando retornos contextuales y preservación de cliente/oportunidad en todas las vistas...');
+    const returnChecks = await evalScript(`
+      (() => {
+        const results = [];
+        // 9.1 Desde Historial de Versiones -> retorna a client-detail-view conservando C1
+        closeDocumentVersionHistory();
+        results.push({
+          step: 'closeDocumentVersionHistory -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.2 Desde Sustituir Documento -> retorna a client-detail-view conservando C1
+        ClientDocuments.openSubstituteDocView('C1', 'escritura', 'Escritura de Constitución');
+        ClientDocuments.closeSubstituteDocView();
+        results.push({
+          step: 'closeSubstituteDocView -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.3 Desde Confirmación Bienal -> retorna a client-detail-view conservando C1
+        ClientDocuments.openBiennialConfirmationView('C1');
+        ClientDocuments.closeBiennialConfirmationView();
+        results.push({
+          step: 'closeBiennialConfirmationView -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.4 Desde Historial Societario -> retorna a client-detail-view conservando C1
+        ClientDocuments.openDossierHistoryView('C1');
+        ClientDocuments.closeDossierHistoryView();
+        results.push({
+          step: 'closeDossierHistoryView -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.5 Desde Otorgar Poder -> retorna a client-detail-view conservando C1
+        ClientDocuments.openGrantPowerView('C1');
+        ClientDocuments.closeGrantPowerView();
+        results.push({
+          step: 'closeGrantPowerView -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.6 Desde Elección RL -> retorna a client-detail-view conservando C1
+        ClientDocuments.openRLElectionView('C1');
+        ClientDocuments.closeRLElectionView();
+        results.push({
+          step: 'closeRLElectionView -> client-detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          clientId: document.getElementById('client-id-edit')?.value
+        });
+
+        // 9.7 Desde Oportunidad (detail-view P1) -> abrir Elección RL contextual -> retornar a detail-view P1
+        showView('detail-view');
+        ClientDocuments.openRLElectionView('C1', { originView: 'detail-view', prospectId: 'P1' });
+        ClientDocuments.closeRLElectionView();
+        results.push({
+          step: 'closeRLElectionView (origin=detail-view) -> detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          prospectId: typeof currentProspectId !== 'undefined' ? currentProspectId : window.currentProspectId
+        });
+
+        // 9.8 Desde Oportunidad (detail-view P1) -> abrir Editar Cliente contextual -> retornar a detail-view P1
+        openClientModal('C1', { originView: 'detail-view', prospectId: 'P1' });
+        ClientsUI.closeClientDetailView();
+        results.push({
+          step: 'closeClientDetailView (origin=detail-view) -> detail-view',
+          activeView: document.querySelector('.view-section.active')?.id,
+          prospectId: typeof currentProspectId !== 'undefined' ? currentProspectId : window.currentProspectId
+        });
+
+        return results;
+      })()
+    `);
+
+    for (const rc of returnChecks) {
+      console.log(`  🔄 [RETORNO CONTEXTUAL] ${rc.step} => activeView=${rc.activeView}, ctx=${rc.clientId || rc.prospectId}`);
+      if (rc.step.includes('-> client-detail-view') && (rc.activeView !== 'client-detail-view' || rc.clientId !== 'C1')) {
+        throw new Error(`Fallo de retorno contextual en ${rc.step}: ${JSON.stringify(rc)}`);
+      }
+      if (rc.step.includes('-> detail-view') && (rc.activeView !== 'detail-view' || rc.prospectId !== 'P1')) {
+        throw new Error(`Fallo de retorno contextual a oportunidad en ${rc.step}: ${JSON.stringify(rc)}`);
+      }
+    }
+    await assertFullScreenView('detail-view', 'Retorno Contextual Final a Oportunidad P1');
+
     console.log('\n' + '='.repeat(80));
-    console.log('✅ VALIDACIÓN EN NAVEGADOR REAL B3 (100% PANTALLA COMPLETA, 0 POPUPS) COMPLETADA');
+    console.log('✅ VALIDACIÓN EN NAVEGADOR REAL B3 (100% PANTALLA COMPLETA, 0 POPUPS, RETORNOS CONTEXTUALES) COMPLETADA');
     console.log('   Las 14 evidencias visuales paso a paso han sido capturadas y guardadas.');
     console.log('='.repeat(80));
 

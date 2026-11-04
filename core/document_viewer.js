@@ -35,7 +35,13 @@
         },
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => (typeof alert === 'function' ? alert(msg) : console.warn('[DocumentViewer Alert]', msg))
+        alert: (msg) => {
+            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
+            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+                return window.CrmUI.notify('error', String(msg || ''));
+            }
+            console.warn('[DocumentViewer Alert]', msg);
+        }
     };
 
     let _initialized = false;

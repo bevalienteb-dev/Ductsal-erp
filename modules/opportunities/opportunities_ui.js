@@ -1068,6 +1068,13 @@
 
 function openDetail(id) {
     currentProspectId = id;
+    if (typeof _deps !== 'undefined' && typeof _deps.setCurrentProspectId === 'function') {
+        _deps.setCurrentProspectId(id);
+    }
+    if (typeof window !== 'undefined') {
+        window.currentProspectId = id;
+        window.currentDetailId = id;
+    }
     var currentUser = ((typeof _deps !== 'undefined' && _deps.getCurrentUser) ? _deps.getCurrentUser() : null) || (typeof window !== 'undefined' ? window.currentUser : (typeof global !== 'undefined' ? global.currentUser : null));
     const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
         ? prospects

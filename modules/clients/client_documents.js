@@ -105,16 +105,45 @@
             if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
         },
         alert: (msg) => {
-            if (typeof alert === 'function') return alert(msg);
-            if (typeof window !== 'undefined' && typeof window.alert === 'function') return window.alert(msg);
-            console.warn('[ClientDocuments Alert]', msg);
+            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
+            if (typeof window !== 'undefined' && typeof window.alert === 'function' && !String(window.alert).includes('[native code]')) return window.alert(msg);
+            return renderInlineViewNotice(msg);
         },
         confirm: (msg) => {
-            if (typeof confirm === 'function') return confirm(msg);
-            if (typeof window !== 'undefined' && typeof window.confirm === 'function') return window.confirm(msg);
+            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
+            if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !String(window.confirm).includes('[native code]')) return window.confirm(msg);
             return true;
         }
     };
+
+    function renderInlineViewNotice(msg) {
+        const text = String(msg || '');
+        const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad|eliminado correctamente/i.test(text) && !/error|no se|denegado|inválid|falta|requiere/i.test(text);
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            window.CrmUI.notify(isSuccess ? 'success' : 'error', text);
+        }
+        if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+            const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+            if (activeView && typeof document.createElement === 'function') {
+                let banner = document.getElementById('b3-inline-view-notice');
+                if (!banner) {
+                    banner = document.createElement('div');
+                    banner.id = 'b3-inline-view-notice';
+                    if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                        activeView.insertBefore(banner, activeView.firstChild);
+                    } else if (typeof activeView.appendChild === 'function') {
+                        activeView.appendChild(banner);
+                    }
+                } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                    activeView.insertBefore(banner, activeView.firstChild);
+                }
+                banner.style.cssText = isSuccess
+                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                banner.textContent = text;
+            }
+        }
+    }
 
     /**
      * Inicializa o actualiza dependencias del módulo de documentos de clientes.
@@ -435,7 +464,7 @@
     // -------------------------------------------------------------------------
     // 4. Eliminación de Documento de Cliente
     // -------------------------------------------------------------------------
-    async function deleteClientDocument(clientId, docKey, itemIndex = null) {
+    async function deleteClientDocument(clientId, docKey, itemIndex = null, skipInlineConfirm = false) {
         const currentUser = _deps.getCurrentUser();
         if (!currentUser || currentUser.role !== 'manager') {
             return _deps.alert("Permiso denegado. Solo el Gerente puede eliminar documentos.");
@@ -449,7 +478,35 @@
         const docName = _deps.formatClientDocLabel(docKey);
         const targetDesc = (itemIndex !== null && itemIndex !== undefined) ? `[${docName} (${itemIndex + 1})]` : `[${docName}]`;
 
-        if (!_deps.confirm(`¿Estás seguro de que deseas eliminar el documento ${targetDesc} del expediente de este cliente?`)) {
+        if (!skipInlineConfirm && typeof document !== 'undefined' && typeof confirm === 'function' && String(confirm).includes('[native code]')) {
+            const container = document.getElementById('client-expediente-documentos-container');
+            if (container && typeof document.createElement === 'function') {
+                let confirmBox = document.getElementById('b3-inline-delete-doc-confirm');
+                if (!confirmBox) {
+                    confirmBox = document.createElement('div');
+                    confirmBox.id = 'b3-inline-delete-doc-confirm';
+                    if (container.firstChild && typeof container.insertBefore === 'function') {
+                        container.insertBefore(confirmBox, container.firstChild);
+                    } else if (typeof container.appendChild === 'function') {
+                        container.appendChild(confirmBox);
+                    }
+                }
+                const safeClientId = _deps.escapeHtmlDoc(clientId);
+                const safeDocKey = _deps.escapeHtmlDoc(docKey);
+                const idxArg = (itemIndex !== null && itemIndex !== undefined) ? Number(itemIndex) : 'null';
+                confirmBox.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.85rem;';
+                confirmBox.innerHTML = `
+                    <span>⚠️ ¿Confirmar eliminación del documento <strong>${_deps.escapeHtmlDoc(targetDesc)}</strong> del expediente?</span>
+                    <div style="display:flex; gap:8px;">
+                        <button type="button" class="btn-danger" style="padding:4px 10px; font-size:0.78rem;" onclick="deleteClientDocument('${safeClientId}', '${safeDocKey}', ${idxArg}, true)">Confirmar eliminación</button>
+                        <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="const el=document.getElementById('b3-inline-delete-doc-confirm'); if(el) el.remove();">Cancelar</button>
+                    </div>
+                `;
+                return;
+            }
+        }
+
+        if (!skipInlineConfirm && !_deps.confirm(`¿Estás seguro de que deseas eliminar el documento ${targetDesc} del expediente de este cliente?`)) {
             return;
         }
 
@@ -658,7 +715,9 @@
         if (typeof document !== 'undefined') {
             const detailEl = document.getElementById('detail-view');
             if (detailEl && detailEl.classList && typeof detailEl.classList.contains === 'function' && detailEl.classList.contains('active')) {
-                const pid = (typeof window !== 'undefined' && window.currentDetailId) ? window.currentDetailId : null;
+                const pid = (typeof window !== 'undefined' && (window.currentProspectId || window.currentDetailId))
+                    ? (window.currentProspectId || window.currentDetailId)
+                    : (typeof currentProspectId !== 'undefined' ? currentProspectId : null);
                 _b3OriginContext = { view: 'detail-view', prospectId: pid };
                 return;
             }
@@ -1606,6 +1665,11 @@
         // Block B3 Full-Screen Views & Actions
         getCurrentAccountId,
         returnToClientOrOrigin,
+        closeRLElectionView: returnToClientOrOrigin,
+        closeGrantPowerView: returnToClientOrOrigin,
+        closeDossierHistoryView: returnToClientOrOrigin,
+        closeBiennialConfirmationView: returnToClientOrOrigin,
+        closeSubstituteDocView: returnToClientOrOrigin,
         previewFileHash,
         openRLElectionView,
         openRLElectionModal,

@@ -799,7 +799,13 @@ if (typeof initDocumentViewer === 'function') {
         },
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => (typeof alert === 'function' ? alert(msg) : console.warn('[DocViewer]', msg))
+        alert: (msg) => {
+            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
+            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+                return window.CrmUI.notify('error', String(msg || ''));
+            }
+            console.warn('[DocViewer]', msg);
+        }
     });
 }
 
@@ -881,8 +887,39 @@ if (typeof _initClientsFn === 'function') {
         normalizeWhatsAppNumber: (phone) => (typeof normalizeWhatsAppNumber === 'function' ? normalizeWhatsAppNumber(phone) : (phone || '').replace(/\D/g, '')),
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => (typeof alert === 'function' ? alert(msg) : console.warn('[Clients]', msg)),
-        confirm: (msg) => (typeof confirm === 'function' ? confirm(msg) : true),
+        alert: (msg) => {
+            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
+            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+                const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
+                window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
+            }
+            if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+                const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+                if (activeView && typeof document.createElement === 'function') {
+                    let banner = document.getElementById('b3-inline-view-notice');
+                    if (!banner) {
+                        banner = document.createElement('div');
+                        banner.id = 'b3-inline-view-notice';
+                        if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                            activeView.insertBefore(banner, activeView.firstChild);
+                        } else if (typeof activeView.appendChild === 'function') {
+                            activeView.appendChild(banner);
+                        }
+                    } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                        activeView.insertBefore(banner, activeView.firstChild);
+                    }
+                    const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
+                    banner.style.cssText = isSuccess
+                        ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                        : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                    banner.textContent = String(msg || '');
+                }
+            }
+        },
+        confirm: (msg) => {
+            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
+            return true;
+        },
         openModal: (id) => (typeof openModal === 'function' ? openModal(id) : null),
         closeModal: (id) => (typeof closeModal === 'function' ? closeModal(id) : null),
         renderClosingDocumentationPanel: (prospectId) => (typeof renderClosingDocumentationPanel === 'function' ? renderClosingDocumentationPanel(prospectId) : null)
