@@ -665,6 +665,209 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         confirmedNoChanges: false
       })).rejects.toThrow(/Debe confirmar expresamente/);
     });
+
+    test('Integridad de versión documental: rechaza si documentVersionId pertenece a otro docKey distinto al indicado', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_nit_1'] = {
+        versionId: 'v_nit_1',
+        versionNumber: 1,
+        docKey: 'nit',
+        estado: 'vigente'
+      };
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_nit_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/corresponde al documento 'nit', no a 'escritura'/);
+    });
+
+    test('Integridad de versión documental: rechaza si documentVersionId tiene entityId de otra cuenta', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_foreign_1'] = {
+        versionId: 'v_foreign_1',
+        versionNumber: 1,
+        entityId: 'ACC_OTRA_CUENTA',
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_foreign_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/no pertenece a la cuenta indicada/);
+    });
+
+    test('Integridad de versión documental: impide confirmar una versión histórica o desactualizada cuando ya existe una versión posterior (v2)', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'historica',
+        reemplazadaPorVersionId: 'v_esc_2'
+      };
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_2'] = {
+        versionId: 'v_esc_2',
+        versionNumber: 2,
+        docKey: 'escritura',
+        estado: 'vigente',
+        reemplazaVersionId: 'v_esc_1'
+      };
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId = 'v_esc_2';
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionNumber = 2;
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/versión documental vigente|histórica|desactualizada/);
+
+      // Aún si v_esc_1 tuviera estado 'vigente' por error, el puntero activo v_esc_2 y la versión superior lo bloquean
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'].estado = 'vigente';
+      delete state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'].reemplazadaPorVersionId;
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/desactualizada|versión posterior/);
+    });
+
+    test('Idempotencia con opId: reintentos con el mismo opId no duplican eventos ni auditoría y rechazan parámetros distintos', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId = 'v_esc_1';
+
+      const res1 = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Confirmación idempotente',
+        opId: 'op_bienal_idem_001'
+      });
+
+      const res2 = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Confirmación idempotente',
+        opId: 'op_bienal_idem_001'
+      });
+
+      expect(res1.confirmationId).toBe('conf_op_bienal_idem_001');
+      expect(res2.confirmationId).toBe(res1.confirmationId);
+      expect(res2.idempotentReplay).toBe(true);
+
+      const allConfs = Object.keys(state.docs).filter(k => k.startsWith('clients_prod/ACC_DELTA/biennial_confirmations/'));
+      expect(allConfs).toHaveLength(1);
+
+      // Reutilizar el mismo opId con otro docKey o usuario es rechazado con already-exists
+      state.docs['clients_prod/ACC_DELTA'].documentos.mods_escritura = {
+        name: 'Mod.pdf',
+        versionId: 'v_mod_1',
+        versionNumber: 1
+      };
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_mod_1'] = {
+        versionId: 'v_mod_1',
+        versionNumber: 1,
+        docKey: 'mods_escritura',
+        estado: 'vigente'
+      };
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'mods_escritura',
+        documentVersionId: 'v_mod_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        opId: 'op_bienal_idem_001'
+      })).rejects.toThrow(/ya fue utilizado con parámetros distintos/);
+    });
+
+    test('Seguridad de identidad en Cloud Function recordBiennialConfirmationAdmin: ignora cualquier intento de suplantar confirmedBy o confirmedByName desde el payload del cliente', async () => {
+      const fns = require('../index');
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId = 'v_esc_1';
+
+      const callable = fns.recordBiennialConfirmationAdmin;
+      const handler = typeof callable === 'function' && callable.__handler ? callable.__handler : callable;
+
+      const spoofedPayload = {
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        confirmedBy: MGR,
+        confirmedByName: 'Gerente Suplantado',
+        caller: { cid: MGR, uid: 'uid-mgr', name: 'Gerente Suplantado', role: 'manager' },
+        dbSuffix: '_prod'
+      };
+
+      const authContext = {
+        auth: {
+          uid: 'uid-v1',
+          token: { cid: V1, role: 'vendedor' }
+        }
+      };
+
+      const res = await handler(spoofedPayload, authContext);
+      expect(res.success).toBe(true);
+      expect(res.confirmedBy).toBe(V1);
+      expect(res.confirmedByName).toBe('Vendedor Uno');
+
+      const savedConf = state.docs[`clients_prod/ACC_DELTA/biennial_confirmations/${res.confirmationId}`];
+      expect(savedConf.confirmedBy).toBe(V1);
+      expect(savedConf.confirmedByUid).toBe('uid-v1');
+      expect(savedConf.confirmedByName).toBe('Vendedor Uno');
+      expect(savedConf.confirmedBy).not.toBe(MGR);
+    });
+
+    test('Seguridad de autorización: vendedor V2 sin acceso a ACC_DELTA no puede registrar confirmación bienal', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId = 'v_esc_1';
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V2),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/No tienes acceso a esta cuenta/);
+    });
   });
 
   describe('6. Control de Cierre y Validación de Oportunidades', () => {

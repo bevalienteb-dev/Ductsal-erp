@@ -610,12 +610,24 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     confirmationType = 'no_changes',
     confirmedNoChanges = true,
     notas = null,
-    opportunityId = null
+    opportunityId = null,
+    opId = null
   }) {
     assertCaller(caller);
-    const cleanAccountId = reqString(accountId, 'accountId');
-    const cleanDocKey = reqString(docKey, 'docKey');
-    const cleanVersionId = reqString(documentVersionId, 'documentVersionId');
+    const cleanAccountId = reqString(accountId, 'accountId', 128);
+    const cleanDocKey = reqString(docKey, 'docKey', 64);
+    const cleanVersionId = reqString(documentVersionId, 'documentVersionId', 128);
+    const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
+
+    if (!DOC_ID_RE.test(cleanAccountId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de cuenta inválido');
+    }
+    if (!DOC_ID_RE.test(cleanVersionId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de versión documental inválido');
+    }
+    if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
+    }
 
     if (!DOCUMENTS_REQUIRING_BIENNIAL_REVIEW.includes(cleanDocKey)) {
       throw new ServiceError('invalid-argument', `El documento '${cleanDocKey}' no está sujeto a revisión bienal`);
@@ -627,6 +639,26 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     }
 
     return db.runTransaction(async tx => {
+      // --- FASE 1 DE TRANSACCIÓN: TODAS LAS LECTURAS ---
+      const opRef = cleanOpId ? col('ops').doc(`biennial_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        if (
+          prevOp.callerCid !== caller.cid ||
+          prevOp.accountId !== cleanAccountId ||
+          prevOp.docKey !== cleanDocKey ||
+          prevOp.documentVersionId !== cleanVersionId
+        ) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -636,63 +668,123 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
-      // Verify that documentVersionId exists
-      const versionRef = clientRef.collection('document_versions').doc(cleanVersionId);
+      // Verify that documentVersionId exists under this account's subcollection
+      const clientVersionsCol = clientRef.collection('document_versions');
+      const versionRef = clientVersionsCol.doc(cleanVersionId);
       const versionSnap = await tx.get(versionRef);
       if (!versionSnap.exists) {
-        throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente');
+        throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
       }
       const versionData = versionSnap.data();
+
+      // Also read all versions for this docKey in the transaction to detect any newer version
+      const docKeyVersionsSnap = await tx.get(clientVersionsCol.where('docKey', '==', cleanDocKey));
+
+      // --- FASE 2 DE TRANSACCIÓN: VALIDACIONES DE INTEGRIDAD Y VIGENCIA ---
+      // 2.1 Verify account and docKey ownership on the version record itself
+      if (versionData.entityId && versionData.entityId !== cleanAccountId) {
+        throw new ServiceError('invalid-argument', 'La versión documental no pertenece a la cuenta indicada');
+      }
+      if (versionData.accountId && versionData.accountId !== cleanAccountId) {
+        throw new ServiceError('invalid-argument', 'La versión documental no pertenece a la cuenta indicada');
+      }
+      if (versionData.docKey !== cleanDocKey) {
+        throw new ServiceError(
+          'invalid-argument',
+          `La versión documental '${cleanVersionId}' corresponde al documento '${versionData.docKey || 'desconocido'}', no a '${cleanDocKey}'`
+        );
+      }
 
       const now = new Date();
       const nowIso = now.toISOString();
       const todayStr = nowIso.slice(0, 10);
 
-      // A biennial confirmation cannot renew a document that has an expired fechaVencimiento
-      if (versionData.fechaVencimiento && String(versionData.fechaVencimiento).slice(0, 10) < todayStr) {
+      // 2.2 Verify the document exists in the account's current active documents
+      const currentActiveDoc = client.documentos && client.documentos[cleanDocKey] ? client.documentos[cleanDocKey] : null;
+      if (!currentActiveDoc) {
+        throw new ServiceError('failed-precondition', `El documento '${cleanDocKey}' no tiene una versión vigente activa en la cuenta`);
+      }
+
+      // 2.3 A biennial confirmation cannot renew a document that has an expired fechaVencimiento
+      const effectiveExpiry = versionData.fechaVencimiento || currentActiveDoc.fechaVencimiento || null;
+      if (effectiveExpiry && String(effectiveExpiry).slice(0, 10) < todayStr) {
         throw new ServiceError('failed-precondition', 'Una confirmación de revisión bienal no puede utilizarse para renovar un documento vencido');
       }
+
+      // 2.4 Verify the version being confirmed is the current active version (not historical or superseded)
       if (versionData.estado && versionData.estado !== 'vigente') {
         throw new ServiceError('failed-precondition', 'La confirmación bienal solo puede registrarse sobre la versión documental vigente');
       }
+      if (versionData.reemplazadaPorVersionId) {
+        throw new ServiceError('failed-precondition', 'No es posible confirmar una versión histórica que ya fue sustituida por una versión posterior');
+      }
+      if (currentActiveDoc.versionId && currentActiveDoc.versionId !== cleanVersionId) {
+        throw new ServiceError(
+          'failed-precondition',
+          `No es posible confirmar una versión desactualizada ('${cleanVersionId}') cuando la versión vigente actual es '${currentActiveDoc.versionId}'`
+        );
+      }
 
+      const targetVersionNumber = Number(versionData.versionNumber) || Number(currentActiveDoc.versionNumber) || 1;
+      if (docKeyVersionsSnap && typeof docKeyVersionsSnap.forEach === 'function') {
+        let supersededByHigher = false;
+        docKeyVersionsSnap.forEach(d => {
+          const dData = d.data() || {};
+          const dId = d.id || dData.versionId;
+          if (dId !== cleanVersionId) {
+            if ((Number(dData.versionNumber) || 0) > targetVersionNumber || dData.reemplazaVersionId === cleanVersionId) {
+              supersededByHigher = true;
+            }
+          }
+        });
+        if (supersededByHigher) {
+          throw new ServiceError('failed-precondition', 'No es posible confirmar una versión histórica o desactualizada cuando ya existe una versión posterior');
+        }
+      }
+
+      // --- FASE 3 DE TRANSACCIÓN: TODAS LAS ESCRITURAS ATÓMICAS ---
       // Next review at: 2 calendar years (730 days) from confirmation
       const nextReviewDate = new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000);
       const nextReviewIso = nextReviewDate.toISOString().slice(0, 10);
 
       const rand = crypto.randomBytes(4).toString('hex');
-      const confId = `conf_${Date.now()}_${rand}`;
+      const confId = cleanOpId ? `conf_${cleanOpId}` : `conf_${Date.now()}_${rand}`;
       const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
 
+      // Identity is taken strictly from server-resolved `caller`
       const confirmationRecord = {
         id: confId,
         eventType: 'biennial_confirmation',
         accountId: cleanAccountId,
         docKey: cleanDocKey,
         documentVersionId: cleanVersionId,
-        versionNumber: versionData.versionNumber || 1,
+        versionNumber: targetVersionNumber,
         confirmationType,
         confirmedNoChanges: !!confirmedNoChanges,
         notas: cleanNotas,
         confirmedBy: caller.cid,
+        confirmedByUid: caller.uid,
         confirmedByName: caller.name || 'Comercial',
+        confirmedByRole: caller.role,
         confirmedAt: nowIso,
         nextReviewAt: nextReviewIso,
         opportunityId: opportunityId ? String(opportunityId).trim() : null,
+        opId: cleanOpId,
         createdAt: FieldValue.serverTimestamp()
       };
 
       tx.set(clientRef.collection('biennial_confirmations').doc(confId), confirmationRecord);
 
-      // Project onto client root
+      // Project onto client root atomically
       const biennialReviews = { ...(client.biennialReviews || {}) };
       biennialReviews[cleanDocKey] = {
+        confirmationId: confId,
         lastConfirmedAt: nowIso,
         nextReviewAt: nextReviewIso,
         confirmedBy: caller.cid,
-        confirmedByName: caller.name,
+        confirmedByName: caller.name || 'Comercial',
         documentVersionId: cleanVersionId,
-        versionNumber: versionData.versionNumber || 1,
+        versionNumber: targetVersionNumber,
         confirmationType
       };
 
@@ -705,19 +797,39 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         accountId: cleanAccountId,
         docKey: cleanDocKey,
         documentVersionId: cleanVersionId,
+        versionNumber: targetVersionNumber,
         confirmationType,
         nextReviewAt: nextReviewIso,
-        opportunityId: confirmationRecord.opportunityId
+        opportunityId: confirmationRecord.opportunityId,
+        opId: cleanOpId
       });
 
-      return {
+      const resultPayload = {
         success: true,
         confirmationId: confId,
         docKey: cleanDocKey,
         documentVersionId: cleanVersionId,
+        versionNumber: targetVersionNumber,
+        confirmedBy: caller.cid,
+        confirmedByName: caller.name || 'Comercial',
         confirmedAt: nowIso,
         nextReviewAt: nextReviewIso
       };
+
+      if (opRef) {
+        tx.set(opRef, {
+          opId: cleanOpId,
+          accountId: cleanAccountId,
+          docKey: cleanDocKey,
+          documentVersionId: cleanVersionId,
+          callerCid: caller.cid,
+          callerUid: caller.uid,
+          result: resultPayload,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return resultPayload;
     });
   }
 
@@ -841,14 +953,17 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       if (DOCUMENTS_REQUIRING_BIENNIAL_REVIEW.includes(cleanDocKey)) {
         const nextReviewDate = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
         const nextReviewIso = nextReviewDate.toISOString().slice(0, 10);
-        updatePayload[`biennialReviews.${cleanDocKey}`] = {
+        const updatedBiennialReviews = { ...(client.biennialReviews || {}) };
+        updatedBiennialReviews[cleanDocKey] = {
           lastConfirmedAt: nowIso,
           nextReviewAt: nextReviewIso,
           confirmedBy: caller.cid,
-          confirmedByName: caller.name,
+          confirmedByName: caller.name || 'Comercial',
           documentVersionId: versionId,
+          versionNumber: newVersionNumber,
           tipo: 'nueva_modificacion'
         };
+        updatePayload.biennialReviews = updatedBiennialReviews;
       }
 
       tx.update(clientRef, updatePayload);

@@ -493,5 +493,165 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
       const confSnapB = await H.getDoc(`clients_local/${accountId}/biennial_confirmations`, resB.confirmationId);
       expect(confSnapB.data.confirmedNoChanges).toBe(true);
     });
+
+    test('Reintentos concurrentes idempotentes con el mismo opId producen exactamente 1 confirmación y 0 duplicados', async () => {
+      const accountId = `CLI_B3_CONC_E4_IDEM_${TAG}`;
+      const versionId = `v_esc_idem_${TAG}`;
+      const sharedOpId = `op_idem_${TAG}`;
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Inversiones Idempotentes ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: {
+            name: 'escritura_idem.pdf',
+            storagePath: 'prod_files/clients/test/legal/esc_idem.pdf',
+            versionId,
+            versionNumber: 1
+          }
+        },
+        visibleTo: [USERS.admin1.cid],
+        activo: true
+      });
+
+      await H.setDoc(`clients_local/${accountId}/document_versions`, versionId, {
+        id: versionId,
+        versionId,
+        docKey: 'escritura',
+        name: 'escritura_idem.pdf',
+        versionNumber: 1,
+        estado: 'vigente'
+      });
+
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const barrier = createBarrier(2);
+
+      const p1 = barrier.enter(() =>
+        state.docSvcA.recordBiennialConfirmation({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: versionId,
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: 'Reintento concurrente mismo opId',
+          opId: sharedOpId
+        })
+      );
+
+      const p2 = barrier.enter(() =>
+        state.docSvcB.recordBiennialConfirmation({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: versionId,
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: 'Reintento concurrente mismo opId',
+          opId: sharedOpId
+        })
+      );
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.confirmationId).toBe(`conf_${sharedOpId}`);
+      expect(r2.confirmationId).toBe(r1.confirmationId);
+
+      const confsCol = await state.dbA.collection(`clients_local/${accountId}/biennial_confirmations`).get();
+      expect(confsCol.size).toBe(1);
+    });
+
+    test('Carrera entre carga de nueva versión (v2) y confirmación bienal sobre versión anterior (v1): sin estados contradictorios', async () => {
+      const accountId = `CLI_B3_CONC_E4_RACE_${TAG}`;
+      const v1Id = `v_esc_v1_${TAG}`;
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación Carrera Versión ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: {
+            name: 'escritura_v1.pdf',
+            storagePath: 'prod_files/clients/test/legal/esc_v1.pdf',
+            versionId: v1Id,
+            versionNumber: 1
+          }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid],
+        activo: true
+      });
+
+      await H.setDoc(`clients_local/${accountId}/document_versions`, v1Id, {
+        id: v1Id,
+        versionId: v1Id,
+        docKey: 'escritura',
+        name: 'escritura_v1.pdf',
+        versionNumber: 1,
+        estado: 'vigente'
+      });
+
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerB = { uid: USERS.admin2.uid, email: USERS.admin2.email, role: 'manager', cid: USERS.admin2.cid, profileId: USERS.admin2.cid, name: USERS.admin2.nombre };
+
+      const barrier = createBarrier(2);
+
+      // Admin A sube nueva versión v2 de la escritura
+      const pUploadV2 = barrier.enter(() =>
+        state.docSvcA.saveAccountDocument({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          doc: {
+            name: 'escritura_v2.pdf',
+            storagePath: 'prod_files/clients/test/legal/esc_v2.pdf',
+            sha256: '9'.repeat(64)
+          },
+          motivoSustitucion: 'Reforma estatutaria v2'
+        })
+      );
+
+      // Admin B intenta confirmar sin cambios la versión v1 simultáneamente
+      const pConfirmV1 = barrier.enter(() =>
+        state.docSvcB.recordBiennialConfirmation({
+          caller: callerB,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: v1Id,
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: 'Intento de confirmar v1 en paralelo con subida de v2'
+        }).catch(err => ({ rejected: true, code: err.code, message: err.message }))
+      );
+
+      const [resUpload, resConfirm] = await Promise.all([pUploadV2, pConfirmV1]);
+      expect(resUpload.success).toBe(true);
+      expect(resUpload.versionNumber).toBe(2);
+
+      const clientSnap = await H.getDoc('clients_local', accountId);
+      const clientDoc = clientSnap.data;
+
+      // Invariante: el documento vigente en el cliente es v2, y si la confirmación de v1 ocurrió después de v2, fue rechazada.
+      // Si la confirmación de v1 ocurrió antes de v2, la subida de v2 actualizó biennialReviews.escritura a v2.
+      expect(clientDoc.documentos.escritura.versionId).toBe(resUpload.versionId);
+      if (resConfirm && resConfirm.rejected) {
+        expect(resConfirm.message).toMatch(/vigente|desactualizada|sustituida|histórica/i);
+        expect(clientDoc.biennialReviews.escritura.documentVersionId).toBe(resUpload.versionId);
+      } else {
+        // Confirmación de v1 entró primero y luego v2 la sustituyó atómicamente
+        expect(clientDoc.biennialReviews.escritura.documentVersionId).toBe(resUpload.versionId);
+      }
+
+      // Verificar que una vez v2 está vigente, cualquier intento posterior de confirmar v1 es rechazado siempre
+      await expect(
+        state.docSvcB.recordBiennialConfirmation({
+          caller: callerB,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: v1Id,
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })
+      ).rejects.toThrow(/vigente|desactualizada|sustituida|histórica/i);
+    });
   });
 });

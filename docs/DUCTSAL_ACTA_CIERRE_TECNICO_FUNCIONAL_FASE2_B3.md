@@ -188,16 +188,16 @@ match /prod_files/clients/{cid}/poderes/{file} {
 
 Se ejecutó la suite completa de pruebas unitarias en `functions/`:
 
-- **Suite B3 (`__tests__/accountDocuments.unit.test.js`):** **29/29 pruebas aprobadas (100%)**.
+- **Suite B3 (`__tests__/accountDocuments.unit.test.js`):** **40/40 pruebas aprobadas (100%)**.
   - Catálogo canónico y compatibilidad de claves `DOC_KEYS` (6 claves intactas + `poder_firma_contrato`).
   - Registro de nombramiento de RL y validación cronológica de credenciales.
   - Otorgamiento de poderes e invalidación automática ante nueva elección de RL (reelección u otra persona).
   - Control de huella SHA-256 contra re-subida de archivos expirados idénticos.
-  - Revisión bienal (Opción A vs Opción B).
+  - Revisión bienal (Caso A: nueva versión vs Caso B: evento de confirmación sin archivo), incluyendo auditoría de seguridad de identidad (`confirmedBy` / `confirmedByName` desde backend), integridad de versión documental vigente (`docKey`, `accountId`, rechazo de versiones históricas) e idempotencia con `opId`.
   - Pre-validación de cierre con control explícito de contrato y firmante acreditado.
   - Seguridad, roles y aislamiento de cartera comercial.
-  - **Auditoría de UI B3 y Editar Cliente (Prohibición de Popups y Vistas de Pantalla Completa):** Verificación automatizada de que las 7 vistas operativas (`#client-detail-view`, `#b3-rl-election-view`, `#b3-grant-power-view`, `#b3-dossier-history-view`, `#b3-biennial-confirmation-view`, `#b3-substitute-doc-view`, `#b3-doc-version-history-view`) existen como `.view-section` dentro de `<main>`, sin modales flotantes ni llamadas a `prompt()`.
-- **Suite General del Repositorio:** **97/97 suites aprobadas (2,439 pruebas, 0 fallos)**.
+  - **Auditoría de UI B3 y Editar Cliente (Prohibición de Popups, Adaptadores Explícitos y Nomenclatura de Vistas):** Verificación automatizada de que las 7 vistas operativas (`#client-detail-view`, `#b3-rl-election-view`, `#b3-grant-power-view`, `#b3-dossier-history-view`, `#b3-biennial-confirmation-view`, `#b3-substitute-doc-view`, `#b3-doc-version-history-view`) existen como `.view-section` dentro de `<main>`, con 0 modales flotantes, 0 detecciones basadas en `[native code]` y nomenclatura de vistas limpia.
+- **Suite General del Repositorio:** **97/97 suites aprobadas (2,450 pruebas, 0 fallos)**.
 
 ### 5.2 Pruebas de Concurrencia Multi-Cliente en Firebase Emulator Suite
 
@@ -208,9 +208,11 @@ Se ejecutó la suite `b3_concurrency.emu.js` simulando condiciones de carrera re
 | 1 | Otorgamiento de Poder vs Nueva Elección de RL | Un admin otorga un poder mientras otro admin registra nueva elección de RL simultáneamente. Se verifica la anulación atómica y la consistencia de `apoderadosVigentes`. | **APROBADO** |
 | 2 | Elecciones Concurrentes de Representante Legal | Dos admins registran nombramientos de RL al mismo milisegundo. Se verifica que resulte exactamente un RL `vigente` y cero inconsistencias de estado. | **APROBADO** |
 | 3 | Cierre de Oportunidad con Poder Invalidado Concurrentemente | Un vendedor intenta cerrar la oportunidad con un apoderado cuyo poder es anulado concurrentemente por una elección de RL. La función `finalizeProspect` rechaza el cierre con `failed-precondition`. | **APROBADO** |
-| 4 | Confirmaciones Bienales Concurrentes | Dos usuarios registran confirmaciones de revisión bienal al mismo tiempo. Se preservan ambas en la auditoría sin corrupción de metadatos. | **APROBADO** |
+| 4.1 | Confirmaciones Bienales Concurrentes | Dos usuarios registran confirmaciones de revisión bienal al mismo tiempo. Se preservan ambas en la auditoría sin corrupción de metadatos. | **APROBADO** |
+| 4.2 | Idempotencia Concurrente (`opId`) en Confirmación Bienal | Reintentos concurrentes idempotentes con el mismo `opId` producen exactamente 1 confirmación bienal y 0 duplicados. | **APROBADO** |
+| 4.3 | Carrera entre Carga de Nueva Versión (`v2`) y Confirmación Bienal sobre Versión Anterior (`v1`) | Transacciones serializadas en Firestore garantizan ausencia de estados contradictorios y rechazo de confirmaciones sobre versiones históricas (`v1`) cuando `v2` está activa. | **APROBADO** |
 
-**Resultado Suite B3 Concurrencia:** **4/4 pruebas aprobadas (código de salida 0)**.  
+**Resultado Suite B3 Concurrencia:** **6/6 pruebas aprobadas (código de salida 0)**.  
 **Resultado Suite B1/B2 Concurrencia (Regresión Cero):** **6/6 pruebas aprobadas (código de salida 0)**.
 
 ---
@@ -274,8 +276,8 @@ Se inspeccionaron todas las coincidencias de `showModal`, `<dialog>`, `Swal.fire
 | `core/document_viewer.js` | Frontend UI | Migración del historial de versiones documentales a vista de pantalla completa (`#b3-doc-version-history-view`) y soporte de poderes notariales hasta 25 MiB. |
 | `index.html` | Frontend | Vistas integradas `.view-section` de pantalla completa para `#client-detail-view` y flujos B3 dentro de `<main>` (cero modales en B3 y Editar Cliente). |
 | `styles.css` | Estilos | Diseño responsive de ancho completo sin scroll interno atrapado para `#client-detail-view` y vistas `#b3-*`. |
-| `functions/__tests__/accountDocuments.unit.test.js` | Pruebas | 29 pruebas unitarias de backend y auditoría de interfaz sin popups en B3. |
-| `functions/emulator-tests/b3_concurrency.emu.js` | Pruebas | Suite de concurrencia real multi-cliente en Firebase Emulator Suite. |
+| `functions/__tests__/accountDocuments.unit.test.js` | Pruebas | 40 pruebas unitarias de backend, seguridad/integridad de confirmación bienal y auditoría de interfaz sin popups en B3. |
+| `functions/emulator-tests/b3_concurrency.emu.js` | Pruebas | Suite de concurrencia real multi-cliente en Firebase Emulator Suite (6 escenarios). |
 | `scripts/verify_b3_browser_real.js` | Pruebas | Script de automatización end-to-end con Google Chrome CDP verificando vistas de pantalla completa y `openModals.length === 0`. |
 | `docs/screenshots/b3_*.png` (14 archivos) | Evidencia | Capturas de pantalla oficiales de validación funcional en navegador real (vistas de pantalla completa). |
 
@@ -285,7 +287,7 @@ Se inspeccionaron todas las coincidencias de `showModal`, `<dialog>`, `Swal.fire
 
 El Bloque B3 de la Fase 2 del CRM de DUCTSAL ERP ha sido completado con rigor técnico, cumpliendo la directriz obligatoria de Dirección de **cero popups / cero modales** en «Editar cliente» y en todos los flujos operativos de B3, respetando la integridad de los datos existentes y los requisitos legales y fiscales salvadoreños.
 
-1. **Estado del Código:** Impecable, verificado con 2,439 pruebas unitarias (`97/97` suites) y 10 pruebas de concurrencia multi-cliente en emulador, sin ninguna regresión.
+1. **Estado del Código:** Impecable, verificado con 2,450 pruebas unitarias (`97/97` suites) y 12 pruebas de concurrencia multi-cliente en emulador (`6/6` en B3 y `6/6` en B1/B2), sin ninguna regresión.
 2. **Estado de Interfaz (UI):** 100% de los flujos operativos de B3 y «Editar cliente» migrados y verificados como vistas de pantalla completa integradas en la navegación de la aplicación.
 3. **Estado de Despliegue:** CERO despliegues a producción. CERO migraciones ejecutadas.
 4. **Estado del Pull Request:** La rama `feat/phase-2-b3-legal-fiscal-documents` se somete a revisión mediante Pull Request formal contra `main`.

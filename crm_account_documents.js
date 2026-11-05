@@ -110,9 +110,9 @@
 
     // ---------- 3. Revisión Bienal ----------
 
-    function recordBiennialConfirmation(fb, { accountId, docKey, documentVersionId, confirmationType, confirmedNoChanges, notas, opportunityId, dbSuffix }) {
+    function recordBiennialConfirmation(fb, { accountId, docKey, documentVersionId, confirmationType, confirmedNoChanges, notas, opportunityId, opId, dbSuffix }) {
         const key = ['recordBiennialConfirmation', dbSuffix, accountId, docKey, documentVersionId, confirmationType].join('|');
-        return callIdempotent(key, () => {
+        return callIdempotent(key, generatedOpId => {
             const fn = fb.functions().httpsCallable('recordBiennialConfirmationAdmin');
             return fn({
                 accountId,
@@ -122,6 +122,7 @@
                 confirmedNoChanges: confirmedNoChanges === true,
                 notas: notas || null,
                 opportunityId: opportunityId || null,
+                opId: opId || generatedOpId,
                 dbSuffix
             });
         });
