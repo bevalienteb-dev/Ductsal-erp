@@ -4,7 +4,7 @@
 // Responsabilidad:
 // 1. Directorio principal de clientes, buscador interactivo y tabla (renderClientsTable).
 // 2. Ordenamiento multicriterio de columnas y actualización de glifos visuales (toggleCliSort).
-// 3. Modales de registro/edición de clientes naturales y jurídicos (openClientModal).
+// 3. Vista de pantalla completa de registro/edición de clientes naturales y jurídicos (openClientDetailView).
 // 4. Alternancia dinámica de campos fiscales y personería (toggleClientFields).
 // 5. Validación fiscal de formulario y resaltado visual de errores (saveClient, setClientFieldError).
 // 6. Selector de clientes en creación de oportunidades (renderClientSelect, selectClientInSelector).
@@ -27,7 +27,8 @@
             window.updateCliSortIcons = api.updateCliSortIcons;
             window.toggleClientFields = api.toggleClientFields;
             window.setClientFieldError = api.setClientFieldError;
-            window.openClientModal = api.openClientModal;
+            window.openClientDetailView = api.openClientDetailView;
+            window.closeClientDetailView = api.closeClientDetailView;
             window.saveClient = api.saveClient;
             window.renderClientSelect = api.renderClientSelect;
             window.selectClientInSelector = api.selectClientInSelector;
@@ -132,13 +133,7 @@
             if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
         },
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
-            if (typeof window !== 'undefined' && typeof window.alert === 'function' && !String(window.alert).includes('[native code]')) return window.alert(msg);
-            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
-                const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
-                return window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
-            }
-            console.warn('[ClientsUI Alert]', msg);
+            return renderInlineClientNotice(msg);
         },
         escapeHtmlDoc: (str) => {
             if (typeof escapeHtmlDoc === 'function') return escapeHtmlDoc(str);
@@ -160,6 +155,35 @@
             if (typeof window !== 'undefined' && typeof window.openRecordFollowUpModal === 'function') return window.openRecordFollowUpModal(id);
         }
     };
+
+    function renderInlineClientNotice(msg) {
+        const text = String(msg || '');
+        const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(text) && !/error|no se|denegado|inválid|falta|requiere|obligatorio/i.test(text);
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            window.CrmUI.notify(isSuccess ? 'success' : 'error', text);
+        }
+        if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+            const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+            if (activeView && typeof document.createElement === 'function') {
+                let banner = document.getElementById('b3-inline-view-notice');
+                if (!banner) {
+                    banner = document.createElement('div');
+                    banner.id = 'b3-inline-view-notice';
+                    if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                        activeView.insertBefore(banner, activeView.firstChild);
+                    } else if (typeof activeView.appendChild === 'function') {
+                        activeView.appendChild(banner);
+                    }
+                } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                    activeView.insertBefore(banner, activeView.firstChild);
+                }
+                banner.style.cssText = isSuccess
+                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                banner.textContent = text;
+            }
+        }
+    }
 
     /**
      * Inicializa o actualiza dependencias de la UI de clientes.
@@ -343,7 +367,7 @@
                 <button type="button" class="btn-table-action" onclick="ContactsUI.openAccountContactsModal('${c.id}')" title="Ver y gestionar personas vinculadas a esta cuenta (Hub & Spoke)" style="background:rgba(56,189,248,0.15); color:#38bdf8; border-color:rgba(56,189,248,0.3);">
                     👥 Contactos
                 </button>
-                <button type="button" class="btn-table-action btn-table-edit" onclick="openClientModal('${c.id}')" title="Editar datos y ver expediente de ${esc(mainName)}">
+                <button type="button" class="btn-table-action btn-table-edit" onclick="openClientDetailView('${c.id}')" title="Editar datos y ver expediente de ${esc(mainName)}">
                     ✏️ Editar
                 </button>`;
             if (currentUser && currentUser.role === 'manager') {
@@ -415,7 +439,7 @@
         }
     }
 
-    function openClientModal(clientId = null, options = {}) {
+    function openClientDetailView(clientId = null, options = {}) {
         if (typeof document === 'undefined') return;
 
         // Determinar origen de navegación para retorno limpio desde la vista de pantalla completa
@@ -538,8 +562,8 @@
             if (headerB3HistoryBtn) headerB3HistoryBtn.style.display = 'none';
         }
 
-        const modal = document.getElementById('clientModal');
-        if (modal) modal.style.display = 'block';
+        const contentEl = document.getElementById('clientDetailContent');
+        if (contentEl && contentEl.style) contentEl.style.display = 'block';
         _navigateView('client-detail-view');
     }
 
@@ -548,8 +572,8 @@
             _deps.cancelPendingClientReservation();
         }
         if (typeof document !== 'undefined') {
-            const modal = document.getElementById('clientModal');
-            if (modal && modal.style) modal.style.display = 'none';
+            const contentEl = document.getElementById('clientDetailContent');
+            if (contentEl && contentEl.style) contentEl.style.display = 'none';
         }
         if (_clientViewOrigin && _clientViewOrigin.fromNewProspect) {
             _navigateView('list-view');
@@ -644,7 +668,7 @@
             if (at > -1) updatedList[at] = c; else updatedList.push(c);
             _deps.setClients(updatedList);
 
-            _deps.closeModal('clientModal');
+            _deps.closeModal('clientDetailContent');
             if (typeof document !== 'undefined' && document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block') {
                 _navigateView('list-view');
                 selectClientInSelector(c.id, getClientName(c.id));
@@ -824,8 +848,7 @@
         renderClientsTable,
         toggleClientFields,
         setClientFieldError,
-        openClientModal,
-        openClientDetailView: openClientModal,
+        openClientDetailView,
         closeClientDetailView,
         saveClient,
         renderClientSelect,

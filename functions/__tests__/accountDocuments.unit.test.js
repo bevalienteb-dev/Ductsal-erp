@@ -502,13 +502,17 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       expect(val.blockingReasons[0]).toMatch(/requiere revisión bienal/);
     });
 
-    test('Opción B: confirmación expresa sin cambios renueva el período por 2 años', async () => {
+    test('Caso B (sin actualizaciones): registra evento de confirmación sin pedir ni generar archivo, vinculado al documento y versión correcta, con fecha y usuario', async () => {
       state.docs['clients_prod/ACC_DELTA'].documentos.escritura.actualizadoEn = '2024-01-01T10:00:00.000Z';
       state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
         versionId: 'v_esc_1',
-        versionNumber: 1,
-        docKey: 'escritura'
+        versionNumber: 2,
+        docKey: 'escritura',
+        estado: 'vigente',
+        name: 'Escritura_Constitucion.pdf'
       };
+
+      const versionsCountBefore = Object.keys(state.docs).filter(k => k.startsWith('clients_prod/ACC_DELTA/document_versions/')).length;
 
       const confRes = await svc.recordBiennialConfirmation({
         caller: callerUser(V1),
@@ -517,20 +521,43 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         documentVersionId: 'v_esc_1',
         confirmationType: 'no_changes',
         confirmedNoChanges: true,
+        notas: 'Se consultó al cliente y confirmó que no existen modificaciones.',
         opportunityId: 'PROSP_1'
       });
 
       expect(confRes.success).toBe(true);
       expect(confRes.docKey).toBe('escritura');
+      expect(confRes.documentVersionId).toBe('v_esc_1');
+      expect(confRes.confirmedAt).toBeDefined();
       expect(confRes.nextReviewAt).toMatch(/^2028-/);
+
+      // Verify NO new document version was created in document_versions
+      const versionsCountAfter = Object.keys(state.docs).filter(k => k.startsWith('clients_prod/ACC_DELTA/document_versions/')).length;
+      expect(versionsCountAfter).toBe(versionsCountBefore);
+
+      // Verify confirmation event record in biennial_confirmations
+      const savedConf = state.docs[`clients_prod/ACC_DELTA/biennial_confirmations/${confRes.confirmationId}`];
+      expect(savedConf).toBeDefined();
+      expect(savedConf.eventType).toBe('biennial_confirmation');
+      expect(savedConf.docKey).toBe('escritura');
+      expect(savedConf.documentVersionId).toBe('v_esc_1');
+      expect(savedConf.versionNumber).toBe(2);
+      expect(savedConf.confirmationType).toBe('no_changes');
+      expect(savedConf.confirmedNoChanges).toBe(true);
+      expect(savedConf.confirmedBy).toBe(V1);
+      expect(savedConf.confirmedByName).toBe('Vendedor Uno');
+      expect(savedConf.confirmedAt).toBeDefined();
+      expect(savedConf.notas).toContain('Se consultó al cliente');
 
       // Verify client biennial review projection
       const client = state.docs['clients_prod/ACC_DELTA'];
       expect(client.biennialReviews.escritura).toBeDefined();
       expect(client.biennialReviews.escritura.nextReviewAt).toMatch(/^2028-/);
+      expect(client.biennialReviews.escritura.documentVersionId).toBe('v_esc_1');
+      expect(client.biennialReviews.escritura.versionNumber).toBe(2);
     });
 
-    test('Opción A: incorporar nueva modificación renueva el período de revisión bienal', async () => {
+    test('Caso A (con actualizaciones): incorpora nueva versión documental, actualiza vigencia y renueva fecha de próxima revisión', async () => {
       const resMod = await svc.saveAccountDocument({
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
@@ -544,10 +571,99 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       });
 
       expect(resMod.success).toBe(true);
+      expect(resMod.versionId).toBeDefined();
+      expect(resMod.versionNumber).toBe(1);
 
       const client = state.docs['clients_prod/ACC_DELTA'];
+      expect(client.documentos.mods_escritura.versionId).toBe(resMod.versionId);
       expect(client.biennialReviews.mods_escritura).toBeDefined();
       expect(client.biennialReviews.mods_escritura.nextReviewAt).toMatch(/^2028-/);
+      expect(client.biennialReviews.mods_escritura.documentVersionId).toBe(resMod.versionId);
+    });
+
+    test('El historial del expediente distingue claramente confirmaciones bienales (biennialConfirmations) frente a cargas de versión (documentVersions)', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente',
+        name: 'Escritura_Inicial.pdf',
+        createdAt: '2024-01-01T10:00:00.000Z'
+      };
+
+      const confRes = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Confirmación bienal sin cambios'
+      });
+
+      const dossier = await svc.getAccountDossier({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA'
+      });
+
+      expect(Array.isArray(dossier.documentVersions)).toBe(true);
+      expect(Array.isArray(dossier.biennialConfirmations)).toBe(true);
+      expect(dossier.documentVersions.some(v => v.id === confRes.confirmationId)).toBe(false);
+      const foundConf = dossier.biennialConfirmations.find(c => c.id === confRes.confirmationId);
+      expect(foundConf).toBeDefined();
+      expect(foundConf.eventType).toBe('biennial_confirmation');
+      expect(foundConf.documentVersionId).toBe('v_esc_1');
+      expect(foundConf.confirmationType).toBe('no_changes');
+    });
+
+    test('Una confirmación bienal NO puede utilizarse para renovar un documento vencido', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_vencida'] = {
+        versionId: 'v_esc_vencida',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente',
+        fechaVencimiento: '2020-01-01'
+      };
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_vencida',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/no puede utilizarse para renovar un documento vencido/);
+    });
+
+    test('Un documento que NO está configurado para revisión bienal (ej. dui, credencial, nit, nrc) rechaza el flujo de confirmación bienal', async () => {
+      for (const nonBiennialDoc of ['dui', 'credencial', 'nit', 'nrc']) {
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: nonBiennialDoc,
+          documentVersionId: 'v_any_1',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })).rejects.toThrow(/no está sujeto a revisión bienal/);
+      }
+    });
+
+    test('Caso B exige confirmación expresa (confirmedNoChanges === true)', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: false
+      })).rejects.toThrow(/Debe confirmar expresamente/);
     });
   });
 
@@ -732,13 +848,18 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
     });
   });
 
-  describe('8. Auditoría de UI B3 y Editar Cliente: Prohibición de Popups y Vistas de Pantalla Completa', () => {
+  describe('8. Auditoría de UI B3 y Editar Cliente: Prohibición de Popups, Adaptadores Explícitos y Nomenclatura de Vistas', () => {
     const fs = require('fs');
     const path = require('path');
     const ROOT = path.join(__dirname, '..', '..');
     const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const appCoreJs = fs.readFileSync(path.join(ROOT, 'app_core.js'), 'utf8');
     const clientDocsJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'client_documents.js'), 'utf8');
     const clientsUiJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_ui.js'), 'utf8');
+    const clientsCtrlJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'clients_controller.js'), 'utf8');
+    const contactsUiJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'contacts_ui.js'), 'utf8');
+    const oppUiJs = fs.readFileSync(path.join(ROOT, 'modules', 'opportunities', 'opportunities_ui.js'), 'utf8');
+    const finContractsJs = fs.readFileSync(path.join(ROOT, 'modules', 'finance', 'finance_contracts.js'), 'utf8');
     const docViewerJs = fs.readFileSync(path.join(ROOT, 'core', 'document_viewer.js'), 'utf8');
 
     test('index.html integra todas las vistas operativas de B3 y Editar Cliente como .view-section de pantalla completa dentro de <main>', () => {
@@ -749,27 +870,49 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       const mainContent = indexHtml.slice(mainStart, mainEnd);
 
       expect(mainContent).toContain('id="client-detail-view" class="view-section"');
+      expect(mainContent).toContain('id="clientDetailContent"');
       expect(mainContent).toContain('id="b3-rl-election-view" class="view-section"');
       expect(mainContent).toContain('id="b3-grant-power-view" class="view-section"');
       expect(mainContent).toContain('id="b3-dossier-history-view" class="view-section"');
+      expect(mainContent).toContain('id="b3-history-content"');
       expect(mainContent).toContain('id="b3-biennial-confirmation-view" class="view-section"');
       expect(mainContent).toContain('id="b3-substitute-doc-view" class="view-section"');
       expect(mainContent).toContain('id="b3-doc-version-history-view" class="view-section"');
     });
 
-    test('No existen modales flotantes (#b3RLElectionModal, #b3PowerModal, #b3DossierHistoryModal, #docVersionHistoryModal) ni #clientModal con clase .modal', () => {
-      expect(indexHtml).not.toContain('id="b3RLElectionModal"');
-      expect(indexHtml).not.toContain('id="b3PowerModal"');
-      expect(indexHtml).not.toContain('id="b3DossierHistoryModal"');
-      expect(indexHtml).not.toMatch(/<div[^>]+id="clientModal"[^>]+class="[^"]*(?:^|\s)modal(?:\s|")/);
-      expect(clientDocsJs).not.toContain('b3RLElectionModal');
-      expect(clientDocsJs).not.toContain('b3PowerModal');
-      expect(clientDocsJs).not.toContain('b3DossierHistoryModal');
-      expect(docViewerJs).not.toContain('docVersionHistoryModal');
+    test('Cero detección basada en [native code] o Function.prototype.toString en ningún módulo', () => {
+      const filesToAudit = [appCoreJs, clientDocsJs, clientsUiJs, clientsCtrlJs, docViewerJs];
+      for (const content of filesToAudit) {
+        expect(content).not.toContain('[native code]');
+        expect(content).not.toContain('Function.prototype.toString');
+        expect(content).not.toMatch(/String\s*\(\s*(?:alert|confirm|prompt)\s*\)/);
+      }
     });
 
-    test('No se utilizan popups prompt() en la revocación de poderes ni flujos B3, y openClientModal navega a client-detail-view', () => {
+    test('Nomenclatura limpia de vistas: cero referencias operativas a openClientModal, openRLElectionModal, openGrantPowerModal, openDossierHistoryModal, clientModal o b3-history-modal-body', () => {
+      const allSources = [indexHtml, appCoreJs, clientDocsJs, clientsUiJs, clientsCtrlJs, contactsUiJs, oppUiJs, finContractsJs, docViewerJs];
+      const legacyIdentifiers = [
+        'openClientModal',
+        'openRLElectionModal',
+        'openGrantPowerModal',
+        'openDossierHistoryModal',
+        'clientModal',
+        'b3-history-modal-body',
+        'b3RLElectionModal',
+        'b3PowerModal',
+        'b3DossierHistoryModal',
+        'docVersionHistoryModal'
+      ];
+      for (const src of allSources) {
+        for (const legacyId of legacyIdentifiers) {
+          expect(src).not.toContain(legacyId);
+        }
+      }
+    });
+
+    test('No se utilizan popups prompt() en la revocación de poderes ni flujos B3, y openClientDetailView navega a client-detail-view', () => {
       expect(clientDocsJs).not.toMatch(/\bprompt\s*\(/);
+      expect(clientsUiJs).toContain('function openClientDetailView(');
       expect(clientsUiJs).toContain("_navigateView('client-detail-view')");
       expect(clientDocsJs).toContain("_navigateB3View('b3-rl-election-view')");
       expect(clientDocsJs).toContain("_navigateB3View('b3-grant-power-view')");

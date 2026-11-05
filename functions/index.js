@@ -2382,7 +2382,7 @@ exports.revokeContractPowerAdmin = functions.https.onCall((data, context) => run
     opId: d.opId
   })));
 
-/** { accountId, docKey, documentVersionId, confirmationType, confirmedNoChanges, opportunityId?, dbSuffix? } -> { success: true, confirmationId, ... } */
+/** { accountId, docKey, documentVersionId, confirmationType, confirmedNoChanges, notas?, opportunityId?, dbSuffix? } -> { success: true, confirmationId, ... } */
 exports.recordBiennialConfirmationAdmin = functions.https.onCall((data, context) => runAccountDocumentOp(data, context,
   (service, caller, d) => service.recordBiennialConfirmation({
     caller,
@@ -2391,6 +2391,7 @@ exports.recordBiennialConfirmationAdmin = functions.https.onCall((data, context)
     documentVersionId: d.documentVersionId,
     confirmationType: d.confirmationType,
     confirmedNoChanges: d.confirmedNoChanges === true,
+    notas: d.notas || null,
     opportunityId: d.opportunityId
   })));
 

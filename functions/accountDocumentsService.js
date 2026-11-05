@@ -598,7 +598,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Confirmación Bienal de Documentos (Opción B: Sin cambios / Opción A: Modificación)
+  // 4. Confirmación Bienal de Documentos Societarios
+  //    Caso A: El documento sí tuvo actualizaciones (nueva versión cargada + renovación bienal)
+  //    Caso B: El documento no tuvo actualizaciones (evento de confirmación expresa sin archivo)
   // ---------------------------------------------------------------------------
   async function recordBiennialConfirmation({
     caller,
@@ -607,6 +609,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     documentVersionId,
     confirmationType = 'no_changes',
     confirmedNoChanges = true,
+    notas = null,
     opportunityId = null
   }) {
     assertCaller(caller);
@@ -616,6 +619,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
     if (!DOCUMENTS_REQUIRING_BIENNIAL_REVIEW.includes(cleanDocKey)) {
       throw new ServiceError('invalid-argument', `El documento '${cleanDocKey}' no está sujeto a revisión bienal`);
+    }
+
+    const isNoChangesType = confirmationType === 'no_changes' || confirmationType === 'biennial_no_changes';
+    if (isNoChangesType && confirmedNoChanges !== true) {
+      throw new ServiceError('invalid-argument', 'Debe confirmar expresamente que consultó al cliente y que no existen modificaciones');
     }
 
     return db.runTransaction(async tx => {
@@ -638,21 +646,34 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
       const now = new Date();
       const nowIso = now.toISOString();
+      const todayStr = nowIso.slice(0, 10);
+
+      // A biennial confirmation cannot renew a document that has an expired fechaVencimiento
+      if (versionData.fechaVencimiento && String(versionData.fechaVencimiento).slice(0, 10) < todayStr) {
+        throw new ServiceError('failed-precondition', 'Una confirmación de revisión bienal no puede utilizarse para renovar un documento vencido');
+      }
+      if (versionData.estado && versionData.estado !== 'vigente') {
+        throw new ServiceError('failed-precondition', 'La confirmación bienal solo puede registrarse sobre la versión documental vigente');
+      }
+
       // Next review at: 2 calendar years (730 days) from confirmation
       const nextReviewDate = new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000);
       const nextReviewIso = nextReviewDate.toISOString().slice(0, 10);
 
       const rand = crypto.randomBytes(4).toString('hex');
       const confId = `conf_${Date.now()}_${rand}`;
+      const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
 
       const confirmationRecord = {
         id: confId,
+        eventType: 'biennial_confirmation',
         accountId: cleanAccountId,
         docKey: cleanDocKey,
         documentVersionId: cleanVersionId,
         versionNumber: versionData.versionNumber || 1,
         confirmationType,
         confirmedNoChanges: !!confirmedNoChanges,
+        notas: cleanNotas,
         confirmedBy: caller.cid,
         confirmedByName: caller.name || 'Comercial',
         confirmedAt: nowIso,
@@ -670,7 +691,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         nextReviewAt: nextReviewIso,
         confirmedBy: caller.cid,
         confirmedByName: caller.name,
-        documentVersionId: cleanVersionId
+        documentVersionId: cleanVersionId,
+        versionNumber: versionData.versionNumber || 1,
+        confirmationType
       };
 
       tx.update(clientRef, {

@@ -36,17 +36,17 @@
             if (typeof window !== 'undefined' && Array.isArray(window.clients)) return window.clients;
             return [];
         },
-        openClientModal: (clientId) => {
-            if (typeof openClientModal === 'function') return openClientModal(clientId);
-            if (typeof window !== 'undefined' && typeof window.openClientModal === 'function') return window.openClientModal(clientId);
+        openClientDetailView: (clientId) => {
+            if (typeof openClientDetailView === 'function') return openClientDetailView(clientId);
+            if (typeof window !== 'undefined' && typeof window.openClientDetailView === 'function') return window.openClientDetailView(clientId);
             const clientsMod = (typeof ClientsUI !== 'undefined') ? ClientsUI : (typeof window !== 'undefined' ? window.ClientsUI : null);
-            if (clientsMod && typeof clientsMod.openClientModal === 'function') return clientsMod.openClientModal(clientId);
+            if (clientsMod && typeof clientsMod.openClientDetailView === 'function') return clientsMod.openClientDetailView(clientId);
         }
     };
 
     /**
      * Genera el contrato marco de prestación de servicios para el proyecto y cliente.
-     * Comprueba completitud de datos legales; si faltan, abre el modal del cliente.
+     * Comprueba completitud de datos legales; si faltan, abre la vista de detalle del cliente.
      * @param {string} prospectId - Identificador de la oportunidad
      */
     function generarContrato(prospectId) {
@@ -84,7 +84,7 @@
             }
 
             if (missing.length > 0) {
-                _deps.openClientModal(c.id);
+                _deps.openClientDetailView(c.id);
                 return alert("Faltan datos en el perfil del cliente para el contrato: " + missing.join(", ") + ". Complete el formulario que se acaba de abrir y vuelva a generar el contrato.");
             }
 

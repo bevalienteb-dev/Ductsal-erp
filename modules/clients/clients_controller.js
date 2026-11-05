@@ -94,20 +94,41 @@
             if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
         },
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
-            if (typeof window !== 'undefined' && typeof window.alert === 'function' && !String(window.alert).includes('[native code]')) return window.alert(msg);
-            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
-                const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
-                return window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
-            }
-            console.warn('[ClientsController Alert]', msg);
+            return renderInlineControllerNotice(msg);
         },
-        confirm: (msg) => {
-            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
-            if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !String(window.confirm).includes('[native code]')) return window.confirm(msg);
+        confirm: () => {
             return true;
         }
     };
+
+    function renderInlineControllerNotice(msg) {
+        const text = String(msg || '');
+        const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(text) && !/error|no se|denegado|inválid|falta|requiere/i.test(text);
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            window.CrmUI.notify(isSuccess ? 'success' : 'error', text);
+        }
+        if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+            const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+            if (activeView && typeof document.createElement === 'function') {
+                let banner = document.getElementById('b3-inline-view-notice');
+                if (!banner) {
+                    banner = document.createElement('div');
+                    banner.id = 'b3-inline-view-notice';
+                    if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                        activeView.insertBefore(banner, activeView.firstChild);
+                    } else if (typeof activeView.appendChild === 'function') {
+                        activeView.appendChild(banner);
+                    }
+                } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                    activeView.insertBefore(banner, activeView.firstChild);
+                }
+                banner.style.cssText = isSuccess
+                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                banner.textContent = text;
+            }
+        }
+    }
 
     /**
      * Inicializa o actualiza dependencias del controlador de clientes.
@@ -335,7 +356,7 @@
                 _deps.alert(crmClients.duplicateMessage(res));
                 const modalOpen = typeof document !== 'undefined' && document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block';
                 if (modalOpen && res.matches && res.matches.length === 1) {
-                    _deps.closeModal('clientModal');
+                    _deps.closeModal('clientDetailContent');
                     _deps.selectClientInSelector(res.matches[0].clientId, res.matches[0].nombre);
                 }
                 return null;
@@ -404,6 +425,7 @@
     // 6. Eliminación de Cliente
     // -------------------------------------------------------------------------
     function deleteClient(id) {
+        const skipInlineConfirm = arguments[1] === true;
         const currentUser = _deps.getCurrentUser();
         if (!currentUser || currentUser.role !== 'manager') return _deps.alert("Permiso denegado.");
         const clientsList = _deps.getClients();
@@ -416,7 +438,28 @@
             return _deps.alert("⚠️ No puedes eliminar este cliente porque tiene proyectos asociados. Debes eliminar primero todos sus proyectos.");
         }
 
-        if (!_deps.confirm(`¿Estás SEGURO de que deseas eliminar permanentemente el cliente "${c.nombres || c.empresa || id}"?\n\nEsta acción NO se puede deshacer.`)) return;
+        const displayName = String(c.nombres || c.empresa || id).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const safeId = String(id).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        const clientsView = (typeof document !== 'undefined') ? document.getElementById('clients-view') : null;
+        if (!skipInlineConfirm && clientsView && typeof clientsView.insertBefore === 'function' && typeof document.createElement === 'function') {
+            let confirmBox = document.getElementById('b3-inline-delete-client-confirm');
+            if (!confirmBox) {
+                confirmBox = document.createElement('div');
+                confirmBox.id = 'b3-inline-delete-client-confirm';
+                clientsView.insertBefore(confirmBox, clientsView.firstChild);
+            }
+            confirmBox.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.85rem;';
+            confirmBox.innerHTML = `
+                <span>⚠️ ¿Confirmar eliminación permanente del cliente <strong>${displayName}</strong>? Esta acción no se puede deshacer.</span>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn-danger" style="padding:4px 10px; font-size:0.78rem;" onclick="const el=document.getElementById('b3-inline-delete-client-confirm'); if(el) el.remove(); deleteClient('${safeId}', true)">Confirmar eliminación</button>
+                    <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="const el=document.getElementById('b3-inline-delete-client-confirm'); if(el) el.remove();">Cancelar</button>
+                </div>
+            `;
+            return;
+        }
+
+        if (!skipInlineConfirm && !_deps.confirm(`¿Estás SEGURO de que deseas eliminar permanentemente el cliente "${c.nombres || c.empresa || id}"?\n\nEsta acción NO se puede deshacer.`)) return;
         const fb = _deps.getFirebase();
         const CrmCommercial = _deps.getCrmCommercial();
         if (!CrmCommercial || typeof CrmCommercial.hasSessionSync !== 'function' || !CrmCommercial.hasSessionSync(fb)) {

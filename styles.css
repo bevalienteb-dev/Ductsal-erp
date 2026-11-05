@@ -2718,9 +2718,9 @@ body.modal-open {
 }
 
 /* ==========================================================================
-   FASE 5.3: MEJORA VISUAL DEL FORMULARIO DE CLIENTES (CLIENT MODAL)
+   FASE 5.3 / B3: MEJORA VISUAL DEL FORMULARIO DE CLIENTES (VISTA INTEGRADA)
    ========================================================================== */
-#clientModal .modal-content,
+#clientDetailContent .modal-content,
 .client-modal-content {
     max-width: 720px;
     width: 95%;
@@ -2949,7 +2949,7 @@ body.modal-open {
 }
 
 /* Fase 2 Bloque B3: Vista integrada de pantalla completa para Cliente y Expediente */
-#client-detail-view #clientModal.client-modal-content {
+#client-detail-view #clientDetailContent.client-modal-content {
     max-width: 100%;
     width: 100%;
     max-height: none;
@@ -2976,13 +2976,13 @@ body.modal-open {
 }
 
 @media (max-width: 768px) {
-    #clientModal .modal-content,
+    #clientDetailContent .modal-content,
     .client-modal-content {
         width: 100% !important;
         padding: 1rem !important;
         margin: 0 !important;
     }
-    #client-detail-view #clientModal.client-modal-content {
+    #client-detail-view #clientDetailContent.client-modal-content {
         padding: 1.1rem !important;
     }
     .client-form-section {

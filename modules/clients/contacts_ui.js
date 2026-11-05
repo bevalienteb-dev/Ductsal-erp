@@ -210,8 +210,8 @@
         const allClients = _deps.getClients();
         activeAccountData = allClients.find(c => c.id === accountId) || { id: accountId };
 
-        // Cerrar clientModal si estaba abierto
-        _deps.closeModal('clientModal');
+        // Cerrar contenedor de detalle de cliente si estaba activo
+        _deps.closeModal('clientDetailContent');
 
         // Navegar a la vista full-screen
         _deps.showView('account-contacts-view');

@@ -2447,7 +2447,7 @@ function openModal(id) {
 }
 
 function closeModal(id) {
-    if (id === 'clientModal') {
+    if (id === 'clientDetailContent') {
         cancelPendingClientReservation();
         if (typeof ClientsUI !== 'undefined' && typeof ClientsUI.closeClientDetailView === 'function') {
             ClientsUI.closeClientDetailView();
@@ -3098,7 +3098,7 @@ async function runB3CloseValidation(prospectId, accountId) {
                         <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openRLElectionView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">⚖️ Registrar / Cambiar RL</button>
                         <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openGrantPowerView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">📜 Registrar Apoderado / Poder</button>
                         <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openBiennialConfirmationView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">🗓️ Confirmación Bienal</button>
-                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="openClientModal('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">✏️ Resolver en Ficha de Cliente</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="openClientDetailView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">✏️ Resolver en Ficha de Cliente</button>
                     </div>
                 </div>
             `;
@@ -3527,7 +3527,7 @@ function renderClosingDocumentationPanel(p) {
                         Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel o en vista de pantalla completa.
                     </div>
                 </div>
-                <button type="button" class="btn-secondary" style="font-size: 0.75rem; padding: 4px 10px;" onclick="openClientModal('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                <button type="button" class="btn-secondary" style="font-size: 0.75rem; padding: 4px 10px;" onclick="openClientDetailView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
                     ✏️ Editar Cliente en Vista Completa
                 </button>
             </div>

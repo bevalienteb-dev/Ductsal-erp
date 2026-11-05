@@ -367,7 +367,7 @@
                         </div>
                         <p>Gestión operativa de información de empresas, contactos y expedientes digitales.</p>
                     </div>
-                    <button class="btn-primary" id="btn-new-client-view" onclick="openClientModal()">+ Agregar Cliente</button>
+                    <button class="btn-primary" id="btn-new-client-view" onclick="openClientDetailView()">+ Agregar Cliente</button>
                 </header>
 
                 <div style="margin-bottom: 1rem;">
@@ -2002,7 +2002,7 @@
                     </div>
                 </div>
 
-                <div id="clientModal" class="modal-content glass-panel client-modal-content">
+                <div id="clientDetailContent" class="modal-content glass-panel client-modal-content">
                     <div class="client-modal-header">
                         <div class="client-modal-title-box">
                             <span class="client-modal-icon">👥</span>
@@ -2011,7 +2011,7 @@
                                 <p class="client-modal-subtitle">Gestión de datos de cliente, régimen fiscal y expediente</p>
                             </div>
                         </div>
-                        <button type="button" class="btn-secondary close" onclick="closeModal('clientModal')" title="Volver al listado" style="position:static; font-size:0.85rem; padding:6px 14px;">← Cancelar y Volver</button>
+                        <button type="button" class="btn-secondary close" onclick="closeClientDetailView()" title="Volver al listado" style="position:static; font-size:0.85rem; padding:6px 14px;">← Cancelar y Volver</button>
                     </div>
 
                     <form id="clientForm" onsubmit="saveClient(event)">
@@ -2235,7 +2235,7 @@
                                 </button>
                             </div>
                             <div style="display:flex; gap:8px;">
-                                <button type="button" class="btn-secondary" onclick="closeModal('clientModal')">Cancelar</button>
+                                <button type="button" class="btn-secondary" onclick="closeClientDetailView()">Cancelar</button>
                                 <button type="submit" class="btn-primary" id="btn-submit-client">Guardar Cliente</button>
                             </div>
                         </div>
@@ -2445,13 +2445,13 @@
                 </div>
 
                 <div class="card glass-panel" style="padding: 1.5rem;">
-                    <div id="b3-history-modal-body">
+                    <div id="b3-history-content">
                         <div style="text-align:center; padding:2rem; color:var(--text-muted);">Cargando historial societario...</div>
                     </div>
                 </div>
             </section>
 
-            <!-- Sub-view B3.4: Registrar Confirmación Bienal de Modificaciones al Pacto Social -->
+            <!-- Sub-view B3.4: Registrar Confirmación Bienal de Documentos Societarios -->
             <section id="b3-biennial-confirmation-view" class="view-section">
                 <div class="detail-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
                     <button type="button" class="btn-back" onclick="ClientDocuments.returnToClientOrOrigin()">← Volver a la Cuenta / Oportunidad</button>
@@ -2462,7 +2462,7 @@
                     <div style="display: flex; align-items: center; gap: 0.85rem;">
                         <span style="font-size: 2rem;">🗓️</span>
                         <div>
-                            <h2 style="margin: 0; font-size: 1.4rem; color: white;">Revisión Bienal de Modificaciones al Pacto Social</h2>
+                            <h2 style="margin: 0; font-size: 1.4rem; color: white;">Revisión Bienal de Documentos Societarios</h2>
                             <p id="b3-biennial-account-subtitle" style="margin: 4px 0 0 0; font-size: 0.9rem; color: #34d399; font-weight: 600;">
                                 Cuenta Comercial: -
                             </p>
@@ -2473,54 +2473,63 @@
                 <div class="card glass-panel" style="padding: 1.75rem;">
                     <input type="hidden" id="b3-biennial-account-id">
 
-                    <div id="b3-biennial-status-summary" style="margin-bottom: 1.5rem;"></div>
+                    <div id="b3-biennial-status-summary" style="margin-bottom: 1.25rem;"></div>
+
+                    <div class="form-group" style="margin-bottom: 1.5rem;">
+                        <label for="b3-biennial-doc-key">Documento societario sujeto a revisión bienal <span class="required-indicator">*</span></label>
+                        <select id="b3-biennial-doc-key">
+                            <option value="escritura">Escritura de Constitución</option>
+                            <option value="mods_escritura">Modificaciones al Pacto Social</option>
+                        </select>
+                        <span class="form-help-text">Seleccione el documento societario cuya vigencia bienal se está verificando con el cliente.</span>
+                    </div>
 
                     <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
-                        <!-- Opción A: Cargar nueva escritura de modificación -->
+                        <!-- Caso A: El documento sí tuvo actualizaciones -->
                         <div class="client-form-section" style="border: 1px solid rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.04);">
                             <div class="client-section-header">
-                                <h3 class="client-section-title" style="color: #38bdf8;"><span>📄</span> Opción A: Incorporar Modificación al Pacto Social</h3>
+                                <h3 class="client-section-title" style="color: #38bdf8;"><span>📄</span> Caso A — El documento sí tuvo actualizaciones</h3>
                             </div>
                             <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1rem;">
-                                Si la sociedad ha inscrito reformas o modificaciones al pacto social (cambio de denominación, capital, cláusulas de administración o representación), incorpore el testimonio inscrito.
+                                Si existen actualizaciones al documento societario, adjunte la nueva versión actualizada. El sistema registrará la nueva versión, fecha, usuario responsable y renovará la revisión bienal con base en la nueva versión incorporada.
                             </p>
                             <form id="b3-biennial-upload-form" onsubmit="event.preventDefault(); ClientDocuments.submitBiennialUpload();">
                                 <div class="form-group client-file-upload-box" style="margin-bottom: 1rem;">
-                                    <label for="b3-biennial-file">Escritura de Modificación al Pacto Social (PDF / Imagen) <span class="required-indicator">*</span></label>
+                                    <label for="b3-biennial-file">Nueva versión del documento actualizado (PDF / Imagen) <span class="required-indicator">*</span></label>
                                     <input type="file" id="b3-biennial-file" required accept=".pdf,.png,.jpg,.jpeg" onchange="ClientDocuments.previewFileHash(this, 'b3-biennial-hash-preview')">
                                     <div id="b3-biennial-hash-preview" style="font-size:0.75rem; color:#38bdf8; margin-top:4px; font-family:monospace;"></div>
                                 </div>
                                 <div class="form-group" style="margin-bottom: 1rem;">
-                                    <label for="b3-biennial-upload-notes">Detalle de la reforma societaria <span class="required-indicator">*</span></label>
-                                    <textarea id="b3-biennial-upload-notes" rows="2" required placeholder="Ej. Modificación de cláusula de administración según escritura inscrita al número..."></textarea>
+                                    <label for="b3-biennial-upload-notes">Motivo o referencia de la actualización <span class="required-indicator">*</span></label>
+                                    <textarea id="b3-biennial-upload-notes" rows="2" required placeholder="Ej. Actualización de cláusulas societarias proporcionada por el cliente."></textarea>
                                 </div>
                                 <button type="submit" class="btn-primary" id="b3-btn-biennial-upload" style="width: 100%;">
-                                    📤 Cargar Modificación y Renovar Vigencia Bienal
+                                    📤 Incorporar Nueva Versión y Renovar Revisión Bienal
                                 </button>
                             </form>
                         </div>
 
-                        <!-- Opción B: Confirmación expresa sin modificaciones -->
+                        <!-- Caso B: El documento no tuvo actualizaciones -->
                         <div class="client-form-section" style="border: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.04);">
                             <div class="client-section-header">
-                                <h3 class="client-section-title" style="color: #34d399;"><span>✅</span> Opción B: Confirmar Vigencia Sin Modificaciones</h3>
+                                <h3 class="client-section-title" style="color: #34d399;"><span>✅</span> Caso B — El documento no tuvo actualizaciones</h3>
                             </div>
                             <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1rem;">
-                                Si el cliente confirma que la Escritura de Constitución y modificaciones actuales continúan vigentes sin nuevas reformas en los últimos 2 años, registre la confirmación expresa con trazabilidad de usuario y fecha.
+                                Si el cliente manifestó que no existen modificaciones, registre la confirmación expresa dentro de la interfaz. Esta confirmación es un evento de datos asociado a la versión documental revisada (no genera ni solicita ningún documento adicional).
                             </p>
                             <form id="b3-biennial-confirm-form" onsubmit="event.preventDefault(); ClientDocuments.submitBiennialExpress();">
                                 <div class="form-group" style="margin-bottom: 1rem;">
-                                    <label for="b3-biennial-confirm-notes">Observaciones / Medio de verificación con el cliente <span class="required-indicator">*</span></label>
-                                    <textarea id="b3-biennial-confirm-notes" rows="3" required placeholder="Ej. Confirmación expresa con Departamento Legal del cliente: pacto social vigente sin reformas en los últimos 24 meses."></textarea>
+                                    <label for="b3-biennial-confirm-notes">Detalle de la consulta realizada al cliente <span class="optional-tag">(Opcional)</span></label>
+                                    <textarea id="b3-biennial-confirm-notes" rows="3" placeholder="Ej. Se consultó con el contacto principal del cliente, quien confirmó que el documento continúa vigente sin modificaciones."></textarea>
                                 </div>
                                 <div class="form-group" style="margin-bottom: 1rem;">
                                     <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 0.82rem; color: #d1fae5; cursor: pointer;">
                                         <input type="checkbox" id="b3-biennial-confirm-check" required style="margin-top: 3px;">
-                                        <span>Dejo constancia expresa de que se verificó con la cuenta comercial que no existen modificaciones posteriores pendientes de incorporar al expediente.</span>
+                                        <span>Confirmo que consulté al cliente y que este manifestó que no existen modificaciones al documento societario revisado.</span>
                                     </label>
                                 </div>
                                 <button type="submit" class="btn-success" id="b3-btn-biennial-confirm" style="width: 100%; padding: 0.7rem;">
-                                    ✅ Registrar Confirmación Expresa (Próxima revisión en 2 años)
+                                    ✅ Confirmar Sin Actualizaciones (Renovar período de 2 años)
                                 </button>
                             </form>
                         </div>
@@ -2644,7 +2653,7 @@
                     </div>
                     <div>
                         <label>&nbsp;</label>
-                        <button type="button" class="btn-secondary" onclick="openClientModal()" style="height: 42px; width: 100%; white-space: nowrap;">+ Nuevo</button>
+                        <button type="button" class="btn-secondary" onclick="openClientDetailView()" style="height: 42px; width: 100%; white-space: nowrap;">+ Nuevo</button>
                     </div>
                 </div>
                 <div class="form-group"><label>Nombre del proyecto</label><input type="text" id="new-proyecto" required></div>

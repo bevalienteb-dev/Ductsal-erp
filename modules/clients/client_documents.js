@@ -84,9 +84,10 @@
             if (typeof window !== 'undefined' && typeof window.isFormatPreviewable === 'function') return window.isFormatPreviewable(fileName);
             return true;
         },
-        openClientModal: (clientId) => {
-            if (typeof openClientModal === 'function') return openClientModal(clientId);
-            if (typeof window !== 'undefined' && typeof window.openClientModal === 'function') return window.openClientModal(clientId);
+        openClientDetailView: (clientId, options) => {
+            if (typeof openClientDetailView === 'function') return openClientDetailView(clientId, options);
+            if (typeof window !== 'undefined' && typeof window.openClientDetailView === 'function') return window.openClientDetailView(clientId, options);
+            if (typeof ClientsUI !== 'undefined' && typeof ClientsUI.openClientDetailView === 'function') return ClientsUI.openClientDetailView(clientId, options);
         },
         renderClientsTable: () => {
             if (typeof renderClientsTable === 'function') return renderClientsTable();
@@ -105,13 +106,9 @@
             if (typeof window !== 'undefined' && typeof window.hideLoading === 'function') return window.hideLoading();
         },
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
-            if (typeof window !== 'undefined' && typeof window.alert === 'function' && !String(window.alert).includes('[native code]')) return window.alert(msg);
             return renderInlineViewNotice(msg);
         },
-        confirm: (msg) => {
-            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
-            if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !String(window.confirm).includes('[native code]')) return window.confirm(msg);
+        confirm: () => {
             return true;
         }
     };
@@ -478,32 +475,30 @@
         const docName = _deps.formatClientDocLabel(docKey);
         const targetDesc = (itemIndex !== null && itemIndex !== undefined) ? `[${docName} (${itemIndex + 1})]` : `[${docName}]`;
 
-        if (!skipInlineConfirm && typeof document !== 'undefined' && typeof confirm === 'function' && String(confirm).includes('[native code]')) {
-            const container = document.getElementById('client-expediente-documentos-container');
-            if (container && typeof document.createElement === 'function') {
-                let confirmBox = document.getElementById('b3-inline-delete-doc-confirm');
-                if (!confirmBox) {
-                    confirmBox = document.createElement('div');
-                    confirmBox.id = 'b3-inline-delete-doc-confirm';
-                    if (container.firstChild && typeof container.insertBefore === 'function') {
-                        container.insertBefore(confirmBox, container.firstChild);
-                    } else if (typeof container.appendChild === 'function') {
-                        container.appendChild(confirmBox);
-                    }
+        const container = (typeof document !== 'undefined') ? document.getElementById('client-expediente-documentos-container') : null;
+        if (!skipInlineConfirm && container && typeof container.insertBefore === 'function' && typeof document.createElement === 'function') {
+            let confirmBox = document.getElementById('b3-inline-delete-doc-confirm');
+            if (!confirmBox) {
+                confirmBox = document.createElement('div');
+                confirmBox.id = 'b3-inline-delete-doc-confirm';
+                if (container.firstChild) {
+                    container.insertBefore(confirmBox, container.firstChild);
+                } else if (typeof container.appendChild === 'function') {
+                    container.appendChild(confirmBox);
                 }
-                const safeClientId = _deps.escapeHtmlDoc(clientId);
-                const safeDocKey = _deps.escapeHtmlDoc(docKey);
-                const idxArg = (itemIndex !== null && itemIndex !== undefined) ? Number(itemIndex) : 'null';
-                confirmBox.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.85rem;';
-                confirmBox.innerHTML = `
-                    <span>⚠️ ¿Confirmar eliminación del documento <strong>${_deps.escapeHtmlDoc(targetDesc)}</strong> del expediente?</span>
-                    <div style="display:flex; gap:8px;">
-                        <button type="button" class="btn-danger" style="padding:4px 10px; font-size:0.78rem;" onclick="deleteClientDocument('${safeClientId}', '${safeDocKey}', ${idxArg}, true)">Confirmar eliminación</button>
-                        <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="const el=document.getElementById('b3-inline-delete-doc-confirm'); if(el) el.remove();">Cancelar</button>
-                    </div>
-                `;
-                return;
             }
+            const safeClientId = _deps.escapeHtmlDoc(clientId);
+            const safeDocKey = _deps.escapeHtmlDoc(docKey);
+            const idxArg = (itemIndex !== null && itemIndex !== undefined) ? Number(itemIndex) : 'null';
+            confirmBox.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.85rem;';
+            confirmBox.innerHTML = `
+                <span>⚠️ ¿Confirmar eliminación del documento <strong>${_deps.escapeHtmlDoc(targetDesc)}</strong> del expediente?</span>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn-danger" style="padding:4px 10px; font-size:0.78rem;" onclick="deleteClientDocument('${safeClientId}', '${safeDocKey}', ${idxArg}, true)">Confirmar eliminación</button>
+                    <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="const el=document.getElementById('b3-inline-delete-doc-confirm'); if(el) el.remove();">Cancelar</button>
+                </div>
+            `;
+            return;
         }
 
         if (!skipInlineConfirm && !_deps.confirm(`¿Estás seguro de que deseas eliminar el documento ${targetDesc} del expediente de este cliente?`)) {
@@ -549,7 +544,7 @@
             if (typeof window !== 'undefined') {
                 window._activeClientBaseDocs = (client.documentos && typeof client.documentos === 'object') ? JSON.parse(JSON.stringify(client.documentos)) : null;
             }
-            _deps.openClientModal(clientId);
+            _deps.openClientDetailView(clientId);
             _deps.renderClientsTable();
         } catch (err) {
             _deps.alert(crmClients.errorMessage(err));
@@ -747,7 +742,7 @@
             return;
         }
         if (accountId) {
-            _deps.openClientModal(accountId);
+            _deps.openClientDetailView(accountId);
         } else {
             _navigateB3View('clients-view');
             _deps.renderClientsTable();
@@ -839,8 +834,6 @@
         const selectEl = document.getElementById('b3-rl-contact-select');
         await loadAccountContactsOptions(clientId, selectEl);
     }
-
-    const openRLElectionModal = openRLElectionView;
 
     function onRLContactSelected(contactId) {
         if (typeof document === 'undefined') return;
@@ -981,8 +974,6 @@
         await loadAccountContactsOptions(clientId, selectEl);
     }
 
-    const openGrantPowerModal = openGrantPowerView;
-
     async function submitGrantContractPower() {
         if (typeof document === 'undefined') return;
         const accountId = (document.getElementById('b3-power-account-id') || {}).value;
@@ -1121,6 +1112,11 @@
             subEl.textContent = `Cuenta Comercial: ${client.empresa || client.nombres || clientId}`;
         }
 
+        const docKeySelect = document.getElementById('b3-biennial-doc-key');
+        if (docKeySelect) {
+            docKeySelect.value = (options && options.docKey) ? options.docKey : 'escritura';
+        }
+
         const fileEl = document.getElementById('b3-biennial-file');
         if (fileEl) fileEl.value = '';
         const upNotesEl = document.getElementById('b3-biennial-upload-notes');
@@ -1135,15 +1131,17 @@
         const summaryEl = document.getElementById('b3-biennial-status-summary');
         if (summaryEl) {
             const docs = client.documentos || {};
-            const hasEscritura = !!docs.escritura;
-            const hasMods = !!docs.mods_escritura;
+            const escDoc = docs.escritura || null;
+            const modsDoc = docs.mods_escritura || null;
+            const escVer = escDoc ? `v${escDoc.versionNumber || 1} (${escDoc.versionId || 'v_base'})` : 'No cargada';
+            const modsVer = modsDoc ? `v${modsDoc.versionNumber || 1} (${modsDoc.versionId || 'v_base'})` : 'Sin modificaciones registradas';
             summaryEl.innerHTML = `
                 <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <div>
-                        <div style="font-size:0.88rem; font-weight:700; color:white;">Estado actual del Pacto Social en el Expediente</div>
+                        <div style="font-size:0.88rem; font-weight:700; color:white;">Estado actual de Documentos Societarios Sujetos a Revisión Bienal</div>
                         <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">
-                            Escritura de Constitución: <strong>${hasEscritura ? '🟢 Incorporada' : '🔴 Pendiente'}</strong> ·
-                            Modificaciones al Pacto Social: <strong>${hasMods ? '🟢 Incorporadas' : '⚪ Sin modificaciones registradas'}</strong>
+                            Escritura de Constitución: <strong>${escDoc ? `🟢 Incorporada — ${escVer}` : '🔴 Pendiente'}</strong> ·
+                            Modificaciones al Pacto Social: <strong>${modsDoc ? `🟢 Incorporadas — ${modsVer}` : '⚪ ' + modsVer}</strong>
                         </div>
                     </div>
                     <span class="badge bg-info" style="font-size:0.75rem;">Ciclo de revisión: 24 meses</span>
@@ -1157,25 +1155,27 @@
     async function submitBiennialUpload() {
         if (typeof document === 'undefined') return;
         const accountId = (document.getElementById('b3-biennial-account-id') || {}).value;
+        const docKeySelect = document.getElementById('b3-biennial-doc-key');
+        const targetDocKey = (docKeySelect && docKeySelect.value) ? docKeySelect.value : 'mods_escritura';
         const fileInput = document.getElementById('b3-biennial-file');
         const notes = ((document.getElementById('b3-biennial-upload-notes') || {}).value || '').trim();
         if (!accountId) return _deps.alert('ID de cuenta faltante');
         if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-            return _deps.alert('Debe seleccionar el archivo de la Escritura de Modificación al Pacto Social.');
+            return _deps.alert('Caso A (Con actualizaciones): Debe adjuntar el archivo actualizado del documento societario.');
         }
         if (!notes) {
-            return _deps.alert('Debe ingresar el detalle de la reforma societaria.');
+            return _deps.alert('Debe ingresar el detalle de la actualización societaria.');
         }
 
         const btn = document.getElementById('b3-btn-biennial-upload');
         const origText = btn ? btn.innerHTML : '';
         if (btn) {
             btn.disabled = true;
-            btn.innerHTML = '⏳ Subiendo escritura de modificación...';
+            btn.innerHTML = '⏳ Subiendo nueva versión...';
         }
 
         try {
-            _deps.showLoading('Subiendo modificación al pacto social y registrando revisión bienal...');
+            _deps.showLoading('Subiendo nueva versión documental y renovando revisión bienal...');
             const file = fileInput.files[0];
             const [docRef, sha] = await Promise.all([
                 _deps.uploadFileToStorage(file, 'clientes', { clientId: accountId, isLegal: true }),
@@ -1185,20 +1185,26 @@
             if (sha && docRef) docRef.sha256 = sha;
 
             const fb = _deps.getFirebase();
-            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.uploadAccountDocumentVersion === 'function') {
-                await CrmAccountDocuments.uploadAccountDocumentVersion(fb, {
+            let savedVersionId = (docRef && docRef.versionId) || null;
+            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.saveAccountDocument === 'function') {
+                const saveRes = await CrmAccountDocuments.saveAccountDocument(fb, {
                     accountId,
-                    docKey: 'mods_escritura',
-                    fileMeta: docRef,
-                    motivo: notes,
+                    docKey: targetDocKey,
+                    doc: docRef,
+                    motivoSustitucion: notes,
                     dbSuffix: _deps.getDbSuffix()
                 });
+                if (saveRes && saveRes.versionId) {
+                    savedVersionId = saveRes.versionId;
+                    docRef.versionId = saveRes.versionId;
+                    docRef.versionNumber = saveRes.versionNumber;
+                }
             }
-            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.recordBiennialConfirmation === 'function') {
+            if (savedVersionId && typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.recordBiennialConfirmation === 'function') {
                 await CrmAccountDocuments.recordBiennialConfirmation(fb, {
                     accountId,
-                    docKey: 'mods_escritura',
-                    documentVersionId: (docRef && docRef.versionId) || 'v_mod_' + Date.now(),
+                    docKey: targetDocKey,
+                    documentVersionId: savedVersionId,
                     confirmationType: 'modification_uploaded',
                     confirmedNoChanges: false,
                     notas: notes,
@@ -1209,19 +1215,19 @@
             const client = _deps.getClients().find(x => x.id === accountId);
             if (client) {
                 if (!client.documentos) client.documentos = {};
-                client.documentos.mods_escritura = docRef;
+                client.documentos[targetDocKey] = docRef;
             }
 
-            _deps.alert('✅ Escritura de Modificación al Pacto Social incorporada y vigencia bienal renovada por 2 años.');
+            _deps.alert('✅ Nueva versión documental registrada y revisión bienal renovada por 2 años.');
             returnToClientOrOrigin(accountId);
         } catch (err) {
             console.error('[ClientDocuments] Error en carga bienal:', err);
-            _deps.alert('Error al incorporar modificación: ' + (err.message || 'Error desconocido'));
+            _deps.alert('Error al incorporar actualización documental: ' + (err.message || 'Error desconocido'));
         } finally {
             _deps.hideLoading();
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = origText || '📤 Cargar Modificación y Renovar Vigencia Bienal';
+                btn.innerHTML = origText || '📤 Cargar Nueva Versión y Renovar Revisión Bienal';
             }
         }
     }
@@ -1229,25 +1235,26 @@
     async function submitBiennialExpress() {
         if (typeof document === 'undefined') return;
         const accountId = (document.getElementById('b3-biennial-account-id') || {}).value;
+        const docKeySelect = document.getElementById('b3-biennial-doc-key');
+        const targetDocKey = (docKeySelect && docKeySelect.value) ? docKeySelect.value : 'escritura';
         const notes = ((document.getElementById('b3-biennial-confirm-notes') || {}).value || '').trim();
         const checked = !!(document.getElementById('b3-biennial-confirm-check') || {}).checked;
         if (!accountId) return _deps.alert('ID de cuenta faltante');
-        if (!notes) return _deps.alert('Debe registrar las observaciones o medio de verificación con el cliente.');
-        if (!checked) return _deps.alert('Debe marcar la casilla de constancia expresa.');
+        if (!checked) return _deps.alert('Debe marcar la confirmación expresa de haber consultado al cliente.');
 
-        await confirmBiennialReviewWithoutChanges(accountId, 'escritura', notes);
+        await confirmBiennialReviewWithoutChanges(accountId, targetDocKey, notes || 'Confirmación expresa del vendedor tras consulta al cliente: sin modificaciones.');
     }
 
     async function confirmBiennialReviewWithoutChanges(accountId, docKey = 'escritura', providedNotes = null) {
-        if (!providedNotes) {
+        if (providedNotes === null || providedNotes === undefined) {
             // Abrir vista de pantalla completa en lugar de usar confirm() emergente
-            openBiennialConfirmationView(accountId);
+            openBiennialConfirmationView(accountId, { docKey });
             return;
         }
 
         const docLabel = _deps.formatClientDocLabel(docKey);
         try {
-            _deps.showLoading('Registrando confirmación bienal...');
+            _deps.showLoading('Registrando confirmación de revisión bienal...');
             const fb = _deps.getFirebase();
             if (typeof CrmAccountDocuments === 'undefined' || typeof CrmAccountDocuments.recordBiennialConfirmation !== 'function') {
                 throw new Error('Módulo CrmAccountDocuments no disponible.');
@@ -1261,13 +1268,13 @@
                 accountId,
                 docKey,
                 documentVersionId: verId,
-                confirmationType: 'biennial_no_changes',
+                confirmationType: 'no_changes',
                 confirmedNoChanges: true,
-                notas: providedNotes,
+                notas: String(providedNotes).trim(),
                 dbSuffix: _deps.getDbSuffix()
             });
 
-            _deps.alert(`✅ Revisión bienal confirmada exitosamente. Validez extendida por 2 años para [${docLabel}].`);
+            _deps.alert(`✅ Confirmación de revisión bienal registrada (sin modificaciones) para [${docLabel}]. Período renovado por 2 años.`);
             returnToClientOrOrigin(accountId);
         } catch (err) {
             console.error('[ClientDocuments] Error en confirmación bienal:', err);
@@ -1459,7 +1466,7 @@
     async function openDossierHistoryView(clientId, options = {}) {
         if (typeof document === 'undefined') return;
         _captureB3Origin(clientId, options);
-        const bodyEl = document.getElementById('b3-history-modal-body');
+        const bodyEl = document.getElementById('b3-history-content');
         const subTitle = document.getElementById('b3-history-account-subtitle');
         if (!bodyEl) return;
 
@@ -1616,25 +1623,30 @@
                                 <table class="table-compact" style="width:100%; font-size:0.82rem; text-align:left;">
                                     <thead>
                                         <tr style="border-bottom:1px solid var(--panel-border); color:var(--text-secondary);">
-                                            <th style="padding:8px;">Documento</th>
+                                            <th style="padding:8px;">Tipo de Registro</th>
+                                            <th style="padding:8px;">Documento y Versión Revisada</th>
                                             <th style="padding:8px;">Fecha Confirmación</th>
-                                            <th style="padding:8px;">Confirmado Por</th>
+                                            <th style="padding:8px;">Usuario Responsable</th>
                                             <th style="padding:8px;">Próxima Revisión</th>
-                                            <th style="padding:8px;">Resultado</th>
+                                            <th style="padding:8px;">Detalle / Trazabilidad</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         ${confirmations.map(cf => `
                                             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                                                <td style="padding:8px; font-weight:600; color:white;">${_deps.escapeHtmlDoc(_deps.formatClientDocLabel(cf.docKey))}</td>
+                                                <td style="padding:8px;">
+                                                    <span class="badge" style="background:${cf.confirmedNoChanges ? 'rgba(16,185,129,0.2)' : 'rgba(56,189,248,0.2)'}; color:${cf.confirmedNoChanges ? '#34d399' : '#38bdf8'};">
+                                                        ${cf.confirmedNoChanges ? '📋 Confirmación Sin Cambios (Evento — Sin Archivo)' : '📄 Nueva Versión Documental Cargada'}
+                                                    </span>
+                                                </td>
+                                                <td style="padding:8px; font-weight:600; color:white;">
+                                                    ${_deps.escapeHtmlDoc(_deps.formatClientDocLabel(cf.docKey))}
+                                                    <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(v${_deps.escapeHtmlDoc(cf.versionNumber || 1)} · ${_deps.escapeHtmlDoc(cf.documentVersionId || '-')})</span>
+                                                </td>
                                                 <td style="padding:8px;">${_deps.escapeHtmlDoc(cf.confirmedAt ? cf.confirmedAt.slice(0, 10) : '-')}</td>
                                                 <td style="padding:8px;">${_deps.escapeHtmlDoc(cf.confirmedByName || cf.confirmedBy)}</td>
                                                 <td style="padding:8px; color:#34d399;">${_deps.escapeHtmlDoc(cf.nextReviewAt || '-')}</td>
-                                                <td style="padding:8px;">
-                                                    <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399;">
-                                                        ${cf.confirmedNoChanges ? 'Sin Modificaciones' : 'Modificación Incorporada'}
-                                                    </span>
-                                                </td>
+                                                <td style="padding:8px; color:var(--text-secondary); font-size:0.76rem;">${_deps.escapeHtmlDoc(cf.notas || (cf.confirmedNoChanges ? 'Confirmado con cliente sin modificaciones' : 'Actualización documental incorporada'))}</td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
@@ -1649,8 +1661,6 @@
             bodyEl.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--danger);"><p>Error al cargar el expediente: ${_deps.escapeHtmlDoc(e.message || 'Error desconocido')}</p></div>`;
         }
     }
-
-    const openDossierHistoryModal = openDossierHistoryView;
 
     const ClientDocuments = {
         init: initClientDocuments,
@@ -1672,11 +1682,9 @@
         closeSubstituteDocView: returnToClientOrOrigin,
         previewFileHash,
         openRLElectionView,
-        openRLElectionModal,
         onRLContactSelected,
         submitLegalRepresentativeElection,
         openGrantPowerView,
-        openGrantPowerModal,
         submitGrantContractPower,
         toggleInlineRevokePower,
         submitInlineRevokePower,
@@ -1689,16 +1697,12 @@
         onSubstFileChanged,
         submitDocumentSubstitution,
         openDossierHistoryView,
-        openDossierHistoryModal,
         _deps
     };
 
     if (typeof window !== 'undefined') {
-        window.openRLElectionModal = openRLElectionView;
         window.openRLElectionView = openRLElectionView;
-        window.openGrantPowerModal = openGrantPowerView;
         window.openGrantPowerView = openGrantPowerView;
-        window.openDossierHistoryModal = openDossierHistoryView;
         window.openDossierHistoryView = openDossierHistoryView;
         window.openBiennialConfirmationView = openBiennialConfirmationView;
         window.openSubstituteDocView = openSubstituteDocView;

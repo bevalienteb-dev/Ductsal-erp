@@ -130,6 +130,16 @@ global.window.CrmClients = CrmClients;
 global.CrmCommercial = CrmCommercial;
 global.window.CrmCommercial = CrmCommercial;
 const appCore = require('../../app_core');
+const ClientDocumentsMod = require('../../modules/clients/client_documents.js');
+const ClientsUIMod = require('../../modules/clients/clients_ui.js');
+ClientDocumentsMod.init({
+  alert: (m) => alerts.push(m),
+  confirm: () => true
+});
+ClientsUIMod.init({
+  alert: (m) => alerts.push(m),
+  confirm: () => true
+});
 
 describe('Fase 4B.4: Carga contextual de documentos desde el panel de cierre', () => {
 

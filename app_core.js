@@ -800,7 +800,6 @@ if (typeof initDocumentViewer === 'function') {
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
             if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
                 return window.CrmUI.notify('error', String(msg || ''));
             }
@@ -888,7 +887,6 @@ if (typeof _initClientsFn === 'function') {
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
             if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
                 const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
                 window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
@@ -916,10 +914,7 @@ if (typeof _initClientsFn === 'function') {
                 }
             }
         },
-        confirm: (msg) => {
-            if (typeof confirm === 'function' && !String(confirm).includes('[native code]')) return confirm(msg);
-            return true;
-        },
+        confirm: () => true,
         openModal: (id) => (typeof openModal === 'function' ? openModal(id) : null),
         closeModal: (id) => (typeof closeModal === 'function' ? closeModal(id) : null),
         renderClosingDocumentationPanel: (prospectId) => (typeof renderClosingDocumentationPanel === 'function' ? renderClosingDocumentationPanel(prospectId) : null)
@@ -1229,7 +1224,7 @@ const _getAuthSession = () => (typeof AuthSession !== 'undefined' ? AuthSession 
         conMod.setDeps({
             getProspects: safeGetProspects,
             getClients: safeGetClients,
-            openClientModal: (...args) => (typeof openClientModal === 'function' ? openClientModal(...args) : undefined),
+            openClientDetailView: (...args) => (typeof openClientDetailView === 'function' ? openClientDetailView(...args) : undefined),
             getProjectSubtotal: (...args) => (typeof getProjectSubtotal === 'function' ? getProjectSubtotal(...args) : undefined)
         });
     }
@@ -1321,9 +1316,13 @@ function toggleClientFields(...args) {
     const mod = _getClientsUI();
     return mod.toggleClientFields ? mod.toggleClientFields(...args) : undefined;
 }
-function openClientModal(...args) {
+function openClientDetailView(...args) {
     const mod = _getClientsUI();
-    return mod.openClientModal ? mod.openClientModal(...args) : undefined;
+    return mod.openClientDetailView ? mod.openClientDetailView(...args) : undefined;
+}
+function closeClientDetailView(...args) {
+    const mod = _getClientsUI();
+    return mod.closeClientDetailView ? mod.closeClientDetailView(...args) : undefined;
 }
 function setClientFieldError(...args) {
     const mod = _getClientsUI();
@@ -1452,7 +1451,8 @@ if (typeof window !== 'undefined') {
     window.toggleCliSort = toggleCliSort;
     window.updateCliSortIcons = updateCliSortIcons;
     window.toggleClientFields = toggleClientFields;
-    window.openClientModal = openClientModal;
+    window.openClientDetailView = openClientDetailView;
+    window.closeClientDetailView = closeClientDetailView;
     window.setClientFieldError = setClientFieldError;
     window.saveClient = saveClient;
     window.renderClientSelect = renderClientSelect;
@@ -1573,7 +1573,8 @@ if (typeof module !== 'undefined' && module.exports) {
         toggleCliSort,
         updateCliSortIcons,
         toggleClientFields,
-        openClientModal,
+        openClientDetailView,
+        closeClientDetailView,
         setClientFieldError,
         saveClient,
         renderClientSelect,
@@ -3201,7 +3202,7 @@ function generateProspectCode() {
 
 // renderClientExpedienteSection extraído a modules/clients/client_documents.js (Fase 6.2.1)
 
-// openClientModal extraído a modules/clients/clients_ui.js (Fase 6.2.1)
+// openClientDetailView extraído a modules/clients/clients_ui.js (Fase 6.2.1 / B3)
 // deleteClientDocument extraído a modules/clients/client_documents.js (Fase 6.2.1)
 
 // hasStagedClientFiles y uploadClientStagedFiles extraídos a modules/clients/client_documents.js (Fase 6.2.1)

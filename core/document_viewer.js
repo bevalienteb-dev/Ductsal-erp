@@ -36,11 +36,26 @@
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
         alert: (msg) => {
-            if (typeof alert === 'function' && !String(alert).includes('[native code]')) return alert(msg);
             if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
                 return window.CrmUI.notify('error', String(msg || ''));
             }
-            console.warn('[DocumentViewer Alert]', msg);
+            if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+                const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+                if (activeView && typeof document.createElement === 'function') {
+                    let banner = document.getElementById('b3-inline-view-notice');
+                    if (!banner) {
+                        banner = document.createElement('div');
+                        banner.id = 'b3-inline-view-notice';
+                        if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                            activeView.insertBefore(banner, activeView.firstChild);
+                        } else if (typeof activeView.appendChild === 'function') {
+                            activeView.appendChild(banner);
+                        }
+                    }
+                    banner.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                    banner.textContent = String(msg || '');
+                }
+            }
         }
     };
 
@@ -992,6 +1007,24 @@
                 });
             }
 
+            const biennialConfirmations = [];
+            if (entityType === 'client' && (!docKey || ['escritura', 'mods_escritura'].includes(docKey))) {
+                try {
+                    const confSnap = await firestoreInstance.collection(entityCollection).doc(entityId).collection('biennial_confirmations').get();
+                    if (confSnap && typeof confSnap.forEach === 'function') {
+                        confSnap.forEach(docSnap => {
+                            const cData = docSnap.data();
+                            if (!docKey || cData.docKey === docKey) {
+                                biennialConfirmations.push(cData);
+                            }
+                        });
+                    }
+                    biennialConfirmations.sort((a, b) => String(b.confirmedAt || b.confirmadoEn || '').localeCompare(String(a.confirmedAt || a.confirmadoEn || '')));
+                } catch (_confErr) {
+                    // Subcolección opcional en entornos mock sin biennial_confirmations
+                }
+            }
+
             allVersions.sort((a, b) => {
                 const vA = Number(a.versionNumber) || 0;
                 const vB = Number(b.versionNumber) || 0;
@@ -1001,7 +1034,7 @@
                 return tB.localeCompare(tA);
             });
 
-            if (allVersions.length === 0) {
+            if (allVersions.length === 0 && biennialConfirmations.length === 0) {
                 bodyEl.innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--text-secondary); background: rgba(255, 255, 255, 0.02); border-radius: 6px; border: 1px dashed var(--panel-border);">
                         <p style="margin: 0; font-size: 0.9rem;">ℹ️ No se registran versiones anteriores archivadas para este documento.</p>
@@ -1012,6 +1045,9 @@
             }
 
             let tableHtml = `
+                <div style="margin-bottom: 0.5rem; font-size: 0.84rem; font-weight: 700; color: var(--brand-gold, #d4af37);">
+                    📄 Versiones Documentales Cargadas (Archivos Adjuntos)
+                </div>
                 <div style="overflow-x: auto;">
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left;">
                         <thead>
@@ -1071,6 +1107,46 @@
                     </table>
                 </div>
             `;
+
+            if (biennialConfirmations.length > 0) {
+                tableHtml += `
+                    <div style="margin-top: 1.35rem; margin-bottom: 0.5rem; font-size: 0.84rem; font-weight: 700; color: #34d399;">
+                        📋 Eventos de Confirmación de Revisión Bienal (Registro de Datos — Diferenciado de Versiones de Archivo)
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--panel-border, #334155); color: var(--text-secondary, #94a3b8);">
+                                    <th style="padding: 8px;">Tipo de Evento</th>
+                                    <th style="padding: 8px;">Versión Revisada</th>
+                                    <th style="padding: 8px;">Fecha Confirmación</th>
+                                    <th style="padding: 8px;">Próxima Revisión</th>
+                                    <th style="padding: 8px;">Usuario Responsable</th>
+                                    <th style="padding: 8px;">Observación Registrada</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${biennialConfirmations.map(bc => {
+                                    const isNoChanges = bc.confirmationType === 'no_changes' || bc.confirmationType === 'biennial_no_changes';
+                                    const typeBadge = isNoChanges
+                                        ? '<span class="badge" style="background:rgba(16,185,129,0.16); color:#34d399; border:1px solid rgba(16,185,129,0.4); padding:2px 6px; border-radius:4px;">📋 Confirmación Sin Cambios (Sin Archivo)</span>'
+                                        : '<span class="badge" style="background:rgba(56,189,248,0.16); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:2px 6px; border-radius:4px;">📄 Con Nueva Versión Adjunta</span>';
+                                    return `
+                                        <tr style="border-bottom: 1px solid var(--panel-border, #334155);">
+                                            <td style="padding: 8px;">${typeBadge}</td>
+                                            <td style="padding: 8px; font-weight: 600; color: #e2e8f0;">v${escapeHtmlDoc(String(bc.versionNumber || 1))} (${escapeHtmlDoc(bc.documentVersionId || '-')})</td>
+                                            <td style="padding: 8px; color: var(--text-muted, #64748b);">${escapeHtmlDoc((bc.confirmedAt || bc.confirmadoEn || '').slice(0, 10) || '-')}</td>
+                                            <td style="padding: 8px; color: #34d399; font-weight: 600;">${escapeHtmlDoc(bc.nextReviewAt || bc.proximaRevisionBienal || '-')}</td>
+                                            <td style="padding: 8px; color: var(--text-secondary, #94a3b8);">${escapeHtmlDoc(bc.confirmedByName || bc.confirmadoPorNombre || bc.confirmedBy || bc.confirmadoPor || '-')}</td>
+                                            <td style="padding: 8px; color: var(--text-muted, #64748b);">${escapeHtmlDoc(bc.notas || (isNoChanges ? 'Confirmación comercial de consulta al cliente: sin modificaciones al documento.' : 'Actualización documental incorporada.'))}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
 
             bodyEl.innerHTML = tableHtml;
 

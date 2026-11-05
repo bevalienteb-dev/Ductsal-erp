@@ -411,7 +411,7 @@ async function main() {
             .map(m => m.id || m.className);
           const openDialogs = Array.from(document.querySelectorAll('dialog[open]'))
             .map(d => d.id || 'dialog');
-          const clientContainer = document.getElementById('clientModal');
+          const clientContainer = document.getElementById('clientDetailContent');
           const clientContainerPosition = clientContainer ? window.getComputedStyle(clientContainer).position : null;
           const clientContainerHasModalClass = clientContainer ? clientContainer.classList.contains('modal') : false;
           return {
@@ -436,7 +436,7 @@ async function main() {
         throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #${expectedViewId} tiene position:fixed (overlay flotante prohibido).`);
       }
       if (expectedViewId === 'client-detail-view' && (check.clientContainerHasModalClass || check.clientContainerPosition === 'fixed')) {
-        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #clientModal sigue comportándose como modal flotante (hasModalClass=${check.clientContainerHasModalClass}, pos=${check.clientContainerPosition}).`);
+        throw new Error(`[UI AUDIT FAIL] (${stepDesc}) #clientDetailContent sigue comportándose como modal flotante (hasModalClass=${check.clientContainerHasModalClass}, pos=${check.clientContainerPosition}).`);
       }
       if (check.openModals.length > 0) {
         throw new Error(`[UI AUDIT FAIL] (${stepDesc}) Se detectaron modales abiertos prohibidos: ${check.openModals.join(', ')}`);
@@ -457,7 +457,7 @@ async function main() {
     await evalScript(`
       (() => {
         showView('clients-view');
-        openClientModal('C1');
+        openClientDetailView('C1');
       })()
     `);
     await new Promise(r => setTimeout(r, 1800));
@@ -511,7 +511,7 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        openClientModal('C1');
+        openClientDetailView('C1');
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -557,7 +557,7 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        openClientModal('C1');
+        openClientDetailView('C1');
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -588,7 +588,7 @@ async function main() {
           dbSuffix: '_local'
         });
 
-        openClientModal('C1');
+        openClientDetailView('C1');
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -607,7 +607,7 @@ async function main() {
       await new Promise(r => setTimeout(r, 400));
       const ready = await evalScript(`
         (() => {
-          const el = document.getElementById('b3-history-modal-body');
+          const el = document.getElementById('b3-history-content');
           return !!(el && !el.textContent.includes('Recuperando expediente'));
         })()
       `);
@@ -696,36 +696,68 @@ async function main() {
     await saveScreenshot('b3_11_oportunidad_ganada_con_contrato_b3.png', 'Oportunidad P1 Ganada con suscripción de contrato formal auditada y conforme');
 
     // =========================================================================
-    // 6. Vista de Pantalla Completa: Revisión Bienal de Pacto Social
+    // 6. Vista de Pantalla Completa: Revisión Bienal de Documentos Societarios (Caso A y Caso B)
     // =========================================================================
-    console.log('\n[PASO 6] Abriendo Vista de Pantalla Completa de Confirmación Bienal...');
+    console.log('\n[PASO 6] Abriendo Vista de Pantalla Completa de Confirmación Bienal (Caso A y Caso B)...');
     await evalScript(`
       (async () => {
         ClientDocuments.openBiennialConfirmationView('C1');
         const notesEl = document.getElementById('b3-biennial-confirm-notes');
-        if (notesEl) notesEl.value = 'Confirmación expresa con Departamento Legal del cliente: pacto social vigente sin reformas en los últimos 24 meses.';
+        if (notesEl) notesEl.value = 'Se consultó con el contacto principal del cliente, quien confirmó que la Escritura de Constitución continúa vigente sin modificaciones.';
         const chkEl = document.getElementById('b3-biennial-confirm-check');
         if (chkEl) chkEl.checked = true;
       })()
     `);
     await new Promise(r => setTimeout(r, 1200));
     await assertFullScreenView('b3-biennial-confirmation-view', 'Vista de Confirmación Bienal');
-    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Vista de pantalla completa para Registrar Confirmaciones Bienales (Opción A y Opción B)');
+    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Vista de pantalla completa para Registrar Confirmaciones Bienales (Caso A y Caso B)');
 
-    await evalScript(`
+    const biennialCheck = await evalScript(`
       (async () => {
         const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        await CrmAccountDocuments.recordBiennialConfirmation(fb, {
+        // Caso B: Confirmación sin actualizaciones sobre Escritura (v_esc_orig) — no genera versión documental
+        const confNoChanges = await CrmAccountDocuments.recordBiennialConfirmation(fb, {
           accountId: 'C1',
           docKey: 'escritura',
           documentVersionId: 'v_esc_orig',
           confirmationType: 'no_changes',
           confirmedNoChanges: true,
-          notas: 'Confirmación notarial express: estatutos sociales vigentes sin reformas',
+          notas: 'Se consultó al cliente y manifestó que no existen modificaciones a la Escritura de Constitución.',
           dbSuffix: '_local'
         });
+
+        // Caso A: Revisión con actualizaciones sobre Modificaciones al Pacto Social — incorpora nueva versión y renueva período
+        const saveModRes = await CrmAccountDocuments.saveAccountDocument(fb, {
+          accountId: 'C1',
+          docKey: 'mods_escritura',
+          doc: {
+            name: 'Modificacion_Pacto_Social_2026.pdf',
+            storagePath: 'prod_files/clients/C1/legal/mod_2026.pdf',
+            sha256: 'f2'.repeat(32)
+          },
+          motivoSustitucion: 'Revisión bienal Caso A: incorporación de modificación societaria actualizada',
+          dbSuffix: '_local'
+        });
+
+        const confWithUpdates = await CrmAccountDocuments.recordBiennialConfirmation(fb, {
+          accountId: 'C1',
+          docKey: 'mods_escritura',
+          documentVersionId: saveModRes.versionId,
+          confirmationType: 'updated_version',
+          confirmedNoChanges: false,
+          notas: 'Caso A: Se adjuntó nueva versión actualizada de Modificaciones al Pacto Social.',
+          dbSuffix: '_local'
+        });
+
+        return {
+          casoB: confNoChanges,
+          casoASave: saveModRes,
+          casoAConf: confWithUpdates
+        };
       })()
     `);
+    console.log('  ✅ [BIENAL CASO B - SIN CAMBIOS] Evento registrado sin archivo:', JSON.stringify(biennialCheck.casoB));
+    console.log('  ✅ [BIENAL CASO A - CON ACTUALIZACIONES] Nueva versión + renovación:', JSON.stringify({ versionId: biennialCheck.casoASave.versionId, nextReviewAt: biennialCheck.casoAConf.nextReviewAt }));
 
     // =========================================================================
     // 7. Vista de Pantalla Completa: Cargar / Sustituir Documento (SHA-256)
@@ -741,7 +773,7 @@ async function main() {
     await saveScreenshot('b3_13_vista_sustitucion_documento.png', 'Vista de pantalla completa para Cargar o Sustituir Documentos con control SHA-256');
 
     // =========================================================================
-    // 8. Vista de Pantalla Completa: Historial de Versiones Documentales
+    // 8. Vista de Pantalla Completa: Historial de Versiones Documentales y Eventos Bienales Diferenciados
     // =========================================================================
     console.log('\n[PASO 8] Abriendo Vista de Pantalla Completa de Historial de Versiones...');
     await evalScript(`
@@ -750,8 +782,22 @@ async function main() {
       })()
     `);
     await new Promise(r => setTimeout(r, 1500));
+    const versionHistoryDiff = await evalScript(`
+      (() => {
+        const bodyText = document.getElementById('docVersionHistoryBody')?.textContent || '';
+        return {
+          hasDocumentVersionsSection: bodyText.includes('Versiones Documentales Cargadas'),
+          hasBiennialEventsSection: bodyText.includes('Eventos de Confirmación de Revisión Bienal'),
+          hasNoChangesBadge: bodyText.includes('Confirmación Sin Cambios (Sin Archivo)')
+        };
+      })()
+    `);
+    if (!versionHistoryDiff.hasDocumentVersionsSection || !versionHistoryDiff.hasBiennialEventsSection || !versionHistoryDiff.hasNoChangesBadge) {
+      throw new Error('El historial de versiones no diferencia claramente las versiones cargadas de los eventos de confirmación bienal: ' + JSON.stringify(versionHistoryDiff));
+    }
+    console.log('  ✅ [HISTORIAL DIFERENCIADO] Versiones de archivo y eventos de confirmación bienal diferenciados:', JSON.stringify(versionHistoryDiff));
     await assertFullScreenView('b3-doc-version-history-view', 'Vista de Historial de Versiones');
-    await saveScreenshot('b3_14_vista_historial_versiones.png', 'Vista de pantalla completa de Historial de Versiones Documentales');
+    await saveScreenshot('b3_14_vista_historial_versiones.png', 'Vista de pantalla completa de Historial de Versiones Documentales y Confirmaciones Bienales diferenciadas');
 
     // =========================================================================
     // 9. Validación Funcional Exhaustiva de Retornos Contextuales y Estado
@@ -824,7 +870,7 @@ async function main() {
         });
 
         // 9.8 Desde Oportunidad (detail-view P1) -> abrir Editar Cliente contextual -> retornar a detail-view P1
-        openClientModal('C1', { originView: 'detail-view', prospectId: 'P1' });
+        openClientDetailView('C1', { originView: 'detail-view', prospectId: 'P1' });
         ClientsUI.closeClientDetailView();
         results.push({
           step: 'closeClientDetailView (origin=detail-view) -> detail-view',
