@@ -15,7 +15,7 @@ const AUTH_PORT = 9099;
 const HTTP_PORT = 8124;
 const CDP_PORT = 9226;
 
-const ARTIFACT_SCREENSHOT_DIR = '/Users/Benjamin/.gemini/antigravity/brain/4066da1e-07cd-4566-978a-48601af7384f';
+const ARTIFACT_SCREENSHOT_DIR = process.env.ARTIFACT_SCREENSHOT_DIR || null;
 const DOCS_SCREENSHOT_DIR = path.resolve(__dirname, '../docs/screenshots');
 
 const MIME_TYPES = {
@@ -211,6 +211,7 @@ async function seedInitialData() {
     nombreCompleto: 'Ana Gómez',
     cargo: 'Gerente General',
     isPrimary: true,
+    activo: true,
     estado: 'activo'
   });
 
@@ -221,6 +222,7 @@ async function seedInitialData() {
     nombreCompleto: 'Carlos López',
     cargo: 'Director Financiero y Apoderado',
     isPrimary: false,
+    activo: true,
     estado: 'activo'
   });
 
@@ -259,7 +261,9 @@ async function main() {
   console.log('   Google Chrome Headless + Firebase Emulator Suite (demo-ductsal-local)');
   console.log('='.repeat(80));
 
-  fs.mkdirSync(ARTIFACT_SCREENSHOT_DIR, { recursive: true });
+  if (ARTIFACT_SCREENSHOT_DIR) {
+    fs.mkdirSync(ARTIFACT_SCREENSHOT_DIR, { recursive: true });
+  }
   fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true });
 
   await seedInitialData();
@@ -356,12 +360,14 @@ async function main() {
     async function saveScreenshot(filename, caption) {
       const { data } = await send('Page.captureScreenshot', { format: 'png' });
       const buf = Buffer.from(data, 'base64');
-      const artPath = path.join(ARTIFACT_SCREENSHOT_DIR, filename);
+      fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true });
       const docPath = path.join(DOCS_SCREENSHOT_DIR, filename);
-      fs.writeFileSync(artPath, buf);
       fs.writeFileSync(docPath, buf);
+      if (ARTIFACT_SCREENSHOT_DIR && fs.existsSync(ARTIFACT_SCREENSHOT_DIR)) {
+        fs.writeFileSync(path.join(ARTIFACT_SCREENSHOT_DIR, filename), buf);
+      }
       console.log(`  📸 [SCREENSHOT] ${filename} — ${caption}`);
-      return artPath;
+      return docPath;
     }
 
     await send('Page.enable');
@@ -477,9 +483,29 @@ async function main() {
     await assertFullScreenView('b3-rl-election-view', 'Registrar o Cambiar Representante Legal');
     await saveScreenshot('b3_02_vista_eleccion_rl.png', 'Vista de pantalla completa para Registrar o Cambiar Representante Legal + DUI y Credencial');
 
-    console.log('  Completando datos de nombramiento de RL (Ana Gómez)...');
+    console.log('  Completando formulario UI y ejecutando submitLegalRepresentativeElection (Ana Gómez)...');
     await evalScript(`
       (async () => {
+        // Configurar adaptador local de Storage para entorno de prueba sin emulador de Storage activo
+        window.__setFakeFileOnInput = (inputId, fileName, content) => {
+          const el = document.getElementById(inputId);
+          if (!el) return;
+          const dt = new DataTransfer();
+          dt.items.add(new File([content], fileName, { type: 'application/pdf' }));
+          el.files = dt.files;
+        };
+        ClientDocuments.init({
+          uploadFileToStorage: async (file, folder, opts) => {
+            const sub = (opts && (opts.subfolder === 'poderes' || opts.isPoder)) ? 'poderes' : ((opts && opts.isLegal) ? 'legal' : 'identificacion');
+            return {
+              name: file.name,
+              storagePath: 'prod_files/clients/' + ((opts && opts.clientId) || 'C1') + '/' + sub + '/' + file.name,
+              size: file.size,
+              contentType: file.type || 'application/pdf'
+            };
+          }
+        });
+
         const sel = document.getElementById('b3-rl-contact-select');
         if (sel) {
           for (let i = 0; i < sel.options.length; i++) {
@@ -493,25 +519,14 @@ async function main() {
         if (fElecEl) fElecEl.value = '2024-01-15';
         const fVencEl = document.getElementById('b3-rl-fecha-vencimiento');
         if (fVencEl) fVencEl.value = '2027-01-15';
+        const fDuiVencEl = document.getElementById('b3-rl-dui-vencimiento');
+        if (fDuiVencEl) fDuiVencEl.value = '2030-05-20';
 
-        const fakeCred = { name: 'Credencial_Ana_Gomez_2024_2027.pdf', storagePath: 'prod_files/clients/C1/legal/credencial_ana.pdf', sha256: 'a1'.repeat(32) };
-        const fakeDui = { name: 'DUI_Ana_Gomez.pdf', storagePath: 'prod_files/clients/C1/identificacion/dui_ana.pdf', sha256: 'b1'.repeat(32), fechaVencimiento: '2030-05-20' };
+        window.__setFakeFileOnInput('b3-rl-file-credencial', 'Credencial_Ana_Gomez_2024_2027.pdf', 'PDF_CREDENCIAL_ANA_2024');
+        window.__setFakeFileOnInput('b3-rl-file-dui', 'DUI_Ana_Gomez.pdf', 'PDF_DUI_ANA_2024');
 
-        const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        await CrmAccountDocuments.registerLegalRepresentativeTerm(fb, {
-          accountId: 'C1',
-          contactId: 'CONT_ANA',
-          nombre: 'Ana Gómez',
-          cargo: 'Gerente General y Representante Legal',
-          fechaEleccion: '2024-01-15',
-          fechaInicio: '2024-01-15',
-          fechaVencimiento: '2027-01-15',
-          credencialDoc: fakeCred,
-          duiDoc: fakeDui,
-          dbSuffix: '_local'
-        });
+        await ClientDocuments.submitLegalRepresentativeElection();
 
-        openClientDetailView('C1');
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -533,31 +548,21 @@ async function main() {
     await assertFullScreenView('b3-grant-power-view', 'Registrar Apoderados y Documentos de Poder');
     await saveScreenshot('b3_04_vista_otorgar_poder.png', 'Vista de pantalla completa para Registrar Apoderado e Incorporar Poder Notarial');
 
-    console.log('  Completando y registrando poder notarial...');
+    console.log('  Completando formulario UI y ejecutando submitGrantContractPower...');
     await evalScript(`
       (async () => {
-        const fakePoderDoc = {
-          name: 'Testimonio_Poder_Firma_Carlos_Lopez.pdf',
-          storagePath: 'prod_files/clients/C1/poderes/poder_carlos.pdf',
-          nombreApoderado: 'Carlos López',
-          tipoPoder: 'especial',
-          facultadFirmaContratos: true,
-          fechaOtorgamiento: '2025-06-01',
-          fechaVencimiento: '2026-12-31',
-          notario: 'Lic. Samuel Rivera',
-          sha256: 'c1'.repeat(32)
-        };
+        const sel = document.getElementById('b3-power-contact-select');
+        if (sel) {
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === 'CONT_CARLOS') { sel.selectedIndex = i; break; }
+          }
+        }
+        const notasEl = document.getElementById('b3-power-notas');
+        if (notasEl) notasEl.value = 'Facultado para suscribir contratos comerciales hasta $250,000';
+        window.__setFakeFileOnInput('b3-power-file-documento', 'Testimonio_Poder_Firma_Carlos_Lopez.pdf', 'PDF_PODER_CARLOS_2025');
 
-        const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        await CrmAccountDocuments.grantContractPower(fb, {
-          accountId: 'C1',
-          contactId: 'CONT_CARLOS',
-          documento: fakePoderDoc,
-          documentoDoc: fakePoderDoc,
-          dbSuffix: '_local'
-        });
+        await ClientDocuments.submitGrantContractPower();
 
-        openClientDetailView('C1');
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -569,26 +574,24 @@ async function main() {
     // =========================================================================
     // 4. Regla Fundamental B3: Nueva Elección Invalida Atómicamente los Poderes
     // =========================================================================
-    console.log('\n[PASO 4] Ejecutando nueva elección de RL (Mario Santos) para verificar anulación atómica de poderes...');
+    console.log('\n[PASO 4] Ejecutando nueva elección de RL (Mario Santos) desde la UI para verificar anulación atómica de poderes...');
     await evalScript(`
       (async () => {
-        const fakeCred2 = { name: 'Credencial_Mario_Santos_2026_2029.pdf', storagePath: 'prod_files/clients/C1/legal/cred_mario.pdf', sha256: 'd1'.repeat(32) };
-        const fakeDui2 = { name: 'DUI_Mario_Santos.pdf', storagePath: 'prod_files/clients/C1/identificacion/dui_mario.pdf', sha256: 'e1'.repeat(32), fechaVencimiento: '2032-01-01' };
+        ClientDocuments.openRLElectionView('C1');
+        const nombreEl = document.getElementById('b3-rl-nombre');
+        if (nombreEl) nombreEl.value = 'Lic. Mario Santos';
+        const fElecEl = document.getElementById('b3-rl-fecha-eleccion');
+        if (fElecEl) fElecEl.value = '2026-02-01';
+        const fVencEl = document.getElementById('b3-rl-fecha-vencimiento');
+        if (fVencEl) fVencEl.value = '2029-02-01';
+        const fDuiVencEl = document.getElementById('b3-rl-dui-vencimiento');
+        if (fDuiVencEl) fDuiVencEl.value = '2032-01-01';
 
-        const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        await CrmAccountDocuments.registerLegalRepresentativeTerm(fb, {
-          accountId: 'C1',
-          nombre: 'Lic. Mario Santos',
-          cargo: 'Presidente Ejecutivo y Representante Legal',
-          fechaEleccion: '2026-02-01',
-          fechaInicio: '2026-02-01',
-          fechaVencimiento: '2029-02-01',
-          credencialDoc: fakeCred2,
-          duiDoc: fakeDui2,
-          dbSuffix: '_local'
-        });
+        window.__setFakeFileOnInput('b3-rl-file-credencial', 'Credencial_Mario_Santos_2026_2029.pdf', 'PDF_CREDENCIAL_MARIO_2026');
+        window.__setFakeFileOnInput('b3-rl-file-dui', 'DUI_Mario_Santos.pdf', 'PDF_DUI_MARIO_2026');
 
-        openClientDetailView('C1');
+        await ClientDocuments.submitLegalRepresentativeElection();
+
         const expSec = document.getElementById('client-expediente-section');
         if (expSec) expSec.scrollIntoView({ behavior: 'instant', block: 'center' });
       })()
@@ -617,9 +620,51 @@ async function main() {
     await saveScreenshot('b3_07_historial_b3_poderes_anulados.png', 'Vista de pantalla completa de Historial de Representantes Legales, Poderes y Revisiones Bienales');
 
     // =========================================================================
-    // 5. Control de Requerimiento de Contrato y Firmantes en Cierre de Oportunidad
+    // 5. Vista de Pantalla Completa: Revisión Bienal de Documentos Societarios (Caso A y Caso B)
     // =========================================================================
-    console.log('\n[PASO 5] Navegando a Vista de Cierre Comercial de la Oportunidad P1...');
+    console.log('\n[PASO 5] Abriendo Vista de Pantalla Completa de Confirmación Bienal (Caso A y Caso B)...');
+    await evalScript(`
+      (async () => {
+        ClientDocuments.openBiennialConfirmationView('C1', { docKey: 'escritura' });
+        const notesEl = document.getElementById('b3-biennial-confirm-notes');
+        if (notesEl) notesEl.value = 'Se consultó con el contacto principal del cliente, quien confirmó que la Escritura de Constitución continúa vigente sin modificaciones.';
+        const chkEl = document.getElementById('b3-biennial-confirm-check');
+        if (chkEl) chkEl.checked = true;
+      })()
+    `);
+    await new Promise(r => setTimeout(r, 1200));
+    await assertFullScreenView('b3-biennial-confirmation-view', 'Vista de Confirmación Bienal');
+    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Vista de pantalla completa para Registrar Confirmaciones Bienales (Caso A y Caso B)');
+
+    const biennialCheck = await evalScript(`
+      (async () => {
+        // Caso B desde el controlador UI real: submitBiennialExpress()
+        await ClientDocuments.submitBiennialExpress();
+
+        // Caso A desde el controlador UI real: submitBiennialUpload() sobre mods_escritura
+        ClientDocuments.openBiennialConfirmationView('C1', { docKey: 'mods_escritura' });
+        const docKeySelect = document.getElementById('b3-biennial-doc-key');
+        if (docKeySelect) docKeySelect.value = 'mods_escritura';
+        const upNotesEl = document.getElementById('b3-biennial-upload-notes');
+        if (upNotesEl) upNotesEl.value = 'Revisión bienal Caso A: incorporación de modificación societaria actualizada 2026.';
+        window.__setFakeFileOnInput('b3-biennial-file', 'Modificacion_Pacto_Social_2026.pdf', 'PDF_MOD_PACTO_SOCIAL_2026');
+        await ClientDocuments.submitBiennialUpload();
+
+        const c = clients.find(x => x.id === 'C1');
+        return {
+          casoBReview: c && c.biennialReviews && c.biennialReviews.escritura,
+          casoAReview: c && c.biennialReviews && c.biennialReviews.mods_escritura,
+          modsVersionId: c && c.documentos && c.documentos.mods_escritura && c.documentos.mods_escritura.versionId
+        };
+      })()
+    `);
+    console.log('  ✅ [BIENAL CASO B - SIN CAMBIOS] Evento registrado desde UI sin archivo:', JSON.stringify(biennialCheck.casoBReview));
+    console.log('  ✅ [BIENAL CASO A - CON ACTUALIZACIONES] Nueva versión + renovación desde UI:', JSON.stringify({ versionId: biennialCheck.modsVersionId, review: biennialCheck.casoAReview }));
+
+    // =========================================================================
+    // 6. Control de Requerimiento de Contrato y Firmantes en Cierre de Oportunidad
+    // =========================================================================
+    console.log('\n[PASO 6] Navegando a Vista de Cierre Comercial de la Oportunidad P1...');
     await evalScript(`
       (() => {
         showView('list-view');
@@ -674,21 +719,20 @@ async function main() {
     await assertFullScreenView('detail-view', 'Prevalidación B3 Exitosa');
     await saveScreenshot('b3_10_prevalidacion_b3_exitosa.png', 'Pre-validación B3 exitosa con backend en vista de pantalla completa');
 
-    console.log('  Finalizando oportunidad con requerimiento de contrato cumplido...');
+    console.log('  Finalizando oportunidad desde el controlador UI finalizeOpportunity con requerimiento de contrato cumplido...');
     await evalScript(`
       (async () => {
-        const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        await CrmCommercial.finalizeProspect(fb, {
-          prospectId: 'P1',
-          data: {
-            forma_pago: '70/30',
-            factura_anticipo: 'FAC-B3-001',
-            requiere_contrato: true,
-            firmante_cierre: { tipo: 'representante_legal' }
-          },
-          dbSuffix: '_local'
-        });
-        openDetail('P1');
+        const fpEl = document.getElementById('closing-forma-pago');
+        if (fpEl) fpEl.value = '70/30';
+        const facEl = document.getElementById('closing-fac-anticipo');
+        if (facEl) facEl.value = 'FAC-B3-001';
+        const encEl = document.getElementById('closing-encargado');
+        if (encEl && !encEl.value) encEl.value = 'Ing. Roberto Mena';
+        const reqEl = document.getElementById('closing-requiere-contrato');
+        if (reqEl) reqEl.checked = true;
+        const tipoEl = document.getElementById('closing-firmante-tipo');
+        if (tipoEl) tipoEl.value = 'representante_legal';
+        await finalizeOpportunity('P1');
       })()
     `);
     await new Promise(r => setTimeout(r, 2000));
@@ -696,81 +740,34 @@ async function main() {
     await saveScreenshot('b3_11_oportunidad_ganada_con_contrato_b3.png', 'Oportunidad P1 Ganada con suscripción de contrato formal auditada y conforme');
 
     // =========================================================================
-    // 6. Vista de Pantalla Completa: Revisión Bienal de Documentos Societarios (Caso A y Caso B)
-    // =========================================================================
-    console.log('\n[PASO 6] Abriendo Vista de Pantalla Completa de Confirmación Bienal (Caso A y Caso B)...');
-    await evalScript(`
-      (async () => {
-        ClientDocuments.openBiennialConfirmationView('C1');
-        const notesEl = document.getElementById('b3-biennial-confirm-notes');
-        if (notesEl) notesEl.value = 'Se consultó con el contacto principal del cliente, quien confirmó que la Escritura de Constitución continúa vigente sin modificaciones.';
-        const chkEl = document.getElementById('b3-biennial-confirm-check');
-        if (chkEl) chkEl.checked = true;
-      })()
-    `);
-    await new Promise(r => setTimeout(r, 1200));
-    await assertFullScreenView('b3-biennial-confirmation-view', 'Vista de Confirmación Bienal');
-    await saveScreenshot('b3_12_confirmacion_bienal_renovada.png', 'Vista de pantalla completa para Registrar Confirmaciones Bienales (Caso A y Caso B)');
-
-    const biennialCheck = await evalScript(`
-      (async () => {
-        const fb = (typeof firebase !== 'undefined') ? firebase : null;
-        // Caso B: Confirmación sin actualizaciones sobre Escritura (v_esc_orig) — no genera versión documental
-        const confNoChanges = await CrmAccountDocuments.recordBiennialConfirmation(fb, {
-          accountId: 'C1',
-          docKey: 'escritura',
-          documentVersionId: 'v_esc_orig',
-          confirmationType: 'no_changes',
-          confirmedNoChanges: true,
-          notas: 'Se consultó al cliente y manifestó que no existen modificaciones a la Escritura de Constitución.',
-          dbSuffix: '_local'
-        });
-
-        // Caso A: Revisión con actualizaciones sobre Modificaciones al Pacto Social — incorpora nueva versión y renueva período
-        const saveModRes = await CrmAccountDocuments.saveAccountDocument(fb, {
-          accountId: 'C1',
-          docKey: 'mods_escritura',
-          doc: {
-            name: 'Modificacion_Pacto_Social_2026.pdf',
-            storagePath: 'prod_files/clients/C1/legal/mod_2026.pdf',
-            sha256: 'f2'.repeat(32)
-          },
-          motivoSustitucion: 'Revisión bienal Caso A: incorporación de modificación societaria actualizada',
-          dbSuffix: '_local'
-        });
-
-        const confWithUpdates = await CrmAccountDocuments.recordBiennialConfirmation(fb, {
-          accountId: 'C1',
-          docKey: 'mods_escritura',
-          documentVersionId: saveModRes.versionId,
-          confirmationType: 'updated_version',
-          confirmedNoChanges: false,
-          notas: 'Caso A: Se adjuntó nueva versión actualizada de Modificaciones al Pacto Social.',
-          dbSuffix: '_local'
-        });
-
-        return {
-          casoB: confNoChanges,
-          casoASave: saveModRes,
-          casoAConf: confWithUpdates
-        };
-      })()
-    `);
-    console.log('  ✅ [BIENAL CASO B - SIN CAMBIOS] Evento registrado sin archivo:', JSON.stringify(biennialCheck.casoB));
-    console.log('  ✅ [BIENAL CASO A - CON ACTUALIZACIONES] Nueva versión + renovación:', JSON.stringify({ versionId: biennialCheck.casoASave.versionId, nextReviewAt: biennialCheck.casoAConf.nextReviewAt }));
-
-    // =========================================================================
     // 7. Vista de Pantalla Completa: Cargar / Sustituir Documento (SHA-256)
     // =========================================================================
-    console.log('\n[PASO 7] Abriendo Vista de Pantalla Completa para Cargar / Sustituir Documento...');
+    console.log('\n[PASO 7] Abriendo Vista de Pantalla Completa para Cargar / Sustituir Documento (ALTO-02)...');
     await evalScript(`
       (() => {
-        ClientDocuments.openSubstituteDocView('C1', 'escritura', 'Escritura de Constitución');
+        openClientDetailView('C1');
+        ClientDocuments.openSubstituteDocView('C1', 'nit', 'Tarjeta NIT');
       })()
     `);
     await new Promise(r => setTimeout(r, 1200));
     await assertFullScreenView('b3-substitute-doc-view', 'Vista de Carga y Sustitución de Documentos');
     await saveScreenshot('b3_13_vista_sustitucion_documento.png', 'Vista de pantalla completa para Cargar o Sustituir Documentos con control SHA-256');
+
+    console.log('  Ejecutando submitDocumentSubstitution desde la UI para verificar ALTO-02...');
+    const substCheck = await evalScript(`
+      (async () => {
+        const motivoEl = document.getElementById('b3-subst-motivo');
+        if (motivoEl) motivoEl.value = 'Actualización de representación gráfica de NIT homologado';
+        window.__setFakeFileOnInput('b3-subst-file', 'NIT_Actualizado_2026.pdf', 'PDF_NIT_ACTUALIZADO_2026_UNICO');
+        await ClientDocuments.submitDocumentSubstitution();
+        const c = clients.find(x => x.id === 'C1');
+        return c && c.documentos && c.documentos.nit;
+      })()
+    `);
+    if (!substCheck || !substCheck.versionId) {
+      throw new Error('ALTO-02 fallo: submitDocumentSubstitution no registró versionId en client.documentos.nit');
+    }
+    console.log('  ✅ [ALTO-02 VERIFICADO] Sustitución documental registrada con versionId:', substCheck.versionId);
 
     // =========================================================================
     // 8. Vista de Pantalla Completa: Historial de Versiones Documentales y Eventos Bienales Diferenciados

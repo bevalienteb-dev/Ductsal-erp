@@ -118,7 +118,41 @@
     let currentProspectId = null;
     let DB_SUFFIX = (typeof window !== 'undefined' && window.DB_SUFFIX) ? window.DB_SUFFIX : (typeof global !== 'undefined' && global.DB_SUFFIX ? global.DB_SUFFIX : '_prod');
 
+    function renderInlineOpportunityNotice(message, type = 'info') {
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            const isSuccess = /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(message || '')) && !/error|no se|denegado|inválid|falta|requiere|❌|⛔/i.test(String(message || ''));
+            window.CrmUI.notify(isSuccess ? 'success' : 'error', String(message || ''));
+        }
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+        const activeView = document.querySelector('.view-section.active')
+            || (typeof document.getElementById === 'function' ? (document.getElementById('detail-view') || document.getElementById('list-view')) : null);
+        if (!activeView || typeof document.createElement !== 'function') return;
+        let banner = typeof document.getElementById === 'function' ? document.getElementById('b3-inline-view-notice') : null;
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'b3-inline-view-notice';
+            banner.setAttribute('role', 'status');
+            if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                activeView.insertBefore(banner, activeView.firstChild);
+            } else if (typeof activeView.appendChild === 'function') {
+                activeView.appendChild(banner);
+            }
+        } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+            activeView.insertBefore(banner, activeView.firstChild);
+        }
+        const isError = type === 'error' || /error|no se|denegado|inválid|falta|requiere|obligatorio|❌|⛔/i.test(String(message || ''));
+        const isSuccess = !isError && (type === 'success' || /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(message || '')));
+        banner.style.cssText = isError
+            ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;'
+            : (isSuccess
+                ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.45); color:#bae6fd; font-size:0.84rem;');
+        banner.textContent = String(message || '');
+    }
+
     const _deps = {
+        alert: (msg) => renderInlineOpportunityNotice(msg),
+        confirm: () => true,
         getCurrentUser: () => {
             if (typeof currentUser !== 'undefined' && currentUser) return currentUser;
             if (typeof window !== 'undefined' && window.currentUser) return window.currentUser;
@@ -383,13 +417,13 @@
             const cm = _deps.getCrmCommercial();
             if (!cm || !cm.hasSessionSync(fb)) {
                 const msg = (cm && cm.NO_SESSION_MESSAGE) ? cm.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.';
-                if (typeof alert === 'function') alert(msg);
+                _deps.alert(msg);
                 return Promise.resolve(null);
             }
             _deps.showLoading(label);
             return fn(fb).catch(err => {
-                if (err && String(err.code || '').startsWith('functions/')) alert(cm.errorMessage(err));
-                else alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
+                if (err && String(err.code || '').startsWith('functions/')) _deps.alert(cm.errorMessage(err));
+                else _deps.alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
                 console.error(err);
                 return null;
             }).finally(() => {
@@ -563,6 +597,8 @@
     const reactivateLostProspect = (...args) => _deps.reactivateLostProspect(...args);
     const escapeHtmlDoc = (...args) => _deps.escapeHtmlDoc(...args);
     const formatCurrency = (...args) => _deps.formatCurrency(...args);
+    const alert = (...args) => _deps.alert(...args);
+    const confirm = (...args) => _deps.confirm(...args);
     const formatDate = (...args) => _deps.formatDate(...args);
     const getDaysDifference = (...args) => _deps.getDaysDifference(...args);
     const hasEnteredPostclosing = (...args) => _deps.hasEnteredPostclosing(...args);

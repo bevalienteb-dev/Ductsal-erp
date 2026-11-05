@@ -191,7 +191,30 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Debe adjuntar el DUI del representante legal');
     }
 
+    const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
+    if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
+    }
+
     return db.runTransaction(async tx => {
+      const opRef = cleanOpId ? col('ops').doc(`rl_term_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        if (
+          prevOp.callerCid !== caller.cid ||
+          prevOp.accountId !== cleanAccountId ||
+          prevOp.nombre !== cleanNombre ||
+          prevOp.fechaEleccion !== cleanFechaEleccion
+        ) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -333,7 +356,8 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           url: duiRecord.url,
           versionId: duiVersionId,
           versionNumber: duiRecord.versionNumber,
-          sha256: duiRecord.sha256
+          sha256: duiRecord.sha256,
+          fechaVencimiento: duiRecord.fechaVencimiento
         },
         estado: 'vigente',
         invalidatedPowersCount: powersToInvalidate.length,
@@ -379,7 +403,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         invalidatedPowersCount: powersToInvalidate.length
       });
 
-      return {
+      const resultPayload = {
         success: true,
         termId: newTermId,
         invalidatedPowersCount: powersToInvalidate.length,
@@ -388,6 +412,22 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         credencialVersionId: credVersionId,
         duiVersionId: duiVersionId
       };
+
+      if (opRef) {
+        tx.set(opRef, {
+          opId: cleanOpId,
+          action: 'registerLegalRepresentativeTerm',
+          accountId: cleanAccountId,
+          nombre: cleanNombre,
+          fechaEleccion: cleanFechaEleccion,
+          callerCid: caller.cid,
+          callerUid: caller.uid,
+          result: resultPayload,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return resultPayload;
     });
   }
 
@@ -412,7 +452,30 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Debe adjuntar el documento que acredita el poder para firma de contratos');
     }
 
+    const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
+    if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
+    }
+    const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
+
     return db.runTransaction(async tx => {
+      const opRef = cleanOpId ? col('ops').doc(`grant_power_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        if (
+          prevOp.callerCid !== caller.cid ||
+          prevOp.accountId !== cleanAccountId ||
+          prevOp.contactId !== cleanContactId
+        ) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -484,6 +547,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         contactId: cleanContactId,
         nombreApoderado,
         termId: activeTerm.termId,
+        notas: cleanNotas,
         documento: {
           name: versionRecord.name,
           storagePath: versionRecord.storagePath,
@@ -507,6 +571,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         contactId: cleanContactId,
         nombreApoderado,
         termId: activeTerm.termId,
+        notas: cleanNotas,
         versionId,
         storagePath: versionRecord.storagePath,
         url: versionRecord.url,
@@ -523,31 +588,88 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         powerId: newPowerId,
         contactId: cleanContactId,
         nombreApoderado,
-        termId: activeTerm.termId
+        termId: activeTerm.termId,
+        notas: cleanNotas
       });
 
-      return {
+      const resultPayload = {
         success: true,
         powerId: newPowerId,
         accountId: cleanAccountId,
         contactId: cleanContactId,
         termId: activeTerm.termId,
         nombreApoderado,
-        estado: 'vigente'
+        notas: cleanNotas,
+        estado: 'vigente',
+        power: {
+          id: newPowerId,
+          powerId: newPowerId,
+          accountId: cleanAccountId,
+          contactId: cleanContactId,
+          nombreApoderado,
+          termId: activeTerm.termId,
+          notas: cleanNotas,
+          documento: powerData.documento,
+          versionId,
+          storagePath: versionRecord.storagePath,
+          url: versionRecord.url,
+          estado: 'vigente',
+          registradoPor: caller.cid,
+          registradoPorNombre: caller.name,
+          registradoEn: nowIso
+        }
       };
+
+      if (opRef) {
+        tx.set(opRef, {
+          opId: cleanOpId,
+          action: 'grantContractPower',
+          accountId: cleanAccountId,
+          contactId: cleanContactId,
+          callerCid: caller.cid,
+          callerUid: caller.uid,
+          result: resultPayload,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return resultPayload;
     });
   }
 
   // ---------------------------------------------------------------------------
   // 3. Revocación Voluntaria / Anticipada de Poder
   // ---------------------------------------------------------------------------
-  async function revokeContractPower({ caller, accountId, powerId, motivo }) {
+  async function revokeContractPower({ caller, accountId, powerId, motivo, opId = null }) {
     assertCaller(caller);
     const cleanAccountId = reqString(accountId, 'accountId');
     const cleanPowerId = reqString(powerId, 'powerId');
     const cleanMotivo = reqString(motivo, 'motivo de revocación', 500);
 
+    const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
+    if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
+    }
+
     return db.runTransaction(async tx => {
+      const opRef = cleanOpId ? col('ops').doc(`revoke_power_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        if (
+          prevOp.callerCid !== caller.cid ||
+          prevOp.accountId !== cleanAccountId ||
+          prevOp.powerId !== cleanPowerId ||
+          prevOp.motivo !== cleanMotivo
+        ) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -577,7 +699,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
       // Update client root projection
       const currentActivePowers = Array.isArray(client.apoderadosVigentes)
-        ? client.apoderadosVigentes.filter(p => p.powerId !== cleanPowerId)
+        ? client.apoderadosVigentes.filter(p => p.powerId !== cleanPowerId && p.id !== cleanPowerId)
         : [];
 
       tx.update(clientRef, {
@@ -593,7 +715,22 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         motivo: cleanMotivo
       });
 
-      return { success: true, powerId: cleanPowerId, estado: 'revocado' };
+      const resultPayload = { success: true, powerId: cleanPowerId, estado: 'revocado' };
+      if (opRef) {
+        tx.set(opRef, {
+          opId: cleanOpId,
+          action: 'revokeContractPower',
+          accountId: cleanAccountId,
+          powerId: cleanPowerId,
+          motivo: cleanMotivo,
+          callerCid: caller.cid,
+          callerUid: caller.uid,
+          result: resultPayload,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return resultPayload;
     });
   }
 
@@ -634,7 +771,13 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     }
 
     const isNoChangesType = confirmationType === 'no_changes' || confirmationType === 'biennial_no_changes';
-    if (isNoChangesType && confirmedNoChanges !== true) {
+    if (!isNoChangesType) {
+      throw new ServiceError(
+        'invalid-argument',
+        `Tipo de confirmación bienal inválido ('${confirmationType}'). Este endpoint registra exclusivamente eventos de confirmación sin cambios ('no_changes' o 'biennial_no_changes'); para modificaciones documentales utilice saveAccountDocument.`
+      );
+    }
+    if (confirmedNoChanges !== true) {
       throw new ServiceError('invalid-argument', 'Debe confirmar expresamente que consultó al cliente y que no existen modificaciones');
     }
 
@@ -649,7 +792,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           prevOp.callerCid !== caller.cid ||
           prevOp.accountId !== cleanAccountId ||
           prevOp.docKey !== cleanDocKey ||
-          prevOp.documentVersionId !== cleanVersionId
+          (prevOp.requestedVersionId && prevOp.requestedVersionId !== cleanVersionId && prevOp.documentVersionId !== cleanVersionId)
         ) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
@@ -668,17 +811,76 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
-      // Verify that documentVersionId exists under this account's subcollection
       const clientVersionsCol = clientRef.collection('document_versions');
       const versionRef = clientVersionsCol.doc(cleanVersionId);
       const versionSnap = await tx.get(versionRef);
-      if (!versionSnap.exists) {
-        throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
-      }
-      const versionData = versionSnap.data();
-
-      // Also read all versions for this docKey in the transaction to detect any newer version
       const docKeyVersionsSnap = await tx.get(clientVersionsCol.where('docKey', '==', cleanDocKey));
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const todayStr = nowIso.slice(0, 10);
+      const rand = crypto.randomBytes(4).toString('hex');
+
+      const currentActiveDoc = client.documentos && client.documentos[cleanDocKey] ? client.documentos[cleanDocKey] : null;
+      if (!currentActiveDoc) {
+        if (!versionSnap.exists) {
+          throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
+        }
+        throw new ServiceError('failed-precondition', `El documento '${cleanDocKey}' no tiene una versión vigente activa en la cuenta`);
+      }
+
+      let effectiveVersionId = cleanVersionId;
+      let versionData = versionSnap.exists ? versionSnap.data() : null;
+      let lazyBaseVersionToCreate = null;
+      let healClientDocVersionPointer = false;
+
+      if (!versionSnap.exists) {
+        // MEDIO-02: Support initial/legacy client documents where client.documentos[docKey] had no versionId ('v_base')
+        if (cleanVersionId === 'v_base' && !currentActiveDoc.versionId) {
+          let activeVersionDoc = null;
+          if (docKeyVersionsSnap && typeof docKeyVersionsSnap.forEach === 'function') {
+            docKeyVersionsSnap.forEach(d => {
+              const dData = d.data() || {};
+              if (dData.estado === 'vigente' || !activeVersionDoc || (Number(dData.versionNumber) || 0) > (Number(activeVersionDoc.data.versionNumber) || 0)) {
+                activeVersionDoc = { id: d.id || dData.versionId, data: dData };
+              }
+            });
+          }
+          if (activeVersionDoc && activeVersionDoc.id) {
+            effectiveVersionId = activeVersionDoc.id;
+            versionData = activeVersionDoc.data;
+            healClientDocVersionPointer = true;
+          } else {
+            const hasRealFile = (typeof currentActiveDoc === 'string' && currentActiveDoc.trim().length > 0)
+              || (typeof currentActiveDoc === 'object' && !!(currentActiveDoc.storagePath || currentActiveDoc.url || currentActiveDoc.path || currentActiveDoc.name));
+            if (!hasRealFile) {
+              throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
+            }
+            effectiveVersionId = `v_${cleanDocKey}_base_${Date.now()}_${rand}`;
+            versionData = {
+              versionId: effectiveVersionId,
+              versionNumber: Number(currentActiveDoc.versionNumber) || 1,
+              entityType: 'client',
+              entityId: cleanAccountId,
+              docKey: cleanDocKey,
+              name: (typeof currentActiveDoc === 'object' && currentActiveDoc.name) ? currentActiveDoc.name : cleanDocKey,
+              storagePath: (typeof currentActiveDoc === 'object' && (currentActiveDoc.storagePath || currentActiveDoc.path)) || null,
+              url: (typeof currentActiveDoc === 'string' ? currentActiveDoc : (currentActiveDoc.url || null)),
+              sha256: (typeof currentActiveDoc === 'object' && currentActiveDoc.sha256) || null,
+              fechaEmision: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaEmision) || null,
+              fechaVencimiento: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaVencimiento) || null,
+              estado: 'vigente',
+              subidoPorId: client.createdBy || caller.cid,
+              creadoEn: (typeof currentActiveDoc === 'object' && currentActiveDoc.actualizadoEn) || client.fecha_creacion || nowIso,
+              createdAt: FieldValue.serverTimestamp()
+            };
+            lazyBaseVersionToCreate = versionData;
+            healClientDocVersionPointer = true;
+          }
+        } else {
+          throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
+        }
+      }
 
       // --- FASE 2 DE TRANSACCIÓN: VALIDACIONES DE INTEGRIDAD Y VIGENCIA ---
       // 2.1 Verify account and docKey ownership on the version record itself
@@ -691,18 +893,8 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       if (versionData.docKey !== cleanDocKey) {
         throw new ServiceError(
           'invalid-argument',
-          `La versión documental '${cleanVersionId}' corresponde al documento '${versionData.docKey || 'desconocido'}', no a '${cleanDocKey}'`
+          `La versión documental '${effectiveVersionId}' corresponde al documento '${versionData.docKey || 'desconocido'}', no a '${cleanDocKey}'`
         );
-      }
-
-      const now = new Date();
-      const nowIso = now.toISOString();
-      const todayStr = nowIso.slice(0, 10);
-
-      // 2.2 Verify the document exists in the account's current active documents
-      const currentActiveDoc = client.documentos && client.documentos[cleanDocKey] ? client.documentos[cleanDocKey] : null;
-      if (!currentActiveDoc) {
-        throw new ServiceError('failed-precondition', `El documento '${cleanDocKey}' no tiene una versión vigente activa en la cuenta`);
       }
 
       // 2.3 A biennial confirmation cannot renew a document that has an expired fechaVencimiento
@@ -718,10 +910,10 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       if (versionData.reemplazadaPorVersionId) {
         throw new ServiceError('failed-precondition', 'No es posible confirmar una versión histórica que ya fue sustituida por una versión posterior');
       }
-      if (currentActiveDoc.versionId && currentActiveDoc.versionId !== cleanVersionId) {
+      if (currentActiveDoc.versionId && currentActiveDoc.versionId !== effectiveVersionId) {
         throw new ServiceError(
           'failed-precondition',
-          `No es posible confirmar una versión desactualizada ('${cleanVersionId}') cuando la versión vigente actual es '${currentActiveDoc.versionId}'`
+          `No es posible confirmar una versión desactualizada ('${effectiveVersionId}') cuando la versión vigente actual es '${currentActiveDoc.versionId}'`
         );
       }
 
@@ -731,8 +923,8 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         docKeyVersionsSnap.forEach(d => {
           const dData = d.data() || {};
           const dId = d.id || dData.versionId;
-          if (dId !== cleanVersionId) {
-            if ((Number(dData.versionNumber) || 0) > targetVersionNumber || dData.reemplazaVersionId === cleanVersionId) {
+          if (dId !== effectiveVersionId) {
+            if ((Number(dData.versionNumber) || 0) > targetVersionNumber || dData.reemplazaVersionId === effectiveVersionId) {
               supersededByHigher = true;
             }
           }
@@ -743,11 +935,14 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       }
 
       // --- FASE 3 DE TRANSACCIÓN: TODAS LAS ESCRITURAS ATÓMICAS ---
+      if (lazyBaseVersionToCreate) {
+        tx.set(clientVersionsCol.doc(effectiveVersionId), lazyBaseVersionToCreate);
+      }
+
       // Next review at: 2 calendar years (730 days) from confirmation
       const nextReviewDate = new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000);
       const nextReviewIso = nextReviewDate.toISOString().slice(0, 10);
 
-      const rand = crypto.randomBytes(4).toString('hex');
       const confId = cleanOpId ? `conf_${cleanOpId}` : `conf_${Date.now()}_${rand}`;
       const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
 
@@ -757,10 +952,10 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         eventType: 'biennial_confirmation',
         accountId: cleanAccountId,
         docKey: cleanDocKey,
-        documentVersionId: cleanVersionId,
+        documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
         confirmationType,
-        confirmedNoChanges: !!confirmedNoChanges,
+        confirmedNoChanges: true,
         notas: cleanNotas,
         confirmedBy: caller.cid,
         confirmedByUid: caller.uid,
@@ -783,20 +978,30 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         nextReviewAt: nextReviewIso,
         confirmedBy: caller.cid,
         confirmedByName: caller.name || 'Comercial',
-        documentVersionId: cleanVersionId,
+        documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
         confirmationType
       };
 
-      tx.update(clientRef, {
+      const clientUpdatePatch = {
         biennialReviews,
         updatedAt: FieldValue.serverTimestamp()
-      });
+      };
+      if (healClientDocVersionPointer && client.documentos && typeof client.documentos === 'object') {
+        const updatedDocs = { ...client.documentos };
+        const existingEntry = typeof updatedDocs[cleanDocKey] === 'object' ? { ...updatedDocs[cleanDocKey] } : { url: updatedDocs[cleanDocKey] };
+        existingEntry.versionId = effectiveVersionId;
+        existingEntry.versionNumber = targetVersionNumber;
+        updatedDocs[cleanDocKey] = existingEntry;
+        clientUpdatePatch.documentos = updatedDocs;
+      }
+
+      tx.update(clientRef, clientUpdatePatch);
 
       addAudit(tx, caller, 'ACCOUNT_DOCUMENT_REVIEW_CONFIRMED', confId, {
         accountId: cleanAccountId,
         docKey: cleanDocKey,
-        documentVersionId: cleanVersionId,
+        documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
         confirmationType,
         nextReviewAt: nextReviewIso,
@@ -808,7 +1013,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         success: true,
         confirmationId: confId,
         docKey: cleanDocKey,
-        documentVersionId: cleanVersionId,
+        documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
         confirmedBy: caller.cid,
         confirmedByName: caller.name || 'Comercial',
@@ -819,9 +1024,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       if (opRef) {
         tx.set(opRef, {
           opId: cleanOpId,
+          action: 'recordBiennialConfirmation',
           accountId: cleanAccountId,
           docKey: cleanDocKey,
-          documentVersionId: cleanVersionId,
+          documentVersionId: effectiveVersionId,
+          requestedVersionId: cleanVersionId,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,
@@ -858,7 +1065,30 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     const cleanFechaEmision = sanitizeDate(fechaEmision || doc.fechaEmision, 'fechaEmision');
     const incomingSha = sanitizeSha256(doc.sha256);
 
+    const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
+    if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
+    }
+
     return db.runTransaction(async tx => {
+      const opRef = cleanOpId ? col('ops').doc(`save_doc_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        if (
+          prevOp.callerCid !== caller.cid ||
+          prevOp.accountId !== cleanAccountId ||
+          prevOp.docKey !== cleanDocKey ||
+          (incomingSha && prevOp.sha256 && prevOp.sha256 !== incomingSha)
+        ) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -870,20 +1100,35 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
       const clientVersionsCol = clientRef.collection('document_versions');
       const existingDoc = (client.documentos && client.documentos[cleanDocKey]) ? client.documentos[cleanDocKey] : null;
+      const prevVersionRef = (existingDoc && existingDoc.versionId) ? clientVersionsCol.doc(existingDoc.versionId) : null;
+      const prevVersionSnap = prevVersionRef ? await tx.get(prevVersionRef) : null;
 
-      // Rule 6.1: When substituting an expired document, prevent uploading identical file (SHA-256 check)
+      const todayStr = new Date().toISOString().slice(0, 10);
+
+      // Rule 6.1 & BAJO-04: Prevent duplicate SHA-256 and enforce renewal rules when substituting an expired document
       if (existingDoc) {
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const prevExpired = existingDoc.fechaVencimiento && existingDoc.fechaVencimiento < todayStr;
+        const prevExpired = existingDoc.fechaVencimiento && String(existingDoc.fechaVencimiento).slice(0, 10) < todayStr;
+
+        if (incomingSha && existingDoc.sha256 && incomingSha === existingDoc.sha256) {
+          throw new ServiceError('failed-precondition', 'No se puede sustituir o renovar un documento cargando el mismo archivo vencido (huella digital SHA-256 idéntica). Se requiere evidencia de renovación efectiva.');
+        }
 
         if (prevExpired) {
-          if (incomingSha && existingDoc.sha256 && incomingSha === existingDoc.sha256) {
-            throw new ServiceError('failed-precondition', 'No se puede renovar un documento cargando el mismo archivo vencido (huella digital SHA-256 idéntica). Se requiere evidencia de renovación efectiva.');
+          if (!incomingSha) {
+            throw new ServiceError('invalid-argument', 'Para renovar un documento vencido es obligatorio proporcionar la huella digital SHA-256 del nuevo archivo.');
           }
-          if (cleanFechaVencimiento && cleanFechaVencimiento <= existingDoc.fechaVencimiento) {
+          if (!cleanFechaVencimiento) {
+            throw new ServiceError('invalid-argument', 'Para renovar un documento vencido es obligatorio especificar la nueva fecha de vencimiento.');
+          }
+          if (cleanFechaVencimiento <= existingDoc.fechaVencimiento) {
             throw new ServiceError('failed-precondition', `La fecha de vencimiento renovada (${cleanFechaVencimiento}) debe ser posterior a la fecha anterior (${existingDoc.fechaVencimiento}).`);
           }
         }
+      }
+
+      // BAJO-04: Reject already-expired fechaVencimiento on any upload/substitution
+      if (cleanFechaVencimiento && cleanFechaVencimiento < todayStr) {
+        throw new ServiceError('failed-precondition', `La fecha de vencimiento especificada (${cleanFechaVencimiento}) ya se encuentra vencida. Debe indicar una fecha vigente.`);
       }
 
       const nowIso = new Date().toISOString();
@@ -893,16 +1138,12 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       const newVersionNumber = prevVersionNumber + 1;
 
       // Mark previous version as 'historica' if exists
-      if (existingDoc && existingDoc.versionId) {
-        const prevVersionRef = clientVersionsCol.doc(existingDoc.versionId);
-        const prevVersionSnap = await tx.get(prevVersionRef);
-        if (prevVersionSnap.exists) {
-          tx.update(prevVersionRef, {
-            estado: 'historica',
-            reemplazadaPorVersionId: versionId,
-            updatedAt: FieldValue.serverTimestamp()
-          });
-        }
+      if (prevVersionSnap && prevVersionSnap.exists) {
+        tx.update(prevVersionRef, {
+          estado: 'historica',
+          reemplazadaPorVersionId: versionId,
+          updatedAt: FieldValue.serverTimestamp()
+        });
       }
 
       const versionRecord = {
@@ -977,12 +1218,28 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         motivoSustitucion
       });
 
-      return {
+      const resultPayload = {
         success: true,
         versionId,
         versionNumber: newVersionNumber,
         docKey: cleanDocKey
       };
+
+      if (opRef) {
+        tx.set(opRef, {
+          opId: cleanOpId,
+          action: 'saveAccountDocument',
+          accountId: cleanAccountId,
+          docKey: cleanDocKey,
+          sha256: incomingSha || null,
+          callerCid: caller.cid,
+          callerUid: caller.uid,
+          result: resultPayload,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      return resultPayload;
     });
   }
 

@@ -116,6 +116,11 @@ global.window.CrmClients = CrmClients;
 global.CrmCommercial = CrmCommercial;
 global.window.CrmCommercial = CrmCommercial;
 const appCore = require('../../app_core');
+const OpportunitiesUIMod = require('../../modules/opportunities/opportunities_ui.js');
+OpportunitiesUIMod.init({
+  alert: (m) => alerts.push(m),
+  confirm: () => true
+});
 
 describe('Fase 4B.5 Acción 3: Formulario integrado de sustitución documental y UX', () => {
   beforeEach(() => {

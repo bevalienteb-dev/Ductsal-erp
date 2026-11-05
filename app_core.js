@@ -779,7 +779,34 @@ try {
 }
 const _DV = (typeof DocumentViewer !== 'undefined' ? DocumentViewer : (_DocViewerModule || {}));
 
-// Inicialización de dependencias inyectadas en DocumentViewer
+function renderInlineAppNotice(msg) {
+    if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+        const isSuccess = /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere|❌|⛔/i.test(String(msg || ''));
+        window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
+    }
+    if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+        const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view') || document.getElementById('detail-view');
+        if (activeView && typeof document.createElement === 'function') {
+            let banner = document.getElementById('b3-inline-view-notice');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'b3-inline-view-notice';
+                if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                    activeView.insertBefore(banner, activeView.firstChild);
+                } else if (typeof activeView.appendChild === 'function') {
+                    activeView.appendChild(banner);
+                }
+            } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                activeView.insertBefore(banner, activeView.firstChild);
+            }
+            const isSuccess = /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere|❌|⛔/i.test(String(msg || ''));
+            banner.style.cssText = isSuccess
+                ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+            banner.textContent = String(msg || '');
+        }
+    }
+}
 if (typeof initDocumentViewer === 'function') {
     initDocumentViewer({
         getFirebaseFunctions: () => (typeof firebase !== 'undefined' && firebase.functions ? firebase.functions() : null),
@@ -886,34 +913,7 @@ if (typeof _initClientsFn === 'function') {
         normalizeWhatsAppNumber: (phone) => (typeof normalizeWhatsAppNumber === 'function' ? normalizeWhatsAppNumber(phone) : (phone || '').replace(/\D/g, '')),
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => {
-            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
-                const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
-                window.CrmUI.notify(isSuccess ? 'success' : 'error', String(msg || ''));
-            }
-            if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
-                const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
-                if (activeView && typeof document.createElement === 'function') {
-                    let banner = document.getElementById('b3-inline-view-notice');
-                    if (!banner) {
-                        banner = document.createElement('div');
-                        banner.id = 'b3-inline-view-notice';
-                        if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
-                            activeView.insertBefore(banner, activeView.firstChild);
-                        } else if (typeof activeView.appendChild === 'function') {
-                            activeView.appendChild(banner);
-                        }
-                    } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
-                        activeView.insertBefore(banner, activeView.firstChild);
-                    }
-                    const isSuccess = /exitosamente|✅|guardad|registrad|confirmad|actualizad/i.test(String(msg || '')) && !/error|no se|denegado|inválid|falta|requiere/i.test(String(msg || ''));
-                    banner.style.cssText = isSuccess
-                        ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
-                        : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
-                    banner.textContent = String(msg || '');
-                }
-            }
-        },
+        alert: (msg) => renderInlineAppNotice(msg),
         confirm: () => true,
         openModal: (id) => (typeof openModal === 'function' ? openModal(id) : null),
         closeModal: (id) => (typeof closeModal === 'function' ? closeModal(id) : null),
@@ -966,8 +966,8 @@ if (typeof _initOpportunitiesFn === 'function') {
         runWorkflowOp: (label, fn) => (typeof runWorkflowOp === 'function' ? runWorkflowOp(label, fn) : Promise.resolve(null)),
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => (typeof alert === 'function' ? alert(msg) : console.warn('[Opportunities]', msg)),
-        confirm: (msg) => (typeof confirm === 'function' ? confirm(msg) : true),
+        alert: (msg) => renderInlineAppNotice(msg),
+        confirm: () => true,
         prompt: (msg) => (typeof prompt === 'function' ? prompt(msg) : ''),
         formatCurrency: (n) => (typeof formatCurrency === 'function' ? formatCurrency(n) : '$' + Number(n || 0).toFixed(2)),
         hasEnteredPostclosing: (p) => (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : !!(p && (p.postcierre_habilitado === true || (p.etapa === 'cierre' && p.estado === 'ganado'))))
@@ -1037,6 +1037,8 @@ if (typeof _initOpportunitiesUIFn === 'function') {
         runWorkflowOp: (msg, fn) => (typeof runWorkflowOp === 'function' ? runWorkflowOp(msg, fn) : Promise.resolve(null)),
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
+        alert: (msg) => renderInlineAppNotice(msg),
+        confirm: () => true,
         uploadFileToStorage: (file, folder, opts) => (typeof uploadFileToStorage === 'function' ? uploadFileToStorage(file, folder, opts) : null),
         getProspectClient: (clientId) => (typeof getProspectClient === 'function' ? getProspectClient(clientId) : null),
         normalizeWhatsAppNumber: (rawPhone) => (typeof normalizeWhatsAppNumber === 'function' ? normalizeWhatsAppNumber(rawPhone) : ''),
@@ -1222,6 +1224,7 @@ const _getAuthSession = () => (typeof AuthSession !== 'undefined' ? AuthSession 
     const conMod = _getFinanceContracts();
     if (conMod && typeof conMod.setDeps === 'function') {
         conMod.setDeps({
+            alert: (msg) => renderInlineAppNotice(msg),
             getProspects: safeGetProspects,
             getClients: safeGetClients,
             openClientDetailView: (...args) => (typeof openClientDetailView === 'function' ? openClientDetailView(...args) : undefined),
@@ -3827,9 +3830,21 @@ function editChangeOrder(id) {
 // call; what is sent to the server is the user's input and the file references, never the opportunity document.
 // Returns the server answer, or null when nothing was saved. The realtime listener refreshes the screen with the stored result.
 async function runWorkflowOp(loadingMessage, operation) {
+    const notifyOpError = (msg) => {
+        const oppUI = (typeof _getOpportunitiesUI === 'function') ? _getOpportunitiesUI() : null;
+        if (oppUI && oppUI._deps && typeof oppUI._deps.alert === 'function') {
+            return oppUI._deps.alert(msg);
+        }
+        if (typeof renderInlineAppNotice === 'function') {
+            return renderInlineAppNotice(msg);
+        }
+        if (typeof ui !== 'undefined' && ui && Array.isArray(ui.alerts)) {
+            ui.alerts.push(msg);
+        }
+    };
     const fb = (typeof firebase !== 'undefined') ? firebase : null;
     if (typeof CrmCommercial === 'undefined' || !CrmCommercial.hasSessionSync(fb)) {
-        alert(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
+        notifyOpError(typeof CrmCommercial !== 'undefined' ? CrmCommercial.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.');
         return null;
     }
     showLoading(loadingMessage);
@@ -3837,8 +3852,8 @@ async function runWorkflowOp(loadingMessage, operation) {
         return await operation(fb);
     } catch (err) {
         // A rejection of the callable carries the `functions/...` code; anything else (e.g. a failed upload) keeps its own message.
-        if (err && String(err.code || '').startsWith('functions/')) alert(CrmCommercial.errorMessage(err));
-        else alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
+        if (err && String(err.code || '').startsWith('functions/')) notifyOpError(CrmCommercial.errorMessage(err));
+        else notifyOpError('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
         console.error(err);
         return null;
     } finally {

@@ -668,7 +668,7 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
           if (Array.isArray(item) || typeof item === 'string') {
             initialDocs[k] = item;
           } else if (item && typeof item === 'object') {
-            await applyDocumentVersionTx({
+            const vRes = await applyDocumentVersionTx({
               tx,
               db,
               entityType: 'client',
@@ -683,7 +683,11 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
               FieldValue,
               now
             });
-            initialDocs[k] = item;
+            initialDocs[k] = {
+              ...item,
+              ...(vRes && vRes.versionId ? { versionId: vRes.versionId } : {}),
+              ...(vRes && vRes.versionNumber !== undefined && vRes.versionNumber !== null ? { versionNumber: vRes.versionNumber } : {})
+            };
           }
         }
         doc.documentos = initialDocs;

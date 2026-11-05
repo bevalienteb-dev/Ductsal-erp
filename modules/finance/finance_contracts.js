@@ -25,7 +25,33 @@
     // -------------------------------------------------------------------------
     // 1. Dependencias inyectadas con fallbacks seguros
     // -------------------------------------------------------------------------
+    function renderInlineContractNotice(message) {
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            window.CrmUI.notify('error', String(message || ''));
+        }
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+        const activeView = document.querySelector('.view-section.active')
+            || (typeof document.getElementById === 'function' ? (document.getElementById('client-detail-view') || document.getElementById('detail-view')) : null);
+        if (!activeView || typeof document.createElement !== 'function') return;
+        let banner = typeof document.getElementById === 'function' ? document.getElementById('b3-inline-view-notice') : null;
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'b3-inline-view-notice';
+            banner.setAttribute('role', 'status');
+            if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                activeView.insertBefore(banner, activeView.firstChild);
+            } else if (typeof activeView.appendChild === 'function') {
+                activeView.appendChild(banner);
+            }
+        } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+            activeView.insertBefore(banner, activeView.firstChild);
+        }
+        banner.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+        banner.textContent = String(message || '');
+    }
+
     const _deps = {
+        alert: (msg) => renderInlineContractNotice(msg),
         getProspects: () => {
             if (typeof prospects !== 'undefined' && Array.isArray(prospects)) return prospects;
             if (typeof window !== 'undefined' && Array.isArray(window.prospects)) return window.prospects;
@@ -43,6 +69,8 @@
             if (clientsMod && typeof clientsMod.openClientDetailView === 'function') return clientsMod.openClientDetailView(clientId);
         }
     };
+
+    const alert = (...args) => _deps.alert(...args);
 
     /**
      * Genera el contrato marco de prestación de servicios para el proyecto y cliente.

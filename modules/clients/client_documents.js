@@ -1018,9 +1018,21 @@
             });
 
             const client = _deps.getClients().find(x => x.id === accountId);
-            if (client && res && res.power) {
+            if (client && res) {
                 if (!Array.isArray(client.apoderadosVigentes)) client.apoderadosVigentes = [];
-                client.apoderadosVigentes.push(res.power);
+                const powerEntry = res.power || {
+                    id: res.powerId,
+                    powerId: res.powerId,
+                    accountId,
+                    contactId,
+                    nombreApoderado: res.nombreApoderado || 'Apoderado',
+                    termId: res.termId || null,
+                    notas: res.notas !== undefined ? res.notas : (notas || null),
+                    documento: docRef,
+                    estado: 'vigente'
+                };
+                if (notas && !powerEntry.notas) powerEntry.notas = notas;
+                client.apoderadosVigentes.push(powerEntry);
             }
 
             _deps.alert(`✅ Poder notarial para firma de contratos otorgado exitosamente.`);
@@ -1185,37 +1197,35 @@
             if (sha && docRef) docRef.sha256 = sha;
 
             const fb = _deps.getFirebase();
-            let savedVersionId = (docRef && docRef.versionId) || null;
-            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.saveAccountDocument === 'function') {
-                const saveRes = await CrmAccountDocuments.saveAccountDocument(fb, {
-                    accountId,
-                    docKey: targetDocKey,
-                    doc: docRef,
-                    motivoSustitucion: notes,
-                    dbSuffix: _deps.getDbSuffix()
-                });
-                if (saveRes && saveRes.versionId) {
-                    savedVersionId = saveRes.versionId;
-                    docRef.versionId = saveRes.versionId;
-                    docRef.versionNumber = saveRes.versionNumber;
-                }
+            if (typeof CrmAccountDocuments === 'undefined' || typeof CrmAccountDocuments.saveAccountDocument !== 'function') {
+                throw new Error('Módulo CrmAccountDocuments.saveAccountDocument no disponible.');
             }
-            if (savedVersionId && typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.recordBiennialConfirmation === 'function') {
-                await CrmAccountDocuments.recordBiennialConfirmation(fb, {
-                    accountId,
-                    docKey: targetDocKey,
-                    documentVersionId: savedVersionId,
-                    confirmationType: 'modification_uploaded',
-                    confirmedNoChanges: false,
-                    notas: notes,
-                    dbSuffix: _deps.getDbSuffix()
-                });
+            const saveRes = await CrmAccountDocuments.saveAccountDocument(fb, {
+                accountId,
+                docKey: targetDocKey,
+                doc: docRef,
+                motivoSustitucion: notes,
+                dbSuffix: _deps.getDbSuffix()
+            });
+            if (saveRes && saveRes.versionId && docRef) {
+                docRef.versionId = saveRes.versionId;
+                docRef.versionNumber = saveRes.versionNumber;
             }
 
             const client = _deps.getClients().find(x => x.id === accountId);
             if (client) {
                 if (!client.documentos) client.documentos = {};
                 client.documentos[targetDocKey] = docRef;
+                if (!client.biennialReviews) client.biennialReviews = {};
+                const nowIso = new Date().toISOString();
+                const nextIso = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                client.biennialReviews[targetDocKey] = {
+                    lastConfirmedAt: nowIso,
+                    nextReviewAt: nextIso,
+                    documentVersionId: (saveRes && saveRes.versionId) || (docRef && docRef.versionId) || null,
+                    versionNumber: (saveRes && saveRes.versionNumber) || (docRef && docRef.versionNumber) || 1,
+                    tipo: 'nueva_modificacion'
+                };
             }
 
             _deps.alert('✅ Nueva versión documental registrada y revisión bienal renovada por 2 años.');
@@ -1264,7 +1274,7 @@
             const doc = (client.documentos && client.documentos[docKey]) || {};
             const verId = doc.versionId || 'v_base';
 
-            await CrmAccountDocuments.recordBiennialConfirmation(fb, {
+            const confRes = await CrmAccountDocuments.recordBiennialConfirmation(fb, {
                 accountId,
                 docKey,
                 documentVersionId: verId,
@@ -1273,6 +1283,24 @@
                 notas: String(providedNotes).trim(),
                 dbSuffix: _deps.getDbSuffix()
             });
+
+            if (confRes && client.documentos && client.documentos[docKey] && typeof client.documentos[docKey] === 'object') {
+                if (confRes.documentVersionId) client.documentos[docKey].versionId = confRes.documentVersionId;
+                if (confRes.versionNumber) client.documentos[docKey].versionNumber = confRes.versionNumber;
+            }
+            if (confRes && client) {
+                if (!client.biennialReviews) client.biennialReviews = {};
+                client.biennialReviews[docKey] = {
+                    confirmationId: confRes.confirmationId,
+                    lastConfirmedAt: confRes.confirmedAt || new Date().toISOString(),
+                    nextReviewAt: confRes.nextReviewAt || null,
+                    confirmedBy: confRes.confirmedBy || null,
+                    confirmedByName: confRes.confirmedByName || null,
+                    documentVersionId: confRes.documentVersionId || verId,
+                    versionNumber: confRes.versionNumber || 1,
+                    confirmationType: 'no_changes'
+                };
+            }
 
             _deps.alert(`✅ Confirmación de revisión bienal registrada (sin modificaciones) para [${docLabel}]. Período renovado por 2 años.`);
             returnToClientOrOrigin(accountId);
@@ -1419,34 +1447,34 @@
             if (motivo && docRef) docRef.motivoSustitucion = motivo;
 
             const fb = _deps.getFirebase();
-            if (typeof CrmAccountDocuments !== 'undefined' && typeof CrmAccountDocuments.uploadAccountDocumentVersion === 'function') {
-                await CrmAccountDocuments.uploadAccountDocumentVersion(fb, {
-                    accountId,
-                    docKey,
-                    fileMeta: docRef,
-                    fechaVencimiento: fechaVencimiento || null,
-                    motivo,
-                    dbSuffix: _deps.getDbSuffix()
-                });
-            } else {
-                const clientsModule = _deps.getCrmClients();
-                const clientUpdate = JSON.parse(JSON.stringify(client));
-                clientUpdate.baseDocumentos = (client.documentos && typeof client.documentos === 'object')
-                    ? JSON.parse(JSON.stringify(client.documentos))
-                    : {};
-                if (!clientUpdate.documentos) clientUpdate.documentos = {};
-                clientUpdate.documentos[docKey] = docRef;
-                clientUpdate.motivosSustitucion = { [docKey]: motivo };
-                await clientsModule.updateClient(fb, {
-                    id: accountId,
-                    client: clientUpdate,
-                    dbSuffix: _deps.getDbSuffix(),
-                    confirmReview: false
-                });
+            if (typeof CrmAccountDocuments === 'undefined' || typeof CrmAccountDocuments.saveAccountDocument !== 'function') {
+                throw new Error('Módulo CrmAccountDocuments.saveAccountDocument no disponible.');
+            }
+            const saveRes = await CrmAccountDocuments.saveAccountDocument(fb, {
+                accountId,
+                docKey,
+                doc: docRef,
+                motivoSustitucion: motivo,
+                fechaVencimiento: fechaVencimiento || null,
+                dbSuffix: _deps.getDbSuffix()
+            });
+            if (saveRes && docRef) {
+                if (saveRes.versionId) docRef.versionId = saveRes.versionId;
+                if (saveRes.versionNumber !== undefined) docRef.versionNumber = saveRes.versionNumber;
             }
 
             if (!client.documentos) client.documentos = {};
             client.documentos[docKey] = docRef;
+            if (['escritura', 'mods_escritura'].includes(docKey)) {
+                if (!client.biennialReviews) client.biennialReviews = {};
+                client.biennialReviews[docKey] = {
+                    lastConfirmedAt: new Date().toISOString(),
+                    nextReviewAt: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                    documentVersionId: (saveRes && saveRes.versionId) || (docRef && docRef.versionId) || null,
+                    versionNumber: (saveRes && saveRes.versionNumber) || (docRef && docRef.versionNumber) || 1,
+                    tipo: 'nueva_modificacion'
+                };
+            }
 
             _deps.alert(`✅ Documento [${docLabel}] actualizado y versionado exitosamente.`);
             returnToClientOrOrigin(accountId);

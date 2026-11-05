@@ -234,7 +234,8 @@ describe('Phase 6.4: Finance Subsystem Modules', () => {
         getProspects: () => [{ id: 'P1', clientId: 'C_INCOMPLETE' }],
         getClients: () => [{ id: 'C_INCOMPLETE', tipo: 'persona', documentos: {} }],
         openClientDetailView: () => { openedDetailView = true; },
-        getProjectSubtotal: () => 10000
+        getProjectSubtotal: () => 10000,
+        alert: (m) => alerts.push(m)
       });
 
       FinanceContracts.generarContrato('P1');

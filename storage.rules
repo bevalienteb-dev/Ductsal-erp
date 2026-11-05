@@ -126,6 +126,10 @@ service firebase.storage {
       let c = getClient(cid);
       return c != null && (me() in c.get('closingVendors', []));
     }
+    function isClientAssigned(cid) {
+      let c = getClient(cid);
+      return c != null && c.get('vendedor_asignado', '') == me();
+    }
 
     function getReservation(cid) {
       return firestore.get(/databases/(default)/documents/client_reservations_prod/$(cid)).data;
@@ -145,10 +149,10 @@ service firebase.storage {
         );
     }
     function isAuthorizedClientUpload(cid) {
-      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid) || cid == me()));
+      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isClientAssigned(cid) || isReservationValid(cid) || cid == me()));
     }
     function isAuthorizedLegalUpload(cid) {
-      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid)));
+      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isClientAssigned(cid) || isReservationValid(cid)));
     }
 
     // Write-once: an upload over an existing object is refused. Real Storage already evaluates that as `update`
@@ -205,7 +209,7 @@ service firebase.storage {
     // ---------- Client: Identification / DUI files ----------
     match /prod_files/clients/{cid}/identificacion/{file} {
       allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isClientAssigned(cid) || isReservationOwner(cid)));
       allow create: if isNew() && sizeOkFor('identificacion')
         && typeOk() && allowedExtensionFor('identificacion', file)
         && isAuthorizedClientUpload(cid);
@@ -215,7 +219,7 @@ service firebase.storage {
     // ---------- Client: Sensitive Legal files (Escritura, Credencial, NIT, NRC) ----------
     match /prod_files/clients/{cid}/legal/{file} {
       allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isClientAssigned(cid) || isReservationOwner(cid)));
       allow create: if isNew() && sizeOkFor('legal')
         && typeOk() && allowedExtensionFor('legal', file)
         && isAuthorizedLegalUpload(cid);
@@ -225,7 +229,7 @@ service firebase.storage {
     // ---------- Client: Contract Powers files (Phase 2 Block B3) ----------
     match /prod_files/clients/{cid}/poderes/{file} {
       allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isClientAssigned(cid) || isReservationOwner(cid)));
       allow create: if isNew() && sizeOkFor('poderes')
         && typeOk() && allowedExtensionFor('poderes', file)
         && isAuthorizedLegalUpload(cid);

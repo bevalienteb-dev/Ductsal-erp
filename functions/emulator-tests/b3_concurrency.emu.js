@@ -402,7 +402,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         duiDoc: { name: 'dui2.pdf', storagePath: 'prod_files/clients/test/identificacion/d2.pdf' }
       });
 
-      // Intentar finalizar la oportunidad con el apoderado del período anterior
+      // Intentar finalizar la oportunidad con el apoderado del período anterior (incluyendo docs nuevos con motivoSustitucion en data para activar applyDocumentVersionsTx)
       await expect(
         state.wfSvcB.finalizeProspect({
           caller: callerSeller,
@@ -411,10 +411,107 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             forma_pago: '100% anticipado',
             factura_anticipo: 'FAC-12345',
             requiere_contrato: true,
-            firmante_cierre: { tipo: 'apoderado', powerId }
+            firmante_cierre: { tipo: 'apoderado', powerId },
+            doc_firmado: { name: 'contrato_firmado_nuevo.pdf', storagePath: 'prod_files/proyectos/c_new.pdf', motivoSustitucion: 'Actualización de contrato' },
+            doc_comprobante: { name: 'ccf_anticipo_nuevo.pdf', storagePath: 'prod_files/facturas/f_new.pdf', motivoSustitucion: 'Actualización de anticipo' }
           }
         })
       ).rejects.toThrow(/anulado_por_nueva_eleccion/i);
+    });
+
+    test('ALTO-01: finalizeProspect con apoderado vigente y documentos nuevos en data completa la transacción real en Firestore sin violar read-before-write', async () => {
+      const accountId = `CLI_B3_CONC_E3_OK_${TAG}`;
+      const prospectId = `OPP_B3_CONC_E3_OK_${TAG}`;
+      const powerId = `pow_e3_ok_${TAG}`;
+
+      const activeTerm = {
+        termId: `term_e3_ok_${TAG}`,
+        nombre: 'Ing. Hugo Rivas Vigente',
+        cargo: 'Presidente',
+        fechaEleccion: '2025-01-01',
+        fechaVencimiento: '2029-01-01',
+        estado: 'vigente',
+        credencialDoc: { name: 'cred.pdf', storagePath: 'prod_files/clients/test/legal/c.pdf', fechaVencimiento: '2029-01-01' },
+        duiDoc: { name: 'dui.pdf', storagePath: 'prod_files/clients/test/identificacion/d.pdf', fechaVencimiento: '2029-01-01' }
+      };
+
+      const activePower = {
+        id: powerId,
+        powerId,
+        termId: activeTerm.termId,
+        nombreApoderado: 'Lic. Fernando Cruz Vigente',
+        facultadFirmaContratos: true,
+        fechaOtorgamiento: '2025-02-01',
+        fechaVencimiento: '2028-12-31',
+        estado: 'vigente',
+        testimonioDoc: { name: 'poder.pdf', storagePath: 'prod_files/clients/test/poderes/p.pdf' }
+      };
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Construcciones Vigentes ALTO-01 ${TAG}`,
+        tipo: 'juridica',
+        contacto: 'Lic. Fernando Cruz Vigente',
+        nit: '0614-010180-101-1',
+        nrc: '123456-7',
+        telefono: '7890-1234',
+        correo: 'contacto@construcciones-ok.test',
+        correo_fact: 'facturacion@construcciones-ok.test',
+        representanteLegalVigente: activeTerm,
+        apoderadosVigentes: [activePower],
+        biennialReviews: {
+          escritura: {
+            docKey: 'escritura',
+            lastConfirmedAt: new Date().toISOString(),
+            nextReviewAt: '2028-01-01'
+          }
+        },
+        documentos: {
+          dui: { name: 'dui.pdf', fechaVencimiento: '2029-01-01' },
+          escritura: { name: 'escritura.pdf', fechaSubida: new Date().toISOString() },
+          credencial: { name: 'cred.pdf', fechaVencimiento: '2029-01-01' },
+          nit: { name: 'nit.pdf' },
+          nrc: { name: 'nrc.pdf' }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.seller.cid],
+        activo: true
+      });
+
+      await H.setDoc(`clients_local/${accountId}/contract_powers`, powerId, activePower);
+
+      await H.setDoc('prospects_local', prospectId, {
+        id: prospectId,
+        nombre: `Proyecto Contrato ALTO-01 ${TAG}`,
+        clientId: accountId,
+        etapa: 'cierre',
+        estado: 'activo',
+        vendedorId: USERS.seller.cid,
+        tipo_proyecto: 'Instalación',
+        precio_cotizado: 8500,
+        requiere_contrato: true,
+        firmante_cierre: { tipo: 'apoderado', powerId },
+        datos: {}
+      });
+
+      const callerSeller = { uid: USERS.seller.uid, email: USERS.seller.email, role: 'vendedor', cid: USERS.seller.cid, profileId: USERS.seller.cid, name: USERS.seller.nombre };
+
+      const res = await state.wfSvcA.finalizeProspect({
+        caller: callerSeller,
+        prospectId,
+        data: {
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'FAC-ALTO01-99',
+          requiere_contrato: true,
+          firmante_cierre: { tipo: 'apoderado', powerId },
+          doc_firmado: { name: 'contrato_firmado_alto01.pdf', storagePath: 'prod_files/proyectos/c_alto01.pdf' },
+          doc_comprobante: { name: 'ccf_anticipo_alto01.pdf', storagePath: 'prod_files/facturas/f_alto01.pdf' }
+        }
+      });
+
+      expect(res.status).toBe('finalized');
+      expect(res.estado).toBe('ganado');
+      const pSnap = await H.getDoc('prospects_local', prospectId);
+      expect(pSnap.data.estado).toBe('ganado');
     });
   });
 
@@ -652,6 +749,116 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           confirmedNoChanges: true
         })
       ).rejects.toThrow(/vigente|desactualizada|sustituida|histórica/i);
+    });
+  });
+
+  // ====================================================================================================
+  // ESCENARIO 5: Idempotencia Transaccional (MEDIO-04) en Endpoints Mutadores B3
+  // ====================================================================================================
+  describe('Escenario 5: Idempotencia Transaccional por opId en Endpoints Mutadores B3', () => {
+    test('Reintentos con el mismo opId en registerLegalRepresentativeTerm, grantContractPower, revokeContractPower y saveAccountDocument son idempotentes', async () => {
+      const accountId = `CLI_B3_CONC_E5_IDEM_${TAG}`;
+      const contactId = `CONT_B3_E5_${TAG}`;
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+
+      await H.setDoc('contacts_local', contactId, {
+        id: contactId,
+        nombres: 'Claudia',
+        apellidos: 'Idempotente',
+        nombreCompleto: 'Lic. Claudia Idempotente',
+        dui: '04567890-1',
+        activo: true
+      });
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación Idempotencia MEDIO-04 ${TAG}`,
+        tipo: 'juridica',
+        documentos: {},
+        visibleTo: [USERS.admin1.cid],
+        activo: true
+      });
+
+      // 1. registerLegalRepresentativeTerm idempotente
+      const opRl = `op_rl_idem_${TAG}`;
+      const rlPayload = {
+        caller: callerA,
+        accountId,
+        nombre: 'Ing. Roberto Idempotente',
+        cargo: 'Presidente',
+        fechaEleccion: '2025-01-10',
+        fechaVencimiento: '2028-01-10',
+        credencialDoc: { name: 'cred_idem.pdf', storagePath: 'prod_files/clients/test/legal/c_idem.pdf', sha256: '1'.repeat(64) },
+        duiDoc: { name: 'dui_idem.pdf', storagePath: 'prod_files/clients/test/identificacion/d_idem.pdf', sha256: '2'.repeat(64), fechaVencimiento: '2029-05-01' },
+        opId: opRl
+      };
+      const rlRes1 = await state.docSvcA.registerLegalRepresentativeTerm(rlPayload);
+      const rlRes2 = await state.docSvcB.registerLegalRepresentativeTerm(rlPayload);
+      expect(rlRes1.termId).toBe(rlRes2.termId);
+
+      const termsCol = await state.dbA.collection(`clients_local/${accountId}/legal_representative_terms`).get();
+      expect(termsCol.size).toBe(1);
+
+      // 2. grantContractPower idempotente
+      const opGrant = `op_grant_idem_${TAG}`;
+      const grantPayload = {
+        caller: callerA,
+        accountId,
+        contactId: `CONT_B3_E5_${TAG}`,
+        notas: 'Poder con nota persistida BAJO-01',
+        documento: {
+          name: 'poder_idem.pdf',
+          storagePath: 'prod_files/clients/test/poderes/p_idem.pdf',
+          sha256: '3'.repeat(64),
+          nombreApoderado: 'Lic. Claudia Idempotente',
+          tipoPoder: 'especial',
+          facultadFirmaContratos: true,
+          fechaOtorgamiento: '2025-03-01',
+          fechaVencimiento: '2027-03-01',
+          notario: 'Lic. Notario'
+        },
+        opId: opGrant
+      };
+      const gRes1 = await state.docSvcA.grantContractPower(grantPayload);
+      const gRes2 = await state.docSvcB.grantContractPower(grantPayload);
+      expect(gRes1.powerId).toBe(gRes2.powerId);
+      expect(gRes1.power.notas).toBe('Poder con nota persistida BAJO-01');
+
+      const powersCol = await state.dbA.collection(`clients_local/${accountId}/contract_powers`).get();
+      expect(powersCol.size).toBe(1);
+
+      // 3. revokeContractPower idempotente
+      const opRevoke = `op_rev_idem_${TAG}`;
+      const revPayload = {
+        caller: callerA,
+        accountId,
+        powerId: gRes1.powerId,
+        motivo: 'Revocación idempotente',
+        opId: opRevoke
+      };
+      const revRes1 = await state.docSvcA.revokeContractPower(revPayload);
+      const revRes2 = await state.docSvcB.revokeContractPower(revPayload);
+      expect(revRes1.estado).toBe('revocado');
+      expect(revRes2.estado).toBe('revocado');
+
+      // 4. saveAccountDocument idempotente
+      const opSave = `op_save_idem_${TAG}`;
+      const savePayload = {
+        caller: callerA,
+        accountId,
+        docKey: 'nit',
+        doc: {
+          name: 'nit_idem.pdf',
+          storagePath: 'prod_files/clients/test/fiscal/nit_idem.pdf',
+          sha256: '4'.repeat(64)
+        },
+        opId: opSave
+      };
+      const sRes1 = await state.docSvcA.saveAccountDocument(savePayload);
+      const sRes2 = await state.docSvcB.saveAccountDocument(savePayload);
+      expect(sRes1.versionId).toBe(sRes2.versionId);
+      expect(sRes1.versionNumber).toBe(1);
+      expect(sRes2.versionNumber).toBe(1);
     });
   });
 });

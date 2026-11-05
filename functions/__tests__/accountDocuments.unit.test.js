@@ -1125,4 +1125,422 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       expect(docViewerJs).toContain("showView('b3-doc-version-history-view')");
     });
   });
+
+  describe('9. Correcciones de Auditoría Integral PR #9 (ALTO-01..02, MEDIO-01..05, BAJO-01..04)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const ROOT = path.join(__dirname, '..', '..');
+    const { createProspectWorkflowService } = require('../prospectWorkflowService');
+    const { createCommercialService } = require('../commercialService');
+
+    test('ALTO-01: finalizeProspect ejecuta todas las lecturas transaccionales (incluido contract_powers) ANTES de cualquier escritura cuando se adjuntan doc_firmado y doc_comprobante con apoderado', async () => {
+      Object.assign(state.docs['clients_prod/ACC_DELTA'], {
+        telefono: '7890-1234',
+        correo: 'contacto@delta.com',
+        correo_fact: 'facturacion@delta.com'
+      });
+      const rlRes = await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-01-10',
+        fechaVencimiento: '2029-01-10',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf', fechaVencimiento: '2029-01-10' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf', fechaVencimiento: '2029-01-10' }
+      });
+      const powerRes = await svc.grantContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_CARLOS',
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
+        notas: 'Facultado para contratos hasta $250,000'
+      });
+
+      state.docs['prospects_prod/OPP_ALTO_01'] = {
+        id: 'OPP_ALTO_01',
+        codigo: 'PRY-ALTO01',
+        proyecto: 'Proyecto Contractual B3',
+        clientId: 'ACC_DELTA',
+        vendedorId: V1,
+        createdBy: V1,
+        etapa: 'cierre',
+        estado: 'activo',
+        tipo_proyecto: 'Fabricación e instalación',
+        precio_cotizado: 25000,
+        costo_venta: 18000,
+        requiere_contrato: true,
+        datos: {
+          requiere_contrato: true
+        }
+      };
+
+      // Enforce strict Firestore transaction rule: NO tx.get allowed after first tx.set/tx.update/tx.create/tx.delete
+      const dbInst = admin.firestore();
+      const baseRunTx = dbInst.runTransaction.bind(dbInst);
+      const strictDb = Object.create(dbInst);
+      strictDb.runTransaction = async (updateFn) => {
+        return baseRunTx(async (tx) => {
+          let hasWritten = false;
+          const strictTx = {
+            get: async (...args) => {
+              if (hasWritten) {
+                throw new Error('Firestore transactions require all reads to be executed before all writes.');
+              }
+              return tx.get(...args);
+            },
+            set: (...args) => { hasWritten = true; return tx.set(...args); },
+            update: (...args) => { hasWritten = true; return tx.update(...args); },
+            create: (...args) => { hasWritten = true; return tx.create(...args); },
+            delete: (...args) => { hasWritten = true; return tx.delete(...args); }
+          };
+          return updateFn(strictTx);
+        });
+      };
+
+      const commSvc = createCommercialService({ db: strictDb, FieldValue, suffix: '_prod', verifyManager: async () => false });
+      const wfSvc = createProspectWorkflowService({ db: strictDb, FieldValue, kit: commSvc.kit, suffix: '_prod' });
+      const closeRes = await wfSvc.finalizeProspect({
+        caller: callerUser(V1),
+        prospectId: 'OPP_ALTO_01',
+        data: {
+          requiere_contrato: true,
+          firmante_cierre: { tipo: 'apoderado', powerId: powerRes.powerId },
+          forma_pago: '100% anticipado',
+          factura_anticipo: 'FAC-B3-9001',
+          encargado: 'Ing. Roberto Mena',
+          doc_firmado: {
+            name: 'Contrato_Firmado_Apoderado.pdf',
+            storagePath: 'prod_files/prospects/OPP_ALTO_01/proyectos/Contrato_Firmado.pdf'
+          },
+          doc_comprobante: {
+            name: 'Anticipo_9001.pdf',
+            storagePath: 'prod_files/prospects/OPP_ALTO_01/facturas/Anticipo_9001.pdf'
+          }
+        }
+      });
+
+      expect(closeRes.status).toBe('finalized');
+      expect(closeRes.estado).toBe('ganado');
+      expect(state.docs['prospects_prod/OPP_ALTO_01'].estado).toBe('ganado');
+      expect(state.docs['prospects_prod/OPP_ALTO_01'].firmante_cierre).toEqual({
+        tipo: 'apoderado',
+        powerId: powerRes.powerId
+      });
+      expect(rlRes.termId).toBeDefined();
+    });
+
+    test('ALTO-02 & MEDIO-03: client_documents.js invoca CrmAccountDocuments.saveAccountDocument en submitDocumentSubstitution y no invoca recordBiennialConfirmation en submitBiennialUpload', () => {
+      const clientDocsJs = fs.readFileSync(path.join(ROOT, 'modules', 'clients', 'client_documents.js'), 'utf8');
+      expect(clientDocsJs).not.toContain('uploadAccountDocumentVersion');
+
+      // Extract submitDocumentSubstitution body
+      const substStart = clientDocsJs.indexOf('async function submitDocumentSubstitution()');
+      const substEnd = clientDocsJs.indexOf('async function openDossierHistoryView(');
+      const substBody = clientDocsJs.slice(substStart, substEnd);
+      expect(substBody).toContain('CrmAccountDocuments.saveAccountDocument(');
+      expect(substBody).not.toContain('clientsModule.updateClient(');
+
+      // Extract submitBiennialUpload body
+      const bienStart = clientDocsJs.indexOf('async function submitBiennialUpload()');
+      const bienEnd = clientDocsJs.indexOf('async function submitBiennialExpress()');
+      const bienBody = clientDocsJs.slice(bienStart, bienEnd);
+      expect(bienBody).toContain('CrmAccountDocuments.saveAccountDocument(');
+      expect(bienBody).not.toContain('CrmAccountDocuments.recordBiennialConfirmation(');
+    });
+
+    test('MEDIO-01: finalizeProspect rechaza cierre cuando escritura tiene revisión bienal vencida (> 730 días) o cuando el período del RL firmante venció', async () => {
+      Object.assign(state.docs['clients_prod/ACC_DELTA'], {
+        telefono: '7890-1234',
+        correo: 'contacto@delta.com',
+        correo_fact: 'facturacion@delta.com'
+      });
+      await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-01-10',
+        fechaVencimiento: '2029-01-10',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf', fechaVencimiento: '2029-01-10' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf', fechaVencimiento: '2029-01-10' }
+      });
+
+      // Set escritura lastConfirmedAt > 3 years ago
+      state.docs['clients_prod/ACC_DELTA'].biennialReviews = {
+        escritura: {
+          lastConfirmedAt: '2022-01-01T00:00:00.000Z',
+          nextReviewAt: '2024-01-01'
+        }
+      };
+
+      state.docs['prospects_prod/OPP_MEDIO_01'] = {
+        id: 'OPP_MEDIO_01',
+        codigo: 'PRY-M01',
+        proyecto: 'Proyecto Bienal Vencida',
+        clientId: 'ACC_DELTA',
+        vendedorId: V1,
+        createdBy: V1,
+        etapa: 'cierre',
+        estado: 'activo',
+        tipo_proyecto: 'Suministro',
+        precio_cotizado: 5000,
+        costo_venta: 3000,
+        requiere_contrato: false,
+        datos: {
+          doc_firmado: { name: 'Oferta.pdf', storagePath: 'prod_files/prospects/OPP_MEDIO_01/proyectos/Oferta.pdf' },
+          doc_comprobante: { name: 'Anticipo.pdf', storagePath: 'prod_files/prospects/OPP_MEDIO_01/facturas/Anticipo.pdf' },
+          forma_pago: '50_50',
+          factura_anticipo: 'FAC-M01'
+        }
+      };
+
+      const dbInst = admin.firestore();
+      const commSvc = createCommercialService({ db: dbInst, FieldValue, suffix: '_prod', verifyManager: async () => false });
+      const wfSvc = createProspectWorkflowService({ db: dbInst, FieldValue, kit: commSvc.kit, suffix: '_prod' });
+      await expect(wfSvc.finalizeProspect({
+        caller: callerUser(V1),
+        prospectId: 'OPP_MEDIO_01',
+        data: {}
+      })).rejects.toThrow(/revisión bienal/i);
+
+      // Fix biennial review, but expire RL term when requires contract
+      state.docs['clients_prod/ACC_DELTA'].biennialReviews.escritura = {
+        lastConfirmedAt: new Date().toISOString(),
+        nextReviewAt: '2028-11-01'
+      };
+      state.docs['clients_prod/ACC_DELTA'].representanteLegalVigente.fechaVencimiento = '2024-05-01';
+      state.docs['clients_prod/ACC_DELTA'].documentos.credencial.fechaVencimiento = '2029-01-10';
+
+      await expect(wfSvc.finalizeProspect({
+        caller: callerUser(V1),
+        prospectId: 'OPP_MEDIO_01',
+        data: {
+          requiere_contrato: true,
+          firmante_cierre: { tipo: 'representante_legal' }
+        }
+      })).rejects.toThrow(/nombramiento del Representante Legal.*venció/i);
+    });
+
+    test('MEDIO-02: recordBiennialConfirmation soporta documentos iniciales con v_base sin versionId previo materializando/vinculando versión real en document_versions', async () => {
+      // Simulate initial/legacy document without versionId
+      delete state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId;
+      delete state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionNumber;
+      expect(state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId).toBeUndefined();
+
+      const conf = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Confirmado sobre escritura inicial de la cuenta'
+      });
+
+      expect(conf.success).toBe(true);
+      expect(conf.documentVersionId).toMatch(/^v_escritura_base_/);
+      expect(state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId).toBe(conf.documentVersionId);
+      expect(state.docs[`clients_prod/ACC_DELTA/document_versions/${conf.documentVersionId}`]).toBeDefined();
+    });
+
+    test('MEDIO-03: recordBiennialConfirmation rechaza confirmationType distinto de no_changes / biennial_no_changes', async () => {
+      state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'] = {
+        versionId: 'v_esc_1',
+        versionNumber: 1,
+        docKey: 'escritura',
+        estado: 'vigente'
+      };
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId = 'v_esc_1';
+
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_esc_1',
+        confirmationType: 'modification_uploaded',
+        confirmedNoChanges: false
+      })).rejects.toThrow(/Tipo de confirmación bienal inválido/);
+    });
+
+    test('MEDIO-04: idempotencia por opId en registerLegalRepresentativeTerm, grantContractPower, revokeContractPower y saveAccountDocument', async () => {
+      // 1. registerLegalRepresentativeTerm idempotency
+      const rl1 = await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-02-01',
+        fechaVencimiento: '2029-02-01',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2029-05-01' },
+        opId: 'op_rl_001'
+      });
+      const rl2 = await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-02-01',
+        fechaVencimiento: '2029-02-01',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2029-05-01' },
+        opId: 'op_rl_001'
+      });
+      expect(rl2.idempotentReplay).toBe(true);
+      expect(rl2.termId).toBe(rl1.termId);
+
+      // Reusing opId with different nombre fails
+      await expect(svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        nombre: 'Otro Nombre',
+        fechaEleccion: '2026-02-01',
+        credencialDoc: { name: 'Cred.pdf' },
+        duiDoc: { name: 'DUI.pdf' },
+        opId: 'op_rl_001'
+      })).rejects.toThrow(/ya fue utilizado con parámetros distintos/);
+
+      // 2. grantContractPower idempotency
+      const pw1 = await svc.grantContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_CARLOS',
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        notas: 'Poder especial',
+        opId: 'op_pw_001'
+      });
+      const pw2 = await svc.grantContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_CARLOS',
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        notas: 'Poder especial',
+        opId: 'op_pw_001'
+      });
+      expect(pw2.idempotentReplay).toBe(true);
+      expect(pw2.powerId).toBe(pw1.powerId);
+
+      // 3. revokeContractPower idempotency
+      const rev1 = await svc.revokeContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        powerId: pw1.powerId,
+        motivo: 'Fin de gestión',
+        opId: 'op_rev_001'
+      });
+      const rev2 = await svc.revokeContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        powerId: pw1.powerId,
+        motivo: 'Fin de gestión',
+        opId: 'op_rev_001'
+      });
+      expect(rev2.idempotentReplay).toBe(true);
+      expect(rev2.powerId).toBe(rev1.powerId);
+
+      // 4. saveAccountDocument idempotency
+      const sha = '9'.repeat(64);
+      const sd1 = await svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'nit',
+        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/nit_v2.pdf', sha256: sha },
+        motivoSustitucion: 'Actualización NIT',
+        opId: 'op_save_001'
+      });
+      const sd2 = await svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'nit',
+        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/nit_v2.pdf', sha256: sha },
+        motivoSustitucion: 'Actualización NIT',
+        opId: 'op_save_001'
+      });
+      expect(sd2.idempotentReplay).toBe(true);
+      expect(sd2.versionId).toBe(sd1.versionId);
+    });
+
+    test('MEDIO-05: storage.rules autoriza cargas legales e identificación para vendedores con cuenta en visibleTo o vendedor_asignado', () => {
+      const storageRules = fs.readFileSync(path.join(ROOT, 'storage.rules'), 'utf8');
+      expect(storageRules).toContain('function isClientAssigned(cid)');
+      expect(storageRules).toMatch(/isAuthorizedClientUpload\(cid\)[\s\S]*?isClientVisible\(cid\)[\s\S]*?isClientAssigned\(cid\)/);
+      expect(storageRules).toMatch(/isAuthorizedLegalUpload\(cid\)[\s\S]*?isClientVisible\(cid\)[\s\S]*?isClientAssigned\(cid\)/);
+    });
+
+    test('BAJO-01: grantContractPower persiste notas y retorna objeto power; registerLegalRepresentativeTerm preserva fechaVencimiento en duiDoc', async () => {
+      await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-03-01',
+        fechaVencimiento: '2029-03-01',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf', fechaVencimiento: '2029-03-01' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2030-08-15' }
+      });
+
+      const clientAfterRL = state.docs['clients_prod/ACC_DELTA'];
+      expect(clientAfterRL.documentos.dui.fechaVencimiento).toBe('2030-08-15');
+      expect(clientAfterRL.representanteLegalVigente.duiDoc.fechaVencimiento).toBe('2030-08-15');
+
+      const pwRes = await svc.grantContractPower({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_CARLOS',
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        notas: 'Limitado a proyectos de climatización industrial'
+      });
+
+      expect(pwRes.notas).toBe('Limitado a proyectos de climatización industrial');
+      expect(pwRes.power).toBeDefined();
+      expect(pwRes.power.notas).toBe('Limitado a proyectos de climatización industrial');
+      expect(state.docs[`clients_prod/ACC_DELTA/contract_powers/${pwRes.powerId}`].notas).toBe('Limitado a proyectos de climatización industrial');
+      expect(state.docs['clients_prod/ACC_DELTA'].apoderadosVigentes[0].notas).toBe('Limitado a proyectos de climatización industrial');
+    });
+
+    test('BAJO-03: scripts/verify_b3_browser_real.js no contiene rutas locales hardcodeadas (/Users/...)', () => {
+      const verifyScript = fs.readFileSync(path.join(ROOT, 'scripts', 'verify_b3_browser_real.js'), 'utf8');
+      expect(verifyScript).not.toContain('/Users/Benjamin');
+    });
+
+    test('BAJO-04: saveAccountDocument exige sha256 y nueva fechaVencimiento vigente al renovar un documento vencido', async () => {
+      const expiredSha = 'a'.repeat(64);
+      const newSha = 'b'.repeat(64);
+      state.docs['clients_prod/ACC_DELTA'].documentos.dui = {
+        name: 'DUI_Vencido.pdf',
+        storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_old.pdf',
+        versionId: 'v_dui_old',
+        versionNumber: 1,
+        sha256: expiredSha,
+        fechaVencimiento: '2024-01-01'
+      };
+
+      // Sin sha256 -> rechaza
+      await expect(svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'dui',
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf' },
+        fechaVencimiento: '2029-12-31'
+      })).rejects.toThrow(/obligatorio proporcionar la huella digital SHA-256/);
+
+      // Sin fechaVencimiento -> rechaza
+      await expect(svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'dui',
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf', sha256: newSha }
+      })).rejects.toThrow(/obligatorio especificar la nueva fecha de vencimiento/);
+
+      // Con fechaVencimiento posterior a 2024-01-01 pero todavía vencida (2025-01-01 < hoy) -> rechaza
+      await expect(svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'dui',
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf', sha256: newSha },
+        fechaVencimiento: '2025-01-01'
+      })).rejects.toThrow(/ya se encuentra vencida/);
+    });
+  });
 });
