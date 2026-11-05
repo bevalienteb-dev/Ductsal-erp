@@ -887,14 +887,16 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
       ps.docs.forEach(d => {
         const p = d.data();
         if (p.eliminado === true) return;
-        [p.createdBy, p.vendedorId].forEach(v => {
-          if (v && v !== 'sistema') {
-            set.add(String(v));
-            if (p.etapa === 'cierre' && p.estado !== 'perdido') {
-              closingSet.add(String(v));
-            }
+        const activeSeller = p.vendedorId || p.createdBy;
+        if (activeSeller && activeSeller !== 'sistema') {
+          set.add(String(activeSeller));
+          if (p.etapa === 'cierre' && p.estado !== 'perdido') {
+            closingSet.add(String(activeSeller));
           }
-        });
+        }
+        if (p.createdBy && p.createdBy !== 'sistema') {
+          set.add(String(p.createdBy));
+        }
       });
       const next = Array.from(set).sort();
       const nextClosing = Array.from(closingSet).sort();

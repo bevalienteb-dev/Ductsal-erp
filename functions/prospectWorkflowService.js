@@ -1119,6 +1119,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             if (pData.estado !== 'vigente') {
               throw precondition(`El poder del apoderado '${pData.nombreApoderado || 'desconocido'}' no está vigente (estado: ${pData.estado})`);
             }
+            if (firmante.contactId && pData.contactId && String(firmante.contactId).trim() !== String(pData.contactId).trim()) {
+              throw precondition(`El contacto del firmante ('${firmante.contactId}') no coincide con el titular del poder seleccionado ('${pData.contactId}')`);
+            }
             if (pData.fechaVencimiento && String(pData.fechaVencimiento).slice(0, 10) < todayStr) {
               throw precondition(`El poder del apoderado '${pData.nombreApoderado || 'desconocido'}' venció el ${pData.fechaVencimiento}. Debe acreditarse un poder vigente antes de cerrar.`);
             }

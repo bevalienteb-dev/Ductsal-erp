@@ -860,5 +860,296 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
       expect(sRes1.versionNumber).toBe(1);
       expect(sRes2.versionNumber).toBe(1);
     });
+
+    test('PUNTO 2 & PUNTO 3: Confirmaciones bienales concurrentes con documentVersionId="v_base" y distintos opId materializan exactamente 1 versión base y ambas tienen éxito; sin referencia Storage válida se rechaza', async () => {
+      const accountId = `CLI_B3_CONC_VBASE_${TAG}`;
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+      const callerB = { uid: USERS.admin2.uid, email: USERS.admin2.email, role: 'manager', cid: USERS.admin2.cid, profileId: USERS.admin2.cid, name: USERS.admin2.nombre };
+
+      // 1. Verificar rechazo cuando solo hay { name } sin storagePath ni url (PUNTO 2)
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación VBase Concurrencia ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: { name: 'escritura_solo_nombre.pdf' }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid],
+        activo: true
+      });
+
+      await expect(
+        state.docSvcA.recordBiennialConfirmation({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          opId: `op_vbase_invalid_${TAG}`
+        })
+      ).rejects.toThrow(/no cuenta con un archivo válido en Storage/i);
+
+      const emptyVersions = await state.dbA.collection(`clients_local/${accountId}/document_versions`).get();
+      expect(emptyVersions.size).toBe(0);
+
+      // 2. Configurar documento base real con storagePath válido y lanzar 2 confirmaciones concurrentes con 'v_base' y distintos opId (PUNTO 3)
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación VBase Concurrencia ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: {
+            name: 'escritura_real_legacy.pdf',
+            storagePath: `prod_files/clients/${accountId}/legal/escritura_real_legacy.pdf`,
+            size: 128000,
+            contentType: 'application/pdf'
+          }
+        },
+        visibleTo: [USERS.admin1.cid, USERS.admin2.cid],
+        activo: true
+      });
+
+      const barrier = createBarrier(2);
+      const p1 = barrier.enter(() =>
+        state.docSvcA.recordBiennialConfirmation({
+          caller: callerA,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: 'Confirmación concurrente A sobre v_base',
+          opId: `op_vbase_conc_A_${TAG}`
+        })
+      );
+      const p2 = barrier.enter(() =>
+        state.docSvcB.recordBiennialConfirmation({
+          caller: callerB,
+          accountId,
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: 'Confirmación concurrente B sobre v_base',
+          opId: `op_vbase_conc_B_${TAG}`
+        })
+      );
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.success).toBe(true);
+      expect(r2.success).toBe(true);
+      expect(r1.documentVersionId).toBe('v_escritura_base_1');
+      expect(r2.documentVersionId).toBe('v_escritura_base_1');
+
+      // Exactamente 1 versión base materializada en document_versions
+      const versionsSnap = await state.dbA.collection(`clients_local/${accountId}/document_versions`).get();
+      expect(versionsSnap.size).toBe(1);
+      const baseDoc = versionsSnap.docs[0].data();
+      expect(baseDoc.versionId).toBe('v_escritura_base_1');
+      expect(baseDoc.storagePath).toBe(`prod_files/clients/${accountId}/legal/escritura_real_legacy.pdf`);
+      expect(baseDoc.size).toBe(128000);
+      expect(baseDoc.contentType).toBe('application/pdf');
+
+      // Ambas confirmaciones bienales registradas apuntando a v_escritura_base_1
+      const confsSnap = await state.dbA.collection(`clients_local/${accountId}/biennial_confirmations`).get();
+      expect(confsSnap.size).toBe(2);
+      confsSnap.docs.forEach(d => {
+        expect(d.data().documentVersionId).toBe('v_escritura_base_1');
+      });
+    });
+
+    test('PUNTO 4: Concurrencia con el mismo opId y payload distinto rechaza con already-exists en las 5 operaciones mutadoras B3', async () => {
+      const accountId = `CLI_B3_CONC_FP_${TAG}`;
+      const contactId1 = `CONT_B3_FP1_${TAG}`;
+      const contactId2 = `CONT_B3_FP2_${TAG}`;
+      const callerA = { uid: USERS.admin1.uid, email: USERS.admin1.email, role: 'manager', cid: USERS.admin1.cid, profileId: USERS.admin1.cid, name: USERS.admin1.nombre };
+
+      await H.setDoc('contacts_local', contactId1, {
+        id: contactId1,
+        nombres: 'Contacto',
+        apellidos: 'Uno',
+        nombreCompleto: 'Lic. Contacto Uno',
+        dui: '01111111-1',
+        activo: true
+      });
+      await H.setDoc('contacts_local', contactId2, {
+        id: contactId2,
+        nombres: 'Contacto',
+        apellidos: 'Dos',
+        nombreCompleto: 'Lic. Contacto Dos',
+        dui: '02222222-2',
+        activo: true
+      });
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación Fingerprint ${TAG}`,
+        tipo: 'juridica',
+        documentos: {
+          escritura: {
+            name: 'escritura_fp.pdf',
+            storagePath: `prod_files/clients/${accountId}/legal/escritura_fp.pdf`
+          }
+        },
+        visibleTo: [USERS.admin1.cid],
+        activo: true
+      });
+
+      // 1. registerLegalRepresentativeTerm: mismo opId concurrente con distinta fechaVencimiento (campo secundario)
+      const opRl = `op_fp_conc_rl_${TAG}`;
+      const bRl = createBarrier(2);
+      const rlResults = await Promise.allSettled([
+        bRl.enter(() =>
+          state.docSvcA.registerLegalRepresentativeTerm({
+            caller: callerA,
+            accountId,
+            contactId: contactId1,
+            nombre: 'Ing. RL Fingerprint',
+            fechaEleccion: '2026-01-10',
+            fechaVencimiento: '2029-01-10',
+            credencialDoc: { name: 'cred.pdf', storagePath: `prod_files/clients/${accountId}/legal/cred1.pdf` },
+            duiDoc: { name: 'dui.pdf', storagePath: `prod_files/clients/${accountId}/identificacion/dui1.pdf` },
+            opId: opRl
+          })
+        ),
+        bRl.enter(() =>
+          state.docSvcB.registerLegalRepresentativeTerm({
+            caller: callerA,
+            accountId,
+            contactId: contactId1,
+            nombre: 'Ing. RL Fingerprint',
+            fechaEleccion: '2026-01-10',
+            fechaVencimiento: '2030-01-10', // Parámetro secundario distinto
+            credencialDoc: { name: 'cred.pdf', storagePath: `prod_files/clients/${accountId}/legal/cred1.pdf` },
+            duiDoc: { name: 'dui.pdf', storagePath: `prod_files/clients/${accountId}/identificacion/dui1.pdf` },
+            opId: opRl
+          })
+        )
+      ]);
+      const rlFulfilled = rlResults.filter(r => r.status === 'fulfilled');
+      const rlRejected = rlResults.filter(r => r.status === 'rejected');
+      expect(rlFulfilled).toHaveLength(1);
+      expect(rlRejected).toHaveLength(1);
+      expect(rlRejected[0].reason.code).toBe('already-exists');
+
+      // 2. grantContractPower: mismo opId concurrente con distinto documento.storagePath (campo secundario)
+      const opPw = `op_fp_conc_pw_${TAG}`;
+      const bPw = createBarrier(2);
+      const pwResults = await Promise.allSettled([
+        bPw.enter(() =>
+          state.docSvcA.grantContractPower({
+            caller: callerA,
+            accountId,
+            contactId: contactId2,
+            documento: { name: 'poder.pdf', storagePath: `prod_files/clients/${accountId}/poderes/p_a.pdf` },
+            notas: 'Nota A',
+            opId: opPw
+          })
+        ),
+        bPw.enter(() =>
+          state.docSvcB.grantContractPower({
+            caller: callerA,
+            accountId,
+            contactId: contactId2,
+            documento: { name: 'poder.pdf', storagePath: `prod_files/clients/${accountId}/poderes/p_b.pdf` },
+            notas: 'Nota A',
+            opId: opPw
+          })
+        )
+      ]);
+      const pwFulfilled = pwResults.filter(r => r.status === 'fulfilled');
+      const pwRejected = pwResults.filter(r => r.status === 'rejected');
+      expect(pwFulfilled).toHaveLength(1);
+      expect(pwRejected).toHaveLength(1);
+      expect(pwRejected[0].reason.code).toBe('already-exists');
+      const grantedPowerId = pwFulfilled[0].value.powerId;
+
+      // 3. revokeContractPower: mismo opId concurrente con distinto motivo
+      const opRev = `op_fp_conc_rev_${TAG}`;
+      const bRev = createBarrier(2);
+      const revResults = await Promise.allSettled([
+        bRev.enter(() =>
+          state.docSvcA.revokeContractPower({
+            caller: callerA,
+            accountId,
+            powerId: grantedPowerId,
+            motivo: 'Motivo A',
+            opId: opRev
+          })
+        ),
+        bRev.enter(() =>
+          state.docSvcB.revokeContractPower({
+            caller: callerA,
+            accountId,
+            powerId: grantedPowerId,
+            motivo: 'Motivo B',
+            opId: opRev
+          })
+        )
+      ]);
+      expect(revResults.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(revResults.filter(r => r.status === 'rejected')[0].reason.code).toBe('already-exists');
+
+      // 4. recordBiennialConfirmation: mismo opId concurrente con distintas notas (campo secundario)
+      const opBi = `op_fp_conc_bi_${TAG}`;
+      const bBi = createBarrier(2);
+      const biResults = await Promise.allSettled([
+        bBi.enter(() =>
+          state.docSvcA.recordBiennialConfirmation({
+            caller: callerA,
+            accountId,
+            docKey: 'escritura',
+            documentVersionId: 'v_base',
+            confirmationType: 'no_changes',
+            confirmedNoChanges: true,
+            notas: 'Notas A',
+            opId: opBi
+          })
+        ),
+        bBi.enter(() =>
+          state.docSvcB.recordBiennialConfirmation({
+            caller: callerA,
+            accountId,
+            docKey: 'escritura',
+            documentVersionId: 'v_base',
+            confirmationType: 'no_changes',
+            confirmedNoChanges: true,
+            notas: 'Notas B',
+            opId: opBi
+          })
+        )
+      ]);
+      expect(biResults.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(biResults.filter(r => r.status === 'rejected')[0].reason.code).toBe('already-exists');
+
+      // 5. saveAccountDocument: mismo opId concurrente con distinto storagePath / motivoSustitucion
+      const opSv = `op_fp_conc_sv_${TAG}`;
+      const bSv = createBarrier(2);
+      const svResults = await Promise.allSettled([
+        bSv.enter(() =>
+          state.docSvcA.saveAccountDocument({
+            caller: callerA,
+            accountId,
+            docKey: 'nit',
+            doc: { name: 'nit.pdf', storagePath: `prod_files/clients/${accountId}/legal/nit_a.pdf` },
+            motivoSustitucion: 'Motivo A',
+            opId: opSv
+          })
+        ),
+        bSv.enter(() =>
+          state.docSvcB.saveAccountDocument({
+            caller: callerA,
+            accountId,
+            docKey: 'nit',
+            doc: { name: 'nit.pdf', storagePath: `prod_files/clients/${accountId}/legal/nit_b.pdf` },
+            motivoSustitucion: 'Motivo A',
+            opId: opSv
+          })
+        )
+      ]);
+      expect(svResults.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(svResults.filter(r => r.status === 'rejected')[0].reason.code).toBe('already-exists');
+    });
   });
 });

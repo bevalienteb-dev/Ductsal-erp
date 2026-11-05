@@ -92,6 +92,109 @@ function computeDaysDifference(dateStr1, dateStr2) {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
+function isValidStorageReferenceString(ref) {
+  if (typeof ref !== 'string') return false;
+  const s = ref.trim();
+  if (!s) return false;
+  if (s.includes('..') || s.includes('\\')) return false;
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('gs://')) {
+    return s.length > 10;
+  }
+  if (s.includes('//')) return false;
+  if (s.startsWith('prod_files/') || s.startsWith('local_files/')) {
+    const parts = s.split('/').filter(Boolean);
+    return parts.length >= 3;
+  }
+  return false;
+}
+
+function extractStorageReferenceFromDoc(doc) {
+  if (!doc) return { isValid: false, storagePath: null, url: null };
+  if (typeof doc === 'string') {
+    const s = doc.trim();
+    if (!isValidStorageReferenceString(s)) return { isValid: false, storagePath: null, url: null };
+    if (s.startsWith('prod_files/') || s.startsWith('local_files/')) {
+      return { isValid: true, storagePath: s, url: null };
+    }
+    return { isValid: true, storagePath: null, url: s };
+  }
+  if (typeof doc === 'object') {
+    const rawStoragePath = typeof doc.storagePath === 'string' && doc.storagePath.trim()
+      ? doc.storagePath.trim()
+      : (typeof doc.path === 'string' && doc.path.trim() ? doc.path.trim() : '');
+    const rawUrl = typeof doc.url === 'string' && doc.url.trim() ? doc.url.trim() : '';
+
+    // If an explicit storagePath/path is provided, it must be a valid storage reference (not a corrupt/traversal string)
+    if (rawStoragePath && !isValidStorageReferenceString(rawStoragePath)) {
+      return { isValid: false, storagePath: null, url: null };
+    }
+    if (rawUrl && !isValidStorageReferenceString(rawUrl)) {
+      return { isValid: false, storagePath: null, url: null };
+    }
+
+    const validPath = rawStoragePath && isValidStorageReferenceString(rawStoragePath) ? rawStoragePath : null;
+    const validUrl = rawUrl && isValidStorageReferenceString(rawUrl) ? rawUrl : null;
+
+    if (!validPath && !validUrl) {
+      return { isValid: false, storagePath: null, url: null };
+    }
+    return {
+      isValid: true,
+      storagePath: validPath,
+      url: validUrl
+    };
+  }
+  return { isValid: false, storagePath: null, url: null };
+}
+
+function canonicalizeValue(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+  if (typeof val === 'number') {
+    return Number.isFinite(val) ? val : null;
+  }
+  if (typeof val === 'boolean') {
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map(item => canonicalizeValue(item));
+  }
+  if (typeof val === 'object') {
+    const sortedKeys = Object.keys(val).sort();
+    const out = {};
+    for (const k of sortedKeys) {
+      out[k] = canonicalizeValue(val[k]);
+    }
+    return out;
+  }
+  return String(val);
+}
+
+function normalizeDocForFingerprint(doc, fallbackFechaVencimiento = null, fallbackFechaEmision = null) {
+  if (!doc || typeof doc !== 'object') return null;
+  return {
+    name: doc.name ? String(doc.name).trim() : null,
+    storagePath: (doc.storagePath || doc.path) ? String(doc.storagePath || doc.path).trim() : null,
+    url: doc.url ? String(doc.url).trim() : null,
+    sha256: sanitizeSha256(doc.sha256) || null,
+    size: doc.size !== undefined && doc.size !== null && doc.size !== '' ? Number(doc.size) : null,
+    contentType: doc.contentType ? String(doc.contentType).trim() : null,
+    fechaEmision: (fallbackFechaEmision || doc.fechaEmision) ? String(fallbackFechaEmision || doc.fechaEmision).trim().slice(0, 10) : null,
+    fechaVencimiento: (fallbackFechaVencimiento || doc.fechaVencimiento) ? String(fallbackFechaVencimiento || doc.fechaVencimiento).trim().slice(0, 10) : null
+  };
+}
+
+function computeOperationFingerprint(action, semanticPayload) {
+  const canonical = canonicalizeValue({
+    action,
+    payload: semanticPayload
+  });
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
 function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
   if (!db) throw new Error('db is required');
   if (!FieldValue) throw new Error('FieldValue is required');
@@ -196,17 +299,29 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
 
+    const cleanContactId = contactId ? String(contactId).trim() : null;
+    const cleanDuiExpiry = duiDoc.fechaVencimiento ? sanitizeDate(duiDoc.fechaVencimiento, 'fechaVencimiento DUI') : null;
+    const payloadHash = cleanOpId ? computeOperationFingerprint('registerLegalRepresentativeTerm', {
+      callerCid: caller.cid,
+      accountId: cleanAccountId,
+      contactId: cleanContactId,
+      nombre: cleanNombre,
+      fechaEleccion: cleanFechaEleccion,
+      fechaInicio: cleanFechaInicio,
+      fechaVencimiento: cleanFechaVencimiento,
+      credencialDoc: normalizeDocForFingerprint(credencialDoc, cleanFechaVencimiento, cleanFechaEleccion),
+      duiDoc: normalizeDocForFingerprint(duiDoc, cleanDuiExpiry, null)
+    }) : null;
+
     return db.runTransaction(async tx => {
       const opRef = cleanOpId ? col('ops').doc(`rl_term_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
         const prevOp = opSnap.data();
-        if (
-          prevOp.callerCid !== caller.cid ||
-          prevOp.accountId !== cleanAccountId ||
-          prevOp.nombre !== cleanNombre ||
-          prevOp.fechaEleccion !== cleanFechaEleccion
-        ) {
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (prevOp.callerCid !== caller.cid || prevOp.accountId !== cleanAccountId || prevOp.nombre !== cleanNombre || prevOp.fechaEleccion !== cleanFechaEleccion);
+        if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
         return {
@@ -420,6 +535,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           accountId: cleanAccountId,
           nombre: cleanNombre,
           fechaEleccion: cleanFechaEleccion,
+          payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,
@@ -457,17 +573,23 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
     const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
+    const payloadHash = cleanOpId ? computeOperationFingerprint('grantContractPower', {
+      callerCid: caller.cid,
+      accountId: cleanAccountId,
+      contactId: cleanContactId,
+      notas: cleanNotas,
+      documento: normalizeDocForFingerprint(effectiveDoc)
+    }) : null;
 
     return db.runTransaction(async tx => {
       const opRef = cleanOpId ? col('ops').doc(`grant_power_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
         const prevOp = opSnap.data();
-        if (
-          prevOp.callerCid !== caller.cid ||
-          prevOp.accountId !== cleanAccountId ||
-          prevOp.contactId !== cleanContactId
-        ) {
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (prevOp.callerCid !== caller.cid || prevOp.accountId !== cleanAccountId || prevOp.contactId !== cleanContactId);
+        if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
         return {
@@ -626,6 +748,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           action: 'grantContractPower',
           accountId: cleanAccountId,
           contactId: cleanContactId,
+          payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,
@@ -650,18 +773,22 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
+    const payloadHash = cleanOpId ? computeOperationFingerprint('revokeContractPower', {
+      callerCid: caller.cid,
+      accountId: cleanAccountId,
+      powerId: cleanPowerId,
+      motivo: cleanMotivo
+    }) : null;
 
     return db.runTransaction(async tx => {
       const opRef = cleanOpId ? col('ops').doc(`revoke_power_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
         const prevOp = opSnap.data();
-        if (
-          prevOp.callerCid !== caller.cid ||
-          prevOp.accountId !== cleanAccountId ||
-          prevOp.powerId !== cleanPowerId ||
-          prevOp.motivo !== cleanMotivo
-        ) {
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (prevOp.callerCid !== caller.cid || prevOp.accountId !== cleanAccountId || prevOp.powerId !== cleanPowerId || prevOp.motivo !== cleanMotivo);
+        if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
         return {
@@ -723,6 +850,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           accountId: cleanAccountId,
           powerId: cleanPowerId,
           motivo: cleanMotivo,
+          payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,
@@ -781,6 +909,19 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Debe confirmar expresamente que consultó al cliente y que no existen modificaciones');
     }
 
+    const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
+    const cleanOpportunityId = opportunityId ? String(opportunityId).trim() : null;
+    const payloadHash = cleanOpId ? computeOperationFingerprint('recordBiennialConfirmation', {
+      callerCid: caller.cid,
+      accountId: cleanAccountId,
+      docKey: cleanDocKey,
+      requestedVersionId: cleanVersionId,
+      confirmationType,
+      confirmedNoChanges: true,
+      notas: cleanNotas,
+      opportunityId: cleanOpportunityId
+    }) : null;
+
     return db.runTransaction(async tx => {
       // --- FASE 1 DE TRANSACCIÓN: TODAS LAS LECTURAS ---
       const opRef = cleanOpId ? col('ops').doc(`biennial_${cleanAccountId}_${cleanOpId}`) : null;
@@ -788,12 +929,15 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
       if (opSnap && opSnap.exists) {
         const prevOp = opSnap.data();
-        if (
-          prevOp.callerCid !== caller.cid ||
-          prevOp.accountId !== cleanAccountId ||
-          prevOp.docKey !== cleanDocKey ||
-          (prevOp.requestedVersionId && prevOp.requestedVersionId !== cleanVersionId && prevOp.documentVersionId !== cleanVersionId)
-        ) {
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (
+              prevOp.callerCid !== caller.cid ||
+              prevOp.accountId !== cleanAccountId ||
+              prevOp.docKey !== cleanDocKey ||
+              (prevOp.requestedVersionId && prevOp.requestedVersionId !== cleanVersionId && prevOp.documentVersionId !== cleanVersionId)
+            );
+        if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
         return {
@@ -813,7 +957,20 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
 
       const clientVersionsCol = clientRef.collection('document_versions');
       const versionRef = clientVersionsCol.doc(cleanVersionId);
+      const deterministicBaseId = `v_${cleanDocKey}_base_1`;
+      const deterministicBaseRef = clientVersionsCol.doc(deterministicBaseId);
+      const currentActiveDoc = client.documentos && client.documentos[cleanDocKey] ? client.documentos[cleanDocKey] : null;
+      const activePointerId = (currentActiveDoc && typeof currentActiveDoc === 'object' && currentActiveDoc.versionId)
+        ? String(currentActiveDoc.versionId)
+        : null;
+
       const versionSnap = await tx.get(versionRef);
+      const deterministicBaseSnap = (cleanVersionId === 'v_base' && cleanVersionId !== deterministicBaseId)
+        ? await tx.get(deterministicBaseRef)
+        : null;
+      const activePointerSnap = (cleanVersionId === 'v_base' && activePointerId && activePointerId !== cleanVersionId && activePointerId !== deterministicBaseId)
+        ? await tx.get(clientVersionsCol.doc(activePointerId))
+        : null;
       const docKeyVersionsSnap = await tx.get(clientVersionsCol.where('docKey', '==', cleanDocKey));
 
       const now = new Date();
@@ -821,7 +978,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       const todayStr = nowIso.slice(0, 10);
       const rand = crypto.randomBytes(4).toString('hex');
 
-      const currentActiveDoc = client.documentos && client.documentos[cleanDocKey] ? client.documentos[cleanDocKey] : null;
       if (!currentActiveDoc) {
         if (!versionSnap.exists) {
           throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
@@ -835,28 +991,82 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       let healClientDocVersionPointer = false;
 
       if (!versionSnap.exists) {
-        // MEDIO-02: Support initial/legacy client documents where client.documentos[docKey] had no versionId ('v_base')
-        if (cleanVersionId === 'v_base' && !currentActiveDoc.versionId) {
-          let activeVersionDoc = null;
-          if (docKeyVersionsSnap && typeof docKeyVersionsSnap.forEach === 'function') {
+        // MEDIO-02 / PUNTO 2 & PUNTO 3: Support initial/legacy client documents ('v_base')
+        // with strict Storage reference validation and concurrency-safe deterministic base resolution.
+        if (cleanVersionId === 'v_base') {
+          let resolvedBase = null;
+
+          // Case 1: A concurrent transaction just materialized v_base and healed currentActiveDoc.versionId
+          if (activePointerId) {
+            let pointerDocData = null;
+            if (activePointerId === deterministicBaseId && deterministicBaseSnap && deterministicBaseSnap.exists) {
+              pointerDocData = deterministicBaseSnap.data();
+            } else if (activePointerSnap && activePointerSnap.exists) {
+              pointerDocData = activePointerSnap.data();
+            }
+            if (pointerDocData) {
+              const pNum = Number(pointerDocData.versionNumber) || 1;
+              // Only resolve 'v_base' to the active pointer if it represents the initial base version (v1)
+              // If the document already moved to v2+, 'v_base' is outdated and must be rejected as superseded.
+              if (pNum === 1 && pointerDocData.estado === 'vigente' && !pointerDocData.reemplazadaPorVersionId) {
+                resolvedBase = { id: activePointerId, data: pointerDocData, needsHeal: false };
+              } else {
+                throw new ServiceError(
+                  'failed-precondition',
+                  `No es posible confirmar una versión desactualizada ('v_base') cuando la versión vigente actual es '${activePointerId}'`
+                );
+              }
+            }
+          }
+
+          // Case 2: Deterministic base version document already exists in document_versions
+          if (!resolvedBase && deterministicBaseSnap && deterministicBaseSnap.exists) {
+            resolvedBase = {
+              id: deterministicBaseId,
+              data: deterministicBaseSnap.data(),
+              needsHeal: !activePointerId
+            };
+          }
+
+          // Case 3: Query snapshot of document_versions for docKey contains an existing version
+          if (!resolvedBase && docKeyVersionsSnap && typeof docKeyVersionsSnap.forEach === 'function') {
+            let activeVersionDoc = null;
             docKeyVersionsSnap.forEach(d => {
               const dData = d.data() || {};
               if (dData.estado === 'vigente' || !activeVersionDoc || (Number(dData.versionNumber) || 0) > (Number(activeVersionDoc.data.versionNumber) || 0)) {
                 activeVersionDoc = { id: d.id || dData.versionId, data: dData };
               }
             });
-          }
-          if (activeVersionDoc && activeVersionDoc.id) {
-            effectiveVersionId = activeVersionDoc.id;
-            versionData = activeVersionDoc.data;
-            healClientDocVersionPointer = true;
-          } else {
-            const hasRealFile = (typeof currentActiveDoc === 'string' && currentActiveDoc.trim().length > 0)
-              || (typeof currentActiveDoc === 'object' && !!(currentActiveDoc.storagePath || currentActiveDoc.url || currentActiveDoc.path || currentActiveDoc.name));
-            if (!hasRealFile) {
-              throw new ServiceError('not-found', 'La versión documental especificada no existe en el expediente de esta cuenta');
+            if (activeVersionDoc && activeVersionDoc.id) {
+              const foundNum = Number(activeVersionDoc.data.versionNumber) || 1;
+              if (foundNum > 1 && activePointerId && activePointerId !== 'v_base') {
+                throw new ServiceError(
+                  'failed-precondition',
+                  `No es posible confirmar una versión desactualizada ('v_base') cuando la versión vigente actual es '${activeVersionDoc.id}'`
+                );
+              }
+              resolvedBase = {
+                id: activeVersionDoc.id,
+                data: activeVersionDoc.data,
+                needsHeal: !activePointerId
+              };
             }
-            effectiveVersionId = `v_${cleanDocKey}_base_${Date.now()}_${rand}`;
+          }
+
+          if (resolvedBase) {
+            effectiveVersionId = resolvedBase.id;
+            versionData = resolvedBase.data;
+            healClientDocVersionPointer = Boolean(resolvedBase.needsHeal);
+          } else {
+            // Case 4: Materialize deterministic base version ONLY if currentActiveDoc has a valid Storage reference
+            const storageRef = extractStorageReferenceFromDoc(currentActiveDoc);
+            if (!storageRef.isValid) {
+              throw new ServiceError(
+                'failed-precondition',
+                `El documento '${cleanDocKey}' no cuenta con un archivo válido en Storage (storagePath o url) para materializar su versión base`
+              );
+            }
+            effectiveVersionId = deterministicBaseId;
             versionData = {
               versionId: effectiveVersionId,
               versionNumber: Number(currentActiveDoc.versionNumber) || 1,
@@ -864,9 +1074,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
               entityId: cleanAccountId,
               docKey: cleanDocKey,
               name: (typeof currentActiveDoc === 'object' && currentActiveDoc.name) ? currentActiveDoc.name : cleanDocKey,
-              storagePath: (typeof currentActiveDoc === 'object' && (currentActiveDoc.storagePath || currentActiveDoc.path)) || null,
-              url: (typeof currentActiveDoc === 'string' ? currentActiveDoc : (currentActiveDoc.url || null)),
-              sha256: (typeof currentActiveDoc === 'object' && currentActiveDoc.sha256) || null,
+              storagePath: storageRef.storagePath,
+              url: storageRef.url,
+              size: (typeof currentActiveDoc === 'object' && currentActiveDoc.size) || null,
+              contentType: (typeof currentActiveDoc === 'object' && currentActiveDoc.contentType) || null,
+              sha256: (typeof currentActiveDoc === 'object' && sanitizeSha256(currentActiveDoc.sha256)) || null,
               fechaEmision: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaEmision) || null,
               fechaVencimiento: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaVencimiento) || null,
               estado: 'vigente',
@@ -944,7 +1156,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       const nextReviewIso = nextReviewDate.toISOString().slice(0, 10);
 
       const confId = cleanOpId ? `conf_${cleanOpId}` : `conf_${Date.now()}_${rand}`;
-      const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
 
       // Identity is taken strictly from server-resolved `caller`
       const confirmationRecord = {
@@ -963,7 +1174,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         confirmedByRole: caller.role,
         confirmedAt: nowIso,
         nextReviewAt: nextReviewIso,
-        opportunityId: opportunityId ? String(opportunityId).trim() : null,
+        opportunityId: cleanOpportunityId,
         opId: cleanOpId,
         createdAt: FieldValue.serverTimestamp()
       };
@@ -1029,6 +1240,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           docKey: cleanDocKey,
           documentVersionId: effectiveVersionId,
           requestedVersionId: cleanVersionId,
+          payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,
@@ -1064,23 +1276,36 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     const cleanFechaVencimiento = sanitizeDate(fechaVencimiento || doc.fechaVencimiento, 'fechaVencimiento');
     const cleanFechaEmision = sanitizeDate(fechaEmision || doc.fechaEmision, 'fechaEmision');
     const incomingSha = sanitizeSha256(doc.sha256);
+    const cleanMotivoSustitucion = motivoSustitucion ? String(motivoSustitucion).trim().slice(0, 500) : null;
 
     const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
     if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
+    const payloadHash = cleanOpId ? computeOperationFingerprint('saveAccountDocument', {
+      callerCid: caller.cid,
+      accountId: cleanAccountId,
+      docKey: cleanDocKey,
+      motivoSustitucion: cleanMotivoSustitucion,
+      fechaEmision: cleanFechaEmision,
+      fechaVencimiento: cleanFechaVencimiento,
+      doc: normalizeDocForFingerprint(doc, cleanFechaVencimiento, cleanFechaEmision)
+    }) : null;
 
     return db.runTransaction(async tx => {
       const opRef = cleanOpId ? col('ops').doc(`save_doc_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
         const prevOp = opSnap.data();
-        if (
-          prevOp.callerCid !== caller.cid ||
-          prevOp.accountId !== cleanAccountId ||
-          prevOp.docKey !== cleanDocKey ||
-          (incomingSha && prevOp.sha256 && prevOp.sha256 !== incomingSha)
-        ) {
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (
+              prevOp.callerCid !== caller.cid ||
+              prevOp.accountId !== cleanAccountId ||
+              prevOp.docKey !== cleanDocKey ||
+              (incomingSha && prevOp.sha256 && prevOp.sha256 !== incomingSha)
+            );
+        if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
         }
         return {
@@ -1232,6 +1457,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           accountId: cleanAccountId,
           docKey: cleanDocKey,
           sha256: incomingSha || null,
+          payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
           result: resultPayload,

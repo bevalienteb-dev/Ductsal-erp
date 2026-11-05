@@ -1461,11 +1461,19 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
       expect(sd2.versionId).toBe(sd1.versionId);
     });
 
-    test('MEDIO-05: storage.rules autoriza cargas legales e identificación para vendedores con cuenta en visibleTo o vendedor_asignado', () => {
+    test('MEDIO-05 & PUNTO 1: storage.rules autoriza cargas de identificación con visibleTo, pero restringe /legal/ y /poderes/ al responsable actual o vendedor en cierre', () => {
       const storageRules = fs.readFileSync(path.join(ROOT, 'storage.rules'), 'utf8');
-      expect(storageRules).toContain('function isClientAssigned(cid)');
-      expect(storageRules).toMatch(/isAuthorizedClientUpload\(cid\)[\s\S]*?isClientVisible\(cid\)[\s\S]*?isClientAssigned\(cid\)/);
-      expect(storageRules).toMatch(/isAuthorizedLegalUpload\(cid\)[\s\S]*?isClientVisible\(cid\)[\s\S]*?isClientAssigned\(cid\)/);
+      expect(storageRules).toContain('function isClientCurrentResponsible(cid)');
+      expect(storageRules).toMatch(/isAuthorizedClientUpload\(cid\)[\s\S]*?isClientCurrentResponsible\(cid\)[\s\S]*?isClientVisible\(cid\)/);
+      expect(storageRules).toMatch(/isAuthorizedLegalAccess\(cid\)[\s\S]*?isClientCurrentResponsible\(cid\)[\s\S]*?isClientClosing\(cid\)[\s\S]*?isReservationValid\(cid\)/);
+      expect(storageRules).toMatch(/isAuthorizedLegalUpload\(cid\)[\s\S]*?isClientCurrentResponsible\(cid\)[\s\S]*?isClientClosing\(cid\)[\s\S]*?isReservationValid\(cid\)/);
+      // Verify /legal/ and /poderes/ do NOT include isClientVisible(cid)
+      const legalFnMatch = storageRules.match(/function isAuthorizedLegalAccess\(cid\)\s*\{[\s\S]*?\}/);
+      expect(legalFnMatch).not.toBeNull();
+      expect(legalFnMatch[0]).not.toContain('isClientVisible');
+      const legalUploadFnMatch = storageRules.match(/function isAuthorizedLegalUpload\(cid\)\s*\{[\s\S]*?\}/);
+      expect(legalUploadFnMatch).not.toBeNull();
+      expect(legalUploadFnMatch[0]).not.toContain('isClientVisible');
     });
 
     test('BAJO-01: grantContractPower persiste notas y retorna objeto power; registerLegalRepresentativeTerm preserva fechaVencimiento en duiDoc', async () => {
@@ -1541,6 +1549,319 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf', sha256: newSha },
         fechaVencimiento: '2025-01-01'
       })).rejects.toThrow(/ya se encuentra vencida/);
+    });
+  });
+
+  // ===========================================================================
+  // 7. Ronda Correctiva Final B3: PUNTO 2, PUNTO 3 y PUNTO 4
+  // ===========================================================================
+  describe('7. Ronda Correctiva Final B3 — Integridad v_base, Concurrencia y Huellas Semánticas de Idempotencia', () => {
+    beforeEach(() => {
+      state.docs['clients_prod/ACC_DELTA'].documentos = {
+        escritura: {
+          name: 'Escritura_Base.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/escritura_base.pdf'
+        },
+        nit: {
+          name: 'NIT.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf',
+          versionId: 'v_nit_1',
+          versionNumber: 1
+        }
+      };
+      delete state.docs['clients_prod/ACC_DELTA/document_versions/v_escritura_1'];
+    });
+
+    test('PUNTO 2: rechaza materializar v_base si currentActiveDoc solo contiene name o metadatos sin referencia válida a Storage', async () => {
+      // Caso 1: Solo { name } sin storagePath ni url
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+        name: 'Escritura_Solo_Nombre.pdf',
+        ext: 'pdf'
+      };
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+      // Caso 2: storagePath vacío
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+        name: 'Escritura_Vacia.pdf',
+        storagePath: '   ',
+        url: ''
+      };
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+      // Caso 3: storagePath corrupto o con secuencias prohibidas (.. o sin prefijo válido)
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+        name: 'Escritura_Corrupta.pdf',
+        storagePath: '../outside/escritura.pdf'
+      };
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+      // Verificar que NO se creó ninguna versión ficticia ni confirmación bienal
+      const versionKeys = Object.keys(state.docs).filter(k => k.startsWith('clients_prod/ACC_DELTA/document_versions/'));
+      expect(versionKeys).toHaveLength(0);
+      const confKeys = Object.keys(state.docs).filter(k => k.startsWith('clients_prod/ACC_DELTA/biennial_confirmations/'));
+      expect(confKeys).toHaveLength(0);
+    });
+
+    test('PUNTO 2 & PUNTO 3: materializa v_base con ID determinístico (v_escritura_base_1) cuando hay storagePath o url válido y resuelve llamadas subsecuentes con v_base sin duplicar versiones', async () => {
+      state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+        name: 'Escritura_Real.pdf',
+        storagePath: 'prod_files/clients/ACC_DELTA/legal/escritura_real.pdf',
+        size: 204800,
+        contentType: 'application/pdf'
+      };
+
+      const res1 = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Confirmación inicial v_base',
+        opId: 'op_vbase_1'
+      });
+
+      expect(res1.documentVersionId).toBe('v_escritura_base_1');
+      const baseVer = state.docs['clients_prod/ACC_DELTA/document_versions/v_escritura_base_1'];
+      expect(baseVer).toBeDefined();
+      expect(baseVer.storagePath).toBe('prod_files/clients/ACC_DELTA/legal/escritura_real.pdf');
+      expect(baseVer.size).toBe(204800);
+      expect(baseVer.contentType).toBe('application/pdf');
+      expect(state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId).toBe('v_escritura_base_1');
+
+      // Segunda llamada concurrente/subsecuente que aún envía documentVersionId: 'v_base' con distinto opId
+      const res2 = await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Segunda confirmación concurrente con v_base',
+        opId: 'op_vbase_2'
+      });
+
+      expect(res2.documentVersionId).toBe('v_escritura_base_1');
+      const escrituraVersions = Object.keys(state.docs).filter(
+        k => k.startsWith('clients_prod/ACC_DELTA/document_versions/') && state.docs[k].docKey === 'escritura'
+      );
+      expect(escrituraVersions).toHaveLength(1);
+    });
+
+    test('PUNTO 3: rechaza v_base si la cuenta ya avanzó a una versión superior (v2+)', async () => {
+      // Materializa v1
+      await svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      });
+
+      // Carga v2 mediante saveAccountDocument
+      await svc.saveAccountDocument({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        doc: {
+          name: 'Escritura_v2.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/escritura_v2.pdf',
+          sha256: 'c'.repeat(64)
+        },
+        motivoSustitucion: 'Reforma de estatutos'
+      });
+
+      // Intentar confirmar v_base cuando ya existe v2 debe fallar con failed-precondition
+      await expect(svc.recordBiennialConfirmation({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true
+      })).rejects.toThrow(/versión desactualizada/);
+    });
+
+    test('PUNTO 4: huella semántica canónica en las 5 operaciones rechaza reutilización de opId ante cambios en cualquier parámetro primario o secundario', async () => {
+      // 1. registerLegalRepresentativeTerm
+      const baseRL = {
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-03-01',
+        fechaVencimiento: '2031-03-01',
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred1.pdf', sha256: '1'.repeat(64) },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui1.pdf', sha256: '2'.repeat(64) },
+        opId: 'op_fp_rl_1'
+      };
+      const rl1 = await svc.registerLegalRepresentativeTerm(baseRL);
+      expect(rl1.success).toBe(true);
+
+      // Reintento idéntico (incluso con orden distinto de propiedades en objetos anidados) -> idempotentReplay: true
+      const rlReplay = await svc.registerLegalRepresentativeTerm({
+        ...baseRL,
+        credencialDoc: { sha256: '1'.repeat(64), storagePath: 'prod_files/clients/ACC_DELTA/legal/cred1.pdf', name: 'Cred.pdf' }
+      });
+      expect(rlReplay.idempotentReplay).toBe(true);
+      expect(rlReplay.termId).toBe(rl1.termId);
+
+      // Cambio en parámetro secundario: fechaVencimiento
+      await expect(svc.registerLegalRepresentativeTerm({
+        ...baseRL,
+        fechaVencimiento: '2032-03-01'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio en parámetro secundario: contactId
+      await expect(svc.registerLegalRepresentativeTerm({
+        ...baseRL,
+        contactId: 'CONT_CARLOS'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio en parámetro secundario: credencialDoc.storagePath
+      await expect(svc.registerLegalRepresentativeTerm({
+        ...baseRL,
+        credencialDoc: { ...baseRL.credencialDoc, storagePath: 'prod_files/clients/ACC_DELTA/legal/cred_other.pdf' }
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio en parámetro secundario: duiDoc.sha256
+      await expect(svc.registerLegalRepresentativeTerm({
+        ...baseRL,
+        duiDoc: { ...baseRL.duiDoc, sha256: '3'.repeat(64) }
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // 2. grantContractPower
+      const basePower = {
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_CARLOS',
+        documento: { name: 'Poder1.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/p1.pdf', sha256: '4'.repeat(64) },
+        notas: 'Notas originales',
+        opId: 'op_fp_pw_1'
+      };
+      const pw1 = await svc.grantContractPower(basePower);
+      expect(pw1.success).toBe(true);
+
+      // Reintento idéntico -> idempotentReplay: true
+      const pwReplay = await svc.grantContractPower({ ...basePower });
+      expect(pwReplay.idempotentReplay).toBe(true);
+
+      // Cambio secundario en documento.storagePath
+      await expect(svc.grantContractPower({
+        ...basePower,
+        documento: { ...basePower.documento, storagePath: 'prod_files/clients/ACC_DELTA/poderes/p2.pdf' }
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio secundario en notas
+      await expect(svc.grantContractPower({
+        ...basePower,
+        notas: 'Notas alteradas'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // 3. revokeContractPower
+      const baseRevoke = {
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        powerId: pw1.powerId,
+        motivo: 'Motivo original',
+        opId: 'op_fp_rev_1'
+      };
+      const rev1 = await svc.revokeContractPower(baseRevoke);
+      expect(rev1.success).toBe(true);
+
+      const revReplay = await svc.revokeContractPower({ ...baseRevoke });
+      expect(revReplay.idempotentReplay).toBe(true);
+
+      await expect(svc.revokeContractPower({
+        ...baseRevoke,
+        motivo: 'Motivo cambiado'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // 4. recordBiennialConfirmation
+      const baseBiennial = {
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'escritura',
+        documentVersionId: 'v_base',
+        confirmationType: 'no_changes',
+        confirmedNoChanges: true,
+        notas: 'Sin cambios 2026',
+        opportunityId: 'OPP_1',
+        opId: 'op_fp_bi_1'
+      };
+      const bi1 = await svc.recordBiennialConfirmation(baseBiennial);
+      expect(bi1.success).toBe(true);
+
+      const biReplay = await svc.recordBiennialConfirmation({ ...baseBiennial });
+      expect(biReplay.idempotentReplay).toBe(true);
+
+      // Cambio secundario en notas
+      await expect(svc.recordBiennialConfirmation({
+        ...baseBiennial,
+        notas: 'Con notas distintas'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio secundario en opportunityId
+      await expect(svc.recordBiennialConfirmation({
+        ...baseBiennial,
+        opportunityId: 'OPP_2'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // 5. saveAccountDocument
+      const baseSave = {
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        docKey: 'nit',
+        doc: { name: 'NIT_2026.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_2026.pdf', sha256: '5'.repeat(64) },
+        motivoSustitucion: 'Actualización fiscal',
+        fechaVencimiento: '2030-12-31',
+        opId: 'op_fp_save_1'
+      };
+      const sv1 = await svc.saveAccountDocument(baseSave);
+      expect(sv1.success).toBe(true);
+
+      const svReplay = await svc.saveAccountDocument({ ...baseSave });
+      expect(svReplay.idempotentReplay).toBe(true);
+
+      // Cambio secundario en storagePath (incluso sin cambiar sha256 o sin sha256)
+      await expect(svc.saveAccountDocument({
+        ...baseSave,
+        doc: { ...baseSave.doc, storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_otro.pdf' }
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio secundario en motivoSustitucion
+      await expect(svc.saveAccountDocument({
+        ...baseSave,
+        motivoSustitucion: 'Otro motivo distinto'
+      })).rejects.toThrow(/parámetros distintos/);
+
+      // Cambio secundario en fechaVencimiento
+      await expect(svc.saveAccountDocument({
+        ...baseSave,
+        fechaVencimiento: '2031-12-31'
+      })).rejects.toThrow(/parámetros distintos/);
     });
   });
 });

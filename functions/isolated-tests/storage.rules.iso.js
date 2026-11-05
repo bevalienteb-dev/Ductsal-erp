@@ -70,6 +70,13 @@ beforeAll(async () => {
   await stApi.seed('prod_files/clients/' + V1 + '/dui-seed.pdf');
   await stApi.seed('prod_files/clients/C1/identificacion/dui.pdf');
   await stApi.seed('prod_files/clients/C1/legal/escritura.pdf');
+  await stApi.seed('prod_files/clients/C1/poderes/poder.pdf');
+  await stApi.seed('prod_files/clients/RES_EXP/identificacion/dui-exp-seed.pdf');
+  await stApi.seed('prod_files/clients/RES_EXP/legal/esc-exp-seed.pdf');
+  await stApi.seed('prod_files/clients/RES_EXP/poderes/pod-exp-seed.pdf');
+  await stApi.seed('prod_files/clients/RES_CANC/identificacion/dui-canc-seed.pdf');
+  await stApi.seed('prod_files/clients/RES_CANC/legal/esc-canc-seed.pdf');
+  await stApi.seed('prod_files/clients/RES_CANC/poderes/pod-canc-seed.pdf');
   await stApi.seed('prod_files/proyectos/legacy.pdf');
   await stApi.seed('prod_files/requerimientos/req-seed.pdf');
   await stApi.seed('prod_files/fabricacion_archivos/fab-seed.pdf');
@@ -257,17 +264,93 @@ describe('Storage: client sensitive legal files by stage & closingVendors', () =
     const rm = await stApi.download('prod_files/clients/C1/legal/escritura.pdf', T.mgr);
     expect(rm.status).toBe(200);
   });
+
+  // Contract powers (/poderes/) and reassignment / lost opportunity matrix (PUNTO 1)
+  test('contract powers (/poderes/) and legal (/legal/) enforce strict current responsible or closingVendors policy', async () => {
+    // Base state: C1 createdBy V1, visibleTo [V1, V2], closingVendors []
+    // V2 is in visibleTo (e.g. initial stage or lost opportunity), NOT in closingVendors
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v1)).status).toBe(200);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.mgr)).status).toBe(200);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.ges)).status).toBe(200);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v2)).status).toBe(403);
+    expect((await stApi.upload('prod_files/clients/C1/poderes/poder-v2-denied.pdf', T.v2)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v3)).status).toBe(403);
+    expect((await stApi.upload('prod_files/clients/C1/poderes/poder-v3-denied.pdf', T.v3)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.anon)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v4inactive)).status).toBe(403);
+
+    // When V2 enters cierre (closingVendors: [V2]), V2 gets read/create on /poderes/
+    await fsApi.set('clients_prod', 'C1', {
+      id: 'C1',
+      tipo: 'empresa',
+      empresa: 'Empresa Test',
+      createdBy: V1,
+      visibleTo: [V1, V2],
+      closingVendors: [V2]
+    }, 'owner');
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v2)).status).toBe(200);
+    expect((await stApi.upload('prod_files/clients/C1/poderes/poder-v2-cierre.pdf', T.v2)).status).toBe(200);
+
+    // Account reassignment: vendedor_asignado set to V3, V1 remains createdBy and in visibleTo (historical/lost opp)
+    // V3 (assigned seller) gains access; V1 (original creator reassigned away & not in closingVendors) loses access to /legal/ and /poderes/
+    await fsApi.set('clients_prod', 'C1', {
+      id: 'C1',
+      tipo: 'empresa',
+      empresa: 'Empresa Test',
+      createdBy: V1,
+      vendedor_asignado: V3,
+      visibleTo: [V1, V2, V3],
+      closingVendors: []
+    }, 'owner');
+
+    expect((await stApi.download('prod_files/clients/C1/legal/escritura.pdf', T.v3)).status).toBe(200);
+    expect((await stApi.upload('prod_files/clients/C1/legal/nit-v3.pdf', T.v3)).status).toBe(200);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v3)).status).toBe(200);
+    expect((await stApi.upload('prod_files/clients/C1/poderes/poder-v3.pdf', T.v3)).status).toBe(200);
+
+    // Reassigned previous seller (V1) and visible-only seller with lost/initial opportunity (V2) are denied
+    expect((await stApi.download('prod_files/clients/C1/legal/escritura.pdf', T.v1)).status).toBe(403);
+    expect((await stApi.upload('prod_files/clients/C1/legal/nit-v1-reassigned.pdf', T.v1)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v1)).status).toBe(403);
+    expect((await stApi.upload('prod_files/clients/C1/poderes/poder-v1-reassigned.pdf', T.v1)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/legal/escritura.pdf', T.v2)).status).toBe(403);
+    expect((await stApi.download('prod_files/clients/C1/poderes/poder.pdf', T.v2)).status).toBe(403);
+
+    // Restore C1 baseline for subsequent suites
+    await fsApi.set('clients_prod', 'C1', {
+      id: 'C1',
+      tipo: 'empresa',
+      empresa: 'Empresa Test',
+      createdBy: V1,
+      visibleTo: [V1, V2],
+      closingVendors: []
+    }, 'owner');
+  });
 });
 
-describe('Storage: client reservation upload authorization', () => {
+describe('Storage: client reservation upload & read authorization (PUNTO 5)', () => {
   allow('active reservation holder uploads identification file', () => stApi.upload('prod_files/clients/RES1/identificacion/dui-res.pdf', T.v1));
   allow('active reservation holder uploads legal file', () => stApi.upload('prod_files/clients/RES1/legal/escritura-res.pdf', T.v1));
-  allow('active reservation holder reads back uploaded file', async () => {
-    return stApi.download('prod_files/clients/RES1/identificacion/dui-res.pdf', T.v1);
-  });
+  allow('active reservation holder uploads poderes file', () => stApi.upload('prod_files/clients/RES1/poderes/poder-res.pdf', T.v1));
+  allow('active reservation holder reads back uploaded identification file', () => stApi.download('prod_files/clients/RES1/identificacion/dui-res.pdf', T.v1));
+  allow('active reservation holder reads back uploaded legal file', () => stApi.download('prod_files/clients/RES1/legal/escritura-res.pdf', T.v1));
+  allow('active reservation holder reads back uploaded poderes file', () => stApi.download('prod_files/clients/RES1/poderes/poder-res.pdf', T.v1));
   deny('another vendedor cannot upload to someone else reservation (impersonation prevented)', () => stApi.upload('prod_files/clients/RES1/identificacion/intruder.pdf', T.v2));
+  deny('another vendedor cannot read from someone else reservation', () => stApi.download('prod_files/clients/RES1/legal/escritura-res.pdf', T.v2));
   deny('upload with expired reservation is denied', () => stApi.upload('prod_files/clients/RES_EXP/identificacion/exp.pdf', T.v1));
+  deny('upload legal with expired reservation is denied', () => stApi.upload('prod_files/clients/RES_EXP/legal/exp.pdf', T.v1));
+  deny('upload poderes with expired reservation is denied', () => stApi.upload('prod_files/clients/RES_EXP/poderes/exp.pdf', T.v1));
+  deny('read identification with expired reservation is denied for seller', () => stApi.download('prod_files/clients/RES_EXP/identificacion/dui-exp-seed.pdf', T.v1));
+  deny('read legal with expired reservation is denied for seller', () => stApi.download('prod_files/clients/RES_EXP/legal/esc-exp-seed.pdf', T.v1));
+  deny('read poderes with expired reservation is denied for seller', () => stApi.download('prod_files/clients/RES_EXP/poderes/pod-exp-seed.pdf', T.v1));
   deny('upload with cancelled reservation is denied', () => stApi.upload('prod_files/clients/RES_CANC/identificacion/canc.pdf', T.v1));
+  deny('upload legal with cancelled reservation is denied', () => stApi.upload('prod_files/clients/RES_CANC/legal/canc.pdf', T.v1));
+  deny('upload poderes with cancelled reservation is denied', () => stApi.upload('prod_files/clients/RES_CANC/poderes/canc.pdf', T.v1));
+  deny('read identification with cancelled reservation is denied for seller', () => stApi.download('prod_files/clients/RES_CANC/identificacion/dui-canc-seed.pdf', T.v1));
+  deny('read legal with cancelled reservation is denied for seller', () => stApi.download('prod_files/clients/RES_CANC/legal/esc-canc-seed.pdf', T.v1));
+  deny('read poderes with cancelled reservation is denied for seller', () => stApi.download('prod_files/clients/RES_CANC/poderes/pod-canc-seed.pdf', T.v1));
+  allow('manager retains administrative read access on expired reservation files', () => stApi.download('prod_files/clients/RES_EXP/legal/esc-exp-seed.pdf', T.mgr));
+  allow('gestor retains administrative read access on cancelled reservation files', () => stApi.download('prod_files/clients/RES_CANC/legal/esc-canc-seed.pdf', T.ges));
   deny('upload to non-existent client or reservation is denied', () => stApi.upload('prod_files/clients/INEXISTENTE/identificacion/none.pdf', T.v1));
 });
 
