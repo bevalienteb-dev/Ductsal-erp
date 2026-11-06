@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const PROJECT = 'demo-ductsal-local';
@@ -17,7 +18,14 @@ const STORAGE_BUCKET = `${PROJECT}.appspot.com`;
 const HTTP_PORT = 8124;
 const CDP_PORT = 9226;
 
+const REPO_ROOT = path.resolve(__dirname, '..');
+const MAX_UPLOAD_BYTES = 1024 * 1024; // 1 MB
+const B3_TEST_UPLOAD_TOKEN = crypto.randomBytes(32).toString('hex');
+
 const createdStoragePaths = new Set();
+let storageCleanupPromise = null;
+let storageCleanupCycleCount = 0;
+let storageDeleteRequestCount = 0;
 
 const ARTIFACT_SCREENSHOT_DIR = process.env.ARTIFACT_SCREENSHOT_DIR || null;
 const DOCS_SCREENSHOT_DIR = path.resolve(__dirname, '../docs/screenshots');
@@ -31,62 +39,299 @@ const MIME_TYPES = {
   '.png': 'image/png'
 };
 
+const ALLOWED_TEST_STORAGE_PATH_RE = /^local_files\/(?:clients\/C1\/(?:legal|identificacion|poderes)|prospects\/P1\/(?:proyectos|facturas))\/([A-Za-z0-9._-]{1,200})$/;
+
+function assertAllowedTestStoragePath(storagePath) {
+  if (typeof storagePath !== 'string' || !storagePath || storagePath !== storagePath.trim()) {
+    throw new Error(`Invalid test storagePath (empty or untrimmed): ${String(storagePath)}`);
+  }
+  if (
+    storagePath.length > 300 ||
+    /[\x00-\x1f\x7f\\]/.test(storagePath) ||
+    storagePath.includes('..') ||
+    storagePath.includes('//') ||
+    storagePath.includes('%')
+  ) {
+    throw new Error(`Forbidden sequence or character in test storagePath: ${storagePath}`);
+  }
+  let decoded;
+  try {
+    decoded = decodeURIComponent(storagePath);
+  } catch (_) {
+    throw new Error(`Malformed URI encoding in test storagePath: ${storagePath}`);
+  }
+  if (
+    decoded !== storagePath ||
+    decoded.includes('%') ||
+    decoded.includes('..') ||
+    decoded.includes('//') ||
+    decoded.includes('\\') ||
+    /[\x00-\x1f\x7f]/.test(decoded)
+  ) {
+    throw new Error(`Encoded or traversal sequence rejected in test storagePath: ${storagePath}`);
+  }
+  const match = ALLOWED_TEST_STORAGE_PATH_RE.exec(storagePath);
+  if (!match) {
+    throw new Error(`Storage path outside allowed B3 test scope: ${storagePath}`);
+  }
+  const fileName = match[1];
+  if (!fileName || fileName === '.' || fileName === '..' || fileName.startsWith('.') || fileName.includes('..')) {
+    throw new Error(`Invalid file name in test storagePath: ${storagePath}`);
+  }
+  return storagePath;
+}
+
+function isValidTestToken(headerVal) {
+  if (typeof headerVal !== 'string' || headerVal.length !== B3_TEST_UPLOAD_TOKEN.length) {
+    return false;
+  }
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(headerVal, 'utf8'),
+      Buffer.from(B3_TEST_UPLOAD_TOKEN, 'utf8')
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+async function assertStorageObjectDoesNotExist(validPath) {
+  assertAllowedTestStoragePath(validPath);
+  const metaUrl = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(validPath)}`;
+  let metaRes;
+  try {
+    metaRes = await fetch(metaUrl, {
+      method: 'GET',
+      headers: { Authorization: 'Bearer owner' }
+    });
+  } catch (err) {
+    throw new Error(`Storage emulator pre-check failed for ${validPath}: ${err.message}`);
+  }
+  if (metaRes.status === 200) {
+    const err = new Error(`Refusing to overwrite pre-existing Storage object: ${validPath}`);
+    err.statusCode = 409;
+    throw err;
+  }
+  if (metaRes.status !== 404) {
+    const body = await metaRes.text().catch(() => '');
+    throw new Error(`Unexpected status (${metaRes.status}) checking Storage object existence for ${validPath}: ${body}`);
+  }
+}
+
 async function uploadToStorageEmulator(storagePath, content = '%PDF-1.4 DUCTSAL B3 TEST DOCUMENT', contentType = 'application/pdf') {
-  const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o?name=${encodeURIComponent(storagePath)}`;
+  const validPath = assertAllowedTestStoragePath(storagePath);
+  if (contentType && contentType !== 'application/pdf') {
+    const err = new Error(`Unsupported contentType for test upload: ${contentType}`);
+    err.statusCode = 415;
+    throw err;
+  }
   const body = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
+  if (body.length === 0) {
+    const err = new Error('Empty payload is not allowed');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (body.length > MAX_UPLOAD_BYTES) {
+    const err = new Error(`Payload exceeds maximum size of ${MAX_UPLOAD_BYTES} bytes`);
+    err.statusCode = 413;
+    throw err;
+  }
+
+  await assertStorageObjectDoesNotExist(validPath);
+
+  const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o?name=${encodeURIComponent(validPath)}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': contentType || 'application/pdf',
+      'Content-Type': 'application/pdf',
       Authorization: 'Bearer owner'
     },
     body
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Failed to upload ${storagePath} to Storage emulator: ${res.status} ${text}`);
+    throw new Error(`Failed to upload ${validPath} to Storage emulator: ${res.status} ${text}`);
   }
-  createdStoragePaths.add(storagePath);
-  return { storagePath, size: body.length, contentType: contentType || 'application/pdf' };
+  createdStoragePaths.add(validPath);
+  return { storagePath: validPath, size: body.length, contentType: 'application/pdf' };
 }
 
-async function cleanupCreatedStorageObjects() {
-  for (const sp of createdStoragePaths) {
-    try {
-      const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(sp)}`;
-      await fetch(url, {
-        method: 'DELETE',
-        headers: { Authorization: 'Bearer owner' }
-      });
-    } catch (_) {}
+function cleanupCreatedStorageObjects() {
+  if (storageCleanupPromise) {
+    return storageCleanupPromise;
   }
-  createdStoragePaths.clear();
+  storageCleanupPromise = (async () => {
+    storageCleanupCycleCount += 1;
+    const pathsToDelete = Array.from(createdStoragePaths);
+    for (const sp of pathsToDelete) {
+      let validPath;
+      try {
+        validPath = assertAllowedTestStoragePath(sp);
+      } catch (err) {
+        console.warn(`[CLEANUP GUARD] Refusing to delete out-of-scope path: ${sp} (${err.message})`);
+        createdStoragePaths.delete(sp);
+        continue;
+      }
+      try {
+        storageDeleteRequestCount += 1;
+        const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(validPath)}`;
+        await fetch(url, {
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer owner' }
+        });
+      } catch (_) {}
+      createdStoragePaths.delete(sp);
+    }
+  })().finally(() => {
+    storageCleanupPromise = null;
+  });
+  return storageCleanupPromise;
 }
 
 const server = http.createServer((req, res) => {
-  const parsedUrl = new URL(req.url, `http://127.0.0.1:${HTTP_PORT}`);
-  if (req.method === 'POST' && parsedUrl.pathname === '/__emulator_storage_upload') {
+  const rawUrl = String(req.url || '');
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl, `http://127.0.0.1:${HTTP_PORT}`);
+  } catch (_) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad Request');
+    return;
+  }
+
+  if (parsedUrl.pathname === '/__emulator_storage_upload') {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+      return;
+    }
+    if (!isValidTestToken(req.headers['x-b3-test-token'])) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden: invalid or missing X-B3-Test-Token' }));
+      return;
+    }
+    const rawQuery = rawUrl.includes('?') ? rawUrl.slice(rawUrl.indexOf('?') + 1) : '';
+    if (/%25/i.test(rawQuery) || /%2e/i.test(rawQuery) || /%5c/i.test(rawQuery) || /%00/i.test(rawQuery)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden encoded sequence in query string' }));
+      return;
+    }
     const storagePath = parsedUrl.searchParams.get('name') || '';
-    const contentType = parsedUrl.searchParams.get('contentType') || 'application/pdf';
+    const contentType = parsedUrl.searchParams.get('contentType') || (req.headers['content-type'] || 'application/pdf').split(';')[0].trim();
+    if (contentType !== 'application/pdf') {
+      res.writeHead(415, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unsupported Media Type: only application/pdf is allowed' }));
+      return;
+    }
+    try {
+      assertAllowedTestStoragePath(storagePath);
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+      return;
+    }
+
+    const declaredLength = req.headers['content-length'] !== undefined ? Number(req.headers['content-length']) : null;
+    if (declaredLength !== null && (!Number.isFinite(declaredLength) || declaredLength > MAX_UPLOAD_BYTES)) {
+      req.resume();
+      res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify({ error: 'Payload Too Large: max 1 MB' }));
+      return;
+    }
+
     const chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
+    let receivedBytes = 0;
+    let abortedForSize = false;
+
+    const onData = (chunk) => {
+      if (abortedForSize) return;
+      receivedBytes += chunk.length;
+      if (receivedBytes > MAX_UPLOAD_BYTES) {
+        abortedForSize = true;
+        chunks.length = 0;
+        req.removeListener('data', onData);
+        req.resume();
+        if (!res.headersSent) {
+          res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
+          res.end(JSON.stringify({ error: 'Payload Too Large: max 1 MB' }));
+        }
+        return;
+      }
+      chunks.push(chunk);
+    };
+
+    req.on('data', onData);
     req.on('end', async () => {
+      if (abortedForSize || res.writableEnded) return;
       try {
         const buf = Buffer.concat(chunks);
+        if (buf.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Empty body is not allowed' }));
+          return;
+        }
         const uploaded = await uploadToStorageEmulator(storagePath, buf, contentType);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(uploaded));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        const statusCode = err && Number.isInteger(err.statusCode) ? err.statusCode : 500;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
     });
     return;
   }
 
-  let reqPath = parsedUrl.pathname;
-  if (reqPath === '/') reqPath = '/index.html';
-  const filePath = path.join(__dirname, '..', reqPath);
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { 'Content-Type': 'text/plain' });
+    res.end('Method Not Allowed');
+    return;
+  }
+
+  const rawPathname = rawUrl.split('?')[0];
+  if (
+    rawPathname.includes('..') ||
+    rawPathname.includes('\\') ||
+    rawPathname.includes('\0') ||
+    /%2e/i.test(rawPathname) ||
+    /%2f/i.test(rawPathname) ||
+    /%5c/i.test(rawPathname) ||
+    /%25/i.test(rawPathname) ||
+    /%00/i.test(rawPathname)
+  ) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
+
+  let decodedPathname;
+  try {
+    decodedPathname = decodeURIComponent(parsedUrl.pathname);
+  } catch (_) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad Request');
+    return;
+  }
+
+  if (
+    decodedPathname.includes('..') ||
+    decodedPathname.includes('\\') ||
+    decodedPathname.includes('\0')
+  ) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
+
+  const reqPath = decodedPathname === '/' ? '/index.html' : decodedPathname;
+  const filePath = path.resolve(REPO_ROOT, '.' + reqPath);
+  const rel = path.relative(REPO_ROOT, filePath);
+
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
 
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -318,6 +563,295 @@ async function seedInitialData() {
   console.log('[SEED] Datos base sembrados exitosamente.');
 }
 
+async function runHarnessSecurityAcceptanceTests() {
+  console.log('\n[SECURITY SELF-TEST] Ejecutando las 15 pruebas de aceptación del arnés HTTP / Storage Emulator...');
+
+  const directRawPut = async (objPath, content = 'RAW_SEED') => {
+    const r = await fetch(`http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o?name=${encodeURIComponent(objPath)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf', Authorization: 'Bearer owner' },
+      body: Buffer.from(content, 'utf8')
+    });
+    if (!r.ok) throw new Error(`directRawPut failed for ${objPath}: ${r.status}`);
+  };
+
+  const directRawGet = async (objPath) => {
+    const r = await fetch(`http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(objPath)}?alt=media`, {
+      method: 'GET',
+      headers: { Authorization: 'Bearer owner' }
+    });
+    return { status: r.status, text: r.ok ? await r.text() : '' };
+  };
+
+  const directRawDel = async (objPath) => {
+    await fetch(`http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(objPath)}`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer owner' }
+    });
+  };
+
+  const endpointUpload = async (rawQueryPath, bodyBuf, headers = {}) => {
+    const r = await fetch(`http://127.0.0.1:${HTTP_PORT}/__emulator_storage_upload?${rawQueryPath}`, {
+      method: 'POST',
+      headers,
+      body: bodyBuf
+    });
+    return { status: r.status, body: await r.text() };
+  };
+
+  // 14. El servidor escucha únicamente en 127.0.0.1
+  const addr = server.address();
+  if (!addr || addr.address !== '127.0.0.1' || addr.port !== HTTP_PORT) {
+    throw new Error(`[ACCEPTANCE 14 FAIL] Server is not bound strictly to 127.0.0.1:${HTTP_PORT}: ${JSON.stringify(addr)}`);
+  }
+  console.log('  ✅ [14/15] Servidor HTTP vinculado exclusivamente a loopback:', `${addr.address}:${addr.port}`);
+
+  // 15. El servidor estático no permite acceder a archivos fuera de su raíz
+  const rawStaticGet = (rawReqPath) => new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: HTTP_PORT,
+      path: rawReqPath,
+      method: 'GET'
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  for (const badRawPath of [
+    '/../package.json',
+    '/..%2fpackage.json',
+    '/%2e%2e/firebase.emulator.json',
+    '/..%5cpackage.json',
+    '/docs/../../package.json'
+  ]) {
+    const stRes = await rawStaticGet(badRawPath);
+    if (stRes.status !== 403 && stRes.status !== 400) {
+      throw new Error(`[ACCEPTANCE 15 FAIL] Static server did not reject out-of-root request ${badRawPath}: HTTP ${stRes.status}`);
+    }
+  }
+  console.log('  ✅ [15/15] Servidor estático confinado a REPO_ROOT (traversal fuera de raíz rechazado con HTTP 403).');
+
+  // 1. prod_files/... es rechazado
+  let prodRejected = false;
+  try {
+    await uploadToStorageEmulator('prod_files/clients/C1/legal/escritura.pdf', '%PDF-1.4');
+  } catch (_) {
+    prodRejected = true;
+  }
+  const prodHttp = await endpointUpload(
+    'name=' + encodeURIComponent('prod_files/clients/C1/legal/escritura.pdf') + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (!prodRejected || prodHttp.status !== 400) {
+    throw new Error(`[ACCEPTANCE 1 FAIL] prod_files/... was not rejected (direct=${prodRejected}, http=${prodHttp.status})`);
+  }
+  console.log('  ✅ [01/15] Prefijo prod_files/... rechazado en validador, función y endpoint HTTP.');
+
+  // 2. Ruta de otra cuenta es rechazada
+  let otherClientRejected = false;
+  try {
+    await uploadToStorageEmulator('local_files/clients/C2/legal/escritura.pdf', '%PDF-1.4');
+  } catch (_) {
+    otherClientRejected = true;
+  }
+  const otherClientHttp = await endpointUpload(
+    'name=' + encodeURIComponent('local_files/clients/C2/legal/escritura.pdf') + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (!otherClientRejected || otherClientHttp.status !== 400) {
+    throw new Error(`[ACCEPTANCE 2 FAIL] Other account path was not rejected`);
+  }
+  console.log('  ✅ [02/15] Ruta de otra cuenta (clients/C2/...) rechazada.');
+
+  // 3. Ruta de otro prospecto es rechazada
+  let otherProspectRejected = false;
+  try {
+    await uploadToStorageEmulator('local_files/prospects/P2/proyectos/oferta.pdf', '%PDF-1.4');
+  } catch (_) {
+    otherProspectRejected = true;
+  }
+  const otherProspectHttp = await endpointUpload(
+    'name=' + encodeURIComponent('local_files/prospects/P2/proyectos/oferta.pdf') + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (!otherProspectRejected || otherProspectHttp.status !== 400) {
+    throw new Error(`[ACCEPTANCE 3 FAIL] Other prospect path was not rejected`);
+  }
+  console.log('  ✅ [03/15] Ruta de otro prospecto (prospects/P2/...) rechazada.');
+
+  // 4. Traversal .. es rechazado
+  for (const travPath of [
+    'local_files/clients/C1/legal/../escritura.pdf',
+    'local_files/clients/C1/../C2/legal/escritura.pdf',
+    '../local_files/clients/C1/legal/escritura.pdf',
+    'local_files/clients/C1/legal/..escritura.pdf'
+  ]) {
+    let rejected = false;
+    try {
+      assertAllowedTestStoragePath(travPath);
+    } catch (_) {
+      rejected = true;
+    }
+    const rHttp = await endpointUpload(
+      'name=' + encodeURIComponent(travPath) + '&contentType=application/pdf',
+      Buffer.from('%PDF-1.4'),
+      { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+    );
+    if (!rejected || rHttp.status !== 400) {
+      throw new Error(`[ACCEPTANCE 4 FAIL] Traversal path not rejected: ${travPath}`);
+    }
+  }
+  console.log('  ✅ [04/15] Secuencias de path traversal (..) rechazadas.');
+
+  // 5. Doble codificación y caracteres prohibidos son rechazados
+  for (const badPath of [
+    'local_files/clients/C1/legal/%2e%2e/escritura.pdf',
+    'local_files/clients/C1/legal/%252e%252e/escritura.pdf',
+    'local_files/clients/C1//legal/escritura.pdf',
+    'local_files\\clients\\C1\\legal\\escritura.pdf',
+    'local_files/clients/C1/legal/escritura\x00.pdf'
+  ]) {
+    let rejected = false;
+    try {
+      assertAllowedTestStoragePath(badPath);
+    } catch (_) {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(`[ACCEPTANCE 5 FAIL] Forbidden/encoded path not rejected by validator: ${badPath}`);
+    }
+  }
+  const doubleEncodedHttp = await endpointUpload(
+    'name=local_files%2Fclients%2FC1%2Flegal%2F%252e%252e%2Fescritura.pdf&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (doubleEncodedHttp.status !== 400) {
+    throw new Error(`[ACCEPTANCE 5 FAIL] Double-encoded HTTP query was not rejected: ${doubleEncodedHttp.status}`);
+  }
+  console.log('  ✅ [05/15] Doble codificación y caracteres prohibidos (//, \\, %2e, %25, NUL) rechazados.');
+
+  // 6. El endpoint rechaza requests sin token o con token inválido
+  const noTokenHttp = await endpointUpload(
+    'name=' + encodeURIComponent('local_files/clients/C1/legal/escritura.pdf') + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf' }
+  );
+  const badTokenHttp = await endpointUpload(
+    'name=' + encodeURIComponent('local_files/clients/C1/legal/escritura.pdf') + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': 'invalid-token' }
+  );
+  if (noTokenHttp.status !== 403 || badTokenHttp.status !== 403) {
+    throw new Error(`[ACCEPTANCE 6 FAIL] Endpoint did not reject missing/invalid token with 403 (noToken=${noTokenHttp.status}, badToken=${badTokenHttp.status})`);
+  }
+  console.log('  ✅ [06/15] Endpoint /__emulator_storage_upload rechaza peticiones sin X-B3-Test-Token válido (HTTP 403).');
+
+  // 7. El endpoint rechaza payload superior a 1 MB con HTTP 413
+  const oversizedBuf = Buffer.alloc(MAX_UPLOAD_BYTES + 1024, 0x41);
+  const oversizedHttp = await endpointUpload(
+    'name=' + encodeURIComponent('local_files/clients/C1/legal/oversized_test.pdf') + '&contentType=application/pdf',
+    oversizedBuf,
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (oversizedHttp.status !== 413) {
+    throw new Error(`[ACCEPTANCE 7 FAIL] Endpoint did not reject >1MB payload with 413: got ${oversizedHttp.status}`);
+  }
+  console.log('  ✅ [07/15] Endpoint /__emulator_storage_upload rechaza payloads > 1 MB con HTTP 413.');
+
+  // 8. Una carga fallida no se registra en createdStoragePaths
+  if (createdStoragePaths.size !== 0) {
+    throw new Error(`[ACCEPTANCE 8 FAIL] createdStoragePaths is not empty after failed uploads: ${Array.from(createdStoragePaths).join(', ')}`);
+  }
+  console.log('  ✅ [08/15] Ninguna carga fallida o rechazada fue registrada en createdStoragePaths (size=0).');
+
+  // 9. Un objeto preexistente no se sobrescribe ni se elimina
+  const preexistingPath = 'local_files/clients/C1/legal/preexisting_fixture_b3.pdf';
+  const preexistingContent = '%PDF-1.4 PREEXISTING_OBJECT_DO_NOT_OVERWRITE_OR_DELETE';
+  await directRawPut(preexistingPath, preexistingContent);
+
+  let overwriteRejectedDirect = false;
+  try {
+    await uploadToStorageEmulator(preexistingPath, '%PDF-1.4 OVERWRITE_ATTEMPT');
+  } catch (err) {
+    overwriteRejectedDirect = err.statusCode === 409 || /pre-existing/i.test(err.message);
+  }
+  const overwriteHttp = await endpointUpload(
+    'name=' + encodeURIComponent(preexistingPath) + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4 OVERWRITE_ATTEMPT_HTTP'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (!overwriteRejectedDirect || overwriteHttp.status !== 409) {
+    throw new Error(`[ACCEPTANCE 9 FAIL] Pre-existing object was not protected with 409 (direct=${overwriteRejectedDirect}, http=${overwriteHttp.status})`);
+  }
+  if (createdStoragePaths.has(preexistingPath)) {
+    throw new Error('[ACCEPTANCE 9 FAIL] Pre-existing object was erroneously added to createdStoragePaths');
+  }
+
+  // 10. Una carga nueva y válida sí se registra
+  const newValidPath = 'local_files/clients/C1/legal/new_valid_acceptance_b3.pdf';
+  const newValidHttp = await endpointUpload(
+    'name=' + encodeURIComponent(newValidPath) + '&contentType=application/pdf',
+    Buffer.from('%PDF-1.4 NEW_VALID_OBJECT_CONTENT'),
+    { 'Content-Type': 'application/pdf', 'X-B3-Test-Token': B3_TEST_UPLOAD_TOKEN }
+  );
+  if (newValidHttp.status !== 200 || !createdStoragePaths.has(newValidPath)) {
+    throw new Error(`[ACCEPTANCE 10 FAIL] Valid upload was not registered (http=${newValidHttp.status}, inSet=${createdStoragePaths.has(newValidPath)})`);
+  }
+  console.log('  ✅ [10/15] Carga nueva y válida registrada en createdStoragePaths y persistida en Storage Emulator.');
+
+  // 11. Cleanup elimina exclusivamente objetos nuevos de la ejecución actual (y preserva el preexistente de #9)
+  await cleanupCreatedStorageObjects();
+  const checkNewAfterCleanup = await directRawGet(newValidPath);
+  const checkPreexistingAfterCleanup = await directRawGet(preexistingPath);
+  if (checkNewAfterCleanup.status !== 404) {
+    throw new Error(`[ACCEPTANCE 11 FAIL] Newly created object was not deleted by cleanup: status=${checkNewAfterCleanup.status}`);
+  }
+  if (checkPreexistingAfterCleanup.status !== 200 || checkPreexistingAfterCleanup.text !== preexistingContent) {
+    throw new Error(`[ACCEPTANCE 9/11 FAIL] Pre-existing object was modified or deleted: status=${checkPreexistingAfterCleanup.status}, text=${checkPreexistingAfterCleanup.text}`);
+  }
+  await directRawDel(preexistingPath);
+  console.log('  ✅ [09/15] Objeto preexistente preservado intacto (HTTP 409 al intentar sobrescribir, no registrado, no eliminado).');
+  console.log('  ✅ [11/15] Cleanup eliminó únicamente el objeto nuevo de la ejecución actual y preservó el preexistente.');
+
+  // 12. Cleanup no permite borrar rutas fuera de la lista blanca aunque el Set contuviera accidentalmente una ruta inválida
+  const protectedOutScopePath = 'prod_files/clients/C1/legal/protected_out_of_scope.pdf';
+  await directRawPut(protectedOutScopePath, '%PDF-1.4 PROTECTED_PROD_SCOPE');
+  createdStoragePaths.add(protectedOutScopePath);
+  await cleanupCreatedStorageObjects();
+  const checkProtectedAfterCleanup = await directRawGet(protectedOutScopePath);
+  if (checkProtectedAfterCleanup.status !== 200 || checkProtectedAfterCleanup.text !== '%PDF-1.4 PROTECTED_PROD_SCOPE') {
+    throw new Error(`[ACCEPTANCE 12 FAIL] Cleanup deleted out-of-whitelist path ${protectedOutScopePath}`);
+  }
+  await directRawDel(protectedOutScopePath);
+  console.log('  ✅ [12/15] Cleanup bloqueó el borrado de una ruta fuera de la lista blanca inyectada en el Set.');
+
+  // 13. Varias llamadas concurrentes a cleanup ejecutan un único ciclo
+  const concPath = 'local_files/clients/C1/legal/concurrent_cleanup_b3.pdf';
+  await uploadToStorageEmulator(concPath, '%PDF-1.4 CONCURRENT_CLEANUP_TEST');
+  const cyclesBefore = storageCleanupCycleCount;
+  const deletesBefore = storageDeleteRequestCount;
+  await Promise.all([
+    cleanupCreatedStorageObjects(),
+    cleanupCreatedStorageObjects(),
+    cleanupCreatedStorageObjects()
+  ]);
+  const cyclesDelta = storageCleanupCycleCount - cyclesBefore;
+  const deletesDelta = storageDeleteRequestCount - deletesBefore;
+  if (cyclesDelta !== 1 || deletesDelta !== 1) {
+    throw new Error(`[ACCEPTANCE 13 FAIL] Concurrent cleanup calls executed ${cyclesDelta} cycles and ${deletesDelta} DELETEs (expected 1 and 1)`);
+  }
+  console.log('  ✅ [13/15] Llamadas concurrentes a cleanup comparten la misma promesa (1 ciclo, 1 DELETE).');
+}
+
 async function main() {
   console.log('='.repeat(80));
   console.log('🌐 VALIDACIÓN FUNCIONAL EN NAVEGADOR REAL — FASE 2: BLOQUE B3');
@@ -330,42 +864,56 @@ async function main() {
   }
   fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true });
 
-  await seedInitialData();
-
-  server.listen(HTTP_PORT);
-  console.log(`[HTTP] Servidor local escuchando en http://127.0.0.1:${HTTP_PORT}`);
-
-  const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   const tmpUserDataDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'chrome-b3-'));
-
-  const chromeProcess = spawn(chromePath, [
-    '--headless=new',
-    `--remote-debugging-port=${CDP_PORT}`,
-    '--remote-debugging-address=127.0.0.1',
-    `--user-data-dir=${tmpUserDataDir}`,
-    '--disable-gpu',
-    '--disable-extensions',
-    '--no-sandbox',
-    '--window-size=1440,900',
-    `http://127.0.0.1:${HTTP_PORT}/index.html?emulators=${PROJECT}`
-  ]);
-
+  let chromeProcess = null;
   let ws = null;
-  async function cleanup() {
-    console.log('\n[TEARDOWN] Finalizando navegador y servidor HTTP...');
-    if (ws) {
-      try { ws.close(); } catch (_) {}
+  let cleanupPromise = null;
+
+  function cleanup() {
+    if (cleanupPromise) {
+      return cleanupPromise;
     }
-    chromeProcess.kill('SIGKILL');
-    server.close();
-    await cleanupCreatedStorageObjects();
-    try { fs.rmSync(tmpUserDataDir, { recursive: true, force: true }); } catch (_) {}
+    cleanupPromise = (async () => {
+      console.log('\n[TEARDOWN] Finalizando navegador y servidor HTTP...');
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+      }
+      if (chromeProcess) {
+        try { chromeProcess.kill('SIGKILL'); } catch (_) {}
+      }
+      try { server.close(); } catch (_) {}
+      await cleanupCreatedStorageObjects();
+      try { fs.rmSync(tmpUserDataDir, { recursive: true, force: true }); } catch (_) {}
+    })();
+    return cleanupPromise;
   }
 
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
   try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(HTTP_PORT, '127.0.0.1', resolve);
+    });
+    console.log(`[HTTP] Servidor local escuchando exclusivamente en http://127.0.0.1:${HTTP_PORT}`);
+
+    await runHarnessSecurityAcceptanceTests();
+    await seedInitialData();
+
+    const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    chromeProcess = spawn(chromePath, [
+      '--headless=new',
+      `--remote-debugging-port=${CDP_PORT}`,
+      '--remote-debugging-address=127.0.0.1',
+      `--user-data-dir=${tmpUserDataDir}`,
+      '--disable-gpu',
+      '--disable-extensions',
+      '--no-sandbox',
+      '--window-size=1440,900',
+      `http://127.0.0.1:${HTTP_PORT}/index.html?emulators=${PROJECT}`
+    ]);
+
     let connected = false;
     let pageTarget = null;
     for (let i = 0; i < 50; i++) {
@@ -570,7 +1118,10 @@ async function main() {
             const bodyBuf = typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : file;
             const uploadRes = await fetch('/__emulator_storage_upload?name=' + encodeURIComponent(storagePath) + '&contentType=' + encodeURIComponent(contentType), {
               method: 'POST',
-              headers: { 'Content-Type': contentType },
+              headers: {
+                'Content-Type': contentType,
+                'X-B3-Test-Token': '${B3_TEST_UPLOAD_TOKEN}'
+              },
               body: bodyBuf
             });
             if (!uploadRes.ok) {
