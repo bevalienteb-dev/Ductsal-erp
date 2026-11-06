@@ -230,6 +230,8 @@
         const previousSection = _deps.getLastViewedSection();
         const isSubView = (
             viewId === 'detail-view' ||
+            viewId === 'client-detail-view' ||
+            viewId.startsWith('b3-') ||
             viewId.includes('opportunity-contact') ||
             viewId.includes('opportunity-account') ||
             viewId === 'account-contacts-view' ||

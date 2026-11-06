@@ -190,7 +190,7 @@ describe('historical login (no server session): the selector falls back to the p
     api.renderClientsTable();
     api.renderClientSelect();
     expect(ui.tbody.innerHTML).toContain('Cliente Uno');
-    expect(ui.tbody.innerHTML).toContain("openClientModal('CTEST-VIS-C1')");
+    expect(ui.tbody.innerHTML).toContain("openClientDetailView('CTEST-VIS-C1')");
     expect(ui.tbody.innerHTML).not.toContain('Cliente Tres');
     expect(ui.tbody.innerHTML).not.toContain('Cliente Gerente');
     expect(ui.select.innerHTML).toContain('<option value="CTEST-VIS-C1">');

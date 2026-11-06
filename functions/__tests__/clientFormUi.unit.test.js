@@ -19,13 +19,13 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
   // 1. HTML Hierarchy, Grouped Sections & Complete Field Inventory
   // =========================================================================
   describe('1. HTML Hierarchy & Field Preservation', () => {
-    test('preserves client modal container and header structure', () => {
-      expect(indexHtml).toContain('id="clientModal"');
+    test('preserves client detail view container and header structure', () => {
+      expect(indexHtml).toContain('id="clientDetailContent"');
       expect(indexHtml).toContain('class="modal-content glass-panel client-modal-content"');
       expect(indexHtml).toContain('id="client-modal-title"');
       expect(indexHtml).toContain('class="client-modal-header"');
       expect(indexHtml).toContain('class="client-modal-subtitle"');
-      expect(indexHtml).toContain('closeModal(\'clientModal\')');
+      expect(indexHtml).toContain('closeClientDetailView()');
     });
 
     test('preserves all 35 original identifiers in clientForm', () => {
@@ -89,18 +89,18 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
 
     test('renders Cancel and Save action buttons with appropriate classes', () => {
       expect(indexHtml).toContain('class="client-modal-actions"');
-      expect(indexHtml).toContain('onclick="closeModal(\'clientModal\')"');
+      expect(indexHtml).toContain('onclick="closeClientDetailView()"');
       expect(indexHtml).toContain('id="btn-submit-client"');
       expect(indexHtml).toContain('Guardar Cliente');
     });
   });
 
   // =========================================================================
-  // 2. CSS Styles, Modal Width & Mobile Responsiveness
+  // 2. CSS Styles, View Width & Mobile Responsiveness
   // =========================================================================
   describe('2. CSS Design & Responsive Rules', () => {
-    test('defines max-width 720px for desktop client modal', () => {
-      expect(stylesCss).toContain('#clientModal .modal-content');
+    test('defines max-width 720px for desktop client detail content', () => {
+      expect(stylesCss).toContain('#clientDetailContent .modal-content');
       expect(stylesCss).toContain('max-width: 720px');
     });
 
@@ -164,7 +164,7 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
       expect(els['fields-juridica'].style.display).toBe('block');
     });
 
-    test('openClientModal resets form and clears input-error states', () => {
+    test('openClientDetailView resets form and clears input-error states', () => {
       expect(clientsUiSrc).toContain("const errs = document.querySelectorAll('#clientForm .input-error');");
       expect(clientsUiSrc).toContain("errs.forEach(el => el.classList.remove('input-error'))");
     });

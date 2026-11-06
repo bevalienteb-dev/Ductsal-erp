@@ -324,3 +324,24 @@ describe('I. Phase 2 Block B1 and B2: Contacts and Opportunity Contacts Security
   deny('V1 writes directly to opportunity_contacts_prod (Cloud Functions only)', () => fsApi.set('opportunity_contacts_prod', 'OC_EVIL', { id: 'OC_EVIL', opportunityId: 'P1' }, T.v1));
   deny('Manager writes directly to opportunity_contacts_prod (Cloud Functions only)', () => fsApi.set('opportunity_contacts_prod', 'OC_EVIL', { id: 'OC_EVIL', opportunityId: 'P1' }, T.mgr));
 });
+
+describe('J. Phase 2 Block B3: Protection of legal, assignment and projection fields on clients_prod (PUNTO 6)', () => {
+  allow('V2 edits permitted commercial field (telefono) on visible client C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', telefono: '2222-3333', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2] }, T.v2));
+  deny('V2 modifies closingVendors directly on C1 (privilege escalation to Storage /legal/ blocked)', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], closingVendors: [V2] }, T.v2));
+  deny('V2 modifies vendedor_asignado directly on C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], vendedor_asignado: V2 }, T.v2));
+  deny('V2 modifies representanteLegalVigente directly on C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], representanteLegalVigente: { termId: 'fake_term', estado: 'vigente' } }, T.v2));
+  deny('V2 modifies apoderadosVigentes directly on C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], apoderadosVigentes: [{ powerId: 'fake_power', estado: 'vigente' }] }, T.v2));
+  deny('V2 modifies biennialReviews directly on C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], biennialReviews: { escritura: { nextReviewAt: '2099-01-01' } } }, T.v2));
+  deny('V2 modifies documentos directly on C1', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2], documentos: { escritura: { url: 'https://evil.test/fake.pdf' } } }, T.v2));
+  deny('inactive user edits C1 directly', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2] }, T.v4inactive));
+  deny('unrelated seller V3 edits C1 directly', () =>
+    fsApi.set('clients_prod', 'C1', { id: 'C1', tipo: 'juridica', empresa: 'Editado', nit: '06141234567890', createdBy: V1, visibleTo: [MGR, V1, V2] }, T.v3));
+});

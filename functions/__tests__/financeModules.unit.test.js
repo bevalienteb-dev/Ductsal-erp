@@ -226,19 +226,20 @@ describe('Phase 6.4: Finance Subsystem Modules', () => {
   // =========================================================================
   describe('5. FinanceContracts', () => {
     test('generarContrato validates client dossier and prompts to complete missing documents', () => {
-      let openedModal = false;
+      let openedDetailView = false;
       const alerts = [];
       global.alert = (m) => alerts.push(m);
 
       FinanceContracts.setDeps({
         getProspects: () => [{ id: 'P1', clientId: 'C_INCOMPLETE' }],
         getClients: () => [{ id: 'C_INCOMPLETE', tipo: 'persona', documentos: {} }],
-        openClientModal: () => { openedModal = true; },
-        getProjectSubtotal: () => 10000
+        openClientDetailView: () => { openedDetailView = true; },
+        getProjectSubtotal: () => 10000,
+        alert: (m) => alerts.push(m)
       });
 
       FinanceContracts.generarContrato('P1');
-      expect(openedModal).toBe(true);
+      expect(openedDetailView).toBe(true);
       expect(alerts[0]).toContain('Faltan datos en el perfil del cliente para el contrato');
     });
   });

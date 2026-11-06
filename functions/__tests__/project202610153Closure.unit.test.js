@@ -269,6 +269,8 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
 
       jest.clearAllMocks();
       global.confirm = jest.fn(() => false);
+      const oppUiMod = require('../../modules/opportunities/opportunities_ui.js');
+      oppUiMod.init({ alert: (m) => global.alert(m), confirm: (m) => global.confirm(m) });
     });
 
     test('2.1 Si faltan los 4 requisitos, finalizeOpportunity() muestra el listado exacto de pendientes sin mencionar gerencia ni contrato', async () => {

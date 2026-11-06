@@ -35,7 +35,28 @@
         },
         showLoading: (msg) => (typeof showLoading === 'function' ? showLoading(msg) : null),
         hideLoading: () => (typeof hideLoading === 'function' ? hideLoading() : null),
-        alert: (msg) => (typeof alert === 'function' ? alert(msg) : console.warn('[DocumentViewer Alert]', msg))
+        alert: (msg) => {
+            if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+                return window.CrmUI.notify('error', String(msg || ''));
+            }
+            if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+                const activeView = document.querySelector('.view-section.active') || document.getElementById('client-detail-view');
+                if (activeView && typeof document.createElement === 'function') {
+                    let banner = document.getElementById('b3-inline-view-notice');
+                    if (!banner) {
+                        banner = document.createElement('div');
+                        banner.id = 'b3-inline-view-notice';
+                        if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                            activeView.insertBefore(banner, activeView.firstChild);
+                        } else if (typeof activeView.appendChild === 'function') {
+                            activeView.appendChild(banner);
+                        }
+                    }
+                    banner.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                    banner.textContent = String(msg || '');
+                }
+            }
+        }
     };
 
     let _initialized = false;
@@ -147,7 +168,7 @@
         const allowedPathPattern = new RegExp(
             `^${prefix}/(` +
             `prospects/[a-zA-Z0-9_-]+/(proyectos|facturas|pagos|ordenes_cambio)/.+|` +
-            `clients/[a-zA-Z0-9_-]+/(identificacion|legal)/.+|` +
+            `clients/[a-zA-Z0-9_-]+/(identificacion|legal|poderes)/.+|` +
             `clients/[a-zA-Z0-9_-]+/[^/]+|` +
             `(clientes|proyectos|facturas|pagos|ordenes_cambio)/.+` +
             `)$`
@@ -920,42 +941,47 @@
     }
 
     // -------------------------------------------------------------------------
-    // 7. Historial de Versiones Documentales
+    // 7. Historial de Versiones Documentales (Vista de Pantalla Completa)
     // -------------------------------------------------------------------------
+    let _versionHistoryReturnOrigin = { view: 'client-detail-view', entityType: null, entityId: null };
+
     async function showDocumentVersionHistory(entityType, entityId, docKey, label) {
         if (typeof document === 'undefined') return;
-        let modal = document.getElementById('docVersionHistoryModal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'docVersionHistoryModal';
-            modal.className = 'modal';
-            modal.style.zIndex = '160';
-            modal.style.display = 'none';
-            modal.style.position = 'fixed';
-            modal.style.top = '0';
-            modal.style.left = '0';
-            modal.style.width = '100vw';
-            modal.style.height = '100vh';
-            modal.style.background = 'rgba(0, 0, 0, 0.7)';
-            modal.style.alignItems = 'center';
-            modal.style.justifyContent = 'center';
-            modal.innerHTML = `
-                <div class="modal-content glass-panel" style="width: 90vw; max-width: 850px; max-height: 85vh; overflow-y: auto; padding: 1.5rem; background: var(--panel-bg, #1e293b); border: 1px solid var(--panel-border, #334155); border-radius: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border, #334155); padding-bottom: 0.75rem; margin-bottom: 1rem;">
-                        <h3 id="docVersionHistoryTitle" style="margin: 0; color: var(--brand-gold, #d4af37);">📜 Historial de Versiones</h3>
-                        <button type="button" class="btn-secondary" onclick="closeDocumentVersionHistory()" style="padding: 2px 8px; font-size: 0.85rem; cursor: pointer;">✖️ Cerrar</button>
-                    </div>
+
+        // Registrar vista de origen para el botón "← Volver"
+        const detailViewEl = document.getElementById('detail-view');
+        if (detailViewEl && detailViewEl.classList && typeof detailViewEl.classList.contains === 'function' && detailViewEl.classList.contains('active')) {
+            _versionHistoryReturnOrigin = { view: 'detail-view', entityType, entityId };
+        } else {
+            _versionHistoryReturnOrigin = { view: 'client-detail-view', entityType, entityId };
+        }
+
+        let viewSection = document.getElementById('b3-doc-version-history-view');
+        if (!viewSection && document.body && typeof document.createElement === 'function') {
+            viewSection = document.createElement('section');
+            viewSection.id = 'b3-doc-version-history-view';
+            viewSection.className = 'view-section';
+            viewSection.innerHTML = `
+                <div class="card glass-panel" style="padding: 1.5rem;">
+                    <h2 id="docVersionHistoryTitle">📜 Historial de Versiones</h2>
                     <div id="docVersionHistoryBody"></div>
                 </div>
             `;
-            document.body.appendChild(modal);
+            document.body.appendChild(viewSection);
         }
 
         const titleEl = document.getElementById('docVersionHistoryTitle');
         const bodyEl = document.getElementById('docVersionHistoryBody');
         if (titleEl) titleEl.textContent = `📜 Historial de Versiones: ${label}`;
         if (bodyEl) bodyEl.innerHTML = `<div style="text-align:center; padding: 2rem; color: var(--text-secondary, #94a3b8);">⏳ Consultando historial de versiones...</div>`;
-        modal.style.display = 'flex';
+
+        if (typeof showView === 'function') {
+            showView('b3-doc-version-history-view');
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView('b3-doc-version-history-view');
+        } else if (viewSection && viewSection.style) {
+            viewSection.style.display = 'block';
+        }
 
         try {
             const firestoreInstance = (typeof _deps !== 'undefined' && _deps.getFirestore)
@@ -981,6 +1007,24 @@
                 });
             }
 
+            const biennialConfirmations = [];
+            if (entityType === 'client' && (!docKey || ['escritura', 'mods_escritura'].includes(docKey))) {
+                try {
+                    const confSnap = await firestoreInstance.collection(entityCollection).doc(entityId).collection('biennial_confirmations').get();
+                    if (confSnap && typeof confSnap.forEach === 'function') {
+                        confSnap.forEach(docSnap => {
+                            const cData = docSnap.data();
+                            if (!docKey || cData.docKey === docKey) {
+                                biennialConfirmations.push(cData);
+                            }
+                        });
+                    }
+                    biennialConfirmations.sort((a, b) => String(b.confirmedAt || b.confirmadoEn || '').localeCompare(String(a.confirmedAt || a.confirmadoEn || '')));
+                } catch (_confErr) {
+                    // Subcolección opcional en entornos mock sin biennial_confirmations
+                }
+            }
+
             allVersions.sort((a, b) => {
                 const vA = Number(a.versionNumber) || 0;
                 const vB = Number(b.versionNumber) || 0;
@@ -990,7 +1034,7 @@
                 return tB.localeCompare(tA);
             });
 
-            if (allVersions.length === 0) {
+            if (allVersions.length === 0 && biennialConfirmations.length === 0) {
                 bodyEl.innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--text-secondary); background: rgba(255, 255, 255, 0.02); border-radius: 6px; border: 1px dashed var(--panel-border);">
                         <p style="margin: 0; font-size: 0.9rem;">ℹ️ No se registran versiones anteriores archivadas para este documento.</p>
@@ -1001,6 +1045,9 @@
             }
 
             let tableHtml = `
+                <div style="margin-bottom: 0.5rem; font-size: 0.84rem; font-weight: 700; color: var(--brand-gold, #d4af37);">
+                    📄 Versiones Documentales Cargadas (Archivos Adjuntos)
+                </div>
                 <div style="overflow-x: auto;">
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left;">
                         <thead>
@@ -1024,6 +1071,7 @@
                     : `<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #64748b; padding: 2px 6px; border-radius: 4px;">Histórica</span>`;
 
                 const fileName = escapeHtmlDoc(v.name || 'Documento');
+                const shaBadge = v.sha256 ? `<div style="font-size:0.68rem; color:#38bdf8; font-family:monospace;">SHA-256: ${escapeHtmlDoc(String(v.sha256).slice(0, 16))}…</div>` : '';
                 const dateStr = v.creadoEn ? v.creadoEn.replace('T', ' ').slice(0, 16) : '-';
                 const userStr = escapeHtmlDoc(v.subidoPorNombre || v.actualizadoPor || (v.esHeredado ? 'Registro anterior' : 'Comercial'));
                 const motivoStr = escapeHtmlDoc(v.motivoSustitucion || (v.esHeredado ? 'Documento heredado de versiones anteriores' : 'Carga inicial'));
@@ -1042,7 +1090,7 @@
                     <tr style="border-bottom: 1px solid var(--panel-border, #334155); background: ${isVigente ? 'rgba(16, 185, 129, 0.04)' : 'transparent'};">
                         <td style="padding: 8px; font-weight: bold; color: ${isVigente ? 'var(--brand-gold, #d4af37)' : 'var(--text-secondary, #94a3b8)'};">v${v.versionNumber || 1}</td>
                         <td style="padding: 8px;">${statusBadge}</td>
-                        <td style="padding: 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${fileName}">${fileName}</td>
+                        <td style="padding: 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${fileName}">${fileName}${shaBadge}</td>
                         <td style="padding: 8px; white-space: nowrap; color: var(--text-muted, #64748b);">${dateStr}</td>
                         <td style="padding: 8px; color: var(--text-secondary, #94a3b8);">${userStr}</td>
                         <td style="padding: 8px; font-style: ${v.motivoSustitucion ? 'normal' : 'italic'}; color: ${v.motivoSustitucion ? 'var(--text-primary, white)' : 'var(--text-muted, #64748b)'};">${motivoStr}</td>
@@ -1060,6 +1108,46 @@
                 </div>
             `;
 
+            if (biennialConfirmations.length > 0) {
+                tableHtml += `
+                    <div style="margin-top: 1.35rem; margin-bottom: 0.5rem; font-size: 0.84rem; font-weight: 700; color: #34d399;">
+                        📋 Eventos de Confirmación de Revisión Bienal (Registro de Datos — Diferenciado de Versiones de Archivo)
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--panel-border, #334155); color: var(--text-secondary, #94a3b8);">
+                                    <th style="padding: 8px;">Tipo de Evento</th>
+                                    <th style="padding: 8px;">Versión Revisada</th>
+                                    <th style="padding: 8px;">Fecha Confirmación</th>
+                                    <th style="padding: 8px;">Próxima Revisión</th>
+                                    <th style="padding: 8px;">Usuario Responsable</th>
+                                    <th style="padding: 8px;">Observación Registrada</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${biennialConfirmations.map(bc => {
+                                    const isNoChanges = bc.confirmationType === 'no_changes' || bc.confirmationType === 'biennial_no_changes';
+                                    const typeBadge = isNoChanges
+                                        ? '<span class="badge" style="background:rgba(16,185,129,0.16); color:#34d399; border:1px solid rgba(16,185,129,0.4); padding:2px 6px; border-radius:4px;">📋 Confirmación Sin Cambios (Sin Archivo)</span>'
+                                        : '<span class="badge" style="background:rgba(56,189,248,0.16); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:2px 6px; border-radius:4px;">📄 Con Nueva Versión Adjunta</span>';
+                                    return `
+                                        <tr style="border-bottom: 1px solid var(--panel-border, #334155);">
+                                            <td style="padding: 8px;">${typeBadge}</td>
+                                            <td style="padding: 8px; font-weight: 600; color: #e2e8f0;">v${escapeHtmlDoc(String(bc.versionNumber || 1))} (${escapeHtmlDoc(bc.documentVersionId || '-')})</td>
+                                            <td style="padding: 8px; color: var(--text-muted, #64748b);">${escapeHtmlDoc((bc.confirmedAt || bc.confirmadoEn || '').slice(0, 10) || '-')}</td>
+                                            <td style="padding: 8px; color: #34d399; font-weight: 600;">${escapeHtmlDoc(bc.nextReviewAt || bc.proximaRevisionBienal || '-')}</td>
+                                            <td style="padding: 8px; color: var(--text-secondary, #94a3b8);">${escapeHtmlDoc(bc.confirmedByName || bc.confirmadoPorNombre || bc.confirmedBy || bc.confirmadoPor || '-')}</td>
+                                            <td style="padding: 8px; color: var(--text-muted, #64748b);">${escapeHtmlDoc(bc.notas || (isNoChanges ? 'Confirmación comercial de consulta al cliente: sin modificaciones al documento.' : 'Actualización documental incorporada.'))}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
             bodyEl.innerHTML = tableHtml;
 
         } catch (err) {
@@ -1074,8 +1162,15 @@
 
     function closeDocumentVersionHistory() {
         if (typeof document === 'undefined') return;
-        const modal = document.getElementById('docVersionHistoryModal');
-        if (modal) modal.style.display = 'none';
+        const viewSection = document.getElementById('b3-doc-version-history-view');
+        const targetView = (_versionHistoryReturnOrigin && _versionHistoryReturnOrigin.view) || 'client-detail-view';
+        if (typeof showView === 'function') {
+            showView(targetView);
+        } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
+            AppRouter.showView(targetView);
+        } else if (viewSection && viewSection.style) {
+            viewSection.style.display = 'none';
+        }
     }
 
     // -------------------------------------------------------------------------

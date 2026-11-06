@@ -73,16 +73,43 @@ service cloud.firestore {
         && request.resource.data.get('dui', '') == resource.data.get('dui', '')
         && request.resource.data.get('tipo', '') == resource.data.get('tipo', '');
     }
+    // Phase 2 Block B3 & SEC-10: Sensitive legal, assignment, visibility and backend-controlled projection
+    // fields on clients_prod must ONLY be mutated through authorized backend callables (Admin SDK),
+    // never via direct client-side Firestore writes.
+    function protectedClientFieldsKept() {
+      return request.resource.data.get('closingVendors', null) == resource.data.get('closingVendors', null)
+        && request.resource.data.get('vendedor_asignado', null) == resource.data.get('vendedor_asignado', null)
+        && request.resource.data.get('representanteLegalVigente', null) == resource.data.get('representanteLegalVigente', null)
+        && request.resource.data.get('apoderadosVigentes', null) == resource.data.get('apoderadosVigentes', null)
+        && request.resource.data.get('biennialReviews', null) == resource.data.get('biennialReviews', null)
+        && request.resource.data.get('documentos', null) == resource.data.get('documentos', null);
+    }
     match /clients_prod/{clientId} {
       allow get, list: if clientVisible(resource.data);
       allow create: if false;
       allow update: if (isPrivileged() || (isVendedor() && clientVisible(resource.data)))
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.get('visibleTo', null) == resource.data.get('visibleTo', null)
-        && identityKept();
+        && identityKept()
+        && protectedClientFieldsKept();
       allow delete: if false;         // SEC-06: Direct deletion disabled; must go exclusively through deleteClientAdmin (atomic index release & audit)
 
       match /document_versions/{versionId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
+
+      match /legal_representative_terms/{termId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
+
+      match /contract_powers/{powerId} {
+        allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
+        allow write: if false;
+      }
+
+      match /biennial_confirmations/{confId} {
         allow get, list: if clientVisible(get(/databases/$(database)/documents/clients_prod/$(clientId)).data);
         allow write: if false;
       }

@@ -283,20 +283,47 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         throw new ServiceError('permission-denied', 'Contexto de cliente contradictorio con la ruta solicitada');
       }
       // Entity-scoped client path: prod_files/clients/{clientId}/...
+      const clientSubfolder = parts.length >= 5 ? parts[3] : '';
+      const isSensitiveLegalSubfolder = clientSubfolder === 'legal' || clientSubfolder === 'poderes';
       const clientSnap = await db.collection(names.clients).doc(entityId).get();
       if (!clientSnap.exists) {
-        // Check if it's an active reservation owned by caller
+        // Check if it's an active, unexpired reservation owned by caller
         const resSnap = await db.collection(names.reservations).doc(entityId).get();
-        if (resSnap.exists && resSnap.data().createdBy === caller.cid) {
-          return true;
+        if (resSnap.exists) {
+          const r = resSnap.data() || {};
+          const nowMs = Date.now();
+          let isNotExpired = false;
+          if (typeof r.expiresAtMs === 'number' && r.expiresAtMs > 0) {
+            isNotExpired = nowMs < r.expiresAtMs;
+          } else if (r.expiresAt && typeof r.expiresAt.toMillis === 'function') {
+            isNotExpired = nowMs < r.expiresAt.toMillis();
+          } else if (r.expiresAt instanceof Date) {
+            isNotExpired = nowMs < r.expiresAt.getTime();
+          } else if (typeof r.expiresAt === 'string') {
+            const parsed = Date.parse(r.expiresAt);
+            isNotExpired = Number.isFinite(parsed) && nowMs < parsed;
+          }
+          if (r.createdBy === caller.cid && r.status === 'reserved' && isNotExpired) {
+            return true;
+          }
+          if (r.createdBy === caller.cid) {
+            throw new ServiceError('permission-denied', 'La reserva del cliente ha expirado o fue cancelada');
+          }
         }
         throw new ServiceError('not-found', 'Cliente no encontrado');
       }
       const c = clientSnap.data();
-      const isOwner = c.createdBy === caller.cid;
+      const assignedVendor = typeof c.vendedor_asignado === 'string' ? c.vendedor_asignado.trim() : '';
+      const isCurrentResponsible = assignedVendor
+        ? assignedVendor === caller.cid
+        : c.createdBy === caller.cid;
       const isVisible = Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid);
       const isClosing = Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid);
-      if (isOwner || isVisible || isClosing) return true;
+      if (isSensitiveLegalSubfolder) {
+        if (isCurrentResponsible || isClosing) return true;
+        throw new ServiceError('permission-denied', 'No tienes permiso para acceder a los documentos de este cliente');
+      }
+      if (isCurrentResponsible || isVisible || isClosing) return true;
       throw new ServiceError('permission-denied', 'No tienes permiso para acceder a los documentos de este cliente');
     }
 

@@ -555,6 +555,8 @@ describe('2. Regla de Negocio: Cierre Comercial Ordinario sin Permiso Especial',
     appCore.setCurrentUser({ id: 'ALEJANDRA-AYALA', role: 'gestor', nombre: 'Alejandra Ayala' });
     appCore.setClients([clientGrado0]);
     appCore.setProspects([project202610153]);
+    const oppUiMod = require('../../modules/opportunities/opportunities_ui.js');
+    oppUiMod.init({ alert: (m) => global.alert(m), confirm: (m) => global.confirm ? global.confirm(m) : false });
 
     makeMockEl('closing-forma-pago', { value: '' });
     makeMockEl('closing-fac-anticipo', { value: '' });

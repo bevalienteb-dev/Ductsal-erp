@@ -26,8 +26,15 @@ service firebase.storage {
     function plantRoles() { return ['jefe_produccion', 'recepcion', 'dibujante', 'operario', 'encargado_armado', 'control_calidad', 'despacho']; }
     function role()       { return request.auth.token.get('role', ''); }
     function me()         { return request.auth.token.cid; }
+    function hasProfile() {
+      return request.auth != null
+        && request.auth.token.get('cid', '') != ''
+        && firestore.exists(/databases/(default)/documents/users_prod/$(request.auth.token.cid));
+    }
     function profile() {
-      return firestore.get(/databases/(default)/documents/users_prod/$(request.auth.token.cid)).data;
+      return hasProfile()
+        ? firestore.get(/databases/(default)/documents/users_prod/$(request.auth.token.cid)).data
+        : null;
     }
 
     // Valid CRM session: Firebase Auth user linked via authUid in profile
@@ -70,8 +77,13 @@ service firebase.storage {
     function isPlant()      { return validPlantSession() && role() in plantRoles(); }
     function isCrm()        { return validCrmSession() && role() in crmRoles(); }
 
+    function hasProspect(pid) {
+      return pid != null && pid != '' && firestore.exists(/databases/(default)/documents/prospects_prod/$(pid));
+    }
     function getProspect(pid) {
-      return firestore.get(/databases/(default)/documents/prospects_prod/$(pid)).data;
+      return hasProspect(pid)
+        ? firestore.get(/databases/(default)/documents/prospects_prod/$(pid)).data
+        : null;
     }
     function isPostclosing(d) {
       return d != null && (
@@ -111,12 +123,31 @@ service firebase.storage {
       return isManager() || (isCrm() && canUploadToProspectDoc(getProspect(pid), folder));
     }
 
+    function hasClient(cid) {
+      return cid != null && cid != '' && firestore.exists(/databases/(default)/documents/clients_prod/$(cid));
+    }
     function getClient(cid) {
-      return firestore.get(/databases/(default)/documents/clients_prod/$(cid)).data;
+      return hasClient(cid)
+        ? firestore.get(/databases/(default)/documents/clients_prod/$(cid)).data
+        : null;
     }
     function isClientOwner(cid) {
       let c = getClient(cid);
       return c != null && c.get('createdBy', '') == me();
+    }
+    function isClientAssigned(cid) {
+      let c = getClient(cid);
+      return c != null && c.get('vendedor_asignado', '') == me();
+    }
+    // Current responsible seller for the account:
+    // - If vendedor_asignado is explicitly set, ONLY that assigned seller is the current responsible.
+    // - Otherwise, falls back to createdBy.
+    function isClientCurrentResponsible(cid) {
+      let c = getClient(cid);
+      return c != null && (
+        c.get('vendedor_asignado', '') == me()
+        || ((c.get('vendedor_asignado', '') == '' || c.get('vendedor_asignado', null) == null) && c.get('createdBy', '') == me())
+      );
     }
     function isClientVisible(cid) {
       let c = getClient(cid);
@@ -127,8 +158,20 @@ service firebase.storage {
       return c != null && (me() in c.get('closingVendors', []));
     }
 
+    // Pre-creation upload reservations (issued by reserveClientForUpload
+    // before clients_prod/{cid} exists).
+    // Policy:
+    // - While status == 'reserved' and not expired, the reserving seller may read (get)
+    //   and upload (create) within the reserved client prefix.
+    // - Once expired or cancelled, seller read/create access is revoked immediately.
+    // - Privileged roles (manager/gestor) retain read access for administrative recovery/audit.
+    function hasReservation(cid) {
+      return cid != null && cid != '' && firestore.exists(/databases/(default)/documents/client_reservations_prod/$(cid));
+    }
     function getReservation(cid) {
-      return firestore.get(/databases/(default)/documents/client_reservations_prod/$(cid)).data;
+      return hasReservation(cid)
+        ? firestore.get(/databases/(default)/documents/client_reservations_prod/$(cid)).data
+        : null;
     }
     function isReservationOwner(cid) {
       let r = getReservation(cid);
@@ -145,10 +188,13 @@ service firebase.storage {
         );
     }
     function isAuthorizedClientUpload(cid) {
-      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid) || cid == me()));
+      return isPrivileged() || (isCrm() && (isClientCurrentResponsible(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationValid(cid) || cid == me()));
+    }
+    function isAuthorizedLegalAccess(cid) {
+      return isPrivileged() || (isCrm() && (isClientCurrentResponsible(cid) || isClientClosing(cid) || isReservationValid(cid)));
     }
     function isAuthorizedLegalUpload(cid) {
-      return isPrivileged() || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationValid(cid)));
+      return isPrivileged() || (isCrm() && (isClientCurrentResponsible(cid) || isClientClosing(cid) || isReservationValid(cid)));
     }
 
     // Write-once: an upload over an existing object is refused. Real Storage already evaluates that as `update`
@@ -163,7 +209,7 @@ service firebase.storage {
     function maxBytesForFolder(f) {
       return (f == 'proyectos' || plantFolder(f)) ? 100 * 1024 * 1024
            : f == 'ordenes_cambio'                ? 35 * 1024 * 1024
-           : f == 'legal'                         ? 25 * 1024 * 1024
+           : (f == 'legal' || f == 'poderes')     ? 25 * 1024 * 1024
            : (f == 'facturas' || f == 'clientes') ? 15 * 1024 * 1024
            : 10 * 1024 * 1024; // identificacion, pagos, etc.
     }
@@ -182,9 +228,9 @@ service firebase.storage {
     // - proyectos & plantFolder: Full technical & commercial dossier (CAD, Revit, PDF, Office, Images, ZIP).
     // - ordenes_cambio: Commercial addenda (PDF, Office, Images).
     // - facturas: Invoices & tax records (PDF, Images, Excel).
-    // - identificacion, legal, pagos: Identity scans & banking receipts (PDF, Images).
+    // - identificacion, legal, poderes, pagos: Identity scans & banking receipts (PDF, Images).
     function allowedExtensionFor(f, file) {
-      return (f == 'identificacion' || f == 'legal' || f == 'pagos')
+      return (f == 'identificacion' || f == 'legal' || f == 'poderes' || f == 'pagos')
         ? file.matches('(?i).*\\.(pdf|jpg|jpeg|png|webp|tif|tiff)$')
         : (f == 'facturas')
         ? file.matches('(?i).*\\.(pdf|jpg|jpeg|png|webp|tif|tiff|xlsx|xls)$')
@@ -205,7 +251,7 @@ service firebase.storage {
     // ---------- Client: Identification / DUI files ----------
     match /prod_files/clients/{cid}/identificacion/{file} {
       allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+        || (isCrm() && (isClientCurrentResponsible(cid) || isClientVisible(cid) || isClientClosing(cid) || isReservationValid(cid)));
       allow create: if isNew() && sizeOkFor('identificacion')
         && typeOk() && allowedExtensionFor('identificacion', file)
         && isAuthorizedClientUpload(cid);
@@ -214,17 +260,25 @@ service firebase.storage {
 
     // ---------- Client: Sensitive Legal files (Escritura, Credencial, NIT, NRC) ----------
     match /prod_files/clients/{cid}/legal/{file} {
-      allow get: if isPrivileged()
-        || (isCrm() && (isClientOwner(cid) || isClientClosing(cid) || isReservationOwner(cid)));
+      allow get: if isAuthorizedLegalAccess(cid);
       allow create: if isNew() && sizeOkFor('legal')
         && typeOk() && allowedExtensionFor('legal', file)
         && isAuthorizedLegalUpload(cid);
       allow list, update, delete: if false;
     }
 
+    // ---------- Client: Contract Powers files (Phase 2 Block B3) ----------
+    match /prod_files/clients/{cid}/poderes/{file} {
+      allow get: if isAuthorizedLegalAccess(cid);
+      allow create: if isNew() && sizeOkFor('poderes')
+        && typeOk() && allowedExtensionFor('poderes', file)
+        && isAuthorizedLegalUpload(cid);
+      allow list, update, delete: if false;
+    }
+
     // ---------- Client: direct files (transitional / general client documents) ----------
     match /prod_files/clients/{cid}/{file} {
-      allow get: if isPrivileged() || (isCrm() && (isClientOwner(cid) || cid == me() || isReservationOwner(cid)));
+      allow get: if isPrivileged() || (isCrm() && (isClientCurrentResponsible(cid) || cid == me() || isReservationValid(cid)));
       allow create: if isNew() && sizeOkFor('clientes')
         && typeOk() && allowedExtensionFor('clientes', file)
         && isAuthorizedClientUpload(cid);

@@ -1241,7 +1241,8 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
         });
         hasOtherClosing = otherDocs.some(d => {
           const op = d.data() || {};
-          return op.etapa === 'cierre' && op.estado !== 'perdido' && (op.vendedorId === p.vendedorId || op.createdBy === p.vendedorId);
+          const activeSeller = op.vendedorId || op.createdBy;
+          return op.etapa === 'cierre' && op.estado !== 'perdido' && activeSeller === p.vendedorId;
         });
         isClientCreator = clientSnap.exists && (clientSnap.data() || {}).createdBy === p.vendedorId;
       }

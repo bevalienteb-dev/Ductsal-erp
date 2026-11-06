@@ -91,6 +91,11 @@
             window.confirmProspectDocSubstitution = api.confirmProspectDocSubstitution;
             window.saveClosingProgress = api.saveClosingProgress;
             window.finalizeOpportunity = api.finalizeOpportunity;
+            window.renderActivePowersOptions = api.renderActivePowersOptions;
+            window.renderSignatoryStatusFeedback = api.renderSignatoryStatusFeedback;
+            window.toggleClosingContractSection = api.toggleClosingContractSection;
+            window.onClosingSignatoryTypeChange = api.onClosingSignatoryTypeChange;
+            window.runB3CloseValidation = api.runB3CloseValidation;
 
             // 2D - Marcado de Pérdida
             window.showLoseForm = api.showLoseForm;
@@ -113,7 +118,41 @@
     let currentProspectId = null;
     let DB_SUFFIX = (typeof window !== 'undefined' && window.DB_SUFFIX) ? window.DB_SUFFIX : (typeof global !== 'undefined' && global.DB_SUFFIX ? global.DB_SUFFIX : '_prod');
 
+    function renderInlineOpportunityNotice(message, type = 'info') {
+        if (typeof window !== 'undefined' && window.CrmUI && typeof window.CrmUI.notify === 'function') {
+            const isSuccess = /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(message || '')) && !/error|no se|denegado|inválid|falta|requiere|❌|⛔/i.test(String(message || ''));
+            window.CrmUI.notify(isSuccess ? 'success' : 'error', String(message || ''));
+        }
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+        const activeView = document.querySelector('.view-section.active')
+            || (typeof document.getElementById === 'function' ? (document.getElementById('detail-view') || document.getElementById('list-view')) : null);
+        if (!activeView || typeof document.createElement !== 'function') return;
+        let banner = typeof document.getElementById === 'function' ? document.getElementById('b3-inline-view-notice') : null;
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'b3-inline-view-notice';
+            banner.setAttribute('role', 'status');
+            if (activeView.firstChild && typeof activeView.insertBefore === 'function') {
+                activeView.insertBefore(banner, activeView.firstChild);
+            } else if (typeof activeView.appendChild === 'function') {
+                activeView.appendChild(banner);
+            }
+        } else if (banner.parentElement !== activeView && activeView.firstChild && typeof activeView.insertBefore === 'function') {
+            activeView.insertBefore(banner, activeView.firstChild);
+        }
+        const isError = type === 'error' || /error|no se|denegado|inválid|falta|requiere|obligatorio|❌|⛔/i.test(String(message || ''));
+        const isSuccess = !isError && (type === 'success' || /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(message || '')));
+        banner.style.cssText = isError
+            ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;'
+            : (isSuccess
+                ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
+                : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.45); color:#bae6fd; font-size:0.84rem;');
+        banner.textContent = String(message || '');
+    }
+
     const _deps = {
+        alert: (msg) => renderInlineOpportunityNotice(msg),
+        confirm: () => true,
         getCurrentUser: () => {
             if (typeof currentUser !== 'undefined' && currentUser) return currentUser;
             if (typeof window !== 'undefined' && window.currentUser) return window.currentUser;
@@ -378,13 +417,13 @@
             const cm = _deps.getCrmCommercial();
             if (!cm || !cm.hasSessionSync(fb)) {
                 const msg = (cm && cm.NO_SESSION_MESSAGE) ? cm.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo comercial. Recarga la página.';
-                if (typeof alert === 'function') alert(msg);
+                _deps.alert(msg);
                 return Promise.resolve(null);
             }
             _deps.showLoading(label);
             return fn(fb).catch(err => {
-                if (err && String(err.code || '').startsWith('functions/')) alert(cm.errorMessage(err));
-                else alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
+                if (err && String(err.code || '').startsWith('functions/')) _deps.alert(cm.errorMessage(err));
+                else _deps.alert('No se pudo completar la operación: ' + ((err && err.message) || 'error desconocido'));
                 console.error(err);
                 return null;
             }).finally(() => {
@@ -558,6 +597,8 @@
     const reactivateLostProspect = (...args) => _deps.reactivateLostProspect(...args);
     const escapeHtmlDoc = (...args) => _deps.escapeHtmlDoc(...args);
     const formatCurrency = (...args) => _deps.formatCurrency(...args);
+    const alert = (...args) => _deps.alert(...args);
+    const confirm = (...args) => _deps.confirm(...args);
     const formatDate = (...args) => _deps.formatDate(...args);
     const getDaysDifference = (...args) => _deps.getDaysDifference(...args);
     const hasEnteredPostclosing = (...args) => _deps.hasEnteredPostclosing(...args);
@@ -1063,6 +1104,13 @@
 
 function openDetail(id) {
     currentProspectId = id;
+    if (typeof _deps !== 'undefined' && typeof _deps.setCurrentProspectId === 'function') {
+        _deps.setCurrentProspectId(id);
+    }
+    if (typeof window !== 'undefined') {
+        window.currentProspectId = id;
+        window.currentDetailId = id;
+    }
     var currentUser = ((typeof _deps !== 'undefined' && _deps.getCurrentUser) ? _deps.getCurrentUser() : null) || (typeof window !== 'undefined' ? window.currentUser : (typeof global !== 'undefined' ? global.currentUser : null));
     const prospectList = (typeof prospects !== 'undefined' && Array.isArray(prospects) && prospects.length > 0)
         ? prospects
@@ -2435,8 +2483,12 @@ function openModal(id) {
 }
 
 function closeModal(id) {
-    if (id === 'clientModal') {
+    if (id === 'clientDetailContent') {
         cancelPendingClientReservation();
+        if (typeof ClientsUI !== 'undefined' && typeof ClientsUI.closeClientDetailView === 'function') {
+            ClientsUI.closeClientDetailView();
+            return;
+        }
     }
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -2972,6 +3024,138 @@ async function processRevertStage(targetStage) {
     }
 }
 
+// -----------------------------------------------------------------------------
+// B3 Helpers: Selección de Firmante Contractual y Validación de Cierre
+// -----------------------------------------------------------------------------
+
+function renderActivePowersOptions(client, selectedPowerId) {
+    const powers = (client && Array.isArray(client.apoderadosVigentes)) ? client.apoderadosVigentes : [];
+    if (powers.length === 0) {
+        return '<option value="">-- Sin apoderados con poder vigente --</option>';
+    }
+    return '<option value="">-- Seleccionar apoderado acreditado --</option>' +
+        powers.map(pw => {
+            const id = pw.id || pw.powerId;
+            const sel = (selectedPowerId && selectedPowerId === id) ? 'selected' : '';
+            return `<option value="${escapeHtmlDoc(id)}" ${sel}>${escapeHtmlDoc(pw.nombreApoderado || 'Apoderado')} (Vigente)</option>`;
+        }).join('');
+}
+
+function renderSignatoryStatusFeedback(client, firmante) {
+    if (!firmante || !firmante.tipo) {
+        return 'ℹ️ Seleccione si el contrato lo suscribirá el Representante Legal vigente o un Apoderado con poder notarial.';
+    }
+    if (firmante.tipo === 'representante_legal') {
+        const rl = client && client.representanteLegalVigente;
+        if (rl && rl.estado === 'vigente') {
+            return `🟢 <strong>Representante Legal:</strong> ${escapeHtmlDoc(rl.nombre)} (Nombramiento vigente en el expediente).`;
+        }
+        return `🔴 <strong>Atención:</strong> La cuenta no tiene un nombramiento vigente de Representante Legal. Debe registrarse en el expediente societario.`;
+    }
+    if (firmante.tipo === 'apoderado') {
+        const powers = (client && Array.isArray(client.apoderadosVigentes)) ? client.apoderadosVigentes : [];
+        if (powers.length === 0) {
+            return `🔴 <strong>Sin Apoderados:</strong> La cuenta no tiene apoderados con poder vigente. Registre o acredite un poder antes de cerrar.`;
+        }
+        return `🟢 <strong>Apoderado Facultado:</strong> Seleccione el apoderado acreditado con poder notarial para firma de contratos.`;
+    }
+    return '';
+}
+
+function toggleClosingContractSection(isChecked) {
+    const p = document.getElementById('closing-contract-signatory-panel');
+    if (p) p.style.display = isChecked ? 'block' : 'none';
+}
+
+function onClosingSignatoryTypeChange(val, accountId) {
+    const container = document.getElementById('closing-apoderado-select-container');
+    const feedback = document.getElementById('closing-signatory-feedback');
+    if (container) container.style.display = (val === 'apoderado') ? 'block' : 'none';
+    if (feedback) {
+        const clientList = (typeof _deps !== 'undefined' && typeof _deps.getClients === 'function')
+            ? _deps.getClients() : ((typeof clients !== 'undefined' && Array.isArray(clients)) ? clients : []);
+        const client = clientList.find(x => x && x.id === accountId) || {};
+        feedback.innerHTML = renderSignatoryStatusFeedback(client, { tipo: val });
+    }
+}
+
+async function runB3CloseValidation(prospectId, accountId) {
+    const resEl = document.getElementById('closing-b3-validation-result');
+    const btn = document.getElementById('btn-validate-b3-close');
+    if (!resEl) return;
+
+    const reqContratoEl = document.getElementById('closing-requiere-contrato');
+    const requiereContrato = reqContratoEl ? reqContratoEl.checked : false;
+
+    let firmante = null;
+    if (requiereContrato) {
+        const tipoEl = document.getElementById('closing-firmante-tipo');
+        const pwEl = document.getElementById('closing-firmante-power-id');
+        const tipo = tipoEl ? tipoEl.value : null;
+        if (tipo === 'representante_legal') {
+            firmante = { tipo: 'representante_legal' };
+        } else if (tipo === 'apoderado') {
+            firmante = { tipo: 'apoderado', powerId: pwEl ? pwEl.value : null };
+        }
+    }
+
+    resEl.style.display = 'block';
+    resEl.innerHTML = '<div style="font-size:0.78rem; color:var(--text-muted); padding:8px; background:rgba(0,0,0,0.3); border-radius:4px;">⏳ Validando expediente con el backend de DUCTSAL...</div>';
+    if (btn) btn.disabled = true;
+
+    try {
+        const fb = (typeof firebase !== 'undefined') ? firebase : null;
+        if (typeof CrmAccountDocuments === 'undefined' || typeof CrmAccountDocuments.validateAccountDocumentsForOpportunityClose !== 'function') {
+            throw new Error('Módulo CrmAccountDocuments no disponible.');
+        }
+
+        const res = await CrmAccountDocuments.validateAccountDocumentsForOpportunityClose(fb, {
+            accountId,
+            prospectId,
+            requiereContrato,
+            firmante,
+            dbSuffix: (typeof _deps !== 'undefined' && typeof _deps.getDbSuffix === 'function') ? _deps.getDbSuffix() : ((typeof window !== 'undefined' && window.DB_SUFFIX) ? window.DB_SUFFIX : DB_SUFFIX)
+        });
+
+        if (res.valid) {
+            resEl.innerHTML = `
+                <div style="font-size:0.8rem; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#a7f3d0; padding:10px; border-radius:6px;">
+                    ✅ <strong>Expediente Validado Exitosamente:</strong> Todos los documentos legales y fiscales obligatorios están vigentes y al día. ${requiereContrato ? 'Firmante contractual debidamente acreditado.' : 'No requiere contrato.'}
+                </div>
+            `;
+        } else {
+            resEl.innerHTML = `
+                <div style="font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; padding:12px; border-radius:6px;">
+                    <div style="font-weight:700; margin-bottom:4px;">⚠️ Validación Backend: Requisitos pendientes para el cierre:</div>
+                    <ul style="margin:0 0 10px 0; padding-left:1.2rem; line-height:1.4;">
+                        ${(res.blockingReasons || []).map(r => `<li>${escapeHtmlDoc(r)}</li>`).join('')}
+                    </ul>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; padding-top:8px; border-top:1px dashed rgba(239,68,68,0.4);">
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openRLElectionView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">⚖️ Registrar / Cambiar RL</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openGrantPowerView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">📜 Registrar Apoderado / Poder</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openBiennialConfirmationView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">🗓️ Confirmación Bienal</button>
+                        <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="openClientDetailView('${accountId}', { originView: 'detail-view', prospectId: '${prospectId}' })">✏️ Resolver en Ficha de Cliente</button>
+                    </div>
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.error('Error in B3 validation check:', e);
+        resEl.innerHTML = `
+            <div style="font-size:0.8rem; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; padding:8px; border-radius:6px;">
+                ❌ Error al validar con backend: ${escapeHtmlDoc(e.message || 'Error desconocido')}
+            </div>
+        `;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.toggleClosingContractSection = toggleClosingContractSection;
+    window.onClosingSignatoryTypeChange = onClosingSignatoryTypeChange;
+    window.runB3CloseValidation = runB3CloseValidation;
+}
 
 function renderClosingDocumentationPanel(p) {
     const container = document.getElementById('advance-form-container');
@@ -3072,6 +3256,34 @@ function renderClosingDocumentationPanel(p) {
         reqList.push("Encargado de instalación");
         if (hasEncargado) okList.push(`Encargado (${p.encargado || datos.encargado})`);
         else pendingList.push("Encargado de instalación");
+    }
+
+    const isContractualRequired = (p && (p.requiere_contrato === true || (datos && datos.requiere_contrato === true))) || false;
+    const currentFirmante = (p && (p.firmante_cierre || (datos && datos.firmante_cierre))) || null;
+    const currentFirmanteTipo = (currentFirmante && currentFirmante.tipo) || '';
+    const currentFirmantePowerId = (currentFirmante && (currentFirmante.powerId || currentFirmante.id)) || '';
+
+    // Requerimiento Contractual B3
+    if (isContractualRequired) {
+        reqList.push("Contrato formal y acreditación de firmante");
+        if (currentFirmanteTipo === 'representante_legal') {
+            const rl = c && c.representanteLegalVigente;
+            if (rl && rl.estado === 'vigente') {
+                okList.push(`Firmante: RL (${rl.nombre || 'Vigente'})`);
+            } else {
+                pendingList.push("Acreditación vigente de Representante Legal para firma");
+            }
+        } else if (currentFirmanteTipo === 'apoderado') {
+            const powers = (c && Array.isArray(c.apoderadosVigentes)) ? c.apoderadosVigentes : [];
+            const pw = powers.find(x => (x.id === currentFirmantePowerId || x.powerId === currentFirmantePowerId));
+            if (pw && pw.estado === 'vigente') {
+                okList.push(`Firmante: Apoderado (${pw.nombreApoderado || 'Poder Vigente'})`);
+            } else {
+                pendingList.push("Acreditación de Apoderado con poder vigente para firma");
+            }
+        } else {
+            pendingList.push("Designación de firmante facultado para el contrato");
+        }
     }
 
     const respName = (typeof users !== 'undefined' && Array.isArray(users))
@@ -3342,21 +3554,101 @@ function renderClosingDocumentationPanel(p) {
 
         <!-- SECCIÓN 1: EXPEDIENTE DOCUMENTAL DEL CLIENTE (Contextual 4B.4) -->
         <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
                 <div>
                     <h5 style="margin: 0; color: var(--brand-gold); font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
                         <span>📇 Documentación del Cliente</span>
                     </h5>
                     <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
-                        Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel.
+                        Expediente de <strong>${escapeHtmlDoc(c.empresa || (c.nombres ? `${c.nombres} ${c.apellidos || ''}`.trim() : 'Cliente'))}</strong> (${c.tipo === 'juridica' ? 'Persona Jurídica' : 'Persona Natural'}). Gestiona los recaudos directamente desde este panel o en vista de pantalla completa.
                     </div>
                 </div>
+                <button type="button" class="btn-secondary" style="font-size: 0.75rem; padding: 4px 10px;" onclick="openClientDetailView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                    ✏️ Editar Cliente en Vista Completa
+                </button>
             </div>
 
             <!-- Listado de documentos del cliente con estado, consulta e inline upload/substitution -->
             <div style="display: flex; flex-direction: column;">
                 ${clientDocsRowsHtml}
             </div>
+        </div>
+
+        <!-- SECCIÓN B3: REQUERIMIENTO CONTRACTUAL Y PODERES DE FIRMA (Fase 2 - B3) -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 0.5rem; margin-bottom: 0.75rem;">
+                <div>
+                    <h5 style="margin: 0; color: #60a5fa; font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
+                        <span>⚖️ Control Contractual y Representación Legal (B3)</span>
+                    </h5>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+                        Definición explícita de suscripción de contrato comercial y acreditación del firmante societario en vistas de pantalla completa.
+                    </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #ef4444; color: #f87171;" onclick="ClientDocuments.openRLElectionView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        ⚖️ Registrar / Cambiar RL
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #38bdf8; color: #38bdf8;" onclick="ClientDocuments.openGrantPowerView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        📜 Registrar Apoderado
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #34d399; color: #34d399;" onclick="ClientDocuments.openBiennialConfirmationView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        🗓️ Confirmación Bienal
+                    </button>
+                    <button type="button" class="btn-secondary" style="font-size: 0.74rem; padding: 4px 10px; border-color: #fbbf24; color: #fbbf24;" onclick="ClientDocuments.openDossierHistoryView('${c.id}', { originView: 'detail-view', prospectId: '${p.id}' })">
+                        🗂️ Historial B3
+                    </button>
+                </div>
+            </div>
+
+            <!-- Checkbox de Requerimiento de Contrato -->
+            <div style="margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text-primary); font-size: 0.88rem; font-weight: 600;">
+                    <input type="checkbox" id="closing-requiere-contrato" ${isContractualRequired ? 'checked' : ''} ${isWon ? 'disabled' : ''} onchange="toggleClosingContractSection(this.checked)" style="transform: scale(1.15);">
+                    <span>Esta oportunidad requiere suscripción de Contrato Formal</span>
+                </label>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-left: 28px; margin-top: 2px;">
+                    Si se marca, el cierre exigirá que la cuenta tenga Representante Legal acreditado o Apoderado con poder notarial vigente.
+                </div>
+            </div>
+
+            <!-- Panel condicional de Firmante -->
+            <div id="closing-contract-signatory-panel" style="${isContractualRequired ? 'display:block;' : 'display:none;'} background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 12px; margin-bottom: 1rem;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; align-items: start;">
+                    <div>
+                        <label for="closing-firmante-tipo" style="display:block; font-size:0.78rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                            Sujeto Facultado para Firmar el Contrato <span style="color:#ef4444;">*</span>
+                        </label>
+                        <select id="closing-firmante-tipo" class="form-control" ${isWon ? 'disabled' : ''} onchange="onClosingSignatoryTypeChange(this.value, '${c.id}')" style="width:100%; font-size:0.8rem; padding:6px 10px; background:rgba(255,255,255,0.07); border:1px solid var(--panel-border); border-radius:4px; color:white;">
+                            <option value="">-- Seleccionar firmante --</option>
+                            <option value="representante_legal" ${currentFirmanteTipo === 'representante_legal' ? 'selected' : ''}>Representante Legal de la Sociedad</option>
+                            <option value="apoderado" ${currentFirmanteTipo === 'apoderado' ? 'selected' : ''}>Apoderado con Poder Notarial para Contratos</option>
+                        </select>
+                    </div>
+
+                    <div id="closing-apoderado-select-container" style="${currentFirmanteTipo === 'apoderado' ? 'display:block;' : 'display:none;'}">
+                        <label for="closing-firmante-power-id" style="display:block; font-size:0.78rem; font-weight:600; color:var(--text-primary); margin-bottom:4px;">
+                            Poder Notarial Vigente <span style="color:#ef4444;">*</span>
+                        </label>
+                        <select id="closing-firmante-power-id" class="form-control" ${isWon ? 'disabled' : ''} style="width:100%; font-size:0.8rem; padding:6px 10px; background:rgba(255,255,255,0.07); border:1px solid var(--panel-border); border-radius:4px; color:white;">
+                            ${renderActivePowersOptions(c, currentFirmantePowerId)}
+                        </select>
+                    </div>
+                </div>
+
+                <div id="closing-signatory-feedback" style="font-size:0.78rem; color:var(--text-secondary); margin-top:8px; padding:6px 10px; background:rgba(0,0,0,0.25); border-radius:4px;">
+                    ${renderSignatoryStatusFeedback(c, currentFirmante)}
+                </div>
+            </div>
+
+            <!-- Botón de Pre-validación B3 -->
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <button type="button" class="btn-secondary" id="btn-validate-b3-close" onclick="runB3CloseValidation('${p.id}', '${c.id}')" style="font-size:0.78rem; padding:5px 12px; display:inline-flex; align-items:center; gap:6px;">
+                    <span>🔍</span> Pre-validar Requisitos Legales y Fiscales para Cierre
+                </button>
+                <span style="font-size:0.72rem; color:var(--text-muted);">Comprueba vigencia de DUI, Credencial, Escritura y Poderes con el backend.</span>
+            </div>
+            <div id="closing-b3-validation-result" style="display:none; margin-top:10px;"></div>
         </div>
 
         <!-- SECCIÓN 2: DOCUMENTOS PROPIOS DEL CIERRE DE LA OPORTUNIDAD -->
@@ -3684,6 +3976,25 @@ async function saveClosingProgress(prospectId) {
     if (hasNewF1 && m1El && m1El.value.trim()) data.motivo_doc_firmado = m1El.value.trim();
     if (hasNewF2 && m2El && m2El.value.trim()) data.motivo_doc_comprobante = m2El.value.trim();
 
+    const reqContratoEl = document.getElementById('closing-requiere-contrato');
+    if (reqContratoEl) {
+        data.requiere_contrato = reqContratoEl.checked;
+        if (reqContratoEl.checked) {
+            const tipoEl = document.getElementById('closing-firmante-tipo');
+            const pwEl = document.getElementById('closing-firmante-power-id');
+            const tipo = tipoEl ? tipoEl.value : null;
+            if (tipo === 'representante_legal') {
+                data.firmante_cierre = { tipo: 'representante_legal' };
+            } else if (tipo === 'apoderado') {
+                data.firmante_cierre = { tipo: 'apoderado', powerId: (pwEl ? pwEl.value : null) };
+            } else {
+                data.firmante_cierre = null;
+            }
+        } else {
+            data.firmante_cierre = null;
+        }
+    }
+
     const ok = await runWorkflowOp('Guardando avances documentales...', async fb => {
         const uploader = (typeof window !== 'undefined' && typeof window.uploadFileToStorage === 'function')
             ? window.uploadFileToStorage
@@ -3783,6 +4094,39 @@ async function finalizeOpportunity(prospectId) {
     }
     if (!hasNewF2 && !hasExistingF2) missing.push("Copia de factura o comprobante de anticipo");
 
+    const reqContratoEl = document.getElementById('closing-requiere-contrato');
+    const requiereContrato = reqContratoEl ? reqContratoEl.checked : (p.requiere_contrato === true || (datos && datos.requiere_contrato === true));
+
+    let firmanteCierre = null;
+    if (requiereContrato) {
+        const tipoEl = document.getElementById('closing-firmante-tipo');
+        const pwEl = document.getElementById('closing-firmante-power-id');
+        const tipo = tipoEl ? tipoEl.value : ((p.firmante_cierre && p.firmante_cierre.tipo) || (datos.firmante_cierre && datos.firmante_cierre.tipo));
+        if (!tipo) {
+            missing.push("Designación de firmante para contrato (Representante Legal o Apoderado facultado)");
+        } else if (tipo === 'representante_legal') {
+            const rl = c && c.representanteLegalVigente;
+            if (!rl || rl.estado !== 'vigente') {
+                missing.push("Acreditación societaria vigente del Representante Legal en el expediente del cliente");
+            } else {
+                firmanteCierre = { tipo: 'representante_legal' };
+            }
+        } else if (tipo === 'apoderado') {
+            const powerId = pwEl ? pwEl.value : ((p.firmante_cierre && p.firmante_cierre.powerId) || (datos.firmante_cierre && datos.firmante_cierre.powerId));
+            if (!powerId) {
+                missing.push("Selección de poder notarial vigente del apoderado firmante");
+            } else {
+                const powers = (c && Array.isArray(c.apoderadosVigentes)) ? c.apoderadosVigentes : [];
+                const pw = powers.find(x => (x.id === powerId || x.powerId === powerId));
+                if (!pw || pw.estado !== 'vigente') {
+                    missing.push("Poder notarial seleccionado no se encuentra vigente en el expediente de la cuenta");
+                } else {
+                    firmanteCierre = { tipo: 'apoderado', powerId: powerId };
+                }
+            }
+        }
+    }
+
     if (missing.length > 0) {
         return alert("❌ No se puede finalizar la oportunidad. Faltan los siguientes requisitos obligatorios:\n\n• " + missing.join("\n• "));
     }
@@ -3793,8 +4137,10 @@ async function finalizeOpportunity(prospectId) {
 
     const data = {
         forma_pago: formaPago,
-        factura_anticipo: facAnticipo
+        factura_anticipo: facAnticipo,
+        requiere_contrato: requiereContrato
     };
+    if (firmanteCierre) data.firmante_cierre = firmanteCierre;
     if (encargado) data.encargado = encargado;
     if (hasNewF1 && m1El && m1El.value.trim()) data.motivo_doc_firmado = m1El.value.trim();
     if (hasNewF2 && m2El && m2El.value.trim()) data.motivo_doc_comprobante = m2El.value.trim();
@@ -3999,6 +4345,11 @@ async function processLose() {
         confirmProspectDocSubstitution,
         saveClosingProgress,
         finalizeOpportunity,
+        renderActivePowersOptions,
+        renderSignatoryStatusFeedback,
+        toggleClosingContractSection,
+        onClosingSignatoryTypeChange,
+        runB3CloseValidation,
 
         // 2D - Marcado de Pérdida
         showLoseForm,

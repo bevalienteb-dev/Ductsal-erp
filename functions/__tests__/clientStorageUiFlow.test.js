@@ -282,7 +282,7 @@ describe('Phase 2 Client Creation & Storage Adaptation (Real UI Flow)', () => {
     // Verify UI effects
     expect(env.S.clients).toHaveLength(1);
     expect(env.S.clients[0].id).toBe(reservationId);
-    expect(env.el('clientModal').style.display).toBe('none');
+    expect(env.el('clientDetailContent').style.display).toBe('none');
     expect(env.ui.tableRendered).toBe(1);
     expect(env.api.getCurrentReservationId()).toBeNull();
   });
@@ -538,7 +538,7 @@ describe('Phase 2 Client Creation & Storage Adaptation (Real UI Flow)', () => {
     };
 
     const env = buildEnvironment({ clientHandler: handler });
-    env.el('clientModal');
+    env.el('clientDetailContent');
     env.api.setCurrentReservationId('RES-CLOSE-01');
     expect(env.api.getCurrentReservationId()).toBe('RES-CLOSE-01');
 

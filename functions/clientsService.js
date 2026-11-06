@@ -668,7 +668,7 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
           if (Array.isArray(item) || typeof item === 'string') {
             initialDocs[k] = item;
           } else if (item && typeof item === 'object') {
-            await applyDocumentVersionTx({
+            const vRes = await applyDocumentVersionTx({
               tx,
               db,
               entityType: 'client',
@@ -683,7 +683,11 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
               FieldValue,
               now
             });
-            initialDocs[k] = item;
+            initialDocs[k] = {
+              ...item,
+              ...(vRes && vRes.versionId ? { versionId: vRes.versionId } : {}),
+              ...(vRes && vRes.versionNumber !== undefined && vRes.versionNumber !== null ? { versionNumber: vRes.versionNumber } : {})
+            };
           }
         }
         doc.documentos = initialDocs;
@@ -883,14 +887,16 @@ function createClientsService({ db, FieldValue, suffix, now = () => new Date(), 
       ps.docs.forEach(d => {
         const p = d.data();
         if (p.eliminado === true) return;
-        [p.createdBy, p.vendedorId].forEach(v => {
-          if (v && v !== 'sistema') {
-            set.add(String(v));
-            if (p.etapa === 'cierre' && p.estado !== 'perdido') {
-              closingSet.add(String(v));
-            }
+        const activeSeller = p.vendedorId || p.createdBy;
+        if (activeSeller && activeSeller !== 'sistema') {
+          set.add(String(activeSeller));
+          if (p.etapa === 'cierre' && p.estado !== 'perdido') {
+            closingSet.add(String(activeSeller));
           }
-        });
+        }
+        if (p.createdBy && p.createdBy !== 'sistema') {
+          set.add(String(p.createdBy));
+        }
       });
       const next = Array.from(set).sort();
       const nextClosing = Array.from(closingSet).sort();
