@@ -397,6 +397,27 @@ function buildAdminFake() {
     options: { projectId: 'ductsal-erp' }
   };
 
+  const storage = () => ({
+    bucket: (name = 'ductsal-erp.firebasestorage.app') => ({
+      name,
+      file: (storagePath) => ({
+        name: storagePath,
+        exists: async () => {
+          if (state.hooks && typeof state.hooks.storageExists === 'function') {
+            return [Boolean(await state.hooks.storageExists(storagePath))];
+          }
+          if (state.missingStorageFiles && typeof state.missingStorageFiles.has === 'function' && state.missingStorageFiles.has(storagePath)) {
+            return [false];
+          }
+          if (state.storageFiles && typeof state.storageFiles.has === 'function') {
+            return [state.storageFiles.has(storagePath)];
+          }
+          return [true];
+        }
+      })
+    })
+  });
+
   return {
     initializeApp: (opts = {}) => {
       if (opts && opts.projectId) {
@@ -409,6 +430,7 @@ function buildAdminFake() {
     apps: [defaultApp],
     firestore,
     auth,
+    storage,
     __state: state
   };
 }

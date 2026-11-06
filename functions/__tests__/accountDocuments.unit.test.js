@@ -142,10 +142,13 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
   beforeEach(() => {
     state.docs = {};
     state.hooks = {};
+    state.storageFiles = null;
+    state.missingStorageFiles = new Set();
     seedBaseData();
     svc = createAccountDocumentsService({
       db: admin.firestore(),
       FieldValue,
+      bucket: admin.storage().bucket(),
       suffix: '_prod'
     });
   });
@@ -284,14 +287,14 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos.pdf' }
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos.pdf' }
       });
 
       await expect(svc.grantContractPower({
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos_2.pdf' }
+        documento: { name: 'Poder_Carlos_2.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos_2.pdf' }
       })).rejects.toThrow('ya cuenta con un poder vigente para firma de contratos en esta cuenta');
     });
 
@@ -301,13 +304,13 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos.pdf' }
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos.pdf' }
       });
       const p2 = await svc.grantContractPower({
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_MARIO',
-        documento: { name: 'Poder_Mario.pdf' }
+        documento: { name: 'Poder_Mario.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Mario.pdf' }
       });
 
       // Socio re-elects the SAME person (Ana Gómez) for a new term (Term 2)
@@ -343,7 +346,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos.pdf' }
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos.pdf' }
       });
 
       // Nueva elección: Se elige a Mario Santos como nuevo RL
@@ -354,8 +357,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         nombre: 'Mario Santos',
         fechaEleccion: '2026-11-02',
         fechaVencimiento: '2029-11-02',
-        credencialDoc: { name: 'Credencial_Mario.pdf' },
-        duiDoc: { name: 'DUI_Mario.pdf' }
+        credencialDoc: { name: 'Credencial_Mario.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/Credencial_Mario.pdf' },
+        duiDoc: { name: 'DUI_Mario.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/DUI_Mario.pdf' }
       });
 
       expect(newElection.invalidatedPowersCount).toBe(1);
@@ -370,7 +373,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos.pdf' }
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos.pdf' }
       });
 
       const revRes = await svc.revokeContractPower({
@@ -435,6 +438,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         docKey: 'dui',
         doc: {
           name: 'DUI_Distinto.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/identificacion/DUI_Distinto.pdf',
           sha256: '2'.repeat(64),
           fechaVencimiento: '2024-12-31' // Anterior a 2025-01-01
         },
@@ -985,7 +989,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder_Carlos.pdf' }
+        documento: { name: 'Poder_Carlos.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/Poder_Carlos.pdf' }
       });
 
       // Nueva elección de RL (invalida el poder de Carlos)
@@ -996,8 +1000,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         nombre: 'Mario Santos',
         fechaEleccion: '2026-11-02',
         fechaVencimiento: '2029-11-02',
-        credencialDoc: { name: 'Cred_Mario.pdf', storagePath: 'prod_files/cred_mario.pdf', fechaVencimiento: '2029-11-02' },
-        duiDoc: { name: 'DUI_Mario.pdf', storagePath: 'prod_files/dui_mario.pdf', fechaVencimiento: '2029-11-02' }
+        credencialDoc: { name: 'Cred_Mario.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred_mario.pdf', fechaVencimiento: '2029-11-02' },
+        duiDoc: { name: 'DUI_Mario.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_mario.pdf', fechaVencimiento: '2029-11-02' }
       });
 
       // Intento de cerrar usando el poder de Carlos
@@ -1372,8 +1376,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         nombre: 'Ana Gómez',
         fechaEleccion: '2026-02-01',
         fechaVencimiento: '2029-02-01',
-        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf' },
-        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2029-05-01' },
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf', fechaVencimiento: '2029-05-01' },
         opId: 'op_rl_001'
       });
       const rl2 = await svc.registerLegalRepresentativeTerm({
@@ -1383,8 +1387,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         nombre: 'Ana Gómez',
         fechaEleccion: '2026-02-01',
         fechaVencimiento: '2029-02-01',
-        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf' },
-        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2029-05-01' },
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf', fechaVencimiento: '2029-05-01' },
         opId: 'op_rl_001'
       });
       expect(rl2.idempotentReplay).toBe(true);
@@ -1396,8 +1400,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         accountId: 'ACC_DELTA',
         nombre: 'Otro Nombre',
         fechaEleccion: '2026-02-01',
-        credencialDoc: { name: 'Cred.pdf' },
-        duiDoc: { name: 'DUI.pdf' },
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf' },
         opId: 'op_rl_001'
       })).rejects.toThrow(/ya fue utilizado con parámetros distintos/);
 
@@ -1406,7 +1410,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
         notas: 'Poder especial',
         opId: 'op_pw_001'
       });
@@ -1414,7 +1418,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
         notas: 'Poder especial',
         opId: 'op_pw_001'
       });
@@ -1445,7 +1449,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         docKey: 'nit',
-        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/nit_v2.pdf', sha256: sha },
+        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_v2.pdf', sha256: sha },
         motivoSustitucion: 'Actualización NIT',
         opId: 'op_save_001'
       });
@@ -1453,7 +1457,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         docKey: 'nit',
-        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/nit_v2.pdf', sha256: sha },
+        doc: { name: 'NIT_v2.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_v2.pdf', sha256: sha },
         motivoSustitucion: 'Actualización NIT',
         opId: 'op_save_001'
       });
@@ -1484,8 +1488,8 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         nombre: 'Ana Gómez',
         fechaEleccion: '2026-03-01',
         fechaVencimiento: '2029-03-01',
-        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/cred.pdf', fechaVencimiento: '2029-03-01' },
-        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/dui.pdf', fechaVencimiento: '2030-08-15' }
+        credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf', fechaVencimiento: '2029-03-01' },
+        duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf', fechaVencimiento: '2030-08-15' }
       });
 
       const clientAfterRL = state.docs['clients_prod/ACC_DELTA'];
@@ -1496,7 +1500,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         contactId: 'CONT_CARLOS',
-        documento: { name: 'Poder.pdf', storagePath: 'prod_files/poder.pdf' },
+        documento: { name: 'Poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
         notas: 'Limitado a proyectos de climatización industrial'
       });
 
@@ -1529,7 +1533,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         docKey: 'dui',
-        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf' },
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_new.pdf' },
         fechaVencimiento: '2029-12-31'
       })).rejects.toThrow(/obligatorio proporcionar la huella digital SHA-256/);
 
@@ -1538,7 +1542,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         docKey: 'dui',
-        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf', sha256: newSha }
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_new.pdf', sha256: newSha }
       })).rejects.toThrow(/obligatorio especificar la nueva fecha de vencimiento/);
 
       // Con fechaVencimiento posterior a 2024-01-01 pero todavía vencida (2025-01-01 < hoy) -> rechaza
@@ -1546,7 +1550,7 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         caller: callerUser(V1),
         accountId: 'ACC_DELTA',
         docKey: 'dui',
-        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/dui_new.pdf', sha256: newSha },
+        doc: { name: 'DUI_Nuevo.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_new.pdf', sha256: newSha },
         fechaVencimiento: '2025-01-01'
       })).rejects.toThrow(/ya se encuentra vencida/);
     });
@@ -1862,6 +1866,634 @@ describe('Phase 2 Block B3: Account Documents, Legal Representation & Powers', (
         ...baseSave,
         fechaVencimiento: '2031-12-31'
       })).rejects.toThrow(/parámetros distintos/);
+    });
+  });
+
+  // ===========================================================================
+  // 10. Corrección Puntual B3: DEF-A1 (Storage Estricto), DEF-A2 (Existencia Física) y DEF-B1 (Idempotencia, Metadatos y Autorización)
+  // ===========================================================================
+  describe('10. Corrección Puntual B3 — DEF-A1, DEF-A2 y DEF-B1', () => {
+    beforeEach(async () => {
+      delete state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionId;
+      delete state.docs['clients_prod/ACC_DELTA'].documentos.escritura.versionNumber;
+      await svc.registerLegalRepresentativeTerm({
+        caller: callerUser(V1),
+        accountId: 'ACC_DELTA',
+        contactId: 'CONT_ANA',
+        nombre: 'Ana Gómez',
+        fechaEleccion: '2026-01-10',
+        fechaVencimiento: '2029-01-10',
+        credencialDoc: {
+          name: 'Cred.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf',
+          fechaVencimiento: '2029-01-10'
+        },
+        duiDoc: {
+          name: 'DUI.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf',
+          fechaVencimiento: '2029-01-10'
+        }
+      });
+    });
+
+    describe('DEF-A1: Validación estricta de referencias a Storage (rutas, traversal, codificación, hosts, buckets, entornos y subcarpetas)', () => {
+      test('rechaza referencia vacía o solo con { name } en saveAccountDocument, registerLegalRepresentativeTerm, grantContractPower y v_base', async () => {
+        // 1. saveAccountDocument con {} o solo { name }
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {}
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'NIT_Sin_Ruta.pdf' }
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+        // 2. grantContractPower solo con { name }
+        await expect(svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'Poder_Sin_Ruta.pdf' }
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+        // 3. registerLegalRepresentativeTerm solo con { name }
+        await expect(svc.registerLegalRepresentativeTerm({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          nombre: 'Ana Gómez',
+          fechaEleccion: '2026-02-01',
+          credencialDoc: { name: 'Cred_Sin_Ruta.pdf' },
+          duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf' }
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+      });
+
+      test('rechaza path traversal literal (..), URL-encoded (%2e%2e), dobles barras (//) y barras invertidas (\\)', async () => {
+        const badPaths = [
+          'prod_files/clients/ACC_DELTA/../ACC_OTHER/legal/nit.pdf',
+          'prod_files/clients/ACC_DELTA/%2e%2e/ACC_OTHER/legal/nit.pdf',
+          'prod_files/clients/ACC_DELTA/%2E%2E/legal/nit.pdf',
+          'prod_files/clients/ACC_DELTA//legal/nit.pdf',
+          'prod_files\\clients\\ACC_DELTA\\legal\\nit.pdf',
+          'prod_files/clients/ACC_DELTA/legal%2fnit.pdf',
+          '/prod_files/clients/ACC_DELTA/legal/nit.pdf'
+        ];
+
+        for (const badPath of badPaths) {
+          await expect(svc.saveAccountDocument({
+            caller: callerUser(V1),
+            accountId: 'ACC_DELTA',
+            docKey: 'nit',
+            doc: { name: 'nit.pdf', storagePath: badPath }
+          })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+        }
+
+        // URL con %2e%2e codificado
+        const encodedTraversalUrl = 'https://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclients%2FACC_DELTA%2F%2e%2e%2Flegal%2Fnit.pdf?alt=media';
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', url: encodedTraversalUrl }
+        })).rejects.toThrow(/secuencias prohibidas|no cuenta con un archivo válido en Storage/);
+
+        // v_base con %2e%2e codificado
+        delete state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'];
+        state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+          name: 'Escritura_Traversal.pdf',
+          url: encodedTraversalUrl
+        };
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+      });
+
+      test('rechaza URL con host externo arbitrario, protocolo no seguro o bucket de otro proyecto/entorno', async () => {
+        const invalidUrls = [
+          'https://evil.example.com/prod_files/clients/ACC_DELTA/legal/nit.pdf',
+          'https://firebasestorage.googleapis.com.evil.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit.pdf',
+          'http://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit.pdf',
+          'https://firebasestorage.googleapis.com/v0/b/otro-bucket-externo.appspot.com/o/prod_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit.pdf',
+          'https://firebasestorage.googleapis.com/v0/b/demo-ductsal-local.appspot.com/o/prod_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit.pdf',
+          'gs://otro-bucket.appspot.com/prod_files/clients/ACC_DELTA/legal/nit.pdf',
+          'gs://demo-ductsal-local.appspot.com/prod_files/clients/ACC_DELTA/legal/nit.pdf'
+        ];
+
+        for (const badUrl of invalidUrls) {
+          await expect(svc.saveAccountDocument({
+            caller: callerUser(V1),
+            accountId: 'ACC_DELTA',
+            docKey: 'nit',
+            doc: { name: 'nit.pdf', url: badUrl }
+          })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+        }
+
+        // En v_base también rechaza host externo y bucket no autorizado
+        delete state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'];
+        state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+          name: 'Escritura_Externa.pdf',
+          url: 'https://evil.example.com/fake_escritura.pdf'
+        };
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })).rejects.toThrow(/host externo no autorizado/);
+      });
+
+      test('rechaza referencias cruzadas de entorno (local_files en _prod y prod_files en _local)', async () => {
+        // En _prod rechaza local_files
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'local_files/clients/ACC_DELTA/legal/nit.pdf' }
+        })).rejects.toThrow(/prefijo de entorno 'local_files' no coincide con 'prod_files'/);
+
+        // En _local rechaza prod_files y bucket de producción
+        state.docs['clients_local/ACC_DELTA'] = {
+          ...state.docs['clients_prod/ACC_DELTA']
+        };
+        const localSvc = createAccountDocumentsService({
+          db: admin.firestore(),
+          FieldValue,
+          bucket: admin.storage().bucket('demo-ductsal-local.appspot.com'),
+          suffix: '_local'
+        });
+
+        await expect(localSvc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf' }
+        })).rejects.toThrow(/prefijo de entorno 'prod_files' no coincide con 'local_files'/);
+
+        await expect(localSvc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'nit.pdf',
+            url: 'https://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/local_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit.pdf'
+          }
+        })).rejects.toThrow(/bucket 'ductsal-erp.firebasestorage.app' no autorizado/);
+      });
+
+      test('rechaza rutas de otra cuenta, de prospectos/otros módulos o con subcarpeta documental incorrecta', async () => {
+        // Ruta de otra cuenta
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/clients/ACC_PERSONA_NATURAL/legal/nit.pdf' }
+        })).rejects.toThrow(/pertenece a otra cuenta/);
+
+        // Ruta de prospecto u otro módulo
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/prospects/OPP_100/proyectos/nit.pdf' }
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage/);
+
+        // Subcarpeta incorrecta: nit en identificacion
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/nit.pdf' }
+        })).rejects.toThrow(/subcarpeta 'identificacion' inválida para 'nit'/);
+
+        // Subcarpeta incorrecta: dui en legal
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'dui',
+          doc: { name: 'dui.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/dui.pdf', fechaVencimiento: '2030-01-01', sha256: 'e'.repeat(64) }
+        })).rejects.toThrow(/subcarpeta 'legal' inválida para 'dui'/);
+
+        // Subcarpeta incorrecta: poder en legal
+        await expect(svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/poder.pdf' }
+        })).rejects.toThrow(/subcarpeta 'legal' inválida para 'poder_firma_contrato'/);
+
+        // En v_base también rechaza ruta de otra cuenta o de prospecto
+        delete state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'];
+        state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+          name: 'Escritura_Ajena.pdf',
+          storagePath: 'prod_files/clients/ACC_OTRA/legal/escritura.pdf'
+        };
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })).rejects.toThrow(/no cuenta con un archivo válido en Storage perteneciente a la cuenta 'ACC_DELTA'/);
+      });
+    });
+
+    describe('DEF-A2: Verificación de existencia física real del objeto en Firebase Storage (bucket.file(storagePath).exists())', () => {
+      test('rechaza registrar o materializar versiones cuando el objeto no existe físicamente en Storage (exists() === false)', async () => {
+        state.storageFiles = new Set([
+          'prod_files/clients/ACC_DELTA/legal/cred.pdf',
+          'prod_files/clients/ACC_DELTA/identificacion/dui.pdf'
+        ]);
+
+        // 1. saveAccountDocument con archivo inexistente en Storage -> rechazado
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'NIT_Fantasma.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_fantasma.pdf',
+            sha256: 'a'.repeat(64)
+          }
+        })).rejects.toThrow(/no existe físicamente en el bucket/);
+
+        // 2. grantContractPower con archivo inexistente en Storage -> rechazado
+        await expect(svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: {
+            name: 'Poder_Fantasma.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder_fantasma.pdf'
+          }
+        })).rejects.toThrow(/no existe físicamente en el bucket/);
+
+        // 3. registerLegalRepresentativeTerm con DUI inexistente en Storage -> rechazado sin cerrar período anterior
+        await expect(svc.registerLegalRepresentativeTerm({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          nombre: 'Nuevo RL',
+          fechaEleccion: '2026-06-01',
+          credencialDoc: {
+            name: 'Cred.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf'
+          },
+          duiDoc: {
+            name: 'DUI_Fantasma.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui_fantasma.pdf'
+          }
+        })).rejects.toThrow(/no existe físicamente en el bucket/);
+        expect(state.docs['clients_prod/ACC_DELTA'].representanteLegalVigente.nombre).toBe('Ana Gómez');
+
+        // 4. recordBiennialConfirmation materializando v_base con archivo inexistente en Storage -> rechazado
+        delete state.docs['clients_prod/ACC_DELTA/document_versions/v_esc_1'];
+        state.docs['clients_prod/ACC_DELTA'].documentos.escritura = {
+          name: 'Escritura_Fantasma.pdf',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/escritura_fantasma.pdf'
+        };
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true
+        })).rejects.toThrow(/no existe físicamente en el bucket/);
+        expect(state.docs['clients_prod/ACC_DELTA/document_versions/v_escritura_base_1']).toBeUndefined();
+      });
+
+      test('acepta ruta válida y URL oficial cuando el objeto sí existe físicamente en Storage (exists() === true)', async () => {
+        const validPath = 'prod_files/clients/ACC_DELTA/legal/nit_existente.pdf';
+        state.storageFiles = new Set([validPath]);
+
+        const officialUrl = 'https://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclients%2FACC_DELTA%2Flegal%2Fnit_existente.pdf?alt=media&token=123';
+        const res = await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'NIT_Existente.pdf',
+            url: officialUrl,
+            size: 4096,
+            contentType: 'application/pdf',
+            sha256: 'f'.repeat(64)
+          }
+        });
+
+        expect(res.success).toBe(true);
+        const savedVer = state.docs[`clients_prod/ACC_DELTA/document_versions/${res.versionId}`];
+        expect(savedVer.storagePath).toBe(validPath);
+        expect(savedVer.url).toBe(officialUrl);
+        expect(savedVer.size).toBe(4096);
+      });
+    });
+
+    describe('DEF-B1: Validación estricta de SHA-256, size, límites de 500 caracteres, equivalencia fingerprint-persistencia y autorización previa a replay', () => {
+      test('rechaza sha256 malformado y size inválido con invalid-argument en lugar de convertirlos silenciosamente en null', async () => {
+        const invalidHashes = ['hash-invalido', '12345', 'g'.repeat(64), '   ', 12345];
+        for (const badHash of invalidHashes) {
+          await expect(svc.saveAccountDocument({
+            caller: callerUser(V1),
+            accountId: 'ACC_DELTA',
+            docKey: 'nit',
+            doc: {
+              name: 'nit.pdf',
+              storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf',
+              sha256: badHash
+            }
+          })).rejects.toThrow(/hash hexadecimal válido de 64 caracteres/);
+        }
+
+        const invalidSizes = [0, -100, 12.34, NaN, Infinity, 'abc', '-50', '10.5', '0', '   ', {}];
+        for (const badSize of invalidSizes) {
+          await expect(svc.saveAccountDocument({
+            caller: callerUser(V1),
+            accountId: 'ACC_DELTA',
+            docKey: 'nit',
+            doc: {
+              name: 'nit.pdf',
+              storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf',
+              size: badSize
+            }
+          })).rejects.toThrow(/entero positivo y finito/);
+        }
+      });
+
+      test('acepta notas y motivoSustitucion de exactamente 500 caracteres y rechaza 501 caracteres con invalid-argument (sin truncamiento silencioso)', async () => {
+        const text500 = 'A'.repeat(500);
+        const text501 = 'B'.repeat(501);
+
+        // 1. grantContractPower: 500 ok, 501 rechazado
+        await expect(svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
+          notas: text501
+        })).rejects.toThrow(/notas no puede superar los 500 caracteres/);
+
+        const pw500 = await svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
+          notas: text500
+        });
+        expect(pw500.notas).toHaveLength(500);
+
+        // 2. recordBiennialConfirmation: 500 ok, 501 rechazado
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: text501
+        })).rejects.toThrow(/notas no puede superar los 500 caracteres/);
+
+        const bi500 = await svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          notas: text500
+        });
+        expect(state.docs[`clients_prod/ACC_DELTA/biennial_confirmations/${bi500.confirmationId}`].notas).toHaveLength(500);
+
+        // 3. saveAccountDocument: 500 ok, 501 rechazado
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf' },
+          motivoSustitucion: text501
+        })).rejects.toThrow(/motivoSustitucion no puede superar los 500 caracteres/);
+
+        const sv500 = await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf' },
+          motivoSustitucion: text500
+        });
+        expect(state.docs[`clients_prod/ACC_DELTA/document_versions/${sv500.versionId}`].motivoSustitucion).toHaveLength(500);
+      });
+
+      test('equivalencia estricta entre fingerprint y datos persistidos: name, contentType, size y sha256 se normalizan igual en payloadHash y en Firestore', async () => {
+        const res1 = await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: '   NIT_Normalizado_2026.pdf   ',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_norm.pdf',
+            contentType: '  application/pdf  ',
+            size: '16384',
+            sha256: 'ABCDEF0123456789'.repeat(4)
+          },
+          motivoSustitucion: '  Sustitución con espacios laterales  ',
+          opId: 'op_norm_eq_1'
+        });
+
+        const persistedVersion = state.docs[`clients_prod/ACC_DELTA/document_versions/${res1.versionId}`];
+        expect(persistedVersion.name).toBe('NIT_Normalizado_2026.pdf');
+        expect(persistedVersion.contentType).toBe('application/pdf');
+        expect(persistedVersion.size).toBe(16384);
+        expect(typeof persistedVersion.size).toBe('number');
+        expect(persistedVersion.sha256).toBe('abcdef0123456789'.repeat(4));
+        expect(persistedVersion.motivoSustitucion).toBe('Sustitución con espacios laterales');
+
+        const persistedClientDoc = state.docs['clients_prod/ACC_DELTA'].documentos.nit;
+        expect(persistedClientDoc.name).toBe('NIT_Normalizado_2026.pdf');
+        expect(persistedClientDoc.size).toBe(16384);
+        expect(persistedClientDoc.contentType).toBe('application/pdf');
+
+        // Reintento con valores ya limpios produce el mismo fingerprint y devuelve idempotentReplay: true
+        const resReplay = await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'NIT_Normalizado_2026.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_norm.pdf',
+            contentType: 'application/pdf',
+            size: 16384,
+            sha256: 'abcdef0123456789'.repeat(4)
+          },
+          motivoSustitucion: 'Sustitución con espacios laterales',
+          opId: 'op_norm_eq_1'
+        });
+        expect(resReplay.idempotentReplay).toBe(true);
+        expect(resReplay.versionId).toBe(res1.versionId);
+      });
+
+      test('verifica autorización sobre la cuenta ANTES de devolver replay idempotente cuando el llamador perdió acceso a la cuenta', async () => {
+        // V1 ejecuta las 5 operaciones mientras tiene acceso a ACC_DELTA
+        await svc.registerLegalRepresentativeTerm({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_ANA',
+          nombre: 'Ana Gómez',
+          fechaEleccion: '2026-04-01',
+          fechaVencimiento: '2029-04-01',
+          credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf' },
+          duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf' },
+          opId: 'op_auth_rl_1'
+        });
+
+        const pw = await svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'Poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
+          notas: 'Poder inicial',
+          opId: 'op_auth_pw_1'
+        });
+
+        await svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          opId: 'op_auth_bi_1'
+        });
+
+        await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'NIT.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf' },
+          opId: 'op_auth_sv_1'
+        });
+
+        await svc.revokeContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          powerId: pw.powerId,
+          motivo: 'Revocación inicial',
+          opId: 'op_auth_rv_1'
+        });
+
+        // Ahora la cuenta ACC_DELTA se reasigna a V2 y V1 pierde todo acceso
+        state.docs['clients_prod/ACC_DELTA'].createdBy = V2;
+        state.docs['clients_prod/ACC_DELTA'].visibleTo = [V2];
+        state.docs['clients_prod/ACC_DELTA'].vendedor_asignado = V2;
+        state.docs['clients_prod/ACC_DELTA'].closingVendors = [];
+
+        // Si V1 intenta hacer replay con cualquiera de los opId anteriores, debe recibir permission-denied (NUNCA idempotentReplay)
+        await expect(svc.registerLegalRepresentativeTerm({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_ANA',
+          nombre: 'Ana Gómez',
+          fechaEleccion: '2026-04-01',
+          fechaVencimiento: '2029-04-01',
+          credencialDoc: { name: 'Cred.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/cred.pdf' },
+          duiDoc: { name: 'DUI.pdf', storagePath: 'prod_files/clients/ACC_DELTA/identificacion/dui.pdf' },
+          opId: 'op_auth_rl_1'
+        })).rejects.toThrow('No tienes acceso a esta cuenta');
+
+        await expect(svc.grantContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          contactId: 'CONT_CARLOS',
+          documento: { name: 'Poder.pdf', storagePath: 'prod_files/clients/ACC_DELTA/poderes/poder.pdf' },
+          notas: 'Poder inicial',
+          opId: 'op_auth_pw_1'
+        })).rejects.toThrow('No tienes acceso a esta cuenta');
+
+        await expect(svc.recordBiennialConfirmation({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'escritura',
+          documentVersionId: 'v_base',
+          confirmationType: 'no_changes',
+          confirmedNoChanges: true,
+          opId: 'op_auth_bi_1'
+        })).rejects.toThrow('No tienes acceso a esta cuenta');
+
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: { name: 'NIT.pdf', storagePath: 'prod_files/clients/ACC_DELTA/legal/nit.pdf' },
+          opId: 'op_auth_sv_1'
+        })).rejects.toThrow('No tienes acceso a esta cuenta');
+
+        await expect(svc.revokeContractPower({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          powerId: pw.powerId,
+          motivo: 'Revocación inicial',
+          opId: 'op_auth_rv_1'
+        })).rejects.toThrow('No tienes acceso a esta cuenta');
+      });
+
+      test('maneja de forma segura registros históricos en ops sin payloadHash (autoriza primero y valida campos persistidos)', async () => {
+        state.docs['accountDocumentOps_prod/save_doc_ACC_DELTA_op_legacy_1'] = {
+          opId: 'op_legacy_1',
+          action: 'saveAccountDocument',
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_leg.pdf',
+          sha256: '1'.repeat(64),
+          motivoSustitucion: 'Motivo legado',
+          callerCid: V1,
+          callerUid: 'uid-v1',
+          result: {
+            success: true,
+            versionId: 'v_nit_legacy_1',
+            versionNumber: 1,
+            docKey: 'nit'
+          }
+        };
+
+        // Replay autorizado con los mismos parámetros -> idempotentReplay: true
+        const replayOk = await svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'NIT_Leg.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_leg.pdf',
+            sha256: '1'.repeat(64)
+          },
+          motivoSustitucion: 'Motivo legado',
+          opId: 'op_legacy_1'
+        });
+        expect(replayOk.idempotentReplay).toBe(true);
+        expect(replayOk.versionId).toBe('v_nit_legacy_1');
+
+        // Replay con distinto storagePath o motivoSustitucion sobre registro legado -> already-exists
+        await expect(svc.saveAccountDocument({
+          caller: callerUser(V1),
+          accountId: 'ACC_DELTA',
+          docKey: 'nit',
+          doc: {
+            name: 'NIT_Leg.pdf',
+            storagePath: 'prod_files/clients/ACC_DELTA/legal/nit_otro.pdf',
+            sha256: '1'.repeat(64)
+          },
+          motivoSustitucion: 'Motivo legado',
+          opId: 'op_legacy_1'
+        })).rejects.toThrow(/parámetros distintos/);
+      });
     });
   });
 });

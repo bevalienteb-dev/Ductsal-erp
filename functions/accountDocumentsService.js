@@ -53,6 +53,34 @@ function namesFor(suffix) {
   };
 }
 
+const DOC_KEY_SUBFOLDER_MAP = {
+  dui: 'identificacion',
+  escritura: 'legal',
+  mods_escritura: 'legal',
+  credencial: 'legal',
+  nit: 'legal',
+  nrc: 'legal',
+  poder_firma_contrato: 'poderes'
+};
+
+const PROD_ALLOWED_BUCKETS = [
+  'ductsal-erp.firebasestorage.app',
+  'ductsal-erp.appspot.com'
+];
+
+const NON_PROD_ALLOWED_BUCKETS = [
+  'demo-ductsal-isolated.appspot.com',
+  'demo-ductsal-local.appspot.com'
+];
+
+function getExpectedStoragePrefix(suffix) {
+  return suffix === '_prod' ? 'prod_files' : 'local_files';
+}
+
+function getAllowedBucketsForSuffix(suffix) {
+  return suffix === '_prod' ? PROD_ALLOWED_BUCKETS : NON_PROD_ALLOWED_BUCKETS;
+}
+
 function reqString(val, name, max = 200) {
   if (val === undefined || val === null) throw new ServiceError('invalid-argument', `${name} es obligatorio`);
   const s = String(val).trim();
@@ -61,10 +89,55 @@ function reqString(val, name, max = 200) {
   return s;
 }
 
+function optMaxString(val, name, max = 500) {
+  if (val === undefined || val === null) return null;
+  if (typeof val !== 'string' && typeof val !== 'number') {
+    throw new ServiceError('invalid-argument', `${name} debe ser una cadena de texto válida`);
+  }
+  const s = String(val).trim();
+  if (!s) return null;
+  if (s.length > max) {
+    throw new ServiceError('invalid-argument', `${name} no puede superar los ${max} caracteres`);
+  }
+  return s;
+}
+
 function sanitizeSha256(val) {
   if (!val || typeof val !== 'string') return null;
   const clean = val.trim().toLowerCase();
   return /^[a-f0-9]{64}$/.test(clean) ? clean : null;
+}
+
+function validateOptionalSha256(val, label = 'sha256') {
+  if (val === undefined || val === null || val === '') return null;
+  if (typeof val !== 'string') {
+    throw new ServiceError('invalid-argument', `${label} debe ser un hash hexadecimal válido de 64 caracteres`);
+  }
+  const clean = val.trim();
+  if (!/^[a-f0-9]{64}$/i.test(clean)) {
+    throw new ServiceError('invalid-argument', `${label} debe ser un hash hexadecimal válido de 64 caracteres`);
+  }
+  return clean.toLowerCase();
+}
+
+function validateOptionalSize(val, label = 'size') {
+  if (val === undefined || val === null || val === '') return null;
+  let num;
+  if (typeof val === 'number') {
+    num = val;
+  } else if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new ServiceError('invalid-argument', `${label} debe ser un entero positivo y finito`);
+    }
+    num = Number(trimmed);
+  } else {
+    throw new ServiceError('invalid-argument', `${label} debe ser un entero positivo y finito`);
+  }
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num <= 0 || num > Number.MAX_SAFE_INTEGER) {
+    throw new ServiceError('invalid-argument', `${label} debe ser un entero positivo y finito`);
+  }
+  return num;
 }
 
 function sanitizeDate(val, name) {
@@ -92,59 +165,341 @@ function computeDaysDifference(dateStr1, dateStr2) {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
-function isValidStorageReferenceString(ref) {
-  if (typeof ref !== 'string') return false;
-  const s = ref.trim();
-  if (!s) return false;
-  if (s.includes('..') || s.includes('\\')) return false;
-  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('gs://')) {
-    return s.length > 10;
+function extractObjectPathFromAuthorizedStorageUrl(rawUrl, {
+  suffix,
+  allowedBuckets,
+  errorCode = 'invalid-argument',
+  label = 'documento'
+}) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: URL vacía o inválida`);
   }
-  if (s.includes('//')) return false;
-  if (s.startsWith('prod_files/') || s.startsWith('local_files/')) {
-    const parts = s.split('/').filter(Boolean);
-    return parts.length >= 3;
+  const s = rawUrl.trim();
+  if (
+    s.length > 2048 ||
+    /[\x00-\x1f\x7f\\]/.test(s) ||
+    /%2e/i.test(s) ||
+    /%5c/i.test(s) ||
+    /%00/i.test(s) ||
+    s.includes('..')
+  ) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: URL con secuencias prohibidas`);
   }
-  return false;
+
+  if (s.startsWith('gs://')) {
+    const match = s.match(/^gs:\/\/([^/]+)\/(.+)$/);
+    if (!match) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: URL gs:// malformada`);
+    }
+    const bucketName = match[1];
+    const rawObjPath = match[2];
+    if (!allowedBuckets.includes(bucketName)) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: bucket '${bucketName}' no autorizado para el entorno`);
+    }
+    if (/%2f/i.test(rawObjPath) || rawObjPath.includes('//') || rawObjPath.includes('..')) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta gs:// con secuencias prohibidas`);
+    }
+    try {
+      return decodeURIComponent(rawObjPath);
+    } catch (_) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: codificación URI inválida`);
+    }
+  }
+
+  if (s.startsWith('https://') || s.startsWith('http://')) {
+    let parsed;
+    try {
+      parsed = new URL(s);
+    } catch (_) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: URL malformada`);
+    }
+
+    const isLocalEmulatorHost = suffix !== '_prod' && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost');
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalEmulatorHost)) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: protocolo '${parsed.protocol}' no permitido`);
+    }
+
+    if (parsed.hostname === 'firebasestorage.googleapis.com' || isLocalEmulatorHost) {
+      const match = parsed.pathname.match(/^\/v0\/b\/([^/]+)\/o\/([^/]+)$/);
+      if (!match) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: estructura de ruta Firebase Storage inválida`);
+      }
+      let bucketName;
+      let decodedPath;
+      try {
+        bucketName = decodeURIComponent(match[1]);
+        const encodedObjPath = match[2];
+        if (/%2f%2f/i.test(encodedObjPath) || encodedObjPath.includes('..')) {
+          throw new Error('Traversal or double slash');
+        }
+        decodedPath = decodeURIComponent(encodedObjPath);
+      } catch (_) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta codificada inválida`);
+      }
+      if (!allowedBuckets.includes(bucketName)) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: bucket '${bucketName}' no autorizado para el entorno`);
+      }
+      return decodedPath;
+    }
+
+    if (parsed.hostname === 'storage.googleapis.com') {
+      const match = parsed.pathname.match(/^\/([^/]+)\/(.+)$/);
+      if (!match) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: estructura de ruta GCS inválida`);
+      }
+      let bucketName;
+      let decodedPath;
+      try {
+        bucketName = decodeURIComponent(match[1]);
+        const rawObjPath = match[2];
+        if (/%2f/i.test(rawObjPath) || rawObjPath.includes('//') || rawObjPath.includes('..')) {
+          throw new Error('Invalid GCS path');
+        }
+        decodedPath = decodeURIComponent(rawObjPath);
+      } catch (_) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta GCS codificada inválida`);
+      }
+      if (!allowedBuckets.includes(bucketName)) {
+        throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: bucket '${bucketName}' no autorizado para el entorno`);
+      }
+      return decodedPath;
+    }
+
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: host externo no autorizado ('${parsed.hostname}')`);
+  }
+
+  throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: formato de URL no reconocido`);
 }
 
-function extractStorageReferenceFromDoc(doc) {
-  if (!doc) return { isValid: false, storagePath: null, url: null };
-  if (typeof doc === 'string') {
-    const s = doc.trim();
-    if (!isValidStorageReferenceString(s)) return { isValid: false, storagePath: null, url: null };
-    if (s.startsWith('prod_files/') || s.startsWith('local_files/')) {
-      return { isValid: true, storagePath: s, url: null };
-    }
-    return { isValid: true, storagePath: null, url: s };
+function validateCanonicalStoragePath(candidatePath, {
+  accountId,
+  docKey,
+  suffix,
+  allowHistoricalBase = false,
+  errorCode = 'invalid-argument',
+  label = 'documento'
+}) {
+  if (typeof candidatePath !== 'string' || !candidatePath.trim()) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta vacía`);
   }
-  if (typeof doc === 'object') {
-    const rawStoragePath = typeof doc.storagePath === 'string' && doc.storagePath.trim()
-      ? doc.storagePath.trim()
-      : (typeof doc.path === 'string' && doc.path.trim() ? doc.path.trim() : '');
-    const rawUrl = typeof doc.url === 'string' && doc.url.trim() ? doc.url.trim() : '';
-
-    // If an explicit storagePath/path is provided, it must be a valid storage reference (not a corrupt/traversal string)
-    if (rawStoragePath && !isValidStorageReferenceString(rawStoragePath)) {
-      return { isValid: false, storagePath: null, url: null };
-    }
-    if (rawUrl && !isValidStorageReferenceString(rawUrl)) {
-      return { isValid: false, storagePath: null, url: null };
-    }
-
-    const validPath = rawStoragePath && isValidStorageReferenceString(rawStoragePath) ? rawStoragePath : null;
-    const validUrl = rawUrl && isValidStorageReferenceString(rawUrl) ? rawUrl : null;
-
-    if (!validPath && !validUrl) {
-      return { isValid: false, storagePath: null, url: null };
-    }
-    return {
-      isValid: true,
-      storagePath: validPath,
-      url: validUrl
-    };
+  const raw = candidatePath.trim();
+  if (
+    raw.length > 500 ||
+    raw.startsWith('/') ||
+    raw.endsWith('/') ||
+    raw.includes('..') ||
+    raw.includes('//') ||
+    raw.includes('\\') ||
+    /[\x00-\x1f\x7f]/.test(raw) ||
+    /%2e/i.test(raw) ||
+    /%2f/i.test(raw) ||
+    /%5c/i.test(raw) ||
+    /%00/i.test(raw) ||
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)
+  ) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta malformada o con secuencias prohibidas`);
   }
-  return { isValid: false, storagePath: null, url: null };
+
+  let decoded;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch (_) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: codificación URI inválida en ruta`);
+  }
+
+  if (
+    !decoded ||
+    decoded.startsWith('/') ||
+    decoded.endsWith('/') ||
+    decoded.includes('..') ||
+    decoded.includes('//') ||
+    decoded.includes('\\') ||
+    decoded.includes('%') ||
+    /[\x00-\x1f\x7f]/.test(decoded)
+  ) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: ruta decodificada inválida`);
+  }
+
+  const segments = decoded.split('/');
+  if (segments.some(seg => !seg || seg === '.' || seg === '..')) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: segmentos de ruta inválidos`);
+  }
+
+  const expectedPrefix = getExpectedStoragePrefix(suffix);
+  if (segments[0] !== expectedPrefix) {
+    throw new ServiceError(
+      errorCode,
+      `El ${label} no cuenta con un archivo válido en Storage: prefijo de entorno '${segments[0]}' no coincide con '${expectedPrefix}'`
+    );
+  }
+
+  const expectedSubfolder = DOC_KEY_SUBFOLDER_MAP[docKey];
+  if (!expectedSubfolder) {
+    throw new ServiceError(errorCode, `Clave documental '${docKey}' no reconocida para validación de Storage`);
+  }
+
+  const fileName = segments[segments.length - 1];
+  if (!fileName || fileName.length > 200 || fileName === '.' || fileName === '..') {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: nombre de archivo inválido`);
+  }
+
+  if (!allowHistoricalBase) {
+    if (segments.length !== 5 || segments[1] !== 'clients') {
+      throw new ServiceError(
+        errorCode,
+        `El ${label} no cuenta con un archivo válido en Storage: la ruta debe seguir la jerarquía '${expectedPrefix}/clients/${accountId}/${expectedSubfolder}/<archivo>'`
+      );
+    }
+    if (segments[2] !== accountId) {
+      throw new ServiceError(
+        errorCode,
+        `El ${label} no cuenta con un archivo válido en Storage: la ruta pertenece a otra cuenta ('${segments[2]}' !== '${accountId}')`
+      );
+    }
+    if (segments[3] !== expectedSubfolder) {
+      throw new ServiceError(
+        errorCode,
+        `El ${label} no cuenta con un archivo válido en Storage: subcarpeta '${segments[3]}' inválida para '${docKey}' (se esperaba '${expectedSubfolder}')`
+      );
+    }
+    return decoded;
+  }
+
+  // Historical v_base compatibility: allow canonical 5-segment path, legacy 4-segment same-account path, or legacy 3-segment flat 'clientes' path
+  const isCanonical = segments.length === 5 && segments[1] === 'clients' && segments[2] === accountId && segments[3] === expectedSubfolder;
+  const isLegacySameAccount = segments.length === 4 && segments[1] === 'clients' && segments[2] === accountId;
+  const isLegacyFlatClientes = segments.length === 3 && segments[1] === 'clientes';
+
+  if (!isCanonical && !isLegacySameAccount && !isLegacyFlatClientes) {
+    throw new ServiceError(
+      errorCode,
+      `El ${label} no cuenta con un archivo válido en Storage perteneciente a la cuenta '${accountId}'`
+    );
+  }
+
+  return decoded;
+}
+
+function validateAndNormalizeStorageDoc(doc, {
+  accountId,
+  docKey,
+  suffix,
+  allowHistoricalBase = false,
+  defaultName = 'Documento',
+  overrideFechaEmision = undefined,
+  overrideFechaVencimiento = undefined,
+  errorCode = 'invalid-argument',
+  label = 'documento'
+}) {
+  if (!doc) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage (storagePath o url)`);
+  }
+
+  let docObj = doc;
+  if (allowHistoricalBase && typeof doc === 'string') {
+    const trimmed = doc.trim();
+    if (!trimmed) {
+      throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage (storagePath o url)`);
+    }
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+      docObj = { url: trimmed };
+    } else {
+      docObj = { storagePath: trimmed };
+    }
+  }
+
+  if (typeof docObj !== 'object' || Array.isArray(docObj)) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage (storagePath o url)`);
+  }
+
+  if (docObj.storagePath !== undefined && docObj.storagePath !== null && typeof docObj.storagePath !== 'string') {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: storagePath de tipo inválido`);
+  }
+  if (docObj.path !== undefined && docObj.path !== null && typeof docObj.path !== 'string') {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: path de tipo inválido`);
+  }
+  if (docObj.url !== undefined && docObj.url !== null && typeof docObj.url !== 'string') {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: url de tipo inválido`);
+  }
+
+  const sp1 = typeof docObj.storagePath === 'string' ? docObj.storagePath.trim() : '';
+  const sp2 = typeof docObj.path === 'string' ? docObj.path.trim() : '';
+  if (sp1 && sp2 && sp1 !== sp2) {
+    throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: conflicto entre storagePath y path`);
+  }
+  const rawStoragePath = sp1 || sp2 || null;
+  const rawUrl = typeof docObj.url === 'string' && docObj.url.trim() ? docObj.url.trim() : null;
+
+  if (!rawStoragePath && !rawUrl) {
+    throw new ServiceError(
+      errorCode,
+      `El ${label} no cuenta con un archivo válido en Storage (storagePath o url)`
+    );
+  }
+
+  const allowedBuckets = getAllowedBucketsForSuffix(suffix);
+  let pathFromStoragePath = null;
+  let pathFromUrl = null;
+
+  if (rawStoragePath) {
+    pathFromStoragePath = validateCanonicalStoragePath(rawStoragePath, {
+      accountId,
+      docKey,
+      suffix,
+      allowHistoricalBase,
+      errorCode,
+      label
+    });
+  }
+
+  if (rawUrl) {
+    const extracted = extractObjectPathFromAuthorizedStorageUrl(rawUrl, {
+      suffix,
+      allowedBuckets,
+      errorCode,
+      label
+    });
+    pathFromUrl = validateCanonicalStoragePath(extracted, {
+      accountId,
+      docKey,
+      suffix,
+      allowHistoricalBase,
+      errorCode,
+      label
+    });
+  }
+
+  if (pathFromStoragePath && pathFromUrl && pathFromStoragePath !== pathFromUrl) {
+    throw new ServiceError(
+      errorCode,
+      `El ${label} no cuenta con un archivo válido en Storage: storagePath y url apuntan a rutas distintas`
+    );
+  }
+
+  const canonicalStoragePath = pathFromStoragePath || pathFromUrl;
+  const cleanUrl = rawUrl || null;
+  const cleanName = optMaxString(docObj.name, `nombre de ${label}`, 200) || defaultName;
+  const cleanContentType = optMaxString(docObj.contentType, `contentType de ${label}`, 120);
+  const cleanSha256 = validateOptionalSha256(docObj.sha256, `sha256 de ${label}`);
+  const cleanSize = validateOptionalSize(docObj.size, `size de ${label}`);
+
+  const effectiveEmision = overrideFechaEmision !== undefined
+    ? overrideFechaEmision
+    : sanitizeDate(docObj.fechaEmision, `fechaEmision de ${label}`);
+  const effectiveVencimiento = overrideFechaVencimiento !== undefined
+    ? overrideFechaVencimiento
+    : sanitizeDate(docObj.fechaVencimiento, `fechaVencimiento de ${label}`);
+
+  return {
+    name: cleanName,
+    storagePath: canonicalStoragePath,
+    url: cleanUrl,
+    size: cleanSize,
+    contentType: cleanContentType,
+    sha256: cleanSha256,
+    fechaEmision: effectiveEmision || null,
+    fechaVencimiento: effectiveVencimiento || null
+  };
 }
 
 function canonicalizeValue(val) {
@@ -173,20 +528,6 @@ function canonicalizeValue(val) {
   return String(val);
 }
 
-function normalizeDocForFingerprint(doc, fallbackFechaVencimiento = null, fallbackFechaEmision = null) {
-  if (!doc || typeof doc !== 'object') return null;
-  return {
-    name: doc.name ? String(doc.name).trim() : null,
-    storagePath: (doc.storagePath || doc.path) ? String(doc.storagePath || doc.path).trim() : null,
-    url: doc.url ? String(doc.url).trim() : null,
-    sha256: sanitizeSha256(doc.sha256) || null,
-    size: doc.size !== undefined && doc.size !== null && doc.size !== '' ? Number(doc.size) : null,
-    contentType: doc.contentType ? String(doc.contentType).trim() : null,
-    fechaEmision: (fallbackFechaEmision || doc.fechaEmision) ? String(fallbackFechaEmision || doc.fechaEmision).trim().slice(0, 10) : null,
-    fechaVencimiento: (fallbackFechaVencimiento || doc.fechaVencimiento) ? String(fallbackFechaVencimiento || doc.fechaVencimiento).trim().slice(0, 10) : null
-  };
-}
-
 function computeOperationFingerprint(action, semanticPayload) {
   const canonical = canonicalizeValue({
     action,
@@ -195,12 +536,42 @@ function computeOperationFingerprint(action, semanticPayload) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
-function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
+function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix = '_prod' }) {
   if (!db) throw new Error('db is required');
   if (!FieldValue) throw new Error('FieldValue is required');
 
   const names = namesFor(suffix);
   const col = k => db.collection(names[k]);
+
+  async function assertStorageObjectExists(storagePath, label = 'documento') {
+    if (!storagePath || typeof storagePath !== 'string') {
+      throw new ServiceError(
+        'failed-precondition',
+        `El ${label} no cuenta con un archivo válido en Storage (storagePath nulo)`
+      );
+    }
+    if (!bucket || typeof bucket.file !== 'function') {
+      throw new ServiceError(
+        'failed-precondition',
+        `Servicio de almacenamiento (Storage bucket) no disponible para verificar la existencia física de ${label}`
+      );
+    }
+    const fileRef = bucket.file(storagePath);
+    if (!fileRef || typeof fileRef.exists !== 'function') {
+      throw new ServiceError(
+        'failed-precondition',
+        `Referencia de archivo Storage inválida para ${label}`
+      );
+    }
+    const existsRes = await fileRef.exists();
+    const exists = Array.isArray(existsRes) ? Boolean(existsRes[0]) : Boolean(existsRes);
+    if (!exists) {
+      throw new ServiceError(
+        'failed-precondition',
+        `El archivo referenciado en Storage ('${storagePath}') para ${label} no existe físicamente en el bucket`
+      );
+    }
+  }
 
   async function resolveCaller(context) {
     if (!context || !context.auth || !context.auth.uid) throw new ServiceError('unauthenticated', 'Authentication required');
@@ -277,8 +648,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     opId = null
   }) {
     assertCaller(caller);
-    const cleanAccountId = reqString(accountId, 'accountId');
-    const cleanNombre = reqString(nombre, 'nombre del representante legal');
+    const cleanAccountId = reqString(accountId, 'accountId', 128);
+    if (!DOC_ID_RE.test(cleanAccountId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de cuenta inválido');
+    }
+    const cleanNombre = reqString(nombre, 'nombre del representante legal', 200);
     const cleanFechaEleccion = sanitizeDate(reqString(fechaEleccion, 'fechaEleccion'), 'fechaEleccion');
     const cleanFechaInicio = sanitizeDate(fechaInicio, 'fechaInicio');
     const cleanFechaVencimiento = sanitizeDate(fechaVencimiento, 'fechaVencimiento');
@@ -299,37 +673,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
 
-    const cleanContactId = contactId ? String(contactId).trim() : null;
+    const cleanContactId = optMaxString(contactId, 'contactId', 128);
     const cleanDuiExpiry = duiDoc.fechaVencimiento ? sanitizeDate(duiDoc.fechaVencimiento, 'fechaVencimiento DUI') : null;
-    const payloadHash = cleanOpId ? computeOperationFingerprint('registerLegalRepresentativeTerm', {
-      callerCid: caller.cid,
-      accountId: cleanAccountId,
-      contactId: cleanContactId,
-      nombre: cleanNombre,
-      fechaEleccion: cleanFechaEleccion,
-      fechaInicio: cleanFechaInicio,
-      fechaVencimiento: cleanFechaVencimiento,
-      credencialDoc: normalizeDocForFingerprint(credencialDoc, cleanFechaVencimiento, cleanFechaEleccion),
-      duiDoc: normalizeDocForFingerprint(duiDoc, cleanDuiExpiry, null)
-    }) : null;
 
     return db.runTransaction(async tx => {
-      const opRef = cleanOpId ? col('ops').doc(`rl_term_${cleanAccountId}_${cleanOpId}`) : null;
-      const opSnap = opRef ? await tx.get(opRef) : null;
-      if (opSnap && opSnap.exists) {
-        const prevOp = opSnap.data();
-        const isMismatch = prevOp.payloadHash
-          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
-          : (prevOp.callerCid !== caller.cid || prevOp.accountId !== cleanAccountId || prevOp.nombre !== cleanNombre || prevOp.fechaEleccion !== cleanFechaEleccion);
-        if (isMismatch) {
-          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
-        }
-        return {
-          ...prevOp.result,
-          idempotentReplay: true
-        };
-      }
-
+      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -339,20 +687,79 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
+      const cleanCredDoc = validateAndNormalizeStorageDoc(credencialDoc, {
+        accountId: cleanAccountId,
+        docKey: 'credencial',
+        suffix,
+        defaultName: 'Credencial de Elección',
+        overrideFechaEmision: cleanFechaEleccion,
+        overrideFechaVencimiento: cleanFechaVencimiento,
+        label: 'credencial del representante legal'
+      });
+
+      const cleanDuiDoc = validateAndNormalizeStorageDoc(duiDoc, {
+        accountId: cleanAccountId,
+        docKey: 'dui',
+        suffix,
+        defaultName: 'DUI Representante Legal',
+        overrideFechaEmision: null,
+        overrideFechaVencimiento: cleanDuiExpiry,
+        label: 'DUI del representante legal'
+      });
+
+      const payloadHash = cleanOpId ? computeOperationFingerprint('registerLegalRepresentativeTerm', {
+        callerCid: caller.cid,
+        accountId: cleanAccountId,
+        contactId: cleanContactId,
+        nombre: cleanNombre,
+        fechaEleccion: cleanFechaEleccion,
+        fechaInicio: cleanFechaInicio,
+        fechaVencimiento: cleanFechaVencimiento,
+        credencialDoc: cleanCredDoc,
+        duiDoc: cleanDuiDoc
+      }) : null;
+
+      const opRef = cleanOpId ? col('ops').doc(`rl_term_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (
+              prevOp.callerCid !== caller.cid ||
+              prevOp.accountId !== cleanAccountId ||
+              prevOp.nombre !== cleanNombre ||
+              prevOp.fechaEleccion !== cleanFechaEleccion ||
+              (prevOp.contactId !== undefined && prevOp.contactId !== cleanContactId) ||
+              (prevOp.fechaVencimiento !== undefined && prevOp.fechaVencimiento !== cleanFechaVencimiento)
+            );
+        if (isMismatch) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
       const clientTermsCol = clientRef.collection('legal_representative_terms');
       const clientPowersCol = clientRef.collection('contract_powers');
       const clientVersionsCol = clientRef.collection('document_versions');
 
-      // 1. Read existing active term (if any)
+      // 2. Read existing active term (if any)
       const activeTermsSnap = await tx.get(clientTermsCol.where('estado', '==', 'vigente'));
       const previousActiveTerm = !activeTermsSnap.empty ? { id: activeTermsSnap.docs[0].id, ...activeTermsSnap.docs[0].data() } : null;
 
-      // 2. Read all currently active contract powers to invalidate them
+      // 3. Read all currently active contract powers to invalidate them
       const activePowersSnap = await tx.get(clientPowersCol.where('estado', '==', 'vigente'));
       const powersToInvalidate = [];
       activePowersSnap.forEach(d => {
         powersToInvalidate.push({ id: d.id, ref: d.ref, ...d.data() });
       });
+
+      // 4. Verify physical existence of both files in Firebase Storage before any Firestore write
+      await assertStorageObjectExists(cleanCredDoc.storagePath, 'credencial del representante legal');
+      await assertStorageObjectExists(cleanDuiDoc.storagePath, 'DUI del representante legal');
 
       const nowIso = new Date().toISOString();
       const rand = crypto.randomBytes(4).toString('hex');
@@ -376,7 +783,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         });
       }
 
-      // 3. Atomically invalidate all powers granted under previous election
+      // 5. Atomically invalidate all powers granted under previous election
       for (const power of powersToInvalidate) {
         tx.update(power.ref, {
           estado: 'anulado_por_nueva_eleccion',
@@ -396,7 +803,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         });
       }
 
-      // 4. Register version for Credencial
+      // 6. Register version for Credencial (exact normalized fields used in payloadHash)
       const credVersionId = `v_cred_${Date.now()}_${rand}`;
       const credRecord = {
         versionId: credVersionId,
@@ -404,14 +811,14 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         entityType: 'client',
         entityId: cleanAccountId,
         docKey: 'credencial',
-        name: credencialDoc.name || 'Credencial de Elección',
-        storagePath: credencialDoc.storagePath || credencialDoc.path || null,
-        url: credencialDoc.url || null,
-        size: credencialDoc.size || null,
-        contentType: credencialDoc.contentType || null,
-        sha256: sanitizeSha256(credencialDoc.sha256) || null,
-        fechaEmision: cleanFechaEleccion,
-        fechaVencimiento: cleanFechaVencimiento,
+        name: cleanCredDoc.name,
+        storagePath: cleanCredDoc.storagePath,
+        url: cleanCredDoc.url,
+        size: cleanCredDoc.size,
+        contentType: cleanCredDoc.contentType,
+        sha256: cleanCredDoc.sha256,
+        fechaEmision: cleanCredDoc.fechaEmision,
+        fechaVencimiento: cleanCredDoc.fechaVencimiento,
         termId: newTermId,
         estado: 'vigente',
         subidoPorId: caller.cid,
@@ -422,7 +829,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       };
       tx.set(clientVersionsCol.doc(credVersionId), credRecord);
 
-      // 5. Register version for DUI
+      // 7. Register version for DUI (exact normalized fields used in payloadHash)
       const duiVersionId = `v_dui_${Date.now()}_${rand}`;
       const duiRecord = {
         versionId: duiVersionId,
@@ -430,13 +837,14 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         entityType: 'client',
         entityId: cleanAccountId,
         docKey: 'dui',
-        name: duiDoc.name || 'DUI Representante Legal',
-        storagePath: duiDoc.storagePath || duiDoc.path || null,
-        url: duiDoc.url || null,
-        size: duiDoc.size || null,
-        contentType: duiDoc.contentType || null,
-        sha256: sanitizeSha256(duiDoc.sha256) || null,
-        fechaVencimiento: duiDoc.fechaVencimiento ? sanitizeDate(duiDoc.fechaVencimiento, 'fechaVencimiento DUI') : null,
+        name: cleanDuiDoc.name,
+        storagePath: cleanDuiDoc.storagePath,
+        url: cleanDuiDoc.url,
+        size: cleanDuiDoc.size,
+        contentType: cleanDuiDoc.contentType,
+        sha256: cleanDuiDoc.sha256,
+        fechaEmision: cleanDuiDoc.fechaEmision,
+        fechaVencimiento: cleanDuiDoc.fechaVencimiento,
         termId: newTermId,
         estado: 'vigente',
         subidoPorId: caller.cid,
@@ -447,11 +855,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       };
       tx.set(clientVersionsCol.doc(duiVersionId), duiRecord);
 
-      // 6. Store new term document
+      // 8. Store new term document
       const newTermData = {
         id: newTermId,
         accountId: cleanAccountId,
-        contactId: contactId ? String(contactId).trim() : null,
+        contactId: cleanContactId,
         nombre: cleanNombre,
         fechaEleccion: cleanFechaEleccion,
         fechaInicio: cleanFechaInicio,
@@ -460,18 +868,24 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           name: credRecord.name,
           storagePath: credRecord.storagePath,
           url: credRecord.url,
+          size: credRecord.size,
+          contentType: credRecord.contentType,
           versionId: credVersionId,
           versionNumber: credRecord.versionNumber,
           sha256: credRecord.sha256,
-          fechaVencimiento: cleanFechaVencimiento
+          fechaEmision: credRecord.fechaEmision,
+          fechaVencimiento: credRecord.fechaVencimiento
         },
         duiDoc: {
           name: duiRecord.name,
           storagePath: duiRecord.storagePath,
           url: duiRecord.url,
+          size: duiRecord.size,
+          contentType: duiRecord.contentType,
           versionId: duiVersionId,
           versionNumber: duiRecord.versionNumber,
           sha256: duiRecord.sha256,
+          fechaEmision: duiRecord.fechaEmision,
           fechaVencimiento: duiRecord.fechaVencimiento
         },
         estado: 'vigente',
@@ -483,7 +897,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       };
       tx.set(clientTermsCol.doc(newTermId), newTermData);
 
-      // 7. Update client root document (maintaining backward-compatible pointer map)
+      // 9. Update client root document
       const updatedDocs = { ...(client.documentos || {}) };
       updatedDocs.credencial = newTermData.credencialDoc;
       updatedDocs.dui = newTermData.duiDoc;
@@ -533,8 +947,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           opId: cleanOpId,
           action: 'registerLegalRepresentativeTerm',
           accountId: cleanAccountId,
+          contactId: cleanContactId,
           nombre: cleanNombre,
           fechaEleccion: cleanFechaEleccion,
+          fechaInicio: cleanFechaInicio,
+          fechaVencimiento: cleanFechaVencimiento,
           payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
@@ -560,8 +977,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     opId = null
   }) {
     assertCaller(caller);
-    const cleanAccountId = reqString(accountId, 'accountId');
-    const cleanContactId = reqString(contactId, 'contactId');
+    const cleanAccountId = reqString(accountId, 'accountId', 128);
+    if (!DOC_ID_RE.test(cleanAccountId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de cuenta inválido');
+    }
+    const cleanContactId = reqString(contactId, 'contactId', 128);
 
     const effectiveDoc = documento || documentoDoc;
     if (!effectiveDoc || typeof effectiveDoc !== 'object') {
@@ -572,32 +992,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
-    const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
-    const payloadHash = cleanOpId ? computeOperationFingerprint('grantContractPower', {
-      callerCid: caller.cid,
-      accountId: cleanAccountId,
-      contactId: cleanContactId,
-      notas: cleanNotas,
-      documento: normalizeDocForFingerprint(effectiveDoc)
-    }) : null;
+
+    const cleanNotas = optMaxString(notas, 'notas', 500);
 
     return db.runTransaction(async tx => {
-      const opRef = cleanOpId ? col('ops').doc(`grant_power_${cleanAccountId}_${cleanOpId}`) : null;
-      const opSnap = opRef ? await tx.get(opRef) : null;
-      if (opSnap && opSnap.exists) {
-        const prevOp = opSnap.data();
-        const isMismatch = prevOp.payloadHash
-          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
-          : (prevOp.callerCid !== caller.cid || prevOp.accountId !== cleanAccountId || prevOp.contactId !== cleanContactId);
-        if (isMismatch) {
-          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
-        }
-        return {
-          ...prevOp.result,
-          idempotentReplay: true
-        };
-      }
-
+      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
       const clientRef = col('clients').doc(cleanAccountId);
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
@@ -607,13 +1006,52 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
-      // 1. Must have an active legal representative term
+      const cleanPowerDoc = validateAndNormalizeStorageDoc(effectiveDoc, {
+        accountId: cleanAccountId,
+        docKey: POWER_DOC_KEY,
+        suffix,
+        defaultName: 'Poder para Firma de Contratos',
+        label: 'poder para firma de contratos'
+      });
+
+      const payloadHash = cleanOpId ? computeOperationFingerprint('grantContractPower', {
+        callerCid: caller.cid,
+        accountId: cleanAccountId,
+        contactId: cleanContactId,
+        notas: cleanNotas,
+        documento: cleanPowerDoc
+      }) : null;
+
+      const opRef = cleanOpId ? col('ops').doc(`grant_power_${cleanAccountId}_${cleanOpId}`) : null;
+      const opSnap = opRef ? await tx.get(opRef) : null;
+      if (opSnap && opSnap.exists) {
+        const prevOp = opSnap.data();
+        const isMismatch = prevOp.payloadHash
+          ? (prevOp.callerCid !== caller.cid || prevOp.payloadHash !== payloadHash)
+          : (
+              prevOp.callerCid !== caller.cid ||
+              prevOp.accountId !== cleanAccountId ||
+              prevOp.contactId !== cleanContactId ||
+              (prevOp.notas !== undefined && prevOp.notas !== cleanNotas) ||
+              (prevOp.result && prevOp.result.notas !== undefined && prevOp.result.notas !== cleanNotas) ||
+              (prevOp.result && prevOp.result.power && prevOp.result.power.storagePath && prevOp.result.power.storagePath !== cleanPowerDoc.storagePath)
+            );
+        if (isMismatch) {
+          throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
+        }
+        return {
+          ...prevOp.result,
+          idempotentReplay: true
+        };
+      }
+
+      // 2. Must have an active legal representative term
       const activeTerm = client.representanteLegalVigente;
       if (!activeTerm || activeTerm.estado !== 'vigente' || !activeTerm.termId) {
         throw new ServiceError('failed-precondition', 'No es posible otorgar poderes sin un nombramiento vigente de Representante Legal en la cuenta');
       }
 
-      // 2. Read contact from contacts_prod (B1 catalog)
+      // 3. Read contact from contacts_prod (B1 catalog)
       const contactRef = col('contacts').doc(cleanContactId);
       const contactSnap = await tx.get(contactRef);
       if (!contactSnap.exists) {
@@ -622,7 +1060,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       const contactData = contactSnap.data();
       const nombreApoderado = contactData.nombreCompleto || `${contactData.nombres || ''} ${contactData.apellidos || ''}`.trim() || 'Apoderado';
 
-      // 3. Verify no existing active power for this contact on this account
+      // 4. Verify no existing active power for this contact on this account
       const clientPowersCol = clientRef.collection('contract_powers');
       const existingPowersSnap = await tx.get(
         clientPowersCol.where('contactId', '==', cleanContactId).where('estado', '==', 'vigente')
@@ -631,12 +1069,15 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('failed-precondition', `El contacto ${nombreApoderado} ya cuenta con un poder vigente para firma de contratos en esta cuenta`);
       }
 
+      // 5. Verify physical existence of power document in Firebase Storage before any Firestore write
+      await assertStorageObjectExists(cleanPowerDoc.storagePath, 'poder para firma de contratos');
+
       const nowIso = new Date().toISOString();
       const rand = crypto.randomBytes(4).toString('hex');
       const newPowerId = `power_${Date.now()}_${rand}`;
       const versionId = `v_power_${Date.now()}_${rand}`;
 
-      // 4. Save version in document_versions subcollection
+      // 6. Save version in document_versions subcollection (exact normalized fields used in payloadHash)
       const clientVersionsCol = clientRef.collection('document_versions');
       const versionRecord = {
         versionId,
@@ -644,12 +1085,14 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         entityType: 'client',
         entityId: cleanAccountId,
         docKey: POWER_DOC_KEY,
-        name: effectiveDoc.name || 'Poder para Firma de Contratos',
-        storagePath: effectiveDoc.storagePath || effectiveDoc.path || null,
-        url: effectiveDoc.url || null,
-        size: effectiveDoc.size || null,
-        contentType: effectiveDoc.contentType || null,
-        sha256: sanitizeSha256(effectiveDoc.sha256) || null,
+        name: cleanPowerDoc.name,
+        storagePath: cleanPowerDoc.storagePath,
+        url: cleanPowerDoc.url,
+        size: cleanPowerDoc.size,
+        contentType: cleanPowerDoc.contentType,
+        sha256: cleanPowerDoc.sha256,
+        fechaEmision: cleanPowerDoc.fechaEmision,
+        fechaVencimiento: cleanPowerDoc.fechaVencimiento,
         termId: activeTerm.termId,
         powerId: newPowerId,
         contactId: cleanContactId,
@@ -662,7 +1105,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       };
       tx.set(clientVersionsCol.doc(versionId), versionRecord);
 
-      // 5. Create power record bound to the active RL term
+      // 7. Create power record bound to the active RL term
       const powerData = {
         id: newPowerId,
         accountId: cleanAccountId,
@@ -674,9 +1117,13 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           name: versionRecord.name,
           storagePath: versionRecord.storagePath,
           url: versionRecord.url,
+          size: versionRecord.size,
+          contentType: versionRecord.contentType,
           versionId,
           versionNumber: 1,
-          sha256: versionRecord.sha256
+          sha256: versionRecord.sha256,
+          fechaEmision: versionRecord.fechaEmision,
+          fechaVencimiento: versionRecord.fechaVencimiento
         },
         estado: 'vigente',
         registradoPor: caller.cid,
@@ -686,7 +1133,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       };
       tx.set(clientPowersCol.doc(newPowerId), powerData);
 
-      // 6. Update client root projection
+      // 8. Update client root projection
       const currentActivePowers = Array.isArray(client.apoderadosVigentes) ? [...client.apoderadosVigentes] : [];
       currentActivePowers.push({
         powerId: newPowerId,
@@ -748,6 +1195,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           action: 'grantContractPower',
           accountId: cleanAccountId,
           contactId: cleanContactId,
+          notas: cleanNotas,
           payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
@@ -765,8 +1213,11 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
   // ---------------------------------------------------------------------------
   async function revokeContractPower({ caller, accountId, powerId, motivo, opId = null }) {
     assertCaller(caller);
-    const cleanAccountId = reqString(accountId, 'accountId');
-    const cleanPowerId = reqString(powerId, 'powerId');
+    const cleanAccountId = reqString(accountId, 'accountId', 128);
+    if (!DOC_ID_RE.test(cleanAccountId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de cuenta inválido');
+    }
+    const cleanPowerId = reqString(powerId, 'powerId', 128);
     const cleanMotivo = reqString(motivo, 'motivo de revocación', 500);
 
     const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
@@ -781,6 +1232,16 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     }) : null;
 
     return db.runTransaction(async tx => {
+      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar idempotencia
+      const clientRef = col('clients').doc(cleanAccountId);
+      const clientSnap = await tx.get(clientRef);
+      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
+      const client = clientSnap.data();
+
+      if (!canAccessAccount(caller, client)) {
+        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
+      }
+
       const opRef = cleanOpId ? col('ops').doc(`revoke_power_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
@@ -795,15 +1256,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           ...prevOp.result,
           idempotentReplay: true
         };
-      }
-
-      const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
       const powerRef = clientRef.collection('contract_powers').doc(cleanPowerId);
@@ -898,7 +1350,8 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', `El documento '${cleanDocKey}' no está sujeto a revisión bienal`);
     }
 
-    const isNoChangesType = confirmationType === 'no_changes' || confirmationType === 'biennial_no_changes';
+    const cleanConfirmationType = typeof confirmationType === 'string' ? confirmationType.trim() : '';
+    const isNoChangesType = cleanConfirmationType === 'no_changes' || cleanConfirmationType === 'biennial_no_changes';
     if (!isNoChangesType) {
       throw new ServiceError(
         'invalid-argument',
@@ -909,21 +1362,30 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       throw new ServiceError('invalid-argument', 'Debe confirmar expresamente que consultó al cliente y que no existen modificaciones');
     }
 
-    const cleanNotas = notas ? String(notas).trim().slice(0, 500) : null;
-    const cleanOpportunityId = opportunityId ? String(opportunityId).trim() : null;
+    const cleanNotas = optMaxString(notas, 'notas', 500);
+    const cleanOpportunityId = optMaxString(opportunityId, 'opportunityId', 128);
     const payloadHash = cleanOpId ? computeOperationFingerprint('recordBiennialConfirmation', {
       callerCid: caller.cid,
       accountId: cleanAccountId,
       docKey: cleanDocKey,
       requestedVersionId: cleanVersionId,
-      confirmationType,
+      confirmationType: cleanConfirmationType,
       confirmedNoChanges: true,
       notas: cleanNotas,
       opportunityId: cleanOpportunityId
     }) : null;
 
     return db.runTransaction(async tx => {
-      // --- FASE 1 DE TRANSACCIÓN: TODAS LAS LECTURAS ---
+      // --- FASE 1 DE TRANSACCIÓN: TODAS LAS LECTURAS (AUTORIZACIÓN ANTES DE IDEMPOTENCIA) ---
+      const clientRef = col('clients').doc(cleanAccountId);
+      const clientSnap = await tx.get(clientRef);
+      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
+      const client = clientSnap.data();
+
+      if (!canAccessAccount(caller, client)) {
+        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
+      }
+
       const opRef = cleanOpId ? col('ops').doc(`biennial_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
 
@@ -935,7 +1397,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
               prevOp.callerCid !== caller.cid ||
               prevOp.accountId !== cleanAccountId ||
               prevOp.docKey !== cleanDocKey ||
-              (prevOp.requestedVersionId && prevOp.requestedVersionId !== cleanVersionId && prevOp.documentVersionId !== cleanVersionId)
+              (prevOp.requestedVersionId && prevOp.requestedVersionId !== cleanVersionId && prevOp.documentVersionId !== cleanVersionId) ||
+              (prevOp.notas !== undefined && prevOp.notas !== cleanNotas) ||
+              (prevOp.opportunityId !== undefined && prevOp.opportunityId !== cleanOpportunityId)
             );
         if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
@@ -944,15 +1408,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           ...prevOp.result,
           idempotentReplay: true
         };
-      }
-
-      const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
       const clientVersionsCol = clientRef.collection('document_versions');
@@ -991,8 +1446,8 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       let healClientDocVersionPointer = false;
 
       if (!versionSnap.exists) {
-        // MEDIO-02 / PUNTO 2 & PUNTO 3: Support initial/legacy client documents ('v_base')
-        // with strict Storage reference validation and concurrency-safe deterministic base resolution.
+        // MEDIO-02 / PUNTO 2 & PUNTO 3 / DEF-A1 & DEF-A2: Support initial/legacy client documents ('v_base')
+        // with strict Storage reference validation, physical existence check, and concurrency-safe deterministic base resolution.
         if (cleanVersionId === 'v_base') {
           let resolvedBase = null;
 
@@ -1006,8 +1461,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
             }
             if (pointerDocData) {
               const pNum = Number(pointerDocData.versionNumber) || 1;
-              // Only resolve 'v_base' to the active pointer if it represents the initial base version (v1)
-              // If the document already moved to v2+, 'v_base' is outdated and must be rejected as superseded.
               if (pNum === 1 && pointerDocData.estado === 'vigente' && !pointerDocData.reemplazadaPorVersionId) {
                 resolvedBase = { id: activePointerId, data: pointerDocData, needsHeal: false };
               } else {
@@ -1059,28 +1512,34 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
             healClientDocVersionPointer = Boolean(resolvedBase.needsHeal);
           } else {
             // Case 4: Materialize deterministic base version ONLY if currentActiveDoc has a valid Storage reference
-            const storageRef = extractStorageReferenceFromDoc(currentActiveDoc);
-            if (!storageRef.isValid) {
-              throw new ServiceError(
-                'failed-precondition',
-                `El documento '${cleanDocKey}' no cuenta con un archivo válido en Storage (storagePath o url) para materializar su versión base`
-              );
-            }
+            // AND the object physically exists in Firebase Storage.
+            const normalizedBaseDoc = validateAndNormalizeStorageDoc(currentActiveDoc, {
+              accountId: cleanAccountId,
+              docKey: cleanDocKey,
+              suffix,
+              allowHistoricalBase: true,
+              defaultName: cleanDocKey,
+              errorCode: 'failed-precondition',
+              label: `documento '${cleanDocKey}'`
+            });
+
+            await assertStorageObjectExists(normalizedBaseDoc.storagePath, `documento base '${cleanDocKey}'`);
+
             effectiveVersionId = deterministicBaseId;
             versionData = {
               versionId: effectiveVersionId,
-              versionNumber: Number(currentActiveDoc.versionNumber) || 1,
+              versionNumber: (typeof currentActiveDoc === 'object' && Number(currentActiveDoc.versionNumber)) || 1,
               entityType: 'client',
               entityId: cleanAccountId,
               docKey: cleanDocKey,
-              name: (typeof currentActiveDoc === 'object' && currentActiveDoc.name) ? currentActiveDoc.name : cleanDocKey,
-              storagePath: storageRef.storagePath,
-              url: storageRef.url,
-              size: (typeof currentActiveDoc === 'object' && currentActiveDoc.size) || null,
-              contentType: (typeof currentActiveDoc === 'object' && currentActiveDoc.contentType) || null,
-              sha256: (typeof currentActiveDoc === 'object' && sanitizeSha256(currentActiveDoc.sha256)) || null,
-              fechaEmision: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaEmision) || null,
-              fechaVencimiento: (typeof currentActiveDoc === 'object' && currentActiveDoc.fechaVencimiento) || null,
+              name: normalizedBaseDoc.name,
+              storagePath: normalizedBaseDoc.storagePath,
+              url: normalizedBaseDoc.url,
+              size: normalizedBaseDoc.size,
+              contentType: normalizedBaseDoc.contentType,
+              sha256: normalizedBaseDoc.sha256,
+              fechaEmision: normalizedBaseDoc.fechaEmision,
+              fechaVencimiento: normalizedBaseDoc.fechaVencimiento,
               estado: 'vigente',
               subidoPorId: client.createdBy || caller.cid,
               creadoEn: (typeof currentActiveDoc === 'object' && currentActiveDoc.actualizadoEn) || client.fecha_creacion || nowIso,
@@ -1110,7 +1569,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       }
 
       // 2.3 A biennial confirmation cannot renew a document that has an expired fechaVencimiento
-      const effectiveExpiry = versionData.fechaVencimiento || currentActiveDoc.fechaVencimiento || null;
+      const effectiveExpiry = versionData.fechaVencimiento || (typeof currentActiveDoc === 'object' ? currentActiveDoc.fechaVencimiento : null) || null;
       if (effectiveExpiry && String(effectiveExpiry).slice(0, 10) < todayStr) {
         throw new ServiceError('failed-precondition', 'Una confirmación de revisión bienal no puede utilizarse para renovar un documento vencido');
       }
@@ -1122,14 +1581,14 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
       if (versionData.reemplazadaPorVersionId) {
         throw new ServiceError('failed-precondition', 'No es posible confirmar una versión histórica que ya fue sustituida por una versión posterior');
       }
-      if (currentActiveDoc.versionId && currentActiveDoc.versionId !== effectiveVersionId) {
+      if (typeof currentActiveDoc === 'object' && currentActiveDoc.versionId && currentActiveDoc.versionId !== effectiveVersionId) {
         throw new ServiceError(
           'failed-precondition',
           `No es posible confirmar una versión desactualizada ('${effectiveVersionId}') cuando la versión vigente actual es '${currentActiveDoc.versionId}'`
         );
       }
 
-      const targetVersionNumber = Number(versionData.versionNumber) || Number(currentActiveDoc.versionNumber) || 1;
+      const targetVersionNumber = Number(versionData.versionNumber) || (typeof currentActiveDoc === 'object' && Number(currentActiveDoc.versionNumber)) || 1;
       if (docKeyVersionsSnap && typeof docKeyVersionsSnap.forEach === 'function') {
         let supersededByHigher = false;
         docKeyVersionsSnap.forEach(d => {
@@ -1165,7 +1624,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         docKey: cleanDocKey,
         documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
-        confirmationType,
+        confirmationType: cleanConfirmationType,
         confirmedNoChanges: true,
         notas: cleanNotas,
         confirmedBy: caller.cid,
@@ -1191,7 +1650,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         confirmedByName: caller.name || 'Comercial',
         documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
-        confirmationType
+        confirmationType: cleanConfirmationType
       };
 
       const clientUpdatePatch = {
@@ -1203,6 +1662,10 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         const existingEntry = typeof updatedDocs[cleanDocKey] === 'object' ? { ...updatedDocs[cleanDocKey] } : { url: updatedDocs[cleanDocKey] };
         existingEntry.versionId = effectiveVersionId;
         existingEntry.versionNumber = targetVersionNumber;
+        if (lazyBaseVersionToCreate) {
+          existingEntry.storagePath = lazyBaseVersionToCreate.storagePath;
+          existingEntry.name = lazyBaseVersionToCreate.name;
+        }
         updatedDocs[cleanDocKey] = existingEntry;
         clientUpdatePatch.documentos = updatedDocs;
       }
@@ -1214,7 +1677,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         docKey: cleanDocKey,
         documentVersionId: effectiveVersionId,
         versionNumber: targetVersionNumber,
-        confirmationType,
+        confirmationType: cleanConfirmationType,
         nextReviewAt: nextReviewIso,
         opportunityId: confirmationRecord.opportunityId,
         opId: cleanOpId
@@ -1240,6 +1703,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           docKey: cleanDocKey,
           documentVersionId: effectiveVersionId,
           requestedVersionId: cleanVersionId,
+          confirmationType: cleanConfirmationType,
+          notas: cleanNotas,
+          opportunityId: cleanOpportunityId,
           payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,
@@ -1266,33 +1732,62 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
     opId = null
   }) {
     assertCaller(caller);
-    const cleanAccountId = reqString(accountId, 'accountId');
-    const cleanDocKey = reqString(docKey, 'docKey');
+    const cleanAccountId = reqString(accountId, 'accountId', 128);
+    if (!DOC_ID_RE.test(cleanAccountId)) {
+      throw new ServiceError('invalid-argument', 'Identificador de cuenta inválido');
+    }
+    const cleanDocKey = reqString(docKey, 'docKey', 64);
+    if (!ALL_DOC_KEYS.includes(cleanDocKey)) {
+      throw new ServiceError('invalid-argument', `Clave documental '${cleanDocKey}' no reconocida`);
+    }
 
     if (!doc || typeof doc !== 'object') {
       throw new ServiceError('invalid-argument', 'Documento inválido');
     }
 
-    const cleanFechaVencimiento = sanitizeDate(fechaVencimiento || doc.fechaVencimiento, 'fechaVencimiento');
-    const cleanFechaEmision = sanitizeDate(fechaEmision || doc.fechaEmision, 'fechaEmision');
-    const incomingSha = sanitizeSha256(doc.sha256);
-    const cleanMotivoSustitucion = motivoSustitucion ? String(motivoSustitucion).trim().slice(0, 500) : null;
+    const rawFechaVenc = fechaVencimiento !== undefined && fechaVencimiento !== null ? fechaVencimiento : doc.fechaVencimiento;
+    const rawFechaEmi = fechaEmision !== undefined && fechaEmision !== null ? fechaEmision : doc.fechaEmision;
+    const cleanFechaVencimiento = sanitizeDate(rawFechaVenc, 'fechaVencimiento');
+    const cleanFechaEmision = sanitizeDate(rawFechaEmi, 'fechaEmision');
+    const cleanMotivoSustitucion = optMaxString(motivoSustitucion, 'motivoSustitucion', 500);
 
     const cleanOpId = opId ? reqString(opId, 'opId', 128) : null;
     if (cleanOpId && !DOC_ID_RE.test(cleanOpId)) {
       throw new ServiceError('invalid-argument', 'Identificador de operación (opId) inválido');
     }
-    const payloadHash = cleanOpId ? computeOperationFingerprint('saveAccountDocument', {
-      callerCid: caller.cid,
-      accountId: cleanAccountId,
-      docKey: cleanDocKey,
-      motivoSustitucion: cleanMotivoSustitucion,
-      fechaEmision: cleanFechaEmision,
-      fechaVencimiento: cleanFechaVencimiento,
-      doc: normalizeDocForFingerprint(doc, cleanFechaVencimiento, cleanFechaEmision)
-    }) : null;
 
     return db.runTransaction(async tx => {
+      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
+      const clientRef = col('clients').doc(cleanAccountId);
+      const clientSnap = await tx.get(clientRef);
+      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
+      const client = clientSnap.data();
+
+      if (!canAccessAccount(caller, client)) {
+        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
+      }
+
+      const cleanSaveDoc = validateAndNormalizeStorageDoc(doc, {
+        accountId: cleanAccountId,
+        docKey: cleanDocKey,
+        suffix,
+        defaultName: 'Documento',
+        overrideFechaEmision: cleanFechaEmision,
+        overrideFechaVencimiento: cleanFechaVencimiento,
+        label: `documento '${cleanDocKey}'`
+      });
+      const incomingSha = cleanSaveDoc.sha256;
+
+      const payloadHash = cleanOpId ? computeOperationFingerprint('saveAccountDocument', {
+        callerCid: caller.cid,
+        accountId: cleanAccountId,
+        docKey: cleanDocKey,
+        motivoSustitucion: cleanMotivoSustitucion,
+        fechaEmision: cleanSaveDoc.fechaEmision,
+        fechaVencimiento: cleanSaveDoc.fechaVencimiento,
+        doc: cleanSaveDoc
+      }) : null;
+
       const opRef = cleanOpId ? col('ops').doc(`save_doc_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
       if (opSnap && opSnap.exists) {
@@ -1303,7 +1798,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
               prevOp.callerCid !== caller.cid ||
               prevOp.accountId !== cleanAccountId ||
               prevOp.docKey !== cleanDocKey ||
-              (incomingSha && prevOp.sha256 && prevOp.sha256 !== incomingSha)
+              ((prevOp.sha256 || null) !== (incomingSha || null)) ||
+              (prevOp.storagePath !== undefined && prevOp.storagePath !== cleanSaveDoc.storagePath) ||
+              (prevOp.motivoSustitucion !== undefined && prevOp.motivoSustitucion !== cleanMotivoSustitucion)
             );
         if (isMismatch) {
           throw new ServiceError('already-exists', 'El identificador de operación (opId) ya fue utilizado con parámetros distintos');
@@ -1312,15 +1809,6 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           ...prevOp.result,
           idempotentReplay: true
         };
-      }
-
-      const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
       }
 
       const clientVersionsCol = clientRef.collection('document_versions');
@@ -1356,6 +1844,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         throw new ServiceError('failed-precondition', `La fecha de vencimiento especificada (${cleanFechaVencimiento}) ya se encuentra vencida. Debe indicar una fecha vigente.`);
       }
 
+      // Verify physical existence in Firebase Storage before any Firestore write
+      await assertStorageObjectExists(cleanSaveDoc.storagePath, `documento '${cleanDocKey}'`);
+
       const nowIso = new Date().toISOString();
       const rand = crypto.randomBytes(4).toString('hex');
       const versionId = `v_${cleanDocKey}_${Date.now()}_${rand}`;
@@ -1377,17 +1868,17 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         entityType: 'client',
         entityId: cleanAccountId,
         docKey: cleanDocKey,
-        name: doc.name || 'Documento',
-        storagePath: doc.storagePath || doc.path || null,
-        url: doc.url || null,
-        size: doc.size || null,
-        contentType: doc.contentType || null,
-        sha256: incomingSha,
-        fechaEmision: cleanFechaEmision,
-        fechaVencimiento: cleanFechaVencimiento,
+        name: cleanSaveDoc.name,
+        storagePath: cleanSaveDoc.storagePath,
+        url: cleanSaveDoc.url,
+        size: cleanSaveDoc.size,
+        contentType: cleanSaveDoc.contentType,
+        sha256: cleanSaveDoc.sha256,
+        fechaEmision: cleanSaveDoc.fechaEmision,
+        fechaVencimiento: cleanSaveDoc.fechaVencimiento,
         estado: 'vigente',
         reemplazaVersionId: (existingDoc && existingDoc.versionId) ? existingDoc.versionId : null,
-        motivoSustitucion: motivoSustitucion ? String(motivoSustitucion).trim().slice(0, 500) : null,
+        motivoSustitucion: cleanMotivoSustitucion,
         subidoPorId: caller.cid,
         subidoPorNombre: caller.name,
         subidoPorRol: caller.role,
@@ -1402,11 +1893,13 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         name: versionRecord.name,
         storagePath: versionRecord.storagePath,
         url: versionRecord.url,
+        size: versionRecord.size,
+        contentType: versionRecord.contentType,
         versionId,
         versionNumber: newVersionNumber,
-        sha256: incomingSha,
-        fechaEmision: cleanFechaEmision,
-        fechaVencimiento: cleanFechaVencimiento,
+        sha256: versionRecord.sha256,
+        fechaEmision: versionRecord.fechaEmision,
+        fechaVencimiento: versionRecord.fechaVencimiento,
         actualizadoEn: nowIso
       };
 
@@ -1440,7 +1933,7 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
         versionId,
         versionNumber: newVersionNumber,
         previousVersionId: (existingDoc && existingDoc.versionId) ? existingDoc.versionId : null,
-        motivoSustitucion
+        motivoSustitucion: cleanMotivoSustitucion
       });
 
       const resultPayload = {
@@ -1456,7 +1949,9 @@ function createAccountDocumentsService({ db, FieldValue, suffix = '_prod' }) {
           action: 'saveAccountDocument',
           accountId: cleanAccountId,
           docKey: cleanDocKey,
+          storagePath: cleanSaveDoc.storagePath,
           sha256: incomingSha || null,
+          motivoSustitucion: cleanMotivoSustitucion,
           payloadHash,
           callerCid: caller.cid,
           callerUid: caller.uid,

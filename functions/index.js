@@ -2326,6 +2326,7 @@ function accountDocumentsServiceFor(suffix) {
     accountDocumentsServiceCache[suffix] = createAccountDocumentsService({
       db,
       FieldValue: firestoreStatics().FieldValue,
+      bucket: admin.storage().bucket(),
       suffix
     });
   }

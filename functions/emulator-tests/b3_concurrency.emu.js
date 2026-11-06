@@ -54,6 +54,8 @@ const state = {
   appB: null,
   dbA: null,
   dbB: null,
+  bucket: null,
+  missingStorageFiles: new Set(),
   docSvcA: null,
   docSvcB: null,
   wfSvcA: null,
@@ -87,8 +89,16 @@ beforeAll(async () => {
   state.dbA = state.appA.firestore();
   state.dbB = state.appB.firestore();
 
-  state.docSvcA = createAccountDocumentsService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX });
-  state.docSvcB = createAccountDocumentsService({ db: state.dbB, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX });
+  state.bucket = {
+    name: 'demo-ductsal-local.appspot.com',
+    file: (storagePath) => ({
+      name: storagePath,
+      exists: async () => [!state.missingStorageFiles.has(storagePath)]
+    })
+  };
+
+  state.docSvcA = createAccountDocumentsService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, bucket: state.bucket, suffix: SUFFIX });
+  state.docSvcB = createAccountDocumentsService({ db: state.dbB, FieldValue: admin.firestore.FieldValue, bucket: state.bucket, suffix: SUFFIX });
 
   const verifyManager = async () => true;
   const commSvcA = createCommercialService({ db: state.dbA, FieldValue: admin.firestore.FieldValue, suffix: SUFFIX, verifyManager });
@@ -162,8 +172,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         fechaEleccion: '2024-01-15',
         fechaVencimiento: '2027-01-15',
         estado: 'vigente',
-        credencialDoc: { name: 'credencial_mendez.pdf', storagePath: 'prod_files/clients/test/legal/c1.pdf' },
-        duiDoc: { name: 'dui_mendez.pdf', storagePath: 'prod_files/clients/test/identificacion/d1.pdf' }
+        credencialDoc: { name: 'credencial_mendez.pdf', storagePath: `local_files/clients/${accountId}/legal/c1.pdf` },
+        duiDoc: { name: 'dui_mendez.pdf', storagePath: `local_files/clients/${accountId}/identificacion/d1.pdf` }
       };
 
       await H.setDoc('clients_local', accountId, {
@@ -196,7 +206,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           contactId: contactBId,
           documento: {
             name: 'poder_morales.pdf',
-            storagePath: 'prod_files/clients/test/poderes/p1.pdf',
+            storagePath: `local_files/clients/${accountId}/poderes/p1.pdf`,
             nombreApoderado: 'Lic. Claudia Morales',
             tipoPoder: 'especial',
             facultadFirmaContratos: true,
@@ -216,8 +226,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           cargo: 'Directora Ejecutiva y Rep. Legal',
           fechaEleccion: '2026-01-10',
           fechaVencimiento: '2029-01-10',
-          credencialDoc: { name: 'credencial_solis.pdf', storagePath: 'prod_files/clients/test/legal/c2.pdf' },
-          duiDoc: { name: 'dui_solis.pdf', storagePath: 'prod_files/clients/test/identificacion/d2.pdf' }
+          credencialDoc: { name: 'credencial_solis.pdf', storagePath: `local_files/clients/${accountId}/legal/c2.pdf` },
+          duiDoc: { name: 'dui_solis.pdf', storagePath: `local_files/clients/${accountId}/identificacion/d2.pdf` }
         }).catch(err => ({ error: err.message }))
       );
 
@@ -280,8 +290,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           cargo: 'Presidente',
           fechaEleccion: '2025-01-01',
           fechaVencimiento: '2028-01-01',
-          credencialDoc: { name: 'cred_a.pdf', storagePath: 'prod_files/clients/test/legal/ca.pdf' },
-          duiDoc: { name: 'dui_a.pdf', storagePath: 'prod_files/clients/test/identificacion/da.pdf' }
+          credencialDoc: { name: 'cred_a.pdf', storagePath: `local_files/clients/${accountId}/legal/ca.pdf` },
+          duiDoc: { name: 'dui_a.pdf', storagePath: `local_files/clients/${accountId}/identificacion/da.pdf` }
         })
       );
 
@@ -293,8 +303,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           cargo: 'Presidenta',
           fechaEleccion: '2025-01-02',
           fechaVencimiento: '2028-01-02',
-          credencialDoc: { name: 'cred_b.pdf', storagePath: 'prod_files/clients/test/legal/cb.pdf' },
-          duiDoc: { name: 'dui_b.pdf', storagePath: 'prod_files/clients/test/identificacion/db.pdf' }
+          credencialDoc: { name: 'cred_b.pdf', storagePath: `local_files/clients/${accountId}/legal/cb.pdf` },
+          duiDoc: { name: 'dui_b.pdf', storagePath: `local_files/clients/${accountId}/identificacion/db.pdf` }
         })
       );
 
@@ -331,8 +341,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         fechaEleccion: '2024-01-01',
         fechaVencimiento: '2027-01-01',
         estado: 'vigente',
-        credencialDoc: { name: 'cred.pdf', storagePath: 'prod_files/clients/test/legal/c.pdf' },
-        duiDoc: { name: 'dui.pdf', storagePath: 'prod_files/clients/test/identificacion/d.pdf' }
+        credencialDoc: { name: 'cred.pdf', storagePath: `local_files/clients/${accountId}/legal/c.pdf` },
+        duiDoc: { name: 'dui.pdf', storagePath: `local_files/clients/${accountId}/identificacion/d.pdf` }
       };
 
       const powerDoc = {
@@ -342,7 +352,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         nombreApoderado: 'Lic. Fernando Cruz',
         facultadFirmaContratos: true,
         estado: 'vigente',
-        testimonioDoc: { name: 'poder.pdf', storagePath: 'prod_files/clients/test/poderes/p.pdf' }
+        testimonioDoc: { name: 'poder.pdf', storagePath: `local_files/clients/${accountId}/poderes/p.pdf` }
       };
 
       await H.setDoc('clients_local', accountId, {
@@ -398,8 +408,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         cargo: 'Presidente',
         fechaEleccion: '2026-02-01',
         fechaVencimiento: '2029-02-01',
-        credencialDoc: { name: 'cred2.pdf', storagePath: 'prod_files/clients/test/legal/c2.pdf' },
-        duiDoc: { name: 'dui2.pdf', storagePath: 'prod_files/clients/test/identificacion/d2.pdf' }
+        credencialDoc: { name: 'cred2.pdf', storagePath: `local_files/clients/${accountId}/legal/c2.pdf` },
+        duiDoc: { name: 'dui2.pdf', storagePath: `local_files/clients/${accountId}/identificacion/d2.pdf` }
       });
 
       // Intentar finalizar la oportunidad con el apoderado del período anterior (incluyendo docs nuevos con motivoSustitucion en data para activar applyDocumentVersionsTx)
@@ -669,7 +679,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         documentos: {
           escritura: {
             name: 'escritura_v1.pdf',
-            storagePath: 'prod_files/clients/test/legal/esc_v1.pdf',
+            storagePath: `local_files/clients/${accountId}/legal/esc_v1.pdf`,
             versionId: v1Id,
             versionNumber: 1
           }
@@ -700,7 +710,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
           docKey: 'escritura',
           doc: {
             name: 'escritura_v2.pdf',
-            storagePath: 'prod_files/clients/test/legal/esc_v2.pdf',
+            storagePath: `local_files/clients/${accountId}/legal/esc_v2.pdf`,
             sha256: '9'.repeat(64)
           },
           motivoSustitucion: 'Reforma estatutaria v2'
@@ -788,8 +798,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         cargo: 'Presidente',
         fechaEleccion: '2025-01-10',
         fechaVencimiento: '2028-01-10',
-        credencialDoc: { name: 'cred_idem.pdf', storagePath: 'prod_files/clients/test/legal/c_idem.pdf', sha256: '1'.repeat(64) },
-        duiDoc: { name: 'dui_idem.pdf', storagePath: 'prod_files/clients/test/identificacion/d_idem.pdf', sha256: '2'.repeat(64), fechaVencimiento: '2029-05-01' },
+        credencialDoc: { name: 'cred_idem.pdf', storagePath: `local_files/clients/${accountId}/legal/c_idem.pdf`, sha256: '1'.repeat(64) },
+        duiDoc: { name: 'dui_idem.pdf', storagePath: `local_files/clients/${accountId}/identificacion/d_idem.pdf`, sha256: '2'.repeat(64), fechaVencimiento: '2029-05-01' },
         opId: opRl
       };
       const rlRes1 = await state.docSvcA.registerLegalRepresentativeTerm(rlPayload);
@@ -808,7 +818,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         notas: 'Poder con nota persistida BAJO-01',
         documento: {
           name: 'poder_idem.pdf',
-          storagePath: 'prod_files/clients/test/poderes/p_idem.pdf',
+          storagePath: `local_files/clients/${accountId}/poderes/p_idem.pdf`,
           sha256: '3'.repeat(64),
           nombreApoderado: 'Lic. Claudia Idempotente',
           tipoPoder: 'especial',
@@ -849,7 +859,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         docKey: 'nit',
         doc: {
           name: 'nit_idem.pdf',
-          storagePath: 'prod_files/clients/test/fiscal/nit_idem.pdf',
+          storagePath: `local_files/clients/${accountId}/legal/nit_idem.pdf`,
           sha256: '4'.repeat(64)
         },
         opId: opSave
@@ -901,7 +911,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         documentos: {
           escritura: {
             name: 'escritura_real_legacy.pdf',
-            storagePath: `prod_files/clients/${accountId}/legal/escritura_real_legacy.pdf`,
+            storagePath: `local_files/clients/${accountId}/legal/escritura_real_legacy.pdf`,
             size: 128000,
             contentType: 'application/pdf'
           }
@@ -947,7 +957,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
       expect(versionsSnap.size).toBe(1);
       const baseDoc = versionsSnap.docs[0].data();
       expect(baseDoc.versionId).toBe('v_escritura_base_1');
-      expect(baseDoc.storagePath).toBe(`prod_files/clients/${accountId}/legal/escritura_real_legacy.pdf`);
+      expect(baseDoc.storagePath).toBe(`local_files/clients/${accountId}/legal/escritura_real_legacy.pdf`);
       expect(baseDoc.size).toBe(128000);
       expect(baseDoc.contentType).toBe('application/pdf');
 
@@ -989,7 +999,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
         documentos: {
           escritura: {
             name: 'escritura_fp.pdf',
-            storagePath: `prod_files/clients/${accountId}/legal/escritura_fp.pdf`
+            storagePath: `local_files/clients/${accountId}/legal/escritura_fp.pdf`
           }
         },
         visibleTo: [USERS.admin1.cid],
@@ -1008,8 +1018,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             nombre: 'Ing. RL Fingerprint',
             fechaEleccion: '2026-01-10',
             fechaVencimiento: '2029-01-10',
-            credencialDoc: { name: 'cred.pdf', storagePath: `prod_files/clients/${accountId}/legal/cred1.pdf` },
-            duiDoc: { name: 'dui.pdf', storagePath: `prod_files/clients/${accountId}/identificacion/dui1.pdf` },
+            credencialDoc: { name: 'cred.pdf', storagePath: `local_files/clients/${accountId}/legal/cred1.pdf` },
+            duiDoc: { name: 'dui.pdf', storagePath: `local_files/clients/${accountId}/identificacion/dui1.pdf` },
             opId: opRl
           })
         ),
@@ -1021,8 +1031,8 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             nombre: 'Ing. RL Fingerprint',
             fechaEleccion: '2026-01-10',
             fechaVencimiento: '2030-01-10', // Parámetro secundario distinto
-            credencialDoc: { name: 'cred.pdf', storagePath: `prod_files/clients/${accountId}/legal/cred1.pdf` },
-            duiDoc: { name: 'dui.pdf', storagePath: `prod_files/clients/${accountId}/identificacion/dui1.pdf` },
+            credencialDoc: { name: 'cred.pdf', storagePath: `local_files/clients/${accountId}/legal/cred1.pdf` },
+            duiDoc: { name: 'dui.pdf', storagePath: `local_files/clients/${accountId}/identificacion/dui1.pdf` },
             opId: opRl
           })
         )
@@ -1042,7 +1052,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             caller: callerA,
             accountId,
             contactId: contactId2,
-            documento: { name: 'poder.pdf', storagePath: `prod_files/clients/${accountId}/poderes/p_a.pdf` },
+            documento: { name: 'poder.pdf', storagePath: `local_files/clients/${accountId}/poderes/p_a.pdf` },
             notas: 'Nota A',
             opId: opPw
           })
@@ -1052,7 +1062,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             caller: callerA,
             accountId,
             contactId: contactId2,
-            documento: { name: 'poder.pdf', storagePath: `prod_files/clients/${accountId}/poderes/p_b.pdf` },
+            documento: { name: 'poder.pdf', storagePath: `local_files/clients/${accountId}/poderes/p_b.pdf` },
             notas: 'Nota A',
             opId: opPw
           })
@@ -1132,7 +1142,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             caller: callerA,
             accountId,
             docKey: 'nit',
-            doc: { name: 'nit.pdf', storagePath: `prod_files/clients/${accountId}/legal/nit_a.pdf` },
+            doc: { name: 'nit.pdf', storagePath: `local_files/clients/${accountId}/legal/nit_a.pdf` },
             motivoSustitucion: 'Motivo A',
             opId: opSv
           })
@@ -1142,7 +1152,7 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
             caller: callerA,
             accountId,
             docKey: 'nit',
-            doc: { name: 'nit.pdf', storagePath: `prod_files/clients/${accountId}/legal/nit_b.pdf` },
+            doc: { name: 'nit.pdf', storagePath: `local_files/clients/${accountId}/legal/nit_b.pdf` },
             motivoSustitucion: 'Motivo A',
             opId: opSv
           })
@@ -1150,6 +1160,84 @@ describe('FASE 2 B3: Concurrencia Real Multi-Cliente en Firestore Emulator', () 
       ]);
       expect(svResults.filter(r => r.status === 'fulfilled')).toHaveLength(1);
       expect(svResults.filter(r => r.status === 'rejected')[0].reason.code).toBe('already-exists');
+    });
+
+    test('DEF-A1, DEF-A2 y DEF-B1: En emulador real rechaza objeto inexistente en Storage, ruta de otro entorno/cuenta y replay tras perder acceso a la cuenta', async () => {
+      const accountId = `CLI_B3_CONC_DEFA_${TAG}`;
+      const callerSeller = { uid: USERS.seller.uid, email: USERS.seller.email, role: 'vendedor', cid: USERS.seller.cid, profileId: USERS.seller.cid, name: USERS.seller.nombre };
+
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación DEF-A1/A2/B1 ${TAG}`,
+        tipo: 'juridica',
+        documentos: {},
+        createdBy: USERS.seller.cid,
+        visibleTo: [USERS.seller.cid],
+        vendedor_asignado: USERS.seller.cid,
+        activo: true
+      });
+
+      // 1. DEF-A1: Rechaza ruta de otro entorno (prod_files en _local)
+      await expect(
+        state.docSvcA.saveAccountDocument({
+          caller: callerSeller,
+          accountId,
+          docKey: 'nit',
+          doc: { name: 'nit.pdf', storagePath: `prod_files/clients/${accountId}/legal/nit.pdf` }
+        })
+      ).rejects.toThrow(/prefijo de entorno/i);
+
+      // 2. DEF-A2: Rechaza ruta válida cuyo archivo físico no existe en Storage (exists() === false)
+      const missingPath = `local_files/clients/${accountId}/legal/nit_inexistente.pdf`;
+      state.missingStorageFiles.add(missingPath);
+      try {
+        await expect(
+          state.docSvcA.saveAccountDocument({
+            caller: callerSeller,
+            accountId,
+            docKey: 'nit',
+            doc: { name: 'nit.pdf', storagePath: missingPath }
+          })
+        ).rejects.toThrow(/no existe físicamente en el bucket/i);
+      } finally {
+        state.missingStorageFiles.delete(missingPath);
+      }
+
+      // 3. DEF-B1: Ejecuta operación con opId y luego revoca acceso de seller a la cuenta -> replay debe fallar con permission-denied
+      const opAuth = `op_defb1_auth_${TAG}`;
+      const validPath = `local_files/clients/${accountId}/legal/nit_valido.pdf`;
+      const okRes = await state.docSvcA.saveAccountDocument({
+        caller: callerSeller,
+        accountId,
+        docKey: 'nit',
+        doc: { name: '  nit_valido.pdf  ', storagePath: validPath, size: 8192, sha256: 'A'.repeat(64) },
+        motivoSustitucion: 'Carga inicial válida',
+        opId: opAuth
+      });
+      expect(okRes.success).toBe(true);
+
+      // Revocar acceso de seller a la cuenta
+      await H.setDoc('clients_local', accountId, {
+        id: accountId,
+        empresa: `Corporación DEF-A1/A2/B1 ${TAG}`,
+        tipo: 'juridica',
+        documentos: {},
+        createdBy: USERS.admin1.cid,
+        visibleTo: [USERS.admin1.cid],
+        vendedor_asignado: USERS.admin1.cid,
+        activo: true
+      });
+
+      await expect(
+        state.docSvcB.saveAccountDocument({
+          caller: callerSeller,
+          accountId,
+          docKey: 'nit',
+          doc: { name: 'nit_valido.pdf', storagePath: validPath, size: 8192, sha256: 'a'.repeat(64) },
+          motivoSustitucion: 'Carga inicial válida',
+          opId: opAuth
+        })
+      ).rejects.toThrow(/No tienes acceso a esta cuenta/i);
     });
   });
 });
