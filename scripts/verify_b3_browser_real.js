@@ -12,8 +12,12 @@ const { spawn } = require('child_process');
 const PROJECT = 'demo-ductsal-local';
 const FIRESTORE_PORT = 8080;
 const AUTH_PORT = 9099;
+const STORAGE_PORT = 9199;
+const STORAGE_BUCKET = `${PROJECT}.appspot.com`;
 const HTTP_PORT = 8124;
 const CDP_PORT = 9226;
+
+const createdStoragePaths = new Set();
 
 const ARTIFACT_SCREENSHOT_DIR = process.env.ARTIFACT_SCREENSHOT_DIR || null;
 const DOCS_SCREENSHOT_DIR = path.resolve(__dirname, '../docs/screenshots');
@@ -27,8 +31,60 @@ const MIME_TYPES = {
   '.png': 'image/png'
 };
 
+async function uploadToStorageEmulator(storagePath, content = '%PDF-1.4 DUCTSAL B3 TEST DOCUMENT', contentType = 'application/pdf') {
+  const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o?name=${encodeURIComponent(storagePath)}`;
+  const body = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': contentType || 'application/pdf',
+      Authorization: 'Bearer owner'
+    },
+    body
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to upload ${storagePath} to Storage emulator: ${res.status} ${text}`);
+  }
+  createdStoragePaths.add(storagePath);
+  return { storagePath, size: body.length, contentType: contentType || 'application/pdf' };
+}
+
+async function cleanupCreatedStorageObjects() {
+  for (const sp of createdStoragePaths) {
+    try {
+      const url = `http://127.0.0.1:${STORAGE_PORT}/v0/b/${STORAGE_BUCKET}/o/${encodeURIComponent(sp)}`;
+      await fetch(url, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer owner' }
+      });
+    } catch (_) {}
+  }
+  createdStoragePaths.clear();
+}
+
 const server = http.createServer((req, res) => {
-  let reqPath = req.url.split('?')[0];
+  const parsedUrl = new URL(req.url, `http://127.0.0.1:${HTTP_PORT}`);
+  if (req.method === 'POST' && parsedUrl.pathname === '/__emulator_storage_upload') {
+    const storagePath = parsedUrl.searchParams.get('name') || '';
+    const contentType = parsedUrl.searchParams.get('contentType') || 'application/pdf';
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', async () => {
+      try {
+        const buf = Buffer.concat(chunks);
+        const uploaded = await uploadToStorageEmulator(storagePath, buf, contentType);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(uploaded));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  let reqPath = parsedUrl.pathname;
   if (reqPath === '/') reqPath = '/index.html';
   const filePath = path.join(__dirname, '..', reqPath);
 
@@ -153,7 +209,14 @@ async function seedInitialData() {
     cargo: 'Director Financiero y Apoderado'
   });
 
-  // 3. Cliente Jurídico C1 (Constructora Delta S.A. de C.V.)
+  // 3. Archivos base reales en el emulador de Storage (demo-ductsal-local.appspot.com)
+  await uploadToStorageEmulator('local_files/clients/C1/legal/escritura.pdf', '%PDF-1.4 ESCRITURA CONSTITUCION DELTA');
+  await uploadToStorageEmulator('local_files/clients/C1/legal/nit.pdf', '%PDF-1.4 NIT EMPRESA DELTA');
+  await uploadToStorageEmulator('local_files/clients/C1/legal/nrc.pdf', '%PDF-1.4 NRC EMPRESA DELTA');
+  await uploadToStorageEmulator('local_files/prospects/P1/proyectos/oferta.pdf', '%PDF-1.4 OFERTA FIRMADA DELTA');
+  await uploadToStorageEmulator('local_files/prospects/P1/facturas/ccf.pdf', '%PDF-1.4 CCF ANTICIPO DELTA');
+
+  // 4. Cliente Jurídico C1 (Constructora Delta S.A. de C.V.)
   await seedDoc('clients_local', 'C1', {
     id: 'C1',
     empresa: 'Constructora Delta S.A. de C.V.',
@@ -172,7 +235,7 @@ async function seedInitialData() {
     documentos: {
       escritura: {
         name: 'Escritura_Constitucion_Delta.pdf',
-        storagePath: 'prod_files/clients/C1/legal/escritura.pdf',
+        storagePath: 'local_files/clients/C1/legal/escritura.pdf',
         actualizadoEn: '2023-01-15T10:00:00Z',
         ultimaRevisionBienal: '2023-01-15',
         versionId: 'v_esc_orig',
@@ -180,13 +243,13 @@ async function seedInitialData() {
       },
       nit: {
         name: 'NIT_Empresa_Delta.pdf',
-        storagePath: 'prod_files/clients/C1/legal/nit.pdf',
+        storagePath: 'local_files/clients/C1/legal/nit.pdf',
         actualizadoEn: '2025-01-15T10:00:00Z',
         versionNumber: 1
       },
       nrc: {
         name: 'NRC_Empresa_Delta.pdf',
-        storagePath: 'prod_files/clients/C1/legal/nrc.pdf',
+        storagePath: 'local_files/clients/C1/legal/nrc.pdf',
         actualizadoEn: '2025-01-15T10:00:00Z',
         versionNumber: 1
       }
@@ -199,11 +262,12 @@ async function seedInitialData() {
     versionId: 'v_esc_orig',
     docKey: 'escritura',
     name: 'Escritura_Constitucion_Delta.pdf',
+    storagePath: 'local_files/clients/C1/legal/escritura.pdf',
     versionNumber: 1,
     creadoEn: '2023-01-15T10:00:00Z'
   });
 
-  // 4. Vinculación de contactos a la cuenta C1
+  // 5. Vinculación de contactos a la cuenta C1
   await seedDoc('account_contacts_local', 'AC_C1_ANA', {
     id: 'AC_C1_ANA',
     accountId: 'C1',
@@ -226,7 +290,7 @@ async function seedInitialData() {
     estado: 'activo'
   });
 
-  // 5. Oportunidad P1 en etapa Cierre
+  // 6. Oportunidad P1 en etapa Cierre
   await seedDoc('prospects_local', 'P1', {
     id: 'P1',
     codigo: 'OPP-DELTA-B3',
@@ -246,8 +310,8 @@ async function seedInitialData() {
     fecha_creacion: new Date().toISOString(),
     fecha_inicio_cierre: new Date().toISOString().slice(0, 10),
     datos: {
-      doc_firmado: { name: 'Oferta_Firmada_Delta.pdf', storagePath: 'prod_files/proyectos/oferta.pdf' },
-      doc_comprobante: { name: 'CCF_Anticipo_Delta.pdf', storagePath: 'prod_files/facturas/ccf.pdf' }
+      doc_firmado: { name: 'Oferta_Firmada_Delta.pdf', storagePath: 'local_files/prospects/P1/proyectos/oferta.pdf' },
+      doc_comprobante: { name: 'CCF_Anticipo_Delta.pdf', storagePath: 'local_files/prospects/P1/facturas/ccf.pdf' }
     }
   });
 
@@ -294,6 +358,7 @@ async function main() {
     }
     chromeProcess.kill('SIGKILL');
     server.close();
+    await cleanupCreatedStorageObjects();
     try { fs.rmSync(tmpUserDataDir, { recursive: true, force: true }); } catch (_) {}
   }
 
@@ -360,14 +425,16 @@ async function main() {
     async function saveScreenshot(filename, caption) {
       const { data } = await send('Page.captureScreenshot', { format: 'png' });
       const buf = Buffer.from(data, 'base64');
-      fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true });
-      const docPath = path.join(DOCS_SCREENSHOT_DIR, filename);
-      fs.writeFileSync(docPath, buf);
-      if (ARTIFACT_SCREENSHOT_DIR && fs.existsSync(ARTIFACT_SCREENSHOT_DIR)) {
-        fs.writeFileSync(path.join(ARTIFACT_SCREENSHOT_DIR, filename), buf);
+      const outDir = ARTIFACT_SCREENSHOT_DIR || path.join(tmpUserDataDir, 'screenshots');
+      fs.mkdirSync(outDir, { recursive: true });
+      const outPath = path.join(outDir, filename);
+      fs.writeFileSync(outPath, buf);
+      if (process.env.UPDATE_DOCS_SCREENSHOTS === '1') {
+        fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(DOCS_SCREENSHOT_DIR, filename), buf);
       }
       console.log(`  📸 [SCREENSHOT] ${filename} — ${caption}`);
-      return docPath;
+      return outPath;
     }
 
     await send('Page.enable');
@@ -486,7 +553,7 @@ async function main() {
     console.log('  Completando formulario UI y ejecutando submitLegalRepresentativeElection (Ana Gómez)...');
     await evalScript(`
       (async () => {
-        // Configurar adaptador local de Storage para entorno de prueba sin emulador de Storage activo
+        // Configurar adaptador local de Storage conectado al emulador local de Storage (127.0.0.1:9199)
         window.__setFakeFileOnInput = (inputId, fileName, content) => {
           const el = document.getElementById(inputId);
           if (!el) return;
@@ -497,11 +564,24 @@ async function main() {
         ClientDocuments.init({
           uploadFileToStorage: async (file, folder, opts) => {
             const sub = (opts && (opts.subfolder === 'poderes' || opts.isPoder)) ? 'poderes' : ((opts && opts.isLegal) ? 'legal' : 'identificacion');
+            const prefix = (typeof STORAGE_PREFIX !== 'undefined' && STORAGE_PREFIX) ? STORAGE_PREFIX : 'local_files';
+            const storagePath = prefix + '/clients/' + ((opts && opts.clientId) || 'C1') + '/' + sub + '/' + file.name;
+            const contentType = file.type || 'application/pdf';
+            const bodyBuf = typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : file;
+            const uploadRes = await fetch('/__emulator_storage_upload?name=' + encodeURIComponent(storagePath) + '&contentType=' + encodeURIComponent(contentType), {
+              method: 'POST',
+              headers: { 'Content-Type': contentType },
+              body: bodyBuf
+            });
+            if (!uploadRes.ok) {
+              const errText = await uploadRes.text().catch(() => '');
+              throw new Error('Error subiendo archivo al emulador de Storage: ' + uploadRes.status + ' ' + errText);
+            }
             return {
               name: file.name,
-              storagePath: 'prod_files/clients/' + ((opts && opts.clientId) || 'C1') + '/' + sub + '/' + file.name,
+              storagePath,
               size: file.size,
-              contentType: file.type || 'application/pdf'
+              contentType
             };
           }
         });
