@@ -286,22 +286,36 @@
             if (filesStaged) {
                 _deps.showLoading('Subiendo documentos del cliente...');
                 try {
-                    const activeBaseDocs = (typeof window !== 'undefined' && window._activeClientBaseDocs !== undefined && window._activeClientBaseDocs !== null)
-                        ? window._activeClientBaseDocs
-                        : null;
-                    c.baseDocumentos = (activeBaseDocs !== null)
-                        ? JSON.parse(JSON.stringify(activeBaseDocs))
-                        : (c.documentos ? JSON.parse(JSON.stringify(c.documentos)) : {});
+                    c.baseDocumentos = (c.documentos && typeof c.documentos === 'object')
+                        ? JSON.parse(JSON.stringify(c.documentos))
+                        : {};
                     c.documentos = await _deps.uploadClientStagedFiles(editId, c.tipo, c.documentos);
+                    if (c.documentos && typeof c.documentos === 'object') {
+                        const motivos = {};
+                        for (const k of Object.keys(c.documentos)) {
+                            if (c.documentos[k] && typeof c.documentos[k] === 'object' && c.documentos[k].motivoSustitucion) {
+                                motivos[k] = c.documentos[k].motivoSustitucion;
+                            }
+                        }
+                        if (Object.keys(motivos).length > 0) {
+                            c.motivosSustitucion = Object.assign({}, c.motivosSustitucion || {}, motivos);
+                        }
+                    }
                 } catch (uploadErr) {
                     _deps.hideLoading();
-                    _deps.alert("Error al subir documentos: " + uploadErr.message);
+                    const errText = (uploadErr && uploadErr.message) ? uploadErr.message : String(uploadErr);
+                    if (errText.includes('Toda sustitución de un documento existente requiere un motivo no vacío')) {
+                        _deps.alert('Datos inválidos (' + errText + ').');
+                    } else {
+                        _deps.alert("Error al subir documentos: " + errText);
+                    }
                     return null;
                 }
             } else {
                 // General data update: do NOT send documentos so live Firestore documents remain untouched
                 delete c.documentos;
                 delete c.baseDocumentos;
+                delete c.motivosSustitucion;
             }
 
             _deps.showLoading('Guardando cambios en cliente...');

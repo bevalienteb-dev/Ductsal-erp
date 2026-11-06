@@ -141,12 +141,20 @@ service firebase.storage {
     }
     // Current responsible seller for the account:
     // - If vendedor_asignado is explicitly set, ONLY that assigned seller is the current responsible.
-    // - Otherwise, falls back to createdBy.
+    // - Otherwise, if createdBy is set, falls back to createdBy.
+    // - For legacy/historical accounts where both vendedor_asignado and createdBy are absent,
+    //   falls back to the seller linked in visibleTo.
     function isClientCurrentResponsible(cid) {
       let c = getClient(cid);
       return c != null && (
         c.get('vendedor_asignado', '') == me()
-        || ((c.get('vendedor_asignado', '') == '' || c.get('vendedor_asignado', null) == null) && c.get('createdBy', '') == me())
+        || (
+          (c.get('vendedor_asignado', '') == '' || c.get('vendedor_asignado', null) == null)
+          && (
+            c.get('createdBy', '') == me()
+            || ((c.get('createdBy', '') == '' || c.get('createdBy', null) == null) && (me() in c.get('visibleTo', [])))
+          )
+        )
       );
     }
     function isClientVisible(cid) {
@@ -183,8 +191,8 @@ service firebase.storage {
         && r.get('createdBy', '') == me()
         && r.get('status', '') == 'reserved'
         && (
-          (r.expiresAt != null && request.time < r.expiresAt)
-          || (r.get('expiresAtMs', 0) > 0 && request.time.toMillis() < r.expiresAtMs)
+          (r.get('expiresAt', null) != null && request.time < r.get('expiresAt', null))
+          || (r.get('expiresAtMs', 0) > 0 && request.time.toMillis() < r.get('expiresAtMs', 0))
         );
     }
     function isAuthorizedClientUpload(cid) {

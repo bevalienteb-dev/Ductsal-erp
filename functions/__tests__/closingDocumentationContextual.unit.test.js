@@ -562,4 +562,53 @@ describe('Fase 4B.4: Carga contextual de documentos desde el panel de cierre', (
       expect(container.innerHTML).not.toContain('DUI Personal');
     });
   });
+
+  describe('Criterio 13: Reintento idempotente en uploadClientDocumentFromClosing tras fallo transitorio o internal', () => {
+    test('Al fallar updateClientAdmin con internal y reintentar, reutiliza el archivo ya subido a Storage y el mismo opId', async () => {
+      const client = { id: 'C_RETRY_CLOSING', tipo: 'juridica', empresa: 'Gama Trading SA', documentos: {} };
+      const prospect = { id: 'P_RETRY_CLOSING', clientId: 'C_RETRY_CLOSING', estado: 'activo', etapa: 'cierre', datos: {} };
+
+      appCore.clients = [client];
+      global.clients = [client];
+      global.prospects = [prospect];
+      global.DB_SUFFIX = '_prod';
+
+      let attempt = 0;
+      const seenOpIds = [];
+      global.customCallableHandler = async (name, payload) => {
+        if (name === 'updateClientAdmin') {
+          attempt++;
+          seenOpIds.push(payload.opId);
+          if (attempt === 1) {
+            const err = new Error('Internal error');
+            err.code = 'functions/internal';
+            throw err;
+          }
+          return { status: 'updated', client: payload.client };
+        }
+        return { status: 'updated' };
+      };
+
+      global.uploadFileToStorage = async (file, folder, opts) => {
+        uploads.push({ file: file.name, folder, opts });
+        return { name: file.name, storagePath: `prod_files/${folder}/${opts.clientId}/legal/170000_${file.name}` };
+      };
+
+      const fileInput = getOrMakeEl('closing-client-file-escritura');
+      fileInput.files = [{ name: 'escritura_gama.pdf', size: 4096, lastModified: 1700000000000 }];
+
+      // Intento 1: falla con internal
+      await appCore.uploadClientDocumentFromClosing('C_RETRY_CLOSING', 'P_RETRY_CLOSING', 'escritura', false);
+      expect(alerts[0]).toMatch(/No se pudo confirmar el guardado \(internal\)/);
+      expect(uploads.length).toBe(1);
+
+      // Intento 2 (reintento): reutiliza el archivo en Storage y el mismo opId
+      await appCore.uploadClientDocumentFromClosing('C_RETRY_CLOSING', 'P_RETRY_CLOSING', 'escritura', false);
+      expect(uploads.length).toBe(1); // No volvió a subir un duplicado a Storage
+      expect(seenOpIds).toHaveLength(2);
+      expect(seenOpIds[0]).toBeDefined();
+      expect(seenOpIds[0]).toBe(seenOpIds[1]); // Mismo opId idempotente
+      expect(alerts[1]).toMatch(/guardado y versionado exitosamente/);
+    });
+  });
 });

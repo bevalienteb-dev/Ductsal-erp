@@ -641,22 +641,74 @@ async function uploadFileToStorage(file, folderName, options = {}) {
         const processedFile = await compressImage(file, 1280, 1280, 0.7);
         const safeName = processedFile.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 
+        const effectiveSubfolder = (options.clientId || options.reservationId)
+            ? ((options.subfolder === 'poderes' || options.isPoder) ? 'poderes' : (options.isLegal ? 'legal' : 'identificacion'))
+            : folderName;
+
+        // Validar extensión y tamaño por carpeta según storage.rules antes de transferir
+        if (['identificacion', 'legal', 'poderes', 'pagos'].includes(effectiveSubfolder)) {
+            if (!['pdf', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff'].includes(rawExt)) {
+                const extErr = new Error(`El archivo "${file.name}" (.${rawExt}) no está permitido en la carpeta "${effectiveSubfolder}". Solo se admiten documentos PDF o imágenes (JPG, PNG, WEBP, TIFF).`);
+                extErr.isFormatError = true;
+                alert('❌ ' + extErr.message);
+                throw extErr;
+            }
+        }
+        const maxBytes = (effectiveSubfolder === 'proyectos' || effectiveSubfolder === 'requerimientos' || effectiveSubfolder === 'fabricacion_archivos')
+            ? 100 * 1024 * 1024
+            : effectiveSubfolder === 'ordenes_cambio'
+                ? 35 * 1024 * 1024
+                : (effectiveSubfolder === 'legal' || effectiveSubfolder === 'poderes')
+                    ? 25 * 1024 * 1024
+                    : (effectiveSubfolder === 'facturas' || effectiveSubfolder === 'clientes')
+                        ? 15 * 1024 * 1024
+                        : 10 * 1024 * 1024;
+        if (typeof processedFile.size === 'number' && processedFile.size > maxBytes) {
+            const maxMb = Math.round(maxBytes / (1024 * 1024));
+            const sizeErr = new Error(`El archivo "${file.name}" (${(processedFile.size / (1024 * 1024)).toFixed(1)} MB) excede el límite máximo permitido de ${maxMb} MB para "${effectiveSubfolder}".`);
+            sizeErr.isFormatError = true;
+            alert('❌ ' + sizeErr.message);
+            throw sizeErr;
+        }
+
+        // Asegurar que el ID token de Firebase Auth incluya los custom claims { cid, role } requeridos por storage.rules
+        if (typeof firebase !== 'undefined' && typeof firebase.auth === 'function') {
+            const authObj = firebase.auth();
+            const authUser = authObj && authObj.currentUser;
+            if (authUser && typeof authUser.getIdTokenResult === 'function' && typeof authUser.getIdToken === 'function') {
+                try {
+                    const tokenRes = await authUser.getIdTokenResult();
+                    if (!tokenRes || !tokenRes.claims || !tokenRes.claims.cid || !tokenRes.claims.role) {
+                        await authUser.getIdToken(true);
+                    }
+                } catch (_) {}
+            }
+        }
+
+        // Generar prefijo numérico monotónico para impedir colisiones Date.now() en subidas concurrentes (Promise.all)
+        // que violarían isNew() (resource == null) en storage.rules con storage/unauthorized.
+        const nowMs = Date.now();
+        uploadFileToStorage._lastTs = (typeof uploadFileToStorage._lastTs === 'number' && nowMs <= uploadFileToStorage._lastTs)
+            ? (uploadFileToStorage._lastTs + 1)
+            : nowMs;
+        const uniqueTs = uploadFileToStorage._lastTs;
+
         // Utilizar exclusivamente el bucket canónico confirmado configurado en Firebase Storage
         const storageRef = storage.ref();
 
         let fullPath;
         if (options.prospectId) {
-            fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${Date.now()}_${safeName}`;
+            fullPath = `${STORAGE_PREFIX}/prospects/${options.prospectId}/${folderName}/${uniqueTs}_${safeName}`;
         } else if (options.clientId) {
             const subfolder = (options.subfolder === 'poderes' || options.isPoder) ? 'poderes' : (options.isLegal ? 'legal' : 'identificacion');
-            fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${Date.now()}_${safeName}`;
+            fullPath = `${STORAGE_PREFIX}/clients/${options.clientId}/${subfolder}/${uniqueTs}_${safeName}`;
         } else if (options.reservationId) {
             const subfolder = options.isLegal ? 'legal' : 'identificacion';
-            fullPath = `${STORAGE_PREFIX}/clients/${options.reservationId}/${subfolder}/${Date.now()}_${safeName}`;
+            fullPath = `${STORAGE_PREFIX}/clients/${options.reservationId}/${subfolder}/${uniqueTs}_${safeName}`;
         } else if (options.customPath) {
             fullPath = `${STORAGE_PREFIX}/${options.customPath}`;
         } else {
-            fullPath = `${STORAGE_PREFIX}/${folderName}/${Date.now()}_${safeName}`;
+            fullPath = `${STORAGE_PREFIX}/${folderName}/${uniqueTs}_${safeName}`;
         }
 
         const fileRef = storageRef.child(fullPath);
