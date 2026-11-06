@@ -81,9 +81,9 @@
         return r.data;
     }
 
-    async function updateClient(fb, { id, client, dbSuffix, confirmReview }) {
-        const r = await fb.functions().httpsCallable('updateClientAdmin')({ id, client, dbSuffix, confirmReview: confirmReview === true });
-        return r.data;
+    function updateClient(fb, { id, client, dbSuffix, confirmReview }) {
+        const key = ['update', id, dbSuffix, confirmReview === true, stableStringify(client)].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('updateClientAdmin')({ id, client, opId, dbSuffix, confirmReview: confirmReview === true }));
     }
 
     async function searchCatalog(fb, { q, dbSuffix }) {

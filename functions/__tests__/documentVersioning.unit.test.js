@@ -964,4 +964,198 @@ describe('Fase 4B.3: Document Versioning & Security Rules Unit Tests', () => {
     const singleVersions = fdb.list('prospects_prod/P_ADV_SINGLE/document_versions');
     expect(singleVersions).toHaveLength(1);
   });
+
+  // --------------------------------------------------------------------------------------
+  // 17. Incidente de producción Alejandra (Error A y Error B): clientes históricos sin createdBy,
+  //     encadenamiento v1->v2->v3 en clientsService.update e idempotencia opId.
+  // --------------------------------------------------------------------------------------
+  test('17. Cliente histórico sin createdBy (como C1784327580134): permite registrar documento nuevo, sustituir DUI con motivo, guardar cambios generales sin motivo y reintentar con mismo opId sin duplicados', async () => {
+    const ALEJANDRA = who('gestor', '1776904514932', 'Alejandra Ayala');
+
+    // Sembrar cuenta histórica sin createdBy pero con DUI preexistente (forma exacta de C1784327580134)
+    fdb.seed('clients_prod/C1784327580134', {
+      id: 'C1784327580134',
+      tipo: 'juridica',
+      empresa: 'Gama Trading S.A. de C.V.',
+      contacto: 'Contacto Principal',
+      telefono: '2200-1100',
+      correo: 'contacto@gamatrading.example',
+      visibleTo: ['1776895495203'],
+      closingVendors: ['1776895495203'],
+      documentos: {
+        dui: {
+          name: '1787004037922_Registro_RTN.pdf',
+          url: 'https://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclientes%2F1787004037922_Registro_RTN.pdf?alt=media'
+        }
+      }
+      // Nota: createdBy está ausente (undefined), igual que en los 41 clientes históricos de producción
+    });
+
+    // 1) Error B Caso A: Guardar cambios generales sin tocar documentos -> NO exige motivo de DUI ni falla por createdBy undefined
+    const generalUpdateRes = await clientsSvc.update({
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      opId: 'op_alejandra_gen_01',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        correo: 'contacto@gamatrading.example'
+      }
+    });
+    expect(generalUpdateRes.status).toBe('updated');
+    const afterGeneral = fdb.data('clients_prod/C1784327580134');
+    expect(afterGeneral.contacto).toBe('Contacto Actualizado');
+    expect(afterGeneral.telefono).toBe('2200-9999');
+    expect('createdBy' in afterGeneral).toBe(false);
+    expect(afterGeneral.documentos.dui.name).toBe('1787004037922_Registro_RTN.pdf');
+
+    // 2) Error A: Registrar documento nuevo (escritura v1) desde panel de cierre en cliente sin createdBy
+    const docUpdatePayload = {
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      opId: 'op_alejandra_esc_v1',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        correo: 'contacto@gamatrading.example',
+        baseDocumentos: afterGeneral.documentos,
+        documentos: {
+          ...afterGeneral.documentos,
+          escritura: {
+            name: 'escritura_gama_v1.pdf',
+            storagePath: 'prod_files/clients/C1784327580134/legal/escritura_gama_v1.pdf'
+          }
+        }
+      }
+    };
+    const escRes1 = await clientsSvc.update(docUpdatePayload);
+    expect(escRes1.status).toBe('updated');
+
+    // 3) Reintento idéntico con el mismo opId -> replay idempotente sin duplicar versión documental
+    const escResReplay = await clientsSvc.update(docUpdatePayload);
+    expect(escResReplay.status).toBe('updated');
+    expect(escResReplay.replay).toBe(true);
+
+    let versions = fdb.list('clients_prod/C1784327580134/document_versions');
+    expect(versions.filter(v => v.docKey === 'escritura')).toHaveLength(1);
+    expect(versions.find(v => v.docKey === 'escritura')).toMatchObject({
+      versionNumber: 1,
+      estado: 'vigente',
+      subidoPorId: ALEJANDRA.cid
+    });
+
+    // 4) Sustituir escritura a v2 y luego v3 -> encadena correctamente v1 (historica) -> v2 (historica) -> v3 (vigente)
+    const afterEscV1 = fdb.data('clients_prod/C1784327580134');
+    await clientsSvc.update({
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      opId: 'op_alejandra_esc_v2',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        baseDocumentos: afterEscV1.documentos,
+        documentos: {
+          ...afterEscV1.documentos,
+          escritura: {
+            name: 'escritura_gama_v2.pdf',
+            storagePath: 'prod_files/clients/C1784327580134/legal/escritura_gama_v2.pdf',
+            motivoSustitucion: 'Actualización de folios legibles v2'
+          }
+        }
+      }
+    });
+
+    const afterEscV2 = fdb.data('clients_prod/C1784327580134');
+    await clientsSvc.update({
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      opId: 'op_alejandra_esc_v3',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        baseDocumentos: afterEscV2.documentos,
+        documentos: {
+          ...afterEscV2.documentos,
+          escritura: {
+            name: 'escritura_gama_v3.pdf',
+            storagePath: 'prod_files/clients/C1784327580134/legal/escritura_gama_v3.pdf',
+            motivoSustitucion: 'Certificación notarial completa v3'
+          }
+        }
+      }
+    });
+
+    const escVersions = fdb.list('clients_prod/C1784327580134/document_versions')
+      .filter(v => v.docKey === 'escritura')
+      .sort((a, b) => a.versionNumber - b.versionNumber);
+    expect(escVersions).toHaveLength(3);
+    expect(escVersions[0]).toMatchObject({ versionNumber: 1, estado: 'historica', esHeredado: false });
+    expect(escVersions[1]).toMatchObject({ versionNumber: 2, estado: 'historica', reemplazaVersionId: escVersions[0].versionId });
+    expect(escVersions[2]).toMatchObject({ versionNumber: 3, estado: 'vigente', reemplazaVersionId: escVersions[1].versionId });
+
+    // 5) Error B Caso B: Sustituir el DUI preexistente sin motivo es rechazado; con motivo archiva legado v1 y crea v2 vigente
+    const beforeDuiSubst = fdb.data('clients_prod/C1784327580134');
+    await expect(clientsSvc.update({
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        baseDocumentos: beforeDuiSubst.documentos,
+        documentos: {
+          ...beforeDuiSubst.documentos,
+          dui: {
+            name: 'dui_rep_legal_real.pdf',
+            storagePath: 'prod_files/clients/C1784327580134/identificacion/dui_rep_legal_real.pdf'
+          }
+        }
+      }
+    })).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining("Toda sustitución de un documento existente requiere un motivo no vacío (documento: 'dui')")
+    });
+
+    const duiSubstOk = await clientsSvc.update({
+      caller: ALEJANDRA,
+      id: 'C1784327580134',
+      opId: 'op_alejandra_dui_subst',
+      client: {
+        tipo: 'juridica',
+        empresa: 'Gama Trading S.A. de C.V.',
+        contacto: 'Contacto Actualizado',
+        telefono: '2200-9999',
+        baseDocumentos: beforeDuiSubst.documentos,
+        documentos: {
+          ...beforeDuiSubst.documentos,
+          dui: {
+            name: 'dui_rep_legal_real.pdf',
+            storagePath: 'prod_files/clients/C1784327580134/identificacion/dui_rep_legal_real.pdf',
+            motivoSustitucion: 'Sustitución de archivo RTN por DUI vigente del Representante Legal'
+          }
+        }
+      }
+    });
+    expect(duiSubstOk.status).toBe('updated');
+    const duiVers = fdb.list('clients_prod/C1784327580134/document_versions')
+      .filter(v => v.docKey === 'dui')
+      .sort((a, b) => a.versionNumber - b.versionNumber);
+    expect(duiVers).toHaveLength(2);
+    expect(duiVers[0]).toMatchObject({ versionNumber: 1, estado: 'historica', esHeredado: true });
+    expect(duiVers[1]).toMatchObject({
+      versionNumber: 2,
+      estado: 'vigente',
+      esHeredado: false,
+      motivoSustitucion: 'Sustitución de archivo RTN por DUI vigente del Representante Legal'
+    });
+  });
 });

@@ -2083,8 +2083,16 @@
                             <div class="client-subsection-title"><span>📎</span> Documento de Identidad Adjunto</div>
                             <div class="form-group full-width client-file-upload-box">
                                 <label for="nat-dui-file">Anexo de DUI (PDF / Imagen)</label>
-                                <input type="file" id="nat-dui-file" accept=".pdf,image/*">
+                                <input type="file" id="nat-dui-file" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('natural','dui',this)">
                                 <span class="form-help-text">Copia legible del documento de identidad (PDF, JPG, PNG).</span>
+                                <div id="client-subst-box-nat-dui" style="display:none; margin-top:8px; padding:10px 12px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+                                        <span style="font-size:0.78rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de DUI existente en el expediente</span>
+                                        <button type="button" class="btn-secondary" style="padding:2px 8px; font-size:0.72rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('nat-dui-file','client-subst-box-nat-dui','nat-motivo-dui')">✖️ Quitar archivo seleccionado</button>
+                                    </div>
+                                    <label for="nat-motivo-dui" style="font-size:0.78rem; color:var(--text-secondary); display:block; margin-bottom:4px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                    <input type="text" id="nat-motivo-dui" maxlength="500" placeholder="Ej. Renovación de DUI vencido o actualización de imagen legible..." style="width:100%; font-size:0.82rem;">
+                                </div>
                             </div>
                         </div>
 
@@ -2156,27 +2164,75 @@
                             <div class="form-grid">
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-escritura">Escritura de Constitución</label>
-                                    <input type="file" id="jur-file-escritura" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-escritura" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','escritura',this)">
+                                    <div id="client-subst-box-jur-escritura" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de Escritura existente</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-escritura','client-subst-box-jur-escritura','jur-motivo-escritura')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-escritura" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-escritura" maxlength="500" placeholder="Motivo de sustitución de Escritura..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-mods">Modificaciones de Escritura <span class="optional-tag">(Opcional)</span></label>
-                                    <input type="file" id="jur-file-mods" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-mods" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','mods_escritura',this)">
+                                    <div id="client-subst-box-jur-mods_escritura" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de Modificaciones existentes</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-mods','client-subst-box-jur-mods_escritura','jur-motivo-mods_escritura')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-mods_escritura" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-mods_escritura" maxlength="500" placeholder="Motivo de sustitución de Modificaciones..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-credencial">Credencial de Rep. Legal</label>
-                                    <input type="file" id="jur-file-credencial" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-credencial" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','credencial',this)">
+                                    <div id="client-subst-box-jur-credencial" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de Credencial existente</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-credencial','client-subst-box-jur-credencial','jur-motivo-credencial')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-credencial" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-credencial" maxlength="500" placeholder="Motivo de sustitución de Credencial..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-nit">NIT de la Empresa</label>
-                                    <input type="file" id="jur-file-nit" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-nit" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','nit',this)">
+                                    <div id="client-subst-box-jur-nit" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de NIT existente</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-nit','client-subst-box-jur-nit','jur-motivo-nit')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-nit" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-nit" maxlength="500" placeholder="Motivo de sustitución de NIT..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-nrc">NRC de la Empresa</label>
-                                    <input type="file" id="jur-file-nrc" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-nrc" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','nrc',this)">
+                                    <div id="client-subst-box-jur-nrc" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de NRC existente</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-nrc','client-subst-box-jur-nrc','jur-motivo-nrc')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-nrc" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-nrc" maxlength="500" placeholder="Motivo de sustitución de NRC..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                                 <div class="form-group client-file-upload-box">
                                     <label for="jur-file-dui">DUI del Representante Legal</label>
-                                    <input type="file" id="jur-file-dui" accept=".pdf,image/*">
+                                    <input type="file" id="jur-file-dui" accept=".pdf,image/*" onchange="if(typeof onClientFormFileChange==='function') onClientFormFileChange('juridica','dui',this)">
+                                    <div id="client-subst-box-jur-dui" style="display:none; margin-top:8px; padding:8px 10px; border-radius:6px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.35);">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                                            <span style="font-size:0.75rem; font-weight:600; color:#fbbf24;">⚠️ Sustitución de DUI existente en el expediente</span>
+                                            <button type="button" class="btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="if(typeof clearClientFormStagedFile==='function') clearClientFormStagedFile('jur-file-dui','client-subst-box-jur-dui','jur-motivo-dui')">✖️ Quitar</button>
+                                        </div>
+                                        <label for="jur-motivo-dui" style="font-size:0.74rem; color:var(--text-secondary); display:block; margin-bottom:3px;">Motivo obligatorio de sustitución <span class="required-indicator">*</span></label>
+                                        <input type="text" id="jur-motivo-dui" maxlength="500" placeholder="Ej. Renovación de DUI de Representante Legal o corrección de archivo..." style="width:100%; font-size:0.8rem;">
+                                    </div>
                                 </div>
                             </div>
                         </div>

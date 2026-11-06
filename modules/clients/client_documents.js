@@ -23,6 +23,9 @@
             window.renderClientExpedienteSection = api.renderClientExpedienteSection;
             window.hasStagedClientFiles = api.hasStagedClientFiles;
             window.uploadClientStagedFiles = api.uploadClientStagedFiles;
+            window.onClientFormFileChange = api.onClientFormFileChange;
+            window.clearClientFormStagedFile = api.clearClientFormStagedFile;
+            window.resetAllClientFormStagedFiles = api.resetAllClientFormStagedFiles;
             window.deleteClientDocument = api.deleteClientDocument;
             window.uploadClientDocumentFromClosing = api.uploadClientDocumentFromClosing;
             window.toggleClientDocSubstForm = api.toggleClientDocSubstForm;
@@ -425,36 +428,127 @@
         });
     }
 
+    function getClientFormStagedSpecs(type) {
+        if (type === 'natural') {
+            return [
+                { id: 'nat-dui-file', key: 'dui', isLegal: false, motivoId: 'nat-motivo-dui', boxId: 'client-subst-box-nat-dui' }
+            ];
+        }
+        return [
+            { id: 'jur-file-escritura', key: 'escritura', isLegal: true, motivoId: 'jur-motivo-escritura', boxId: 'client-subst-box-jur-escritura' },
+            { id: 'jur-file-mods', key: 'mods_escritura', isLegal: true, motivoId: 'jur-motivo-mods_escritura', boxId: 'client-subst-box-jur-mods_escritura' },
+            { id: 'jur-file-credencial', key: 'credencial', isLegal: true, motivoId: 'jur-motivo-credencial', boxId: 'client-subst-box-jur-credencial' },
+            { id: 'jur-file-nit', key: 'nit', isLegal: true, motivoId: 'jur-motivo-nit', boxId: 'client-subst-box-jur-nit' },
+            { id: 'jur-file-nrc', key: 'nrc', isLegal: true, motivoId: 'jur-motivo-nrc', boxId: 'client-subst-box-jur-nrc' },
+            { id: 'jur-file-dui', key: 'dui', isLegal: false, motivoId: 'jur-motivo-dui', boxId: 'client-subst-box-jur-dui' }
+        ];
+    }
+
+    function hasExistingClientDocumentForKey(existingDocs, docKey) {
+        if (!existingDocs || typeof existingDocs !== 'object') return false;
+        const val = existingDocs[docKey];
+        if (!val) return false;
+        if (Array.isArray(val)) return false; // Arrays (e.g. legacy mods) append rather than replace
+        if (typeof val === 'string') return val.trim().length > 0;
+        if (typeof val === 'object') return !!(val.storagePath || val.path || val.url || val.name);
+        return false;
+    }
+
+    function onClientFormFileChange(type, docKey, inputEl) {
+        if (typeof document === 'undefined') return;
+        const specs = getClientFormStagedSpecs(type);
+        const spec = specs.find(s => s.key === docKey) || null;
+        if (!spec) return;
+        const fileEl = inputEl || document.getElementById(spec.id);
+        const boxEl = document.getElementById(spec.boxId);
+        const motivoEl = document.getElementById(spec.motivoId);
+        const hasFile = !!(fileEl && fileEl.files && fileEl.files.length > 0);
+
+        const editIdEl = document.getElementById('client-id-edit');
+        const editId = editIdEl ? editIdEl.value : '';
+        const clientList = _deps.getClients() || [];
+        const existingClient = editId ? clientList.find(x => x && x.id === editId) : null;
+        const hasExistingDoc = !!(existingClient && hasExistingClientDocumentForKey(existingClient.documentos, docKey));
+
+        if (hasFile && hasExistingDoc) {
+            if (boxEl && boxEl.style) boxEl.style.display = 'block';
+        } else {
+            if (boxEl && boxEl.style) boxEl.style.display = 'none';
+            if (motivoEl) motivoEl.value = '';
+        }
+    }
+
+    function clearClientFormStagedFile(fileInputId, boxId, motivoInputId) {
+        if (typeof document === 'undefined') return;
+        const fileEl = document.getElementById(fileInputId);
+        if (fileEl) {
+            fileEl.value = '';
+            if (Array.isArray(fileEl.files)) fileEl.files = [];
+        }
+        const boxEl = boxId ? document.getElementById(boxId) : null;
+        if (boxEl && boxEl.style) boxEl.style.display = 'none';
+        const motivoEl = motivoInputId ? document.getElementById(motivoInputId) : null;
+        if (motivoEl) motivoEl.value = '';
+    }
+
+    function resetAllClientFormStagedFiles() {
+        if (typeof document === 'undefined') return;
+        const allSpecs = [...getClientFormStagedSpecs('natural'), ...getClientFormStagedSpecs('juridica')];
+        for (const s of allSpecs) {
+            clearClientFormStagedFile(s.id, s.boxId, s.motivoId);
+        }
+    }
+
     async function uploadClientStagedFiles(targetId, type, existingDocs = {}) {
         const docs = Object.assign({}, existingDocs);
         const filesToUpload = [];
-        if (type === 'natural') {
-            const duiEl = typeof document !== 'undefined' ? document.getElementById('nat-dui-file') : null;
-            if (duiEl && duiEl.files && duiEl.files.length > 0) {
-                filesToUpload.push({ el: duiEl, key: 'dui', isLegal: false });
-            }
-        } else {
-            const specs = [
-                { id: 'jur-file-escritura', key: 'escritura', isLegal: true },
-                { id: 'jur-file-mods', key: 'mods_escritura', isLegal: true },
-                { id: 'jur-file-credencial', key: 'credencial', isLegal: true },
-                { id: 'jur-file-nit', key: 'nit', isLegal: true },
-                { id: 'jur-file-nrc', key: 'nrc', isLegal: true },
-                { id: 'jur-file-dui', key: 'dui', isLegal: false }
-            ];
-            for (const s of specs) {
-                const el = typeof document !== 'undefined' ? document.getElementById(s.id) : null;
-                if (el && el.files && el.files.length > 0) filesToUpload.push({ el, key: s.key, isLegal: s.isLegal });
+        const specs = getClientFormStagedSpecs(type);
+        for (const s of specs) {
+            const el = typeof document !== 'undefined' ? document.getElementById(s.id) : null;
+            if (el && el.files && el.files.length > 0) {
+                filesToUpload.push({
+                    el,
+                    key: s.key,
+                    isLegal: s.isLegal,
+                    motivoId: s.motivoId,
+                    boxId: s.boxId,
+                    motivo: ''
+                });
             }
         }
 
         if (filesToUpload.length === 0) return docs;
 
+        // Validate substitution motives BEFORE uploading any file to Firebase Storage
+        for (const item of filesToUpload) {
+            if (hasExistingClientDocumentForKey(existingDocs, item.key)) {
+                const motivoEl = (typeof document !== 'undefined' && item.motivoId) ? document.getElementById(item.motivoId) : null;
+                const motivoFromInput = (motivoEl && typeof motivoEl.value === 'string') ? motivoEl.value.trim() : '';
+                const motivoFromDataset = (item.el && item.el.dataset && typeof item.el.dataset.motivoSustitucion === 'string')
+                    ? item.el.dataset.motivoSustitucion.trim()
+                    : '';
+                const motivo = motivoFromInput || motivoFromDataset;
+                if (!motivo) {
+                    const boxEl = (typeof document !== 'undefined' && item.boxId) ? document.getElementById(item.boxId) : null;
+                    if (boxEl && boxEl.style) boxEl.style.display = 'block';
+                    if (motivoEl && typeof motivoEl.focus === 'function') {
+                        try { motivoEl.focus(); } catch (_) {}
+                    }
+                    throw new Error(`Toda sustitución de un documento existente requiere un motivo no vacío (documento: '${item.key}')`);
+                }
+                item.motivo = motivo;
+            }
+        }
+
         _deps.showLoading('Subiendo documentos del cliente a la nube...');
         await Promise.all(filesToUpload.map(async item => {
             const ref = await _deps.uploadFileToStorage(item.el.files[0], 'clientes', { clientId: targetId, isLegal: item.isLegal });
+            if (item.motivo && ref && typeof ref === 'object') {
+                ref.motivoSustitucion = item.motivo;
+            }
             docs[item.key] = ref;
         }));
+        resetAllClientFormStagedFiles();
         return docs;
     }
 
@@ -556,6 +650,9 @@
     // -------------------------------------------------------------------------
     // 5. Carga y Sustitución Contextual desde Panel de Cierre
     // -------------------------------------------------------------------------
+    const _closingPendingUploads = new Map();
+    let _lastClosingUploadFn = null;
+
     function toggleClientDocSubstForm(docKey) {
         if (typeof document === 'undefined') return;
         const el = document.getElementById(`subst-container-client-${docKey}`);
@@ -565,6 +662,9 @@
     }
 
     function cancelClientDocSubstForm(docKey) {
+        for (const k of Array.from(_closingPendingUploads.keys())) {
+            if (k.includes(`|${docKey}|`)) _closingPendingUploads.delete(k);
+        }
         if (typeof document === 'undefined') return;
         const fileEl = document.getElementById(`closing-client-subst-file-${docKey}`);
         if (fileEl) fileEl.value = '';
@@ -616,13 +716,22 @@
 
         try {
             const isLegal = ['escritura', 'credencial', 'nit', 'nrc', 'mods_escritura'].includes(docKey);
+            const currentUploadFn = (typeof window !== 'undefined' && window.uploadFileToStorage) || (typeof uploadFileToStorage !== 'undefined' ? uploadFileToStorage : null);
+            if (_lastClosingUploadFn !== currentUploadFn) {
+                _closingPendingUploads.clear();
+                _lastClosingUploadFn = currentUploadFn;
+            }
+            const uploadCacheKey = `${c.id}|${docKey}|${file.name || ''}|${file.size || 0}|${file.lastModified || 0}`;
 
-            let docRef;
-            try {
-                docRef = await _deps.uploadFileToStorage(file, 'clientes', { clientId: c.id, isLegal });
-            } catch (uploadErr) {
-                _deps.alert('Error al subir archivo a Storage: ' + (uploadErr.message || 'Error de red'));
-                return;
+            let docRef = _closingPendingUploads.get(uploadCacheKey) || null;
+            if (!docRef) {
+                try {
+                    docRef = await _deps.uploadFileToStorage(file, 'clientes', { clientId: c.id, isLegal });
+                    _closingPendingUploads.set(uploadCacheKey, docRef);
+                } catch (uploadErr) {
+                    _deps.alert('Error al subir archivo a Storage: ' + (uploadErr.message || 'Error de red'));
+                    return;
+                }
             }
 
             if (btn && btn.tagName === 'BUTTON') {
@@ -657,10 +766,15 @@
             });
 
             if (res.status === 'updated') {
+                _closingPendingUploads.delete(uploadCacheKey);
                 if (res.client && res.client.documentos) {
                     c.documentos = res.client.documentos;
                 } else {
+                    if (!c.documentos) c.documentos = {};
                     c.documentos[docKey] = stampedDoc;
+                }
+                if (typeof window !== 'undefined' && window._activeClientBaseDocs !== undefined && window._activeClientBaseDocs !== null) {
+                    window._activeClientBaseDocs = JSON.parse(JSON.stringify(c.documentos || {}));
                 }
                 _deps.renderClosingDocumentationPanel(p);
                 _deps.alert(`Documento [${_deps.formatClientDocLabel(docKey)}] ${isSubstitution ? 'sustituido' : 'guardado'} y versionado exitosamente.`);
@@ -1696,6 +1810,9 @@
         renderClientExpedienteSection,
         hasStagedClientFiles,
         uploadClientStagedFiles,
+        onClientFormFileChange,
+        clearClientFormStagedFile,
+        resetAllClientFormStagedFiles,
         deleteClientDocument,
         toggleClientDocSubstForm,
         cancelClientDocSubstForm,
@@ -1729,6 +1846,9 @@
     };
 
     if (typeof window !== 'undefined') {
+        window.onClientFormFileChange = onClientFormFileChange;
+        window.clearClientFormStagedFile = clearClientFormStagedFile;
+        window.resetAllClientFormStagedFiles = resetAllClientFormStagedFiles;
         window.openRLElectionView = openRLElectionView;
         window.openGrantPowerView = openGrantPowerView;
         window.openDossierHistoryView = openDossierHistoryView;

@@ -462,6 +462,9 @@
 
         const form = document.getElementById('clientForm');
         if (form && typeof form.reset === 'function') form.reset();
+        if (typeof window !== 'undefined' && typeof window.resetAllClientFormStagedFiles === 'function') {
+            window.resetAllClientFormStagedFiles();
+        }
         const idInput = document.getElementById('client-id-edit');
         if (idInput) idInput.value = '';
 

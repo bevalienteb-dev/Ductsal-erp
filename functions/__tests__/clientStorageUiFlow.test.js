@@ -611,4 +611,130 @@ describe('Phase 2 Client Creation & Storage Adaptation (Real UI Flow)', () => {
     expect(getFileName(doc3)).toBe('factura_001.pdf');
     expect(doc3.storagePath).toBe('prod_files/prospects/P1/facturas/factura_001.pdf');
   });
+
+  test('Incidente Error B (Caso A y Caso B): editar cliente con DUI existente guarda datos generales sin motivo y exige/propaga motivo al sustituir DUI en clientForm', async () => {
+    const existingClient = {
+      id: 'C1784327580134',
+      tipo: 'juridica',
+      empresa: 'Gama Trading S.A. de C.V.',
+      contacto: 'Contacto Inicial',
+      telefono: '2200-1100',
+      correo: 'info@gamatrading.example',
+      documentos: {
+        dui: {
+          name: '1787004037922_Registro_RTN.pdf',
+          url: 'https://firebasestorage.googleapis.com/v0/b/ductsal-erp.firebasestorage.app/o/prod_files%2Fclientes%2F1787004037922_Registro_RTN.pdf?alt=media'
+        }
+      }
+    };
+
+    const handler = async (name, payload) => {
+      if (name === 'updateClientAdmin') {
+        return {
+          status: 'updated',
+          client: {
+            ...existingClient,
+            ...payload.client,
+            id: payload.id,
+            documentos: payload.client.documentos || existingClient.documentos
+          }
+        };
+      }
+      throw new Error('Unexpected callable: ' + name);
+    };
+
+    const env = buildEnvironment({ clientHandler: handler });
+    env.S.clients = [JSON.parse(JSON.stringify(existingClient))];
+
+    env.el('client-id-edit', 'C1784327580134');
+    env.el('client-tipo', 'juridica');
+    env.el('cli-telefono', '2200-9999');
+    env.el('cli-correo', 'info@gamatrading.example');
+    env.el('cli-correo-fact', '');
+    env.el('cli-es-exportacion').checked = false;
+    env.el('jur-empresa', 'Gama Trading S.A. de C.V.');
+    env.el('jur-contacto', 'Contacto Actualizado');
+    env.el('jur-nit', '0614-010120-101-0');
+    env.el('jur-nrc', '123456-7');
+    env.el('jur-rep-legal', 'Representante Legal');
+    env.el('jur-profesion-rep', 'Licenciada');
+    env.el('jur-domicilio-rep', 'San Salvador');
+    env.el('jur-dui-rep', '01234567-8');
+    env.el('jur-nit-rep', '');
+    env.el('jur-gran-contribuyente').checked = false;
+
+    // Caso A: Guardar cambios generales sin seleccionar nuevo archivo de DUI -> guarda sin pedir motivo
+    await env.api.saveClient({ preventDefault: () => {} });
+    expect(env.calls).toHaveLength(1);
+    expect(env.calls[0].name).toBe('updateClientAdmin');
+    expect(env.calls[0].payload.client.documentos).toBeUndefined();
+    expect(env.uploads).toHaveLength(0);
+    expect(env.ui.alerts).toHaveLength(0);
+
+    // Caso B (sin motivo): Seleccionar nuevo archivo en jur-file-dui sin motivo -> bloquea ANTES de subir a Storage y muestra cuadro de justificación
+    env.el('jur-file-dui', '', { files: [{ name: 'dui_rep_nuevo.pdf' }] });
+    env.el('jur-motivo-dui', '   ');
+    await env.api.saveClient({ preventDefault: () => {} });
+    expect(env.uploads).toHaveLength(0);
+    expect(env.calls).toHaveLength(1); // No llamó a updateClientAdmin
+    expect(env.ui.alerts[0]).toContain("Toda sustitución de un documento existente requiere un motivo no vacío (documento: 'dui')");
+    expect(env.el('client-subst-box-jur-dui').style.display).toBe('block');
+
+    // Caso B (con motivo): Ingresar motivo obligatorio -> sube archivo y propaga motivoSustitucion al backend
+    env.el('jur-motivo-dui', 'Reemplazo de archivo RTN por DUI vigente del representante legal');
+    await env.api.saveClient({ preventDefault: () => {} });
+    expect(env.uploads).toHaveLength(1);
+    expect(env.calls).toHaveLength(2);
+    const updateCall = env.calls[1];
+    expect(updateCall.name).toBe('updateClientAdmin');
+    expect(updateCall.payload.opId).toBeDefined();
+    expect(updateCall.payload.client.documentos.dui.motivoSustitucion).toBe('Reemplazo de archivo RTN por DUI vigente del representante legal');
+    expect(updateCall.payload.client.motivosSustitucion.dui).toBe('Reemplazo de archivo RTN por DUI vigente del representante legal');
+  });
+
+  test('Concurrent legal uploads with identical filename generate strictly unique Storage paths (prevents isNew() storage/unauthorized collision)', async () => {
+    const reservationId = 'C1793828959939';
+    const handler = async (name, payload) => {
+      if (name === 'reserveClientCreationAdmin') {
+        return { status: 'reserved', reservationId, expiresAt: new Date(Date.now() + 1800000).toISOString() };
+      }
+      if (name === 'finalizeClientCreationAdmin') {
+        return { status: 'created', client: { id: reservationId, ...payload.client } };
+      }
+      throw new Error('Unexpected callable: ' + name);
+    };
+
+    const env = buildEnvironment({ clientHandler: handler });
+    env.el('client-id-edit', '');
+    env.el('client-tipo', 'juridica');
+    env.el('cli-telefono', '2211-3344');
+    env.el('cli-correo', 'legal@empresa.example');
+    env.el('cli-correo-fact', '');
+    env.el('cli-es-exportacion').checked = false;
+    env.el('jur-empresa', 'Empresa Legal Concurrente S.A. de C.V.');
+    env.el('jur-contacto', 'Contacto Legal');
+    env.el('jur-nit', '0614-121220-105-4');
+    env.el('jur-nrc', '765432-1');
+    env.el('jur-rep-legal', 'Representante');
+    env.el('jur-profesion-rep', 'Abogado');
+    env.el('jur-domicilio-rep', 'San Salvador');
+    env.el('jur-dui-rep', '01234567-8');
+    env.el('jur-nit-rep', '');
+    env.el('jur-gran-contribuyente').checked = false;
+
+    // Attach the exact same PDF filename in multiple legal slots simultaneously
+    env.el('jur-file-escritura', '', { files: [{ name: 'expediente_legal_unificado.pdf', size: 102400, type: 'application/pdf' }] });
+    env.el('jur-file-credencial', '', { files: [{ name: 'expediente_legal_unificado.pdf', size: 102400, type: 'application/pdf' }] });
+    env.el('jur-file-nit', '', { files: [{ name: 'expediente_legal_unificado.pdf', size: 102400, type: 'application/pdf' }] });
+    env.el('jur-file-nrc', '', { files: [{ name: 'expediente_legal_unificado.pdf', size: 102400, type: 'application/pdf' }] });
+
+    await env.api.saveClient({ preventDefault: () => {} });
+
+    expect(env.uploads).toHaveLength(4);
+    const uniquePaths = new Set(env.uploads);
+    expect(uniquePaths.size).toBe(4);
+    for (const p of env.uploads) {
+      expect(p).toMatch(new RegExp(`^prod_files/clients/${reservationId}/legal/\\d+_expediente_legal_unificado\\.pdf$`));
+    }
+  });
 });
