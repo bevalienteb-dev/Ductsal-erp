@@ -301,4 +301,205 @@ describe('Phase 5.3: Client Form Visual Enhancement & Integrity', () => {
       expect(serverSaved.tipo).toBe('juridica');
     });
   });
+
+  // =========================================================================
+  // 4. Lista de Verificación de Documentación Legal de la Sociedad (Hotfix D.2)
+  // =========================================================================
+  describe('4. Lista de Verificación de Documentación Legal de la Sociedad (Hotfix D.2)', () => {
+    const ClientDocuments = require('../../modules/clients/client_documents.js');
+
+    function createChecklistDom() {
+      const els = {};
+      const specs = [
+        { scope: 'jur', key: 'escritura', inputId: 'jur-file-escritura' },
+        { scope: 'jur', key: 'mods_escritura', inputId: 'jur-file-mods' },
+        { scope: 'jur', key: 'credencial', inputId: 'jur-file-credencial' },
+        { scope: 'jur', key: 'nit', inputId: 'jur-file-nit' },
+        { scope: 'jur', key: 'nrc', inputId: 'jur-file-nrc' },
+        { scope: 'jur', key: 'dui', inputId: 'jur-file-dui' },
+        { scope: 'nat', key: 'dui', inputId: 'nat-dui-file' }
+      ];
+
+      specs.forEach(sp => {
+        const suffix = `${sp.scope}-${sp.key}`;
+        els[`doc-checklist-card-${suffix}`] = { id: `doc-checklist-card-${suffix}`, className: '', dataset: {}, style: {} };
+        els[`doc-checklist-badge-${suffix}`] = { id: `doc-checklist-badge-${suffix}`, className: '', textContent: '', style: {} };
+        els[`doc-checklist-registered-${suffix}`] = { id: `doc-checklist-registered-${suffix}`, innerHTML: '', style: { display: 'none' } };
+        els[`doc-checklist-input-wrap-${suffix}`] = { id: `doc-checklist-input-wrap-${suffix}`, style: { display: 'block' } };
+        els[sp.inputId] = { id: sp.inputId, value: '', disabled: false, files: [], style: { display: '' } };
+        els[`client-subst-box-${suffix}`] = { id: `client-subst-box-${suffix}`, style: { display: 'none' } };
+      });
+
+      els['cli-es-exportacion'] = { id: 'cli-es-exportacion', checked: false };
+      els['client-id-edit'] = { id: 'client-id-edit', value: '' };
+      els['jur-legal-docs-checklist-summary'] = { id: 'jur-legal-docs-checklist-summary', textContent: '', style: {} };
+      els['client-expediente-section'] = { id: 'client-expediente-section', style: {} };
+      els['client-docs-list'] = { id: 'client-docs-list', innerHTML: '' };
+      els['client-docs-count-badge'] = { id: 'client-docs-count-badge', textContent: '' };
+
+      return {
+        els,
+        document: {
+          getElementById: (id) => els[id] || null
+        }
+      };
+    }
+
+    test('Escenario 1: Cliente jurídico con los 6 documentos registrados (C1784327580134) muestra Documento registrado y deshabilita/oculta selectores vacíos', () => {
+      const { els, document: fakeDoc } = createChecklistDom();
+      const origDoc = global.document;
+      global.document = fakeDoc;
+
+      try {
+        const clientFull = {
+          id: 'C1784327580134',
+          tipo: 'juridica',
+          es_exportacion: false,
+          documentos: {
+            escritura: { name: 'ESCRITURA.pdf', storagePath: 'prod_files/clients/C1784327580134/legal/esc.pdf', versionNumber: 1, sha256: 'abc1234567890' },
+            mods_escritura: { name: 'MODIFICACION.pdf', storagePath: 'prod_files/clients/C1784327580134/legal/mod.pdf', versionNumber: 1, sha256: 'def1234567890' },
+            credencial: { name: 'CREDENCIAL.pdf', storagePath: 'prod_files/clients/C1784327580134/legal/cred.pdf', versionNumber: 1, sha256: 'ghi1234567890' },
+            nit: { name: 'RTN.pdf', storagePath: 'prod_files/clients/C1784327580134/legal/nit.pdf', versionNumber: 1, sha256: 'jkl1234567890' },
+            nrc: { name: 'NRC.pdf', storagePath: 'prod_files/clients/C1784327580134/legal/nrc.pdf', versionNumber: 1, sha256: 'mno1234567890' },
+            dui: { name: 'CARNET DE RESIDENTE WILLIAM GONZALEZ.pdf', storagePath: 'prod_files/clients/C1784327580134/identificacion/1793980364661_CARNET_DE_RESIDENTE_WILLIAM_GONZALEZ.pdf', versionNumber: 2, sha256: '66617b53758e09df91df6c438888954c90b7017ee67842b89285fe376f936e6a' }
+          }
+        };
+
+        const res = ClientDocuments.syncClientLegalDocsChecklist(clientFull);
+        const jurKeys = ['escritura', 'mods_escritura', 'credencial', 'nit', 'nrc', 'dui'];
+        jurKeys.forEach(k => {
+          expect(res[`jur:${k}`].isRegistered).toBe(true);
+          expect(res[`jur:${k}`].status).toBe('registered');
+          expect(els[`doc-checklist-badge-jur-${k}`].textContent).toContain('Documento registrado');
+          expect(els[`doc-checklist-input-wrap-jur-${k}`].style.display).toBe('none');
+          const inputId = k === 'mods_escritura' ? 'jur-file-mods' : `jur-file-${k}`;
+          expect(els[inputId].disabled).toBe(true);
+          expect(els[inputId].style.display).toBe('none');
+          expect(els[`doc-checklist-registered-jur-${k}`].style.display).toBe('block');
+          expect(els[`doc-checklist-registered-jur-${k}`].innerHTML).toContain('Sustituir');
+          expect(els[`doc-checklist-registered-jur-${k}`].innerHTML).toContain('Expediente Digital del Cliente');
+        });
+        expect(els['doc-checklist-registered-jur-dui'].innerHTML).toContain('CARNET DE RESIDENTE WILLIAM GONZALEZ.pdf');
+        expect(els['doc-checklist-registered-jur-dui'].innerHTML).toContain('v2');
+        expect(els['jur-legal-docs-checklist-summary'].textContent).toContain('6/6 registrados');
+      } finally {
+        global.document = origDoc;
+      }
+    });
+
+    test('Escenarios 2, 3, 4 y 5: Cliente nuevo, parcial, Modificación opcional y NRC No aplica en exportación', () => {
+      const { els, document: fakeDoc } = createChecklistDom();
+      const origDoc = global.document;
+      global.document = fakeDoc;
+
+      try {
+        // Escenario 2 & 4: Cliente nuevo (sin documentos)
+        const resNew = ClientDocuments.syncClientLegalDocsChecklist(null);
+        expect(resNew['jur:escritura'].status).toBe('pending');
+        expect(els['doc-checklist-badge-jur-escritura'].textContent).toContain('Pendiente de cargar');
+        expect(els['jur-file-escritura'].disabled).toBe(false);
+        expect(els['doc-checklist-input-wrap-jur-escritura'].style.display).toBe('block');
+
+        // Modificación al Pacto Social ausente se muestra como Opcional
+        expect(resNew['jur:mods_escritura'].status).toBe('optional');
+        expect(els['doc-checklist-badge-jur-mods_escritura'].textContent).toContain('Opcional');
+
+        // Escenario 5: Cliente de exportación sin NRC -> No aplica
+        els['cli-es-exportacion'].checked = true;
+        const resExport = ClientDocuments.syncClientLegalDocsChecklist({ id: 'C_EXP', tipo: 'juridica', es_exportacion: true, documentos: {} });
+        expect(resExport['jur:nrc'].status).toBe('not_applicable');
+        expect(els['doc-checklist-badge-jur-nrc'].textContent).toContain('No aplica');
+
+        // Escenario 3: Cliente con documentos parciales
+        els['cli-es-exportacion'].checked = false;
+        const resPartial = ClientDocuments.syncClientLegalDocsChecklist({
+          id: 'C_PARTIAL',
+          tipo: 'juridica',
+          documentos: {
+            escritura: { name: 'escritura.pdf', storagePath: 'prod_files/clients/C_PARTIAL/legal/esc.pdf' },
+            nit: { name: 'nit.pdf', storagePath: 'prod_files/clients/C_PARTIAL/legal/nit.pdf' }
+          }
+        });
+        expect(resPartial['jur:escritura'].isRegistered).toBe(true);
+        expect(resPartial['jur:nit'].isRegistered).toBe(true);
+        expect(resPartial['jur:credencial'].isRegistered).toBe(false);
+        expect(els['jur-file-escritura'].disabled).toBe(true);
+        expect(els['jur-file-credencial'].disabled).toBe(false);
+        expect(els['jur-legal-docs-checklist-summary'].textContent).toContain('2/6 registrados');
+      } finally {
+        global.document = origDoc;
+      }
+    });
+
+    test('Escenario 6: Metadatos de validación (Vencido, Pendiente de revisión, Observado) se reflejan sin asumir validez automática', () => {
+      const clientMeta = {
+        id: 'C_META',
+        tipo: 'juridica',
+        biennialReviews: {
+          escritura: { nextReviewAt: '2025-01-01' }
+        },
+        documentos: {
+          escritura: { name: 'esc.pdf', storagePath: 'prod_files/clients/C_META/legal/esc.pdf' },
+          credencial: { name: 'cred.pdf', storagePath: 'prod_files/clients/C_META/legal/cred.pdf', fechaVencimiento: '2025-05-01' },
+          nit: { name: 'nit.pdf', storagePath: 'prod_files/clients/C_META/legal/nit.pdf', estadoValidacion: 'observado', observacion: 'Imagen ilegible' }
+        }
+      };
+
+      const stEsc = ClientDocuments.evaluateClientDocumentChecklistState(clientMeta, 'escritura', { todayIso: '2026-11-06' });
+      expect(stEsc.status).toBe('review_pending');
+      expect(stEsc.badgeText).toContain('Pendiente de revisión');
+
+      const stCred = ClientDocuments.evaluateClientDocumentChecklistState(clientMeta, 'credencial', { todayIso: '2026-11-06' });
+      expect(stCred.status).toBe('expired');
+      expect(stCred.badgeText).toContain('Vencido');
+
+      const stNit = ClientDocuments.evaluateClientDocumentChecklistState(clientMeta, 'nit', { todayIso: '2026-11-06' });
+      expect(stNit.status).toBe('observed');
+      expect(stNit.badgeText).toContain('Observado');
+    });
+
+    test('Escenarios 7, 8 y 9: Actualización en vivo al cargar/sustituir y aislamiento al cambiar entre clientes', () => {
+      const { els, document: fakeDoc } = createChecklistDom();
+      const origDoc = global.document;
+      global.document = fakeDoc;
+
+      try {
+        const clientA = {
+          id: 'C_A',
+          tipo: 'juridica',
+          documentos: {
+            dui: { name: 'dui_v1.pdf', storagePath: 'prod_files/clients/C_A/identificacion/dui_v1.pdf', versionNumber: 1 }
+          }
+        };
+
+        // Inicialmente DUI está registrado (v1) y NRC está pendiente
+        ClientDocuments.syncClientLegalDocsChecklist(clientA);
+        expect(els['jur-file-dui'].disabled).toBe(true);
+        expect(els['jur-file-nrc'].disabled).toBe(false);
+        expect(els['doc-checklist-registered-jur-dui'].innerHTML).toContain('dui_v1.pdf');
+
+        // Escenario 7: Carga inicial de NRC pasa en vivo a Documento registrado
+        clientA.documentos.nrc = { name: 'nrc_inicial.pdf', storagePath: 'prod_files/clients/C_A/legal/nrc.pdf', versionNumber: 1 };
+        ClientDocuments.syncClientLegalDocsChecklist(clientA);
+        expect(els['jur-file-nrc'].disabled).toBe(true);
+        expect(els['doc-checklist-badge-jur-nrc'].textContent).toContain('Documento registrado');
+
+        // Escenario 8: Sustitución de DUI desde Expediente Digital actualiza versión a v2 en vivo
+        clientA.documentos.dui = { name: 'carnet_residente_v2.pdf', storagePath: 'prod_files/clients/C_A/identificacion/carnet_v2.pdf', versionNumber: 2 };
+        ClientDocuments.syncClientLegalDocsChecklist(clientA);
+        expect(els['doc-checklist-registered-jur-dui'].innerHTML).toContain('carnet_residente_v2.pdf');
+        expect(els['doc-checklist-registered-jur-dui'].innerHTML).toContain('v2');
+
+        // Escenario 9: Cambio a otro cliente sin documentos no arrastra el estado de clientA
+        const clientB = { id: 'C_B', tipo: 'juridica', documentos: {} };
+        ClientDocuments.syncClientLegalDocsChecklist(clientB);
+        expect(els['jur-file-dui'].disabled).toBe(false);
+        expect(els['jur-file-nrc'].disabled).toBe(false);
+        expect(els['doc-checklist-registered-jur-dui'].style.display).toBe('none');
+        expect(els['doc-checklist-badge-jur-dui'].textContent).toContain('Pendiente de cargar');
+      } finally {
+        global.document = origDoc;
+      }
+    });
+  });
 });
