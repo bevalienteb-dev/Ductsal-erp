@@ -418,6 +418,9 @@
             if (natFields) natFields.style.display = 'none';
             if (jurFields) jurFields.style.display = 'none';
         }
+        if (typeof window !== 'undefined' && window.ClientDocuments && typeof window.ClientDocuments.syncClientLegalDocsChecklist === 'function') {
+            window.ClientDocuments.syncClientLegalDocsChecklist();
+        }
     }
 
     function setClientFieldError(elementId, hasError) {

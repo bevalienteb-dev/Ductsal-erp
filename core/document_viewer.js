@@ -528,6 +528,13 @@
         const contentEl = document.getElementById('doc-preview-content');
         const dlBtn = document.getElementById('btn-doc-preview-download');
 
+        if (typeof root !== 'undefined' && !root._docPreviewPreviousFocus) {
+            const activeEl = document.activeElement;
+            if (activeEl && activeEl !== document.body && activeEl !== modal) {
+                root._docPreviewPreviousFocus = activeEl;
+            }
+        }
+
         const ext = String(fileName || '').split('.').pop().toUpperCase() || 'DOC';
         if (titleEl) titleEl.textContent = fileName || 'Documento';
         if (badgeEl) badgeEl.textContent = ext;
@@ -556,22 +563,122 @@
             root._activeDocRef = docRef;
             root._activeDocOptions = options;
             root._activeDocName = fileName;
+
+            if (document.body && document.body.style && root._docPreviewPrevBodyOverflow === undefined) {
+                root._docPreviewPrevBodyOverflow = document.body.style.overflow || '';
+                document.body.style.overflow = 'hidden';
+            }
+
+            if (typeof document.addEventListener === 'function') {
+                if (root._docPreviewEscHandler && typeof document.removeEventListener === 'function') {
+                    document.removeEventListener('keydown', root._docPreviewEscHandler);
+                }
+                root._docPreviewEscHandler = function (ev) {
+                    if (ev && (ev.key === 'Escape' || ev.key === 'Esc')) {
+                        closeDocPreviewModal();
+                    }
+                };
+                document.addEventListener('keydown', root._docPreviewEscHandler);
+            }
         }
 
-        modal.style.display = 'block';
+        modal.onclick = function (ev) {
+            if (ev && ev.target === modal) {
+                closeDocPreviewModal();
+            }
+        };
+
+        if (modal.style) modal.style.display = 'block';
+        if (modal.classList) {
+            modal.classList.remove('closing');
+            modal.classList.add('active');
+        }
+        if (typeof modal.setAttribute === 'function') {
+            modal.setAttribute('aria-hidden', 'false');
+        }
     }
 
     function closeDocPreviewModal() {
         if (typeof document === 'undefined') return;
         const modal = document.getElementById('docPreviewModal');
-        if (!modal) return;
         const contentEl = document.getElementById('doc-preview-content');
-        if (contentEl) contentEl.innerHTML = '';
+        const titleEl = document.getElementById('doc-preview-title');
+        const badgeEl = document.getElementById('doc-preview-badge');
+        const iconEl = document.getElementById('doc-preview-icon');
+        const dlBtn = document.getElementById('btn-doc-preview-download');
+
+        if (contentEl) {
+            if (typeof contentEl.querySelectorAll === 'function') {
+                const iframes = contentEl.querySelectorAll('iframe');
+                if (iframes && iframes.forEach) {
+                    iframes.forEach(frame => {
+                        try {
+                            const src = frame.getAttribute('src') || frame.src || '';
+                            if (src && src.startsWith('blob:') && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+                                URL.revokeObjectURL(src);
+                            }
+                            frame.src = 'about:blank';
+                        } catch (_) {}
+                    });
+                }
+                const mediaEls = contentEl.querySelectorAll('img, embed, object');
+                if (mediaEls && mediaEls.forEach) {
+                    mediaEls.forEach(el => {
+                        try {
+                            const src = el.getAttribute('src') || el.getAttribute('data') || el.src || '';
+                            if (src && src.startsWith('blob:') && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+                                URL.revokeObjectURL(src);
+                            }
+                        } catch (_) {}
+                    });
+                }
+            }
+            contentEl.innerHTML = '';
+        }
+
+        if (titleEl) titleEl.textContent = 'Documento';
+        if (badgeEl) badgeEl.textContent = 'ARCHIVO';
+        if (iconEl) iconEl.textContent = '📄';
+        if (dlBtn) dlBtn.onclick = null;
+
+        if (modal) {
+            if (modal.style) modal.style.display = 'none';
+            if (modal.classList) {
+                modal.classList.remove('active', 'open');
+            }
+            if (typeof modal.setAttribute === 'function') {
+                modal.setAttribute('aria-hidden', 'true');
+            }
+            modal.onclick = null;
+        }
+
         if (typeof root !== 'undefined') {
+            if (root._activePreviewBlobUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+                try { URL.revokeObjectURL(root._activePreviewBlobUrl); } catch (_) {}
+                root._activePreviewBlobUrl = null;
+            }
+            if (root._docPreviewEscHandler && typeof document.removeEventListener === 'function') {
+                document.removeEventListener('keydown', root._docPreviewEscHandler);
+                root._docPreviewEscHandler = null;
+            }
+            if (document.body && document.body.style && root._docPreviewPrevBodyOverflow !== undefined) {
+                document.body.style.overflow = root._docPreviewPrevBodyOverflow;
+                delete root._docPreviewPrevBodyOverflow;
+            }
+            if (document.body && document.body.classList && typeof document.body.classList.remove === 'function') {
+                document.body.classList.remove('modal-open');
+            }
             root._activeWorkbook = null;
             root._activeWorkbookName = null;
             root._activeDocRef = null;
             root._activeDocOptions = null;
+            root._activeDocName = null;
+
+            const prevFocus = root._docPreviewPreviousFocus;
+            root._docPreviewPreviousFocus = null;
+            if (prevFocus && typeof prevFocus.focus === 'function') {
+                try { prevFocus.focus(); } catch (_) {}
+            }
         }
     }
 

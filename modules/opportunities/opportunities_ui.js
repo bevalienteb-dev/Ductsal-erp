@@ -2483,6 +2483,10 @@ function openModal(id) {
 }
 
 function closeModal(id) {
+    if (id === 'docPreviewModal' && typeof closeDocPreviewModal === 'function') {
+        closeDocPreviewModal();
+        return;
+    }
     if (id === 'clientDetailContent') {
         cancelPendingClientReservation();
         if (typeof ClientsUI !== 'undefined' && typeof ClientsUI.closeClientDetailView === 'function') {
