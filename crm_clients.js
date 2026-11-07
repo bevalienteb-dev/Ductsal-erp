@@ -61,19 +61,38 @@
         }
     }
 
-    function createClient(fb, { client, dbSuffix, confirmReview }) {
-        const key = ['create', dbSuffix, confirmReview === true, stableStringify(client)].join('|');
-        return callIdempotent(key, opId => fb.functions().httpsCallable('createClientAdmin')({ client, opId, dbSuffix, confirmReview: confirmReview === true }));
+    function createClient(fb, { client, dbSuffix, confirmReview, reviewJustification }) {
+        const key = ['create', dbSuffix, confirmReview === true, reviewJustification || '', stableStringify(client)].join('|');
+        const payload = {
+            client,
+            dbSuffix,
+            confirmReview: confirmReview === true,
+            ...(reviewJustification !== undefined ? { reviewJustification } : {})
+        };
+        return callIdempotent(key, opId => fb.functions().httpsCallable('createClientAdmin')({ ...payload, opId }));
     }
 
-    async function reserveCreation(fb, { client, dbSuffix, confirmReview }) {
-        const r = await fb.functions().httpsCallable('reserveClientCreationAdmin')({ client, dbSuffix, confirmReview: confirmReview === true });
+    async function reserveCreation(fb, { client, dbSuffix, confirmReview, reviewJustification }) {
+        const payload = {
+            client,
+            dbSuffix,
+            confirmReview: confirmReview === true,
+            ...(reviewJustification !== undefined ? { reviewJustification } : {})
+        };
+        const r = await fb.functions().httpsCallable('reserveClientCreationAdmin')(payload);
         return r.data;
     }
 
-    function finalizeCreation(fb, { reservationId, client, dbSuffix, confirmReview }) {
-        const key = ['finalize', reservationId, dbSuffix, confirmReview === true, stableStringify(client)].join('|');
-        return callIdempotent(key, opId => fb.functions().httpsCallable('finalizeClientCreationAdmin')({ reservationId, client, opId, dbSuffix, confirmReview: confirmReview === true }));
+    function finalizeCreation(fb, { reservationId, client, dbSuffix, confirmReview, reviewJustification }) {
+        const key = ['finalize', reservationId, dbSuffix, confirmReview === true, reviewJustification || '', stableStringify(client)].join('|');
+        const payload = {
+            reservationId,
+            client,
+            dbSuffix,
+            confirmReview: confirmReview === true,
+            ...(reviewJustification !== undefined ? { reviewJustification } : {})
+        };
+        return callIdempotent(key, opId => fb.functions().httpsCallable('finalizeClientCreationAdmin')({ ...payload, opId }));
     }
 
     async function cancelReservation(fb, { reservationId, dbSuffix }) {
@@ -81,8 +100,15 @@
         return r.data;
     }
 
-    async function updateClient(fb, { id, client, dbSuffix, confirmReview }) {
-        const r = await fb.functions().httpsCallable('updateClientAdmin')({ id, client, dbSuffix, confirmReview: confirmReview === true });
+    async function updateClient(fb, { id, client, dbSuffix, confirmReview, reviewJustification }) {
+        const payload = {
+            id,
+            client,
+            dbSuffix,
+            confirmReview: confirmReview === true,
+            ...(reviewJustification !== undefined ? { reviewJustification } : {})
+        };
+        const r = await fb.functions().httpsCallable('updateClientAdmin')(payload);
         return r.data;
     }
 
@@ -91,9 +117,33 @@
         return r.data;
     }
 
+    async function previewMergeAccounts(fb, { sourceId, destinationId, dbSuffix }) {
+        const r = await fb.functions().httpsCallable('previewMergeAccountsAdmin')({
+            sourceId,
+            destinationId,
+            dbSuffix
+        });
+        return r.data;
+    }
+
+    function mergeAccounts(fb, { sourceId, destinationId, justification, legalIdentityVerified, verificationEvidence, expectedStateHash, dbSuffix }) {
+        const payload = {
+            sourceId,
+            destinationId,
+            justification: justification || '',
+            legalIdentityVerified: legalIdentityVerified === true,
+            ...(verificationEvidence !== undefined ? { verificationEvidence } : {}),
+            ...(expectedStateHash ? { expectedStateHash } : {}),
+            dbSuffix
+        };
+        const key = ['mergeAccounts', sourceId, destinationId, dbSuffix, justification || '', legalIdentityVerified === true, verificationEvidence || ''].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('mergeAccountsAdmin')({ ...payload, opId }));
+    }
+
     // ---------- wording ----------
     const REASONS = {
-        nit: 'mismo NIT', dui: 'mismo DUI', 'nombre-igual': 'mismo nombre', 'nombre-parecido': 'nombre parecido',
+        nit: 'mismo NIT', nrc: 'mismo NRC', dui: 'mismo DUI',
+        'nombre-igual': 'mismo nombre', 'nombre-parecido': 'nombre parecido',
         'nit-igual-a-dui-de-otro': 'su DUI coincide con este NIT', 'dui-igual-a-nit-de-otro': 'su NIT coincide con este DUI',
         telefono: 'mismo teléfono', correo: 'mismo correo'
     };
@@ -101,6 +151,9 @@
     function describeMatches(matches) {
         return (matches || []).map(m => {
             const why = (m.reasons || []).map(r => REASONS[r] || r).join(', ');
+            if (m && m.inPortfolio === false) {
+                return `• Cuenta registrada fuera de tu cartera comercial${why ? ' — ' + why : ''} (consulta al gerente)`;
+            }
             const hint = m.hint ? ` · ${m.hint}` : '';
             const mine = m.inPortfolio ? ' (ya está en tu cartera)' : '';
             return `• ${m.nombre || '(sin nombre)'}${hint}${why ? ' — ' + why : ''}${mine}`;
@@ -108,13 +161,13 @@
     }
 
     function duplicateMessage(res) {
-        return 'No se creó un cliente nuevo: ya existe un cliente con el mismo documento.\n\n' + describeMatches(res && res.matches) +
-            '\n\nUsa el cliente existente (búscalo por nombre al crear la oportunidad). No se modificó ningún dato.';
+        return 'No se creó un cliente nuevo: ya existe una cuenta con la misma identidad fiscal (NIT, NRC o DUI).\n\n' + describeMatches(res && res.matches) +
+            '\n\nUsa la cuenta existente o consulta al gerente si no está en tu cartera. No se modificó ningún dato.';
     }
 
     function reviewMessage(res) {
-        return 'Hay clientes con datos parecidos. Revísalos antes de continuar:\n\n' + describeMatches(res && res.matches) +
-            '\n\n¿Es realmente un cliente distinto? Aceptar lo registra; Cancelar no guarda nada.';
+        return 'Hay cuentas con nombre idéntico o similar. Revísalas antes de continuar:\n\n' + describeMatches(res && res.matches) +
+            '\n\n¿Es realmente una empresa o cliente diferente? Si no tienes acceso a la cuenta coincidente, consulta al gerente.';
     }
 
     function errorMessage(err) {
@@ -145,6 +198,8 @@
         cancelReservation,
         updateClient,
         searchCatalog,
+        previewMergeAccounts,
+        mergeAccounts,
         describeMatches,
         duplicateMessage,
         reviewMessage,

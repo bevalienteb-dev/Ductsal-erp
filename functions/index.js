@@ -1781,6 +1781,7 @@ function clientsServiceFor(suffix) {
       db,
       FieldValue: firestoreStatics().FieldValue,
       suffix,
+      verifyManager: liveManagerCheck,
       cacheTtlMs: process.env.FUNCTIONS_EMULATOR === 'true' ? 0 : 30000
     });
   }
@@ -1815,29 +1816,51 @@ async function runClientOp(data, context, op) {
   }
 }
 
-/** { client, opId, confirmReview?, dryRun?, dbSuffix? } -> { status: created | duplicate | needs-review | ok, ... } */
+/** { client, opId, confirmReview?, reviewJustification?, dryRun?, dbSuffix? } -> { status: created | duplicate | needs-review | ok, ... } */
 exports.createClientAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
-  (service, caller, d) => service.create({ caller, client: d.client, opId: d.opId, confirmReview: d.confirmReview === true, dryRun: d.dryRun === true })));
+  (service, caller, d) => service.create({ caller, client: d.client, opId: d.opId, confirmReview: d.confirmReview === true, reviewJustification: d.reviewJustification, dryRun: d.dryRun === true })));
 
-/** { client, confirmReview?, dbSuffix? } -> { status: reserved | duplicate | needs-review, reservationId, clientId, expiresAt, ... } */
+/** { client, confirmReview?, reviewJustification?, dbSuffix? } -> { status: reserved | duplicate | needs-review, reservationId, clientId, expiresAt, ... } */
 exports.reserveClientCreationAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
-  (service, caller, d) => service.reserveCreation({ caller, client: d.client, confirmReview: d.confirmReview === true })));
+  (service, caller, d) => service.reserveCreation({ caller, client: d.client, confirmReview: d.confirmReview === true, reviewJustification: d.reviewJustification })));
 
-/** { reservationId, client, opId, confirmReview?, dbSuffix? } -> { status: created | duplicate | needs-review, client, ... } */
+/** { reservationId, client, opId, confirmReview?, reviewJustification?, dbSuffix? } -> { status: created | duplicate | needs-review, client, ... } */
 exports.finalizeClientCreationAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
-  (service, caller, d) => service.finalizeCreation({ caller, reservationId: d.reservationId, client: d.client, opId: d.opId, confirmReview: d.confirmReview === true })));
+  (service, caller, d) => service.finalizeCreation({ caller, reservationId: d.reservationId, client: d.client, opId: d.opId, confirmReview: d.confirmReview === true, reviewJustification: d.reviewJustification })));
 
 /** { reservationId, dbSuffix? } -> { status: cancelled, reservationId } */
 exports.cancelClientReservationAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
   (service, caller, d) => service.cancelReservation({ caller, reservationId: d.reservationId })));
 
-/** { id, client, confirmReview?, dryRun?, dbSuffix? } -> { status: updated | duplicate | needs-review | ok, ... } */
+/** { id, client, confirmReview?, reviewJustification?, dryRun?, dbSuffix? } -> { status: updated | duplicate | needs-review | ok, ... } */
 exports.updateClientAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
-  (service, caller, d) => service.update({ caller, id: d.id, client: d.client, confirmReview: d.confirmReview === true, dryRun: d.dryRun === true })));
+  (service, caller, d) => service.update({ caller, id: d.id, client: d.client, confirmReview: d.confirmReview === true, reviewJustification: d.reviewJustification, dryRun: d.dryRun === true })));
 
 /** { q, limit?, dbSuffix? } -> { results: [{ id, nombre, tipo, hint, inPortfolio }], tooShort, truncated } (selector of new opportunities) */
 exports.searchClientsCatalog = functions.https.onCall((data, context) => runClientOp(data, context,
   (service, caller, d) => service.search({ caller, q: typeof d.q === 'string' ? d.q.slice(0, 100) : '', limit: d.limit })));
+
+/** { sourceId, destinationId, dbSuffix? } -> comparative preview of administrative account merge (manager only) */
+exports.previewMergeAccountsAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
+  (service, caller, d) => service.previewMerge({
+    caller,
+    sourceId: d.sourceId,
+    destinationId: d.destinationId
+  })));
+
+/** { sourceId, destinationId, justification, legalIdentityVerified?, verificationEvidence?, expectedStateHash?, opId, dbSuffix? } -> atomic administrative account merge (manager only) */
+exports.mergeAccountsAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
+  (service, caller, d) => service.mergeAccounts({
+    caller,
+    sourceId: d.sourceId,
+    destinationId: d.destinationId,
+    justification: d.justification,
+    legalIdentityVerified: d.legalIdentityVerified === true,
+    verificationEvidence: d.verificationEvidence,
+    expectedStateHash: d.expectedStateHash,
+    sameCorporateGroupOnly: d.sameCorporateGroupOnly === true,
+    opId: d.opId
+  })));
 
 // ======================================================================================================
 // Commercial operations (opportunities, activity log, reassignment, no-contract authorisation, settings,

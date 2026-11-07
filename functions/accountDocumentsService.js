@@ -16,6 +16,12 @@
 //      biennial reviews, and contractual signatory accreditation (RL vs valid attorney-in-fact) when a contract is required.
 
 const crypto = require('crypto');
+const {
+  MAX_MERGE_DEPTH,
+  isCallerActiveAndAuthenticated,
+  authorizeClientAccess,
+  resolveCanonicalAccount
+} = require('./clientsService');
 
 class ServiceError extends Error {
   constructor(code, message) {
@@ -273,6 +279,7 @@ function extractObjectPathFromAuthorizedStorageUrl(rawUrl, {
 
 function validateCanonicalStoragePath(candidatePath, {
   accountId,
+  allowedAccountIds = null,
   docKey,
   suffix,
   allowHistoricalBase = false,
@@ -343,6 +350,10 @@ function validateCanonicalStoragePath(candidatePath, {
     throw new ServiceError(errorCode, `El ${label} no cuenta con un archivo válido en Storage: nombre de archivo inválido`);
   }
 
+  const validAccountIds = Array.isArray(allowedAccountIds) && allowedAccountIds.length > 0
+    ? allowedAccountIds
+    : [accountId];
+
   if (!allowHistoricalBase) {
     if (segments.length !== 5 || segments[1] !== 'clients') {
       throw new ServiceError(
@@ -350,7 +361,7 @@ function validateCanonicalStoragePath(candidatePath, {
         `El ${label} no cuenta con un archivo válido en Storage: la ruta debe seguir la jerarquía '${expectedPrefix}/clients/${accountId}/${expectedSubfolder}/<archivo>'`
       );
     }
-    if (segments[2] !== accountId) {
+    if (!validAccountIds.includes(segments[2])) {
       throw new ServiceError(
         errorCode,
         `El ${label} no cuenta con un archivo válido en Storage: la ruta pertenece a otra cuenta ('${segments[2]}' !== '${accountId}')`
@@ -365,9 +376,9 @@ function validateCanonicalStoragePath(candidatePath, {
     return decoded;
   }
 
-  // Historical v_base compatibility: allow canonical 5-segment path, legacy 4-segment same-account path, or legacy 3-segment flat 'clientes' path
-  const isCanonical = segments.length === 5 && segments[1] === 'clients' && segments[2] === accountId && segments[3] === expectedSubfolder;
-  const isLegacySameAccount = segments.length === 4 && segments[1] === 'clients' && segments[2] === accountId;
+  // Historical v_base compatibility: allow canonical 5-segment path, legacy 4-segment same-account (or merged chain) path, or legacy 3-segment flat 'clientes' path
+  const isCanonical = segments.length === 5 && segments[1] === 'clients' && validAccountIds.includes(segments[2]) && segments[3] === expectedSubfolder;
+  const isLegacySameAccount = segments.length === 4 && segments[1] === 'clients' && validAccountIds.includes(segments[2]);
   const isLegacyFlatClientes = segments.length === 3 && segments[1] === 'clientes';
 
   if (!isCanonical && !isLegacySameAccount && !isLegacyFlatClientes) {
@@ -382,6 +393,7 @@ function validateCanonicalStoragePath(candidatePath, {
 
 function validateAndNormalizeStorageDoc(doc, {
   accountId,
+  allowedAccountIds = null,
   docKey,
   suffix,
   allowHistoricalBase = false,
@@ -444,6 +456,7 @@ function validateAndNormalizeStorageDoc(doc, {
   if (rawStoragePath) {
     pathFromStoragePath = validateCanonicalStoragePath(rawStoragePath, {
       accountId,
+      allowedAccountIds,
       docKey,
       suffix,
       allowHistoricalBase,
@@ -461,6 +474,7 @@ function validateAndNormalizeStorageDoc(doc, {
     });
     pathFromUrl = validateCanonicalStoragePath(extracted, {
       accountId,
+      allowedAccountIds,
       docKey,
       suffix,
       allowHistoricalBase,
@@ -595,19 +609,31 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     if (!caller || !caller.uid || !caller.role || !caller.cid) {
       throw new ServiceError('unauthenticated', 'Se requiere una sesión activa del CRM');
     }
+    if (!isCallerActiveAndAuthenticated(caller)) {
+      throw new ServiceError('permission-denied', 'Se requiere un usuario activo del CRM vinculado a esta sesión');
+    }
     if (!CRM_ROLES.includes(caller.role)) {
       throw new ServiceError('permission-denied', 'Rol no autorizado para operaciones de gestión documental');
     }
   }
 
   function canAccessAccount(caller, client) {
-    if (!caller || !client) return false;
-    if (PRIVILEGED.includes(caller.role)) return true;
-    if (client.createdBy === caller.cid) return true;
-    if (Array.isArray(client.visibleTo) && client.visibleTo.includes(caller.cid)) return true;
-    if (client.vendedor_asignado === caller.cid) return true;
-    if (Array.isArray(client.closingVendors) && client.closingVendors.includes(caller.cid)) return true;
-    return false;
+    return authorizeClientAccess(caller, client);
+  }
+
+  const boundResolveCanonicalAccount = (originId, opts = {}) =>
+    resolveCanonicalAccount(col('clients'), originId, {
+      suffix,
+      notFoundMessage: 'Cuenta no encontrada',
+      ...opts
+    });
+
+  async function resolveAndAuthorizeAccount(caller, accountId, tx = null) {
+    const resolved = await boundResolveCanonicalAccount(accountId, { tx });
+    if (!authorizeClientAccess(caller, resolved.canonicalData)) {
+      throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
+    }
+    return resolved;
   }
 
   function addAudit(tx, caller, action, entityId, metadata = {}, result = 'success') {
@@ -677,15 +703,10 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     const cleanDuiExpiry = duiDoc.fechaVencimiento ? sanitizeDate(duiDoc.fechaVencimiento, 'fechaVencimiento DUI') : null;
 
     return db.runTransaction(async tx => {
-      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
+      // 1. Cargar primero clientRef (resolviendo cadena de fusión si aplica) y autorizar acceso a la cuenta terminal antes de evaluar documentos o idempotencia
+      const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId, tx);
       const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-      }
+      const client = resolvedAccount.originData;
 
       const cleanCredDoc = validateAndNormalizeStorageDoc(credencialDoc, {
         accountId: cleanAccountId,
@@ -996,15 +1017,10 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     const cleanNotas = optMaxString(notas, 'notas', 500);
 
     return db.runTransaction(async tx => {
-      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
+      // 1. Cargar primero clientRef (resolviendo cadena de fusión si aplica) y autorizar acceso a la cuenta terminal antes de evaluar documentos o idempotencia
+      const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId, tx);
       const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-      }
+      const client = resolvedAccount.originData;
 
       const cleanPowerDoc = validateAndNormalizeStorageDoc(effectiveDoc, {
         accountId: cleanAccountId,
@@ -1232,15 +1248,10 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     }) : null;
 
     return db.runTransaction(async tx => {
-      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar idempotencia
+      // 1. Cargar primero clientRef (resolviendo cadena de fusión si aplica) y autorizar acceso a la cuenta terminal antes de evaluar idempotencia
+      const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId, tx);
       const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-      }
+      const client = resolvedAccount.originData;
 
       const opRef = cleanOpId ? col('ops').doc(`revoke_power_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
@@ -1377,14 +1388,9 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
 
     return db.runTransaction(async tx => {
       // --- FASE 1 DE TRANSACCIÓN: TODAS LAS LECTURAS (AUTORIZACIÓN ANTES DE IDEMPOTENCIA) ---
+      const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId, tx);
       const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-      }
+      const client = resolvedAccount.originData;
 
       const opRef = cleanOpId ? col('ops').doc(`biennial_${cleanAccountId}_${cleanOpId}`) : null;
       const opSnap = opRef ? await tx.get(opRef) : null;
@@ -1513,8 +1519,30 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
           } else {
             // Case 4: Materialize deterministic base version ONLY if currentActiveDoc has a valid Storage reference
             // AND the object physically exists in Firebase Storage.
+            const allowedAccountIds = [...resolvedAccount.chain];
+            const rawCandidatePath = typeof currentActiveDoc === 'string'
+              ? currentActiveDoc
+              : (currentActiveDoc && (currentActiveDoc.storagePath || currentActiveDoc.path || currentActiveDoc.url)) || '';
+            const decodedCandidatePath = (() => {
+              try { return decodeURIComponent(String(rawCandidatePath)); } catch (_) { return String(rawCandidatePath); }
+            })();
+            const clientPathMatch = decodedCandidatePath.match(/(?:^|\/)(?:prod_files|local_files)\/clients\/([^/]+)\//);
+            if (clientPathMatch && clientPathMatch[1] && !allowedAccountIds.includes(clientPathMatch[1])) {
+              try {
+                const candidateResolved = await boundResolveCanonicalAccount(clientPathMatch[1], { tx });
+                if (candidateResolved && candidateResolved.canonicalId === resolvedAccount.canonicalId) {
+                  for (const id of candidateResolved.chain) {
+                    if (!allowedAccountIds.includes(id)) allowedAccountIds.push(id);
+                  }
+                }
+              } catch (_) {
+                // Si la cuenta origen del path no existe o tiene cadena inválida, se rechaza abajo
+              }
+            }
+
             const normalizedBaseDoc = validateAndNormalizeStorageDoc(currentActiveDoc, {
               accountId: cleanAccountId,
+              allowedAccountIds,
               docKey: cleanDocKey,
               suffix,
               allowHistoricalBase: true,
@@ -1757,15 +1785,10 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     }
 
     return db.runTransaction(async tx => {
-      // 1. Cargar primero clientRef y autorizar acceso a la cuenta antes de evaluar documentos o idempotencia
+      // 1. Cargar primero clientRef (resolviendo cadena de fusión si aplica) y autorizar acceso a la cuenta terminal antes de evaluar documentos o idempotencia
+      const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId, tx);
       const clientRef = col('clients').doc(cleanAccountId);
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-      const client = clientSnap.data();
-
-      if (!canAccessAccount(caller, client)) {
-        throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-      }
+      const client = resolvedAccount.originData;
 
       const cleanSaveDoc = validateAndNormalizeStorageDoc(doc, {
         accountId: cleanAccountId,
@@ -1979,14 +2002,9 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     const cleanAccountId = reqString(accountId, 'accountId');
     const cleanProspectId = reqString(prospectId, 'prospectId');
 
-    const clientRef = col('clients').doc(cleanAccountId);
-    const clientSnap = await clientRef.get();
-    if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-    const client = clientSnap.data();
-
-    if (!canAccessAccount(caller, client)) {
-      throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-    }
+    const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId);
+    const clientRef = col('clients').doc(resolvedAccount.canonicalId);
+    const client = resolvedAccount.canonicalData;
 
     const todayStr = now.toISOString().slice(0, 10);
     const blockingReasons = [];
@@ -2199,14 +2217,9 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     assertCaller(caller);
     const cleanAccountId = reqString(accountId, 'accountId');
 
-    const clientRef = col('clients').doc(cleanAccountId);
-    const clientSnap = await clientRef.get();
-    if (!clientSnap.exists) throw new ServiceError('not-found', 'Cuenta no encontrada');
-    const client = clientSnap.data();
-
-    if (!canAccessAccount(caller, client)) {
-      throw new ServiceError('permission-denied', 'No tienes acceso a esta cuenta');
-    }
+    const resolvedAccount = await resolveAndAuthorizeAccount(caller, cleanAccountId);
+    const clientRef = col('clients').doc(resolvedAccount.canonicalId);
+    const client = resolvedAccount.canonicalData;
 
     // Read subcollections
     const [termsSnap, powersSnap, confirmationsSnap, versionsSnap] = await Promise.all([
@@ -2257,7 +2270,9 @@ function createAccountDocumentsService({ db, FieldValue, bucket = null, suffix =
     saveAccountDocument,
     validateAccountDocumentsForOpportunityClose,
     getAccountDossier,
-    resolveCaller
+    resolveCaller,
+    resolveCanonicalAccount: boundResolveCanonicalAccount,
+    authorizeClientAccess
   };
 }
 
@@ -2269,5 +2284,8 @@ module.exports = {
   ALL_DOC_KEYS,
   DOC_FAMILIES,
   DOCUMENTS_REQUIRING_BIENNIAL_REVIEW,
-  DOCUMENTS_WITH_EXPIRATION
+  DOCUMENTS_WITH_EXPIRATION,
+  MAX_MERGE_DEPTH,
+  authorizeClientAccess,
+  resolveCanonicalAccount
 };

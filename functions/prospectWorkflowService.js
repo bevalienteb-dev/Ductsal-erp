@@ -20,7 +20,7 @@
 // tested decision and not a hunt through the code. Manager-only items keep the live Auth check.
 
 const identity = require('./clientIdentity');
-const { ServiceError, stableHash } = require('./clientsService');
+const { ServiceError, stableHash, resolveCanonicalAccount } = require('./clientsService');
 const { validators } = require('./commercialService');
 const {
   applyDocumentVersionsTx,
@@ -216,7 +216,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   async function loadClient(tx, p) {
     if (!p.clientId) return null;
     const s = await tx.get(col('clients').doc(p.clientId));
-    return s.exists ? (s.data() || {}) : null;
+    if (!s.exists) return null;
+    const data = s.data() || {};
+    if (typeof data.fusionada_en === 'string' && data.fusionada_en.trim()) {
+      const resolved = await resolveCanonicalAccount(col('clients'), p.clientId, { tx });
+      return resolved.canonicalData || {};
+    }
+    return data;
   }
   const subtotalOf = p => {
     let base = Number(p.precio_cotizado) || 0;
@@ -922,9 +928,17 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (p.estado !== 'activo') throw precondition('Solo una oportunidad activa puede finalizarse');
 
       let client = null;
+      let effectiveClientId = p.clientId || null;
       if (p.clientId) {
         const cSnap = await tx.get(col('clients').doc(p.clientId));
-        client = cSnap.data() || {};
+        const rawClient = cSnap.data() || {};
+        if (typeof rawClient.fusionada_en === 'string' && rawClient.fusionada_en.trim()) {
+          const resolved = await resolveCanonicalAccount(col('clients'), p.clientId, { tx });
+          effectiveClientId = resolved.canonicalId;
+          client = resolved.canonicalData || {};
+        } else {
+          client = rawClient;
+        }
       }
 
       const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(parseFloat(p.precio_cotizado) || 0, parseFloat(p.costo_venta) || 0) > 10000;
@@ -943,10 +957,10 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const isContractual = explicitContractRequirement === true;
       const firmante = input.firmante_cierre || p.firmante_cierre || datos.firmante_cierre || null;
       let preloadedPowerSnap = null;
-      if (isContractual && firmante && firmante.tipo === 'apoderado' && p.clientId) {
+      if (isContractual && firmante && firmante.tipo === 'apoderado' && effectiveClientId) {
         const powerId = firmante.powerId || firmante.id;
         if (powerId) {
-          preloadedPowerSnap = await tx.get(col('clients').doc(p.clientId).collection('contract_powers').doc(String(powerId)));
+          preloadedPowerSnap = await tx.get(col('clients').doc(effectiveClientId).collection('contract_powers').doc(String(powerId)));
         }
       }
 

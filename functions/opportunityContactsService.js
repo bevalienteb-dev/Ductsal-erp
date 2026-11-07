@@ -13,6 +13,10 @@
 //   6. Logical deletion on prospect cascades to all subordinate participants (eliminado = true, estado_participacion = 'inactivo', isPrimary = false).
 
 const crypto = require('crypto');
+const {
+  authorizeClientAccess,
+  resolveCanonicalAccount
+} = require('./clientsService');
 
 class ServiceError extends Error {
   constructor(code, message) {
@@ -310,9 +314,23 @@ function createOpportunityContactsService({
       const accountContact = acSnap.data() || {};
 
       // Invariants:
-      // a) Contact must belong to the opportunity's account
+      // a) Contact must belong to the opportunity's account (including merged account chain)
       if (accountContact.accountId !== p.clientId) {
-        throw new ServiceError('failed-precondition', 'El contacto no pertenece a la cuenta de la oportunidad');
+        let sameCanonical = false;
+        if (accountContact.accountId && p.clientId) {
+          try {
+            const [acRes, pRes] = await Promise.all([
+              resolveCanonicalAccount(col('clients'), accountContact.accountId, { suffix, tx }),
+              resolveCanonicalAccount(col('clients'), p.clientId, { suffix, tx })
+            ]);
+            sameCanonical = acRes.canonicalId === pRes.canonicalId;
+          } catch (_) {
+            sameCanonical = false;
+          }
+        }
+        if (!sameCanonical) {
+          throw new ServiceError('failed-precondition', 'El contacto no pertenece a la cuenta de la oportunidad');
+        }
       }
 
       // b) Relation must be active in the account
@@ -704,18 +722,17 @@ function createOpportunityContactsService({
         throw new ServiceError('failed-precondition', 'No se puede cambiar la cuenta si existe una cotización activa');
       }
 
-      // c) Read new account
-      const newAccSnap = await tx.get(newAccountRef);
-      if (!newAccSnap.exists) throw new ServiceError('not-found', 'La nueva cuenta especificada no existe');
-      const newAccount = newAccSnap.data() || {};
+      // c) Read new account (resolving canonical account if merged)
+      const resolvedNewAcc = await resolveCanonicalAccount(col('clients'), newAccId, {
+        suffix,
+        tx,
+        notFoundMessage: 'La nueva cuenta especificada no existe'
+      });
+      const newAccount = resolvedNewAcc.canonicalData;
 
-      // Check seller access to new account
-      if (!PRIVILEGED.includes(caller.role)) {
-        const visibleTo = Array.isArray(newAccount.visibleTo) ? newAccount.visibleTo : [];
-        const hasAccess = newAccount.createdBy === caller.cid || visibleTo.includes(caller.cid) || newAccount.vendedor_asignado === caller.cid;
-        if (!hasAccess) {
-          throw new ServiceError('permission-denied', 'No tiene permisos para transferir la oportunidad a esta cuenta');
-        }
+      // Check seller access to new account via centralized authorizeClientAccess
+      if (!authorizeClientAccess(caller, newAccount)) {
+        throw new ServiceError('permission-denied', 'No tiene permisos para transferir la oportunidad a esta cuenta');
       }
 
       if (p.clientId === newAccId) {

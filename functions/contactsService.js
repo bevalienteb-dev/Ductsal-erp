@@ -9,6 +9,10 @@
 // portfolio visibility verification, and atomic Firestore transactions.
 
 const crypto = require('crypto');
+const {
+  authorizeClientAccess,
+  resolveCanonicalAccount
+} = require('./clientsService');
 
 class ServiceError extends Error {
   constructor(code, message) {
@@ -109,24 +113,27 @@ function createContactsService({
   // ---------- portfolio authorization ----------
   async function assertAccountVisible(caller, accountId, tx = null) {
     reqDocId(accountId, 'accountId');
-    const accountRef = col('clients').doc(accountId);
-    const snap = tx ? await tx.get(accountRef) : await accountRef.get();
-    if (!snap.exists) throw new ServiceError('not-found', 'La cuenta especificada no existe');
-    const account = snap.data() || {};
-    if (PRIVILEGED.includes(caller.role)) return { ref: accountRef, account };
+    const resolved = await resolveCanonicalAccount(col('clients'), accountId, {
+      suffix,
+      tx,
+      notFoundMessage: 'La cuenta especificada no existe'
+    });
+    const accountRef = col('clients').doc(resolved.canonicalId);
+    const account = resolved.canonicalData;
 
-    const visibleTo = Array.isArray(account.visibleTo) ? account.visibleTo : [];
-    if (account.createdBy === caller.cid || visibleTo.includes(caller.cid) || (account.vendedor_asignado && account.vendedor_asignado === caller.cid)) {
-      return { ref: accountRef, account };
+    if (authorizeClientAccess(caller, account)) {
+      return { ref: accountRef, account, resolved };
     }
 
-    // Check if vendedor has any opportunity for this client
-    const oppsQuery = col('prospects')
-      .where('clientId', '==', accountId)
-      .where('vendedorId', '==', caller.cid);
-    const oppsSnap = await oppsQuery.get();
-    const hasOpp = oppsSnap.docs.some(d => d.data() && d.data().eliminado !== true);
-    if (hasOpp) return { ref: accountRef, account };
+    // Fallback when account is unmerged and visibleTo has not yet been recomputed from opportunities
+    if (!resolved.isMerged && caller && caller.role === 'vendedor' && caller.cid) {
+      const oppsQuery = col('prospects')
+        .where('clientId', '==', resolved.canonicalId)
+        .where('vendedorId', '==', caller.cid);
+      const oppsSnap = await oppsQuery.get();
+      const hasOpp = oppsSnap.docs.some(d => d.data() && d.data().eliminado !== true);
+      if (hasOpp) return { ref: accountRef, account, resolved };
+    }
 
     throw new ServiceError('permission-denied', 'No tiene permisos para acceder a esta cuenta');
   }
