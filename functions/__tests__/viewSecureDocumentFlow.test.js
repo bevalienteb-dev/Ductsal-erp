@@ -12,9 +12,9 @@ describe('SEC-03: Storage Document Preview & Download Flow', () => {
   const releaseViewerPath = path.join(__dirname, '..', '..', '..', 'sales-reporting-system-release', 'core', 'document_viewer.js');
   const mainViewerPath = path.join(__dirname, '..', '..', 'core', 'document_viewer.js');
 
-  const viewerSrc = fs.existsSync(releaseViewerPath)
-    ? fs.readFileSync(releaseViewerPath, 'utf8')
-    : fs.readFileSync(mainViewerPath, 'utf8');
+  const viewerSrc = fs.existsSync(mainViewerPath)
+    ? fs.readFileSync(mainViewerPath, 'utf8')
+    : fs.readFileSync(releaseViewerPath, 'utf8');
 
   const extractFn = (fnName, nextFn) => {
     const start = viewerSrc.indexOf(`async function ${fnName}(`);
@@ -306,6 +306,114 @@ describe('SEC-03: Storage Document Preview & Download Flow', () => {
           prospectId: 'P100'
         })
       ).rejects.toThrow('No tienes acceso a los documentos de esta oportunidad');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. Cierre completo de #docPreviewModal (Hotfix D.1: X, Escape, Backdrop, Blob & Iframe Cleanup)
+  // ---------------------------------------------------------------------------
+  describe('4. Cierre completo del modal #docPreviewModal (Hotfix D.1)', () => {
+    const DocumentViewerFactory = require('../../core/document_viewer.js');
+
+    test('openDocPreviewModal y closeDocPreviewModal ocultan el contenedor modal, limpian iframe, revocan blob URL, restauran scroll y foco', () => {
+      const keydownListeners = [];
+      const revokedUrls = [];
+      let focusRestored = false;
+
+      const triggerBtn = {
+        focus: () => { focusRestored = true; }
+      };
+
+      const iframeEl = {
+        src: 'blob:https://erp.ductsal.com/pdf-preview-123',
+        getAttribute: (attr) => (attr === 'src' ? iframeEl.src : null)
+      };
+      const contentEl = {
+        innerHTML: '',
+        querySelectorAll: (sel) => (sel === 'iframe' && contentEl.innerHTML.includes('<iframe')) ? [iframeEl] : []
+      };
+      const titleEl = { textContent: '' };
+      const badgeEl = { textContent: '' };
+      const iconEl = { textContent: '' };
+      const dlBtn = { onclick: null };
+      const modalEl = {
+        id: 'docPreviewModal',
+        style: { display: 'none' },
+        dataset: {},
+        onclick: null,
+        classList: {
+          add: jest.fn(),
+          remove: jest.fn()
+        },
+        setAttribute: jest.fn()
+      };
+
+      const fakeDoc = {
+        activeElement: triggerBtn,
+        body: { style: { overflow: '' } },
+        getElementById: (id) => {
+          if (id === 'docPreviewModal') return modalEl;
+          if (id === 'doc-preview-title') return titleEl;
+          if (id === 'doc-preview-content') return contentEl;
+          if (id === 'doc-preview-badge') return badgeEl;
+          if (id === 'doc-preview-icon') return iconEl;
+          if (id === 'btn-doc-preview-download') return dlBtn;
+          return null;
+        },
+        addEventListener: (evt, fn) => {
+          if (evt === 'keydown') keydownListeners.push(fn);
+        },
+        removeEventListener: (evt, fn) => {
+          if (evt === 'keydown') {
+            const idx = keydownListeners.indexOf(fn);
+            if (idx >= 0) keydownListeners.splice(idx, 1);
+          }
+        }
+      };
+
+      const origDoc = global.document;
+      const origUrl = global.URL;
+      global.document = fakeDoc;
+      global.URL = {
+        revokeObjectURL: (u) => revokedUrls.push(u)
+      };
+
+      try {
+        // 1. Abrir modal con un blob URL activo
+        DocumentViewerFactory.openDocPreviewModal('Vista Previa.pdf', { storagePath: 'prod_files/clients/C1/legal/doc.pdf' }, {});
+        expect(modalEl.style.display).toBe('block');
+        expect(fakeDoc.body.style.overflow).toBe('hidden');
+        expect(keydownListeners.length).toBe(1);
+        expect(typeof modalEl.onclick).toBe('function');
+
+        contentEl.innerHTML = '<iframe src="blob:https://erp.ductsal.com/pdf-preview-123"></iframe>';
+
+        // 2. Cerrar con botón X (closeDocPreviewModal)
+        DocumentViewerFactory.closeDocPreviewModal();
+        expect(modalEl.style.display).toBe('none');
+        expect(iframeEl.src).toBe('about:blank');
+        expect(contentEl.innerHTML).toBe('');
+        expect(revokedUrls).toContain('blob:https://erp.ductsal.com/pdf-preview-123');
+        expect(fakeDoc.body.style.overflow).toBe('');
+        expect(focusRestored).toBe(true);
+        expect(keydownListeners.length).toBe(0);
+
+        // 3. Reabrir y cerrar con tecla Escape
+        DocumentViewerFactory.openDocPreviewModal('Segundo Documento.pdf', {}, {});
+        expect(modalEl.style.display).toBe('block');
+        expect(keydownListeners.length).toBe(1);
+        keydownListeners[0]({ key: 'Escape' });
+        expect(modalEl.style.display).toBe('none');
+
+        // 4. Reabrir y cerrar con clic en backdrop (event.target === modal)
+        DocumentViewerFactory.openDocPreviewModal('Tercer Documento.pdf', {}, {});
+        expect(modalEl.style.display).toBe('block');
+        modalEl.onclick({ target: modalEl });
+        expect(modalEl.style.display).toBe('none');
+      } finally {
+        global.document = origDoc;
+        global.URL = origUrl;
+      }
     });
   });
 });

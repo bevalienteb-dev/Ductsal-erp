@@ -23,10 +23,15 @@
             window.renderClientExpedienteSection = api.renderClientExpedienteSection;
             window.hasStagedClientFiles = api.hasStagedClientFiles;
             window.uploadClientStagedFiles = api.uploadClientStagedFiles;
+            window.onClientFormFileChange = api.onClientFormFileChange;
+            window.clearClientFormStagedFile = api.clearClientFormStagedFile;
+            window.resetAllClientFormStagedFiles = api.resetAllClientFormStagedFiles;
             window.deleteClientDocument = api.deleteClientDocument;
             window.uploadClientDocumentFromClosing = api.uploadClientDocumentFromClosing;
             window.toggleClientDocSubstForm = api.toggleClientDocSubstForm;
             window.cancelClientDocSubstForm = api.cancelClientDocSubstForm;
+            window.syncClientLegalDocsChecklist = api.syncClientLegalDocsChecklist;
+            window.evaluateClientDocumentChecklistState = api.evaluateClientDocumentChecklistState;
         }
     }
 })(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this), function () {
@@ -159,10 +164,426 @@
     }
 
     // -------------------------------------------------------------------------
-    // 2. Expediente Digital del Cliente
+    // 2. Lista de Verificación de Documentación Legal y Expediente Digital
     // -------------------------------------------------------------------------
+    function hasValidFirestoreDocRef(val) {
+        if (!val) return false;
+        if (Array.isArray(val)) {
+            return val.some(item => hasValidFirestoreDocRef(item));
+        }
+        if (typeof val === 'string') {
+            return val.trim().length > 0;
+        }
+        if (typeof val === 'object') {
+            const sp = typeof val.storagePath === 'string' ? val.storagePath.trim() : '';
+            const p = typeof val.path === 'string' ? val.path.trim() : '';
+            const u = typeof val.url === 'string' ? val.url.trim() : '';
+            return Boolean(sp.length > 0 || p.length > 0 || u.length > 0);
+        }
+        return false;
+    }
+
+    function evaluateClientDocumentChecklistState(client, docKey, options = {}) {
+        const docs = (client && client.documentos && typeof client.documentos === 'object') ? client.documentos : {};
+        const rawDoc = docs[docKey] !== undefined ? docs[docKey] : null;
+        const isRegistered = hasValidFirestoreDocRef(rawDoc);
+        const todayIso = (options && options.todayIso) || new Date().toISOString().slice(0, 10);
+
+        let isExport = false;
+        if (options && typeof options.isExport === 'boolean') {
+            isExport = options.isExport;
+        } else if (client && (client.es_exportacion === true || client.es_exportacion === 'true')) {
+            isExport = true;
+        } else if (typeof document !== 'undefined') {
+            const expEl = document.getElementById('cli-es-exportacion');
+            if (expEl && typeof expEl.checked === 'boolean') {
+                isExport = expEl.checked;
+            }
+        }
+
+        const isOptionalCategory = docKey === 'mods_escritura';
+        const isConditionalExportNrc = docKey === 'nrc' && isExport;
+
+        if (!isRegistered) {
+            if (isConditionalExportNrc) {
+                return {
+                    docKey,
+                    isRegistered: false,
+                    status: 'not_applicable',
+                    badgeText: '✈️ No aplica (Exportación)',
+                    badgeClass: 'status-not-applicable',
+                    isOptional: true,
+                    isNotApplicable: true,
+                    fileName: '',
+                    versionNumber: null,
+                    sha256: '',
+                    fechaVencimiento: '',
+                    validationNote: 'Cliente de exportación: tarjeta de IVA / NRC no exigible.',
+                    docRef: null
+                };
+            }
+            if (isOptionalCategory) {
+                return {
+                    docKey,
+                    isRegistered: false,
+                    status: 'optional',
+                    badgeText: 'ℹ️ Opcional · Pendiente de cargar',
+                    badgeClass: 'status-optional',
+                    isOptional: true,
+                    isNotApplicable: false,
+                    fileName: '',
+                    versionNumber: null,
+                    sha256: '',
+                    fechaVencimiento: '',
+                    validationNote: 'Opcional si la sociedad no ha tenido reformas al pacto social.',
+                    docRef: null
+                };
+            }
+            return {
+                docKey,
+                isRegistered: false,
+                status: 'pending',
+                badgeText: '⏳ Pendiente de cargar',
+                badgeClass: 'status-pending',
+                isOptional: false,
+                isNotApplicable: false,
+                fileName: '',
+                versionNumber: null,
+                sha256: '',
+                fechaVencimiento: '',
+                validationNote: '',
+                docRef: null
+            };
+        }
+
+        const docObj = Array.isArray(rawDoc) ? rawDoc[rawDoc.length - 1] : rawDoc;
+        let fileName = _deps.formatClientDocLabel(docKey);
+        if (docObj && typeof docObj === 'object' && docObj.name) {
+            fileName = String(docObj.name);
+        } else if (typeof docObj === 'string') {
+            const parts = docObj.split('?')[0].split('/');
+            const last = parts[parts.length - 1];
+            fileName = decodeURIComponent(last) || fileName;
+        }
+
+        const versionNumber = (docObj && typeof docObj === 'object' && docObj.versionNumber)
+            ? Number(docObj.versionNumber)
+            : 1;
+        const sha256 = (docObj && typeof docObj === 'object' && docObj.sha256)
+            ? String(docObj.sha256)
+            : '';
+
+        let fechaVencimiento = (docObj && typeof docObj === 'object' && docObj.fechaVencimiento)
+            ? String(docObj.fechaVencimiento).trim()
+            : '';
+        if (!fechaVencimiento && docKey === 'credencial' && client && client.representanteLegalVigente && client.representanteLegalVigente.estado === 'vigente' && client.representanteLegalVigente.fechaVencimiento) {
+            fechaVencimiento = String(client.representanteLegalVigente.fechaVencimiento).trim();
+        }
+
+        const estadoVal = (docObj && typeof docObj === 'object' && docObj.estadoValidacion)
+            ? String(docObj.estadoValidacion).toLowerCase().trim()
+            : '';
+        const observacion = (docObj && typeof docObj === 'object' && (docObj.observacion || docObj.observaciones || docObj.motivoObservacion))
+            ? String(docObj.observacion || docObj.observaciones || docObj.motivoObservacion).trim()
+            : '';
+
+        const biennialNext = (['escritura', 'mods_escritura'].includes(docKey) && client && client.biennialReviews && client.biennialReviews[docKey] && client.biennialReviews[docKey].nextReviewAt)
+            ? String(client.biennialReviews[docKey].nextReviewAt).trim()
+            : '';
+
+        const isObserved = estadoVal === 'observado' || Boolean(docObj && docObj.observado === true) || observacion.length > 0;
+        const isExpired = estadoVal === 'vencido' || Boolean(docObj && docObj.vencido === true) || Boolean(fechaVencimiento && fechaVencimiento < todayIso);
+        const isReviewPending = estadoVal === 'pendiente_revision' || estadoVal === 'pendiente de revision' || Boolean(docObj && docObj.pendienteRevision === true) || Boolean(biennialNext && biennialNext < todayIso);
+
+        let status = 'registered';
+        let badgeText = '✅ Documento registrado';
+        let badgeClass = 'status-registered';
+        let validationNote = '';
+
+        if (isObserved) {
+            status = 'observed';
+            badgeText = '🔎 Observado';
+            badgeClass = 'status-observed';
+            validationNote = observacion
+                ? `Observación documental: ${observacion}`
+                : 'Documento observado: requiere revisión o sustitución en el Expediente Digital.';
+        } else if (isExpired) {
+            status = 'expired';
+            badgeText = '⚠️ Vencido';
+            badgeClass = 'status-expired';
+            validationNote = fechaVencimiento
+                ? `Vigencia vencida (${fechaVencimiento}). Reemplace el documento desde el Expediente Digital.`
+                : 'Documento con vigencia vencida. Reemplace el documento desde el Expediente Digital.';
+        } else if (isReviewPending) {
+            status = 'review_pending';
+            badgeText = '🗓️ Pendiente de revisión';
+            badgeClass = 'status-review-pending';
+            validationNote = biennialNext
+                ? `Revisión bienal pendiente desde ${biennialNext}. Confirme vigencia o sustituya en el Expediente Digital.`
+                : 'Documento pendiente de revisión de vigencia.';
+        }
+
+        return {
+            docKey,
+            isRegistered: true,
+            status,
+            badgeText,
+            badgeClass,
+            isOptional: isOptionalCategory,
+            isNotApplicable: false,
+            fileName,
+            versionNumber,
+            sha256,
+            fechaVencimiento,
+            validationNote,
+            docRef: docObj
+        };
+    }
+
+    function syncClientLegalDocsChecklist(clientOverride) {
+        if (typeof document === 'undefined') return null;
+
+        let client = null;
+        if (arguments.length > 0) {
+            client = clientOverride;
+        } else {
+            const editIdEl = document.getElementById('client-id-edit');
+            const editId = editIdEl && editIdEl.value ? String(editIdEl.value).trim() : '';
+            if (editId) {
+                const list = _deps.getClients() || [];
+                client = list.find(x => x && x.id === editId) || null;
+            }
+        }
+
+        const expEl = document.getElementById('cli-es-exportacion');
+        const isExport = (expEl && typeof expEl.checked === 'boolean')
+            ? expEl.checked
+            : Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+
+        const checklistSpecs = [
+            {
+                scope: 'jur',
+                docKey: 'escritura',
+                label: 'Escritura de Constitución',
+                cardId: 'doc-checklist-card-jur-escritura',
+                badgeId: 'doc-checklist-badge-jur-escritura',
+                regId: 'doc-checklist-registered-jur-escritura',
+                wrapId: 'doc-checklist-input-wrap-jur-escritura',
+                inputId: 'jur-file-escritura',
+                substBoxId: 'client-subst-box-jur-escritura'
+            },
+            {
+                scope: 'jur',
+                docKey: 'mods_escritura',
+                label: 'Modificación al Pacto Social',
+                cardId: 'doc-checklist-card-jur-mods_escritura',
+                badgeId: 'doc-checklist-badge-jur-mods_escritura',
+                regId: 'doc-checklist-registered-jur-mods_escritura',
+                wrapId: 'doc-checklist-input-wrap-jur-mods_escritura',
+                inputId: 'jur-file-mods',
+                substBoxId: 'client-subst-box-jur-mods_escritura'
+            },
+            {
+                scope: 'jur',
+                docKey: 'credencial',
+                label: 'Credencial de Rep. Legal',
+                cardId: 'doc-checklist-card-jur-credencial',
+                badgeId: 'doc-checklist-badge-jur-credencial',
+                regId: 'doc-checklist-registered-jur-credencial',
+                wrapId: 'doc-checklist-input-wrap-jur-credencial',
+                inputId: 'jur-file-credencial',
+                substBoxId: 'client-subst-box-jur-credencial'
+            },
+            {
+                scope: 'jur',
+                docKey: 'nit',
+                label: 'NIT de la Empresa',
+                cardId: 'doc-checklist-card-jur-nit',
+                badgeId: 'doc-checklist-badge-jur-nit',
+                regId: 'doc-checklist-registered-jur-nit',
+                wrapId: 'doc-checklist-input-wrap-jur-nit',
+                inputId: 'jur-file-nit',
+                substBoxId: 'client-subst-box-jur-nit'
+            },
+            {
+                scope: 'jur',
+                docKey: 'nrc',
+                label: 'NRC / Tarjeta de IVA',
+                cardId: 'doc-checklist-card-jur-nrc',
+                badgeId: 'doc-checklist-badge-jur-nrc',
+                regId: 'doc-checklist-registered-jur-nrc',
+                wrapId: 'doc-checklist-input-wrap-jur-nrc',
+                inputId: 'jur-file-nrc',
+                substBoxId: 'client-subst-box-jur-nrc'
+            },
+            {
+                scope: 'jur',
+                docKey: 'dui',
+                label: 'DUI del Representante Legal',
+                cardId: 'doc-checklist-card-jur-dui',
+                badgeId: 'doc-checklist-badge-jur-dui',
+                regId: 'doc-checklist-registered-jur-dui',
+                wrapId: 'doc-checklist-input-wrap-jur-dui',
+                inputId: 'jur-file-dui',
+                substBoxId: 'client-subst-box-jur-dui'
+            },
+            {
+                scope: 'nat',
+                docKey: 'dui',
+                label: 'DUI (Persona Natural)',
+                cardId: 'doc-checklist-card-nat-dui',
+                badgeId: 'doc-checklist-badge-nat-dui',
+                regId: 'doc-checklist-registered-nat-dui',
+                wrapId: 'doc-checklist-input-wrap-nat-dui',
+                inputId: 'nat-dui-file',
+                substBoxId: 'client-subst-box-nat-dui'
+            }
+        ];
+
+        const results = {};
+        let jurRegisteredCount = 0;
+        let jurRequiredTotal = 0;
+        let jurRequiredSatisfied = 0;
+
+        checklistSpecs.forEach(spec => {
+            const state = evaluateClientDocumentChecklistState(client, spec.docKey, { isExport });
+            results[`${spec.scope}:${spec.docKey}`] = state;
+
+            if (spec.scope === 'jur') {
+                if (state.isRegistered) jurRegisteredCount++;
+                if (!state.isOptional && !state.isNotApplicable) {
+                    jurRequiredTotal++;
+                    if (state.isRegistered) jurRequiredSatisfied++;
+                }
+            }
+
+            const cardEl = document.getElementById(spec.cardId);
+            const badgeEl = document.getElementById(spec.badgeId);
+            const regEl = document.getElementById(spec.regId);
+            const wrapEl = document.getElementById(spec.wrapId);
+            const inputEl = document.getElementById(spec.inputId);
+            const substBoxEl = document.getElementById(spec.substBoxId);
+
+            if (cardEl) {
+                cardEl.className = `form-group doc-checklist-item ${state.isRegistered ? 'is-registered' : 'is-pending'} status-${state.status}`;
+                if (cardEl.dataset) {
+                    cardEl.dataset.docStatus = state.status;
+                    cardEl.dataset.docRegistered = state.isRegistered ? 'true' : 'false';
+                }
+            }
+            if (badgeEl) {
+                badgeEl.className = `doc-checklist-badge ${state.badgeClass}`;
+                badgeEl.textContent = state.badgeText;
+            }
+
+            if (state.isRegistered) {
+                if (wrapEl && wrapEl.style) wrapEl.style.display = 'none';
+                if (inputEl) {
+                    inputEl.value = '';
+                    inputEl.disabled = true;
+                    if (inputEl.style) inputEl.style.display = 'none';
+                }
+                if (substBoxEl && substBoxEl.style) substBoxEl.style.display = 'none';
+
+                if (regEl) {
+                    if (regEl.style) regEl.style.display = 'block';
+                    const safeFileName = _deps.escapeHtmlDoc(state.fileName || spec.label);
+                    const safeLabel = _deps.escapeHtmlDoc(spec.label);
+                    const safeClientId = _deps.escapeHtmlDoc((client && client.id) || '');
+                    const shaShort = state.sha256 ? ` · SHA-256: ${_deps.escapeHtmlDoc(state.sha256.slice(0, 10))}…` : '';
+                    const vencShort = state.fechaVencimiento ? ` · Vence: ${_deps.escapeHtmlDoc(state.fechaVencimiento)}` : '';
+                    const verBadge = state.versionNumber ? `v${_deps.escapeHtmlDoc(String(state.versionNumber))}` : 'v1';
+
+                    let storeId = '';
+                    const store = _deps.getDocStore();
+                    if (store && typeof store.set === 'function' && state.docRef) {
+                        storeId = 'chkdoc_' + spec.scope + '_' + spec.docKey + '_' + Date.now().toString(36);
+                        store.set(storeId, {
+                            docRef: state.docRef,
+                            fileName: state.fileName || spec.label,
+                            label: spec.label,
+                            clientId: (client && client.id) || '',
+                            docKey: spec.docKey,
+                            itemIndex: null
+                        });
+                    }
+
+                    const previewable = _deps.isFormatPreviewable(state.fileName || 'documento.pdf');
+                    const viewBtnHtml = (previewable && storeId)
+                        ? `<button type="button" class="btn-table-action btn-table-edit" style="padding:2px 8px; font-size:0.72rem;" onclick="viewStoredClientDoc('${storeId}')" title="Previsualizar documento registrado">👁️ Ver</button>`
+                        : '';
+                    const substBtnHtml = safeClientId
+                        ? `<button type="button" class="btn-table-action" style="padding:2px 8px; font-size:0.72rem; background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);" onclick="ClientDocuments.openSubstituteDocView('${safeClientId}', '${spec.docKey}', '${safeLabel}')" title="Ir a Sustituir documento en el Expediente Digital">🔄 Sustituir</button>`
+                        : '';
+
+                    const validationBannerHtml = state.validationNote
+                        ? `<div class="doc-checklist-validation-note status-${state.status}" style="margin-top:4px; padding:4px 8px; border-radius:5px; font-size:0.72rem; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d;">
+                            ${_deps.escapeHtmlDoc(state.validationNote)}
+                           </div>`
+                        : '';
+
+                    regEl.innerHTML = `
+                        <div class="doc-checklist-registered-row">
+                            <div class="doc-checklist-registered-info">
+                                <div class="doc-checklist-registered-filename" title="${safeFileName}">
+                                    📄 ${safeFileName}
+                                    <span class="badge" style="background:rgba(16,185,129,0.16); color:#6ee7b7; border:1px solid rgba(16,185,129,0.35); font-size:0.65rem; margin-left:4px;">Documento registrado (${verBadge})</span>
+                                </div>
+                                <div class="doc-checklist-registered-meta">
+                                    Confirmado en Firestore${shaShort}${vencShort}
+                                </div>
+                            </div>
+                            <div class="doc-checklist-registered-actions" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+                                ${viewBtnHtml}
+                                ${substBtnHtml}
+                            </div>
+                        </div>
+                        ${validationBannerHtml}
+                        <div class="doc-checklist-replace-hint">
+                            ℹ️ Selector de carga inicial deshabilitado. Para reemplazar este archivo, utilice la acción <strong>Sustituir</strong> en la sección <em>Expediente Digital del Cliente</em>.
+                        </div>
+                    `;
+                }
+            } else {
+                if (regEl) {
+                    if (regEl.style) regEl.style.display = 'none';
+                    regEl.innerHTML = '';
+                }
+                if (wrapEl && wrapEl.style) wrapEl.style.display = 'block';
+                if (inputEl) {
+                    inputEl.disabled = false;
+                    if (inputEl.style) inputEl.style.display = '';
+                }
+            }
+        });
+
+        const summaryBadge = document.getElementById('jur-legal-docs-checklist-summary');
+        if (summaryBadge) {
+            if (!client || !client.id) {
+                summaryBadge.textContent = `0/6 registrados · Alta inicial`;
+                summaryBadge.style.background = 'rgba(245, 158, 11, 0.14)';
+                summaryBadge.style.color = '#fbbf24';
+                summaryBadge.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+            } else if (jurRequiredSatisfied >= jurRequiredTotal && jurRequiredTotal > 0) {
+                summaryBadge.textContent = `${jurRegisteredCount}/6 registrados · Obligatorios completos`;
+                summaryBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+                summaryBadge.style.color = '#6ee7b7';
+                summaryBadge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+            } else {
+                const missingReq = Math.max(0, jurRequiredTotal - jurRequiredSatisfied);
+                summaryBadge.textContent = `${jurRegisteredCount}/6 registrados · ${missingReq} obligatorio${missingReq === 1 ? '' : 's'} pendiente${missingReq === 1 ? '' : 's'}`;
+                summaryBadge.style.background = 'rgba(245, 158, 11, 0.14)';
+                summaryBadge.style.color = '#fbbf24';
+                summaryBadge.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+            }
+        }
+
+        return results;
+    }
+
     function renderClientExpedienteSection(c) {
         if (typeof document === 'undefined') return;
+        syncClientLegalDocsChecklist(c);
         const section = document.getElementById('client-expediente-section');
         const listEl = document.getElementById('client-docs-list');
         const badgeEl = document.getElementById('client-docs-count-badge');
@@ -425,36 +846,127 @@
         });
     }
 
+    function getClientFormStagedSpecs(type) {
+        if (type === 'natural') {
+            return [
+                { id: 'nat-dui-file', key: 'dui', isLegal: false, motivoId: 'nat-motivo-dui', boxId: 'client-subst-box-nat-dui' }
+            ];
+        }
+        return [
+            { id: 'jur-file-escritura', key: 'escritura', isLegal: true, motivoId: 'jur-motivo-escritura', boxId: 'client-subst-box-jur-escritura' },
+            { id: 'jur-file-mods', key: 'mods_escritura', isLegal: true, motivoId: 'jur-motivo-mods_escritura', boxId: 'client-subst-box-jur-mods_escritura' },
+            { id: 'jur-file-credencial', key: 'credencial', isLegal: true, motivoId: 'jur-motivo-credencial', boxId: 'client-subst-box-jur-credencial' },
+            { id: 'jur-file-nit', key: 'nit', isLegal: true, motivoId: 'jur-motivo-nit', boxId: 'client-subst-box-jur-nit' },
+            { id: 'jur-file-nrc', key: 'nrc', isLegal: true, motivoId: 'jur-motivo-nrc', boxId: 'client-subst-box-jur-nrc' },
+            { id: 'jur-file-dui', key: 'dui', isLegal: false, motivoId: 'jur-motivo-dui', boxId: 'client-subst-box-jur-dui' }
+        ];
+    }
+
+    function hasExistingClientDocumentForKey(existingDocs, docKey) {
+        if (!existingDocs || typeof existingDocs !== 'object') return false;
+        const val = existingDocs[docKey];
+        if (!val) return false;
+        if (Array.isArray(val)) return false; // Arrays (e.g. legacy mods) append rather than replace
+        if (typeof val === 'string') return val.trim().length > 0;
+        if (typeof val === 'object') return !!(val.storagePath || val.path || val.url || val.name);
+        return false;
+    }
+
+    function onClientFormFileChange(type, docKey, inputEl) {
+        if (typeof document === 'undefined') return;
+        const specs = getClientFormStagedSpecs(type);
+        const spec = specs.find(s => s.key === docKey) || null;
+        if (!spec) return;
+        const fileEl = inputEl || document.getElementById(spec.id);
+        const boxEl = document.getElementById(spec.boxId);
+        const motivoEl = document.getElementById(spec.motivoId);
+        const hasFile = !!(fileEl && fileEl.files && fileEl.files.length > 0);
+
+        const editIdEl = document.getElementById('client-id-edit');
+        const editId = editIdEl ? editIdEl.value : '';
+        const clientList = _deps.getClients() || [];
+        const existingClient = editId ? clientList.find(x => x && x.id === editId) : null;
+        const hasExistingDoc = !!(existingClient && hasExistingClientDocumentForKey(existingClient.documentos, docKey));
+
+        if (hasFile && hasExistingDoc) {
+            if (boxEl && boxEl.style) boxEl.style.display = 'block';
+        } else {
+            if (boxEl && boxEl.style) boxEl.style.display = 'none';
+            if (motivoEl) motivoEl.value = '';
+        }
+    }
+
+    function clearClientFormStagedFile(fileInputId, boxId, motivoInputId) {
+        if (typeof document === 'undefined') return;
+        const fileEl = document.getElementById(fileInputId);
+        if (fileEl) {
+            fileEl.value = '';
+            if (Array.isArray(fileEl.files)) fileEl.files = [];
+        }
+        const boxEl = boxId ? document.getElementById(boxId) : null;
+        if (boxEl && boxEl.style) boxEl.style.display = 'none';
+        const motivoEl = motivoInputId ? document.getElementById(motivoInputId) : null;
+        if (motivoEl) motivoEl.value = '';
+    }
+
+    function resetAllClientFormStagedFiles() {
+        if (typeof document === 'undefined') return;
+        const allSpecs = [...getClientFormStagedSpecs('natural'), ...getClientFormStagedSpecs('juridica')];
+        for (const s of allSpecs) {
+            clearClientFormStagedFile(s.id, s.boxId, s.motivoId);
+        }
+    }
+
     async function uploadClientStagedFiles(targetId, type, existingDocs = {}) {
         const docs = Object.assign({}, existingDocs);
         const filesToUpload = [];
-        if (type === 'natural') {
-            const duiEl = typeof document !== 'undefined' ? document.getElementById('nat-dui-file') : null;
-            if (duiEl && duiEl.files && duiEl.files.length > 0) {
-                filesToUpload.push({ el: duiEl, key: 'dui', isLegal: false });
-            }
-        } else {
-            const specs = [
-                { id: 'jur-file-escritura', key: 'escritura', isLegal: true },
-                { id: 'jur-file-mods', key: 'mods_escritura', isLegal: true },
-                { id: 'jur-file-credencial', key: 'credencial', isLegal: true },
-                { id: 'jur-file-nit', key: 'nit', isLegal: true },
-                { id: 'jur-file-nrc', key: 'nrc', isLegal: true },
-                { id: 'jur-file-dui', key: 'dui', isLegal: false }
-            ];
-            for (const s of specs) {
-                const el = typeof document !== 'undefined' ? document.getElementById(s.id) : null;
-                if (el && el.files && el.files.length > 0) filesToUpload.push({ el, key: s.key, isLegal: s.isLegal });
+        const specs = getClientFormStagedSpecs(type);
+        for (const s of specs) {
+            const el = typeof document !== 'undefined' ? document.getElementById(s.id) : null;
+            if (el && el.files && el.files.length > 0) {
+                filesToUpload.push({
+                    el,
+                    key: s.key,
+                    isLegal: s.isLegal,
+                    motivoId: s.motivoId,
+                    boxId: s.boxId,
+                    motivo: ''
+                });
             }
         }
 
         if (filesToUpload.length === 0) return docs;
 
+        // Validate substitution motives BEFORE uploading any file to Firebase Storage
+        for (const item of filesToUpload) {
+            if (hasExistingClientDocumentForKey(existingDocs, item.key)) {
+                const motivoEl = (typeof document !== 'undefined' && item.motivoId) ? document.getElementById(item.motivoId) : null;
+                const motivoFromInput = (motivoEl && typeof motivoEl.value === 'string') ? motivoEl.value.trim() : '';
+                const motivoFromDataset = (item.el && item.el.dataset && typeof item.el.dataset.motivoSustitucion === 'string')
+                    ? item.el.dataset.motivoSustitucion.trim()
+                    : '';
+                const motivo = motivoFromInput || motivoFromDataset;
+                if (!motivo) {
+                    const boxEl = (typeof document !== 'undefined' && item.boxId) ? document.getElementById(item.boxId) : null;
+                    if (boxEl && boxEl.style) boxEl.style.display = 'block';
+                    if (motivoEl && typeof motivoEl.focus === 'function') {
+                        try { motivoEl.focus(); } catch (_) {}
+                    }
+                    throw new Error(`Toda sustitución de un documento existente requiere un motivo no vacío (documento: '${item.key}')`);
+                }
+                item.motivo = motivo;
+            }
+        }
+
         _deps.showLoading('Subiendo documentos del cliente a la nube...');
         await Promise.all(filesToUpload.map(async item => {
             const ref = await _deps.uploadFileToStorage(item.el.files[0], 'clientes', { clientId: targetId, isLegal: item.isLegal });
+            if (item.motivo && ref && typeof ref === 'object') {
+                ref.motivoSustitucion = item.motivo;
+            }
             docs[item.key] = ref;
         }));
+        resetAllClientFormStagedFiles();
         return docs;
     }
 
@@ -556,6 +1068,9 @@
     // -------------------------------------------------------------------------
     // 5. Carga y Sustitución Contextual desde Panel de Cierre
     // -------------------------------------------------------------------------
+    const _closingPendingUploads = new Map();
+    let _lastClosingUploadFn = null;
+
     function toggleClientDocSubstForm(docKey) {
         if (typeof document === 'undefined') return;
         const el = document.getElementById(`subst-container-client-${docKey}`);
@@ -565,6 +1080,9 @@
     }
 
     function cancelClientDocSubstForm(docKey) {
+        for (const k of Array.from(_closingPendingUploads.keys())) {
+            if (k.includes(`|${docKey}|`)) _closingPendingUploads.delete(k);
+        }
         if (typeof document === 'undefined') return;
         const fileEl = document.getElementById(`closing-client-subst-file-${docKey}`);
         if (fileEl) fileEl.value = '';
@@ -616,13 +1134,22 @@
 
         try {
             const isLegal = ['escritura', 'credencial', 'nit', 'nrc', 'mods_escritura'].includes(docKey);
+            const currentUploadFn = (typeof window !== 'undefined' && window.uploadFileToStorage) || (typeof uploadFileToStorage !== 'undefined' ? uploadFileToStorage : null);
+            if (_lastClosingUploadFn !== currentUploadFn) {
+                _closingPendingUploads.clear();
+                _lastClosingUploadFn = currentUploadFn;
+            }
+            const uploadCacheKey = `${c.id}|${docKey}|${file.name || ''}|${file.size || 0}|${file.lastModified || 0}`;
 
-            let docRef;
-            try {
-                docRef = await _deps.uploadFileToStorage(file, 'clientes', { clientId: c.id, isLegal });
-            } catch (uploadErr) {
-                _deps.alert('Error al subir archivo a Storage: ' + (uploadErr.message || 'Error de red'));
-                return;
+            let docRef = _closingPendingUploads.get(uploadCacheKey) || null;
+            if (!docRef) {
+                try {
+                    docRef = await _deps.uploadFileToStorage(file, 'clientes', { clientId: c.id, isLegal });
+                    _closingPendingUploads.set(uploadCacheKey, docRef);
+                } catch (uploadErr) {
+                    _deps.alert('Error al subir archivo a Storage: ' + (uploadErr.message || 'Error de red'));
+                    return;
+                }
             }
 
             if (btn && btn.tagName === 'BUTTON') {
@@ -657,11 +1184,17 @@
             });
 
             if (res.status === 'updated') {
+                _closingPendingUploads.delete(uploadCacheKey);
                 if (res.client && res.client.documentos) {
                     c.documentos = res.client.documentos;
                 } else {
+                    if (!c.documentos) c.documentos = {};
                     c.documentos[docKey] = stampedDoc;
                 }
+                if (typeof window !== 'undefined' && window._activeClientBaseDocs !== undefined && window._activeClientBaseDocs !== null) {
+                    window._activeClientBaseDocs = JSON.parse(JSON.stringify(c.documentos || {}));
+                }
+                syncClientLegalDocsChecklist(c);
                 _deps.renderClosingDocumentationPanel(p);
                 _deps.alert(`Documento [${_deps.formatClientDocLabel(docKey)}] ${isSubstitution ? 'sustituido' : 'guardado'} y versionado exitosamente.`);
             } else {
@@ -1477,6 +2010,7 @@
             }
 
             _deps.alert(`✅ Documento [${docLabel}] actualizado y versionado exitosamente.`);
+            syncClientLegalDocsChecklist(client);
             returnToClientOrOrigin(accountId);
             _deps.renderClientsTable();
         } catch (err) {
@@ -1693,9 +2227,15 @@
     const ClientDocuments = {
         init: initClientDocuments,
         initClientDocuments,
+        hasValidFirestoreDocRef,
+        evaluateClientDocumentChecklistState,
+        syncClientLegalDocsChecklist,
         renderClientExpedienteSection,
         hasStagedClientFiles,
         uploadClientStagedFiles,
+        onClientFormFileChange,
+        clearClientFormStagedFile,
+        resetAllClientFormStagedFiles,
         deleteClientDocument,
         toggleClientDocSubstForm,
         cancelClientDocSubstForm,
@@ -1729,6 +2269,11 @@
     };
 
     if (typeof window !== 'undefined') {
+        window.onClientFormFileChange = onClientFormFileChange;
+        window.clearClientFormStagedFile = clearClientFormStagedFile;
+        window.resetAllClientFormStagedFiles = resetAllClientFormStagedFiles;
+        window.syncClientLegalDocsChecklist = syncClientLegalDocsChecklist;
+        window.evaluateClientDocumentChecklistState = evaluateClientDocumentChecklistState;
         window.openRLElectionView = openRLElectionView;
         window.openGrantPowerView = openGrantPowerView;
         window.openDossierHistoryView = openDossierHistoryView;

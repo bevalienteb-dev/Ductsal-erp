@@ -1832,4 +1832,110 @@ describe('Fase 2 B4.3 — Fusión administrativa excepcional de cuentas duplicad
       global.Option = prevOption;
     }
   });
+
+  test('Escenario 27: Integración B4 + Hotfix Documental B3 (cuenta histórica sin createdBy, sustitución con motivo obligatorio, opId idempotente y ausencia de duplicados en cuenta canónica)', async () => {
+    const { db, rawSvc, manager, seller2 } = buildB43Harness();
+
+    // Seed absorbed account and canonical legacy account without createdBy
+    db.seed('clients_prod/C_ABS_LEG', {
+      id: 'C_ABS_LEG',
+      tipo: 'juridica',
+      empresa: 'Aceros Centroamericanos S.A. de C.V.',
+      contacto: 'Ing. Ramos',
+      telefono: '2200-1100',
+      nit: '0614-121290-105-7',
+      fusionada_en: 'C_CAN_LEG',
+      estado_cuenta: 'fusionada',
+      documentos: {
+        escritura: {
+          name: 'Escritura_Original.pdf',
+          storagePath: 'prod_files/clients/C_ABS_LEG/legal/1700000001_Escritura_Original.pdf',
+          versionId: 'v_abs_1',
+          versionNumber: 1
+        }
+      }
+    });
+    // Canonical account is a historical record without createdBy, where seller2 has access via visibleTo
+    db.seed('clients_prod/C_CAN_LEG', {
+      id: 'C_CAN_LEG',
+      tipo: 'juridica',
+      empresa: 'ACEROS CENTROAMERICANOS S.A. DE C.V.',
+      contacto: 'Lic. Alejandra',
+      telefono: '2200-1199',
+      nit: '0614-121290-105-7',
+      nrc: '445566-1',
+      visibleTo: [seller2.id],
+      closingVendors: [seller2.id],
+      documentos: {
+        dui: {
+          name: 'DUI_Anterior.pdf',
+          storagePath: 'prod_files/clients/C_CAN_LEG/identificacion/1700000002_DUI_Anterior.pdf',
+          versionId: 'v_dui_1',
+          versionNumber: 1
+        }
+      }
+    });
+
+    // 1. Attempting to substitute DUI without motivoSustitucion is rejected
+    await expect(rawSvc.update({
+      caller: seller2,
+      id: 'C_CAN_LEG',
+      opId: 'op_hotfix_b4_no_reason',
+      client: {
+        tipo: 'juridica',
+        empresa: 'ACEROS CENTROAMERICANOS S.A. DE C.V.',
+        contacto: 'Lic. Alejandra',
+        telefono: '2200-1199',
+        nit: '0614-121290-105-7',
+        nrc: '445566-1',
+        documentos: {
+          dui: {
+            name: 'DUI_Nuevo_Vigente.pdf',
+            storagePath: 'prod_files/clients/C_CAN_LEG/identificacion/1700000003_DUI_Nuevo_Vigente.pdf'
+          }
+        }
+      }
+    })).rejects.toThrow(/Toda sustitución de un documento existente requiere un motivo no vacío \(documento: 'dui'\)/);
+
+    // 2. Registering new NRC document + substituting DUI with mandatory reason on legacy canonical account without createdBy succeeds
+    const updatePayload = {
+      caller: seller2,
+      id: 'C_CAN_LEG',
+      opId: 'op_hotfix_b4_idempotent_1',
+      motivosSustitucion: {
+        dui: 'Renovación de documento de identidad del representante legal'
+      },
+      client: {
+        tipo: 'juridica',
+        empresa: 'ACEROS CENTROAMERICANOS S.A. DE C.V.',
+        contacto: 'Lic. Alejandra',
+        telefono: '2200-1199',
+        nit: '0614-121290-105-7',
+        nrc: '445566-1',
+        documentos: {
+          dui: {
+            name: 'DUI_Nuevo_Vigente.pdf',
+            storagePath: 'prod_files/clients/C_CAN_LEG/identificacion/1700000003_DUI_Nuevo_Vigente.pdf'
+          },
+          nrc: {
+            name: 'NRC_Tarjeta.pdf',
+            storagePath: 'prod_files/clients/C_CAN_LEG/legal/1700000004_NRC_Tarjeta.pdf'
+          }
+        }
+      }
+    };
+
+    const firstRes = await rawSvc.update(updatePayload);
+    expect(firstRes.status).toBe('updated');
+    expect(firstRes.replay).toBeUndefined();
+    const updatedClient = db.data('clients_prod/C_CAN_LEG');
+    expect(updatedClient.createdBy).toBeUndefined();
+    expect(updatedClient.documentos.dui.storagePath).toBe('prod_files/clients/C_CAN_LEG/identificacion/1700000003_DUI_Nuevo_Vigente.pdf');
+    expect(updatedClient.documentos.nrc.storagePath).toBe('prod_files/clients/C_CAN_LEG/legal/1700000004_NRC_Tarjeta.pdf');
+
+    // 3. Replaying with the exact same opId returns replay: true and does not duplicate versions
+    const secondRes = await rawSvc.update(updatePayload);
+    expect(secondRes.status).toBe('updated');
+    expect(secondRes.replay).toBe(true);
+  });
 });

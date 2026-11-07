@@ -74,6 +74,10 @@ function sanitizeDocumento(v) {
     if (typeof v.versionNumber === 'number' && Number.isFinite(v.versionNumber)) doc.versionNumber = v.versionNumber;
     if (typeof v.actualizadoEn === 'string' && v.actualizadoEn.length <= 50) doc.actualizadoEn = str(v.actualizadoEn);
     if (typeof v.motivoSustitucion === 'string' && v.motivoSustitucion.length <= 500) doc.motivoSustitucion = str(v.motivoSustitucion);
+    if (typeof v.sha256 === 'string' && /^[a-fA-F0-9]{64}$/.test(v.sha256.trim())) doc.sha256 = v.sha256.trim().toLowerCase();
+    if (typeof v.fechaEmision === 'string' && v.fechaEmision.length <= 30) doc.fechaEmision = str(v.fechaEmision);
+    if (typeof v.fechaVencimiento === 'string' && v.fechaVencimiento.length <= 30) doc.fechaVencimiento = str(v.fechaVencimiento);
+    if (typeof v.termId === 'string' && v.termId.length <= 120) doc.termId = str(v.termId);
     return doc;
   }
   return null;
@@ -226,7 +230,7 @@ function resolveDocumentsForUpdate(caller, existingDocs, rawDocs, baseDocs, moti
     }
 
     // 2. Unmodified by current user: rawVal matches baseVal
-    if (inRaw && inBase && stableHash(rawVal) === stableHash(baseVal)) {
+    if (inRaw && inBase && (stableHash(rawVal) === stableHash(baseVal) || (!Array.isArray(rawVal) && !Array.isArray(baseVal) && isSameDocument(rawVal, baseVal)))) {
       if (inCur) {
         // Keep live Firestore version
         resolved[k] = curVal;
@@ -1255,6 +1259,26 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
       throw new ServiceError('permission-denied', 'No tienes acceso a este cliente');
     }
     const activeMotivos = raw ? (raw.motivosSustitucion || motivosSustitucion) : motivosSustitucion;
+    const opKey = (raw && typeof raw.opId === 'string' && raw.opId.trim())
+      ? raw.opId.trim()
+      : (typeof opId === 'string' && opId.trim() ? opId.trim() : null);
+    if (opKey && !/^[A-Za-z0-9_-]{8,100}$/.test(opKey)) {
+      throw new ServiceError('invalid-argument', 'opId inválido');
+    }
+    const updatePayloadHash = opKey
+      ? stableHash({ clientId, incoming, rawDocs: raw ? raw.documentos : null, motivos: activeMotivos || null })
+      : null;
+    const opRef = (!dryRun && opKey) ? col('ops').doc(`upd_${clientId}_${opKey}`) : null;
+    if (opRef) {
+      const prevOp = await opRef.get();
+      if (prevOp.exists) {
+        const prevData = prevOp.data() || {};
+        if (prevData.createdBy !== caller.cid) throw new ServiceError('permission-denied', 'opId pertenece a otro usuario');
+        if (prevData.payloadHash !== updatePayloadHash) throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+        return { status: 'updated', replay: true, client: prevData.client || { ...existing, id: clientId }, matches: [], warnings: [] };
+      }
+    }
+
     const incomingDocs = resolveDocumentsForUpdate(caller, existing.documentos, raw ? raw.documentos : undefined, raw ? raw.baseDocumentos : undefined, activeMotivos);
     if (incomingDocs !== undefined) incoming.documentos = incomingDocs;
 
@@ -1284,6 +1308,10 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
 
     const selfIdsSet = new Set(resolved.chain || [clientId, resolved.canonicalId]);
     const outcome = await db.runTransaction(async tx => {
+      if (opRef) {
+        const opSnap = await tx.get(opRef);
+        if (opSnap.exists) return { replay: opSnap.data() };
+      }
       const cur = await tx.get(ref);
       if (!cur.exists) throw new ServiceError('not-found', 'Cliente no encontrado');
       const curData = cur.data();
@@ -1299,7 +1327,12 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
         const idx = await tx.get(col('identifiers').doc(k));
         if (idx.exists && idx.data().clientId === clientId && !idx.data().absorbedClientId) releases.push(k);
       }
-      const doc = { ...curData, ...incoming, id: clientId, createdBy: curData.createdBy };
+      const doc = { ...curData, ...incoming, id: clientId };
+      if (curData.createdBy !== undefined) {
+        doc.createdBy = curData.createdBy;
+      } else {
+        delete doc.createdBy;
+      }
       if (txDocs !== undefined) {
         const finalDocs = { ...txDocs };
         const itemsToVersion = [];
@@ -1313,7 +1346,6 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
               || (raw && raw.motivosSustitucion && raw.motivosSustitucion[k])
               || (motivosSustitucion && motivosSustitucion[k])
               || null;
-            const opKey = (raw && raw.opId) || opId;
             itemsToVersion.push({
               docKey: k,
               existingDoc: curDoc,
@@ -1343,14 +1375,34 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
       }
       if (curData.fecha_creacion !== undefined) doc.fecha_creacion = curData.fecha_creacion;
       if (curData.visibleTo !== undefined) doc.visibleTo = curData.visibleTo;
+      for (const k of Object.keys(doc)) {
+        if (doc[k] === undefined) delete doc[k];
+      }
       tx.set(ref, doc);
       for (const k of claims) tx.set(col('identifiers').doc(k), { key: k, kind: k.split('_')[0], clientId, createdBy: caller.cid, createdAt: FieldValue.serverTimestamp() });
       for (const k of releases) tx.delete(col('identifiers').doc(k));
       if (reviewList.length > 0 && confirmReview) {
         tx.create(col('audit').doc(), buildSimilarityConfirmedAuditEntry(caller, 'update', clientId, merged, reviewList, cleanJustification));
       }
+      if (opRef) {
+        tx.set(opRef, {
+          kind: 'update',
+          status: 'succeeded',
+          clientId,
+          payloadHash: updatePayloadHash,
+          client: doc,
+          createdBy: caller.cid,
+          createdAt: FieldValue.serverTimestamp()
+        });
+      }
       return { updated: doc };
     });
+    if (outcome.replay) {
+      const prevData = outcome.replay || {};
+      if (prevData.createdBy !== caller.cid) throw new ServiceError('permission-denied', 'opId pertenece a otro usuario');
+      if (prevData.payloadHash !== updatePayloadHash) throw new ServiceError('failed-precondition', 'opId ya usado con otros datos');
+      return { status: 'updated', replay: true, client: prevData.client || { ...existing, id: clientId }, matches: [], warnings: [] };
+    }
     if (outcome.conflict) {
       const byId = new Map(outcome.conflict.map(o => [o.clientId, o.data]));
       const portfolio = await portfolioIds(caller);

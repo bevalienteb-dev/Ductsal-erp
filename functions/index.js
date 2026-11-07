@@ -1832,9 +1832,18 @@ exports.finalizeClientCreationAdmin = functions.https.onCall((data, context) => 
 exports.cancelClientReservationAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
   (service, caller, d) => service.cancelReservation({ caller, reservationId: d.reservationId })));
 
-/** { id, client, confirmReview?, reviewJustification?, dryRun?, dbSuffix? } -> { status: updated | duplicate | needs-review | ok, ... } */
+/** { id, client, opId?, motivosSustitucion?, confirmReview?, reviewJustification?, dryRun?, dbSuffix? } -> { status: updated | duplicate | needs-review | ok, ... } */
 exports.updateClientAdmin = functions.https.onCall((data, context) => runClientOp(data, context,
-  (service, caller, d) => service.update({ caller, id: d.id, client: d.client, confirmReview: d.confirmReview === true, reviewJustification: d.reviewJustification, dryRun: d.dryRun === true })));
+  (service, caller, d) => service.update({
+    caller,
+    id: d.id,
+    client: d.client,
+    opId: d.opId,
+    motivosSustitucion: d.motivosSustitucion,
+    confirmReview: d.confirmReview === true,
+    reviewJustification: d.reviewJustification,
+    dryRun: d.dryRun === true
+  })));
 
 /** { q, limit?, dbSuffix? } -> { results: [{ id, nombre, tipo, hint, inPortfolio }], tooShort, truncated } (selector of new opportunities) */
 exports.searchClientsCatalog = functions.https.onCall((data, context) => runClientOp(data, context,

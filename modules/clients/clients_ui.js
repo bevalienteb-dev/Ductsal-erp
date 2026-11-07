@@ -457,6 +457,9 @@
             if (natFields) natFields.style.display = 'none';
             if (jurFields) jurFields.style.display = 'none';
         }
+        if (typeof window !== 'undefined' && window.ClientDocuments && typeof window.ClientDocuments.syncClientLegalDocsChecklist === 'function') {
+            window.ClientDocuments.syncClientLegalDocsChecklist();
+        }
     }
 
     function setClientFieldError(elementId, hasError) {
@@ -501,6 +504,9 @@
 
         const form = document.getElementById('clientForm');
         if (form && typeof form.reset === 'function') form.reset();
+        if (typeof window !== 'undefined' && typeof window.resetAllClientFormStagedFiles === 'function') {
+            window.resetAllClientFormStagedFiles();
+        }
         const idInput = document.getElementById('client-id-edit');
         if (idInput) idInput.value = '';
 

@@ -100,7 +100,8 @@
         return r.data;
     }
 
-    async function updateClient(fb, { id, client, dbSuffix, confirmReview, reviewJustification }) {
+    function updateClient(fb, { id, client, dbSuffix, confirmReview, reviewJustification }) {
+        const key = ['update', id, dbSuffix, confirmReview === true, reviewJustification || '', stableStringify(client)].join('|');
         const payload = {
             id,
             client,
@@ -108,8 +109,7 @@
             confirmReview: confirmReview === true,
             ...(reviewJustification !== undefined ? { reviewJustification } : {})
         };
-        const r = await fb.functions().httpsCallable('updateClientAdmin')(payload);
-        return r.data;
+        return callIdempotent(key, opId => fb.functions().httpsCallable('updateClientAdmin')({ ...payload, opId }));
     }
 
     async function searchCatalog(fb, { q, dbSuffix }) {

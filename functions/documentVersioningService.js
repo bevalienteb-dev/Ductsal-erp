@@ -226,12 +226,51 @@ async function applyDocumentVersionsTx({
       throw new ServiceError('invalid-argument', `Toda sustitución de un documento existente requiere un motivo no vacío (documento: '${docKey}')`);
     }
 
+    let prevVersionId = existingDoc.versionId || null;
+    let prevVersionNumber = typeof existingDoc.versionNumber === 'number' ? existingDoc.versionNumber : 1;
+    let prevSnapExists = false;
+    let activeVersionIdsToArchive = [];
+
+    if (prevVersionId) {
+      const prevSnap = await tx.get(verCol.doc(prevVersionId)); // READ
+      if (prevSnap && prevSnap.exists) {
+        prevSnapExists = true;
+        const pData = prevSnap.data() || {};
+        if (typeof pData.versionNumber === 'number') prevVersionNumber = pData.versionNumber;
+        activeVersionIdsToArchive = [prevVersionId];
+      }
+    } else {
+      const existingVersSnap = await tx.get(verCol.where('docKey', '==', docKey)); // READ
+      if (existingVersSnap && !existingVersSnap.empty && Array.isArray(existingVersSnap.docs) && existingVersSnap.docs.length > 0) {
+        prevSnapExists = true;
+        let maxVerNum = 1;
+        let latestDocId = existingVersSnap.docs[0].id;
+        for (const vDoc of existingVersSnap.docs) {
+          const vd = vDoc.data() || {};
+          const vNum = Number(vd.versionNumber) || 1;
+          if (vNum >= maxVerNum) {
+            maxVerNum = vNum;
+            latestDocId = vd.versionId || vDoc.id;
+          }
+          if (vd.estado === 'vigente') {
+            activeVersionIdsToArchive.push(vDoc.id);
+          }
+        }
+        prevVersionId = latestDocId;
+        prevVersionNumber = maxVerNum;
+      }
+    }
+
     prepared.push({
       type: 'substitute',
       docKey,
       existingDoc,
       incomingDoc,
       reason,
+      prevVersionId,
+      prevVersionNumber,
+      prevSnapExists,
+      activeVersionIdsToArchive,
       opId,
       opRef,
       payloadHash,
@@ -309,18 +348,23 @@ async function applyDocumentVersionsTx({
     }
 
     if (prep.type === 'substitute') {
-      let prevVersionId = prep.existingDoc.versionId || null;
-      let prevVersionNumber = typeof prep.existingDoc.versionNumber === 'number' ? prep.existingDoc.versionNumber : 1;
+      let prevVersionId = prep.prevVersionId || prep.existingDoc.versionId || null;
+      let prevVersionNumber = typeof prep.prevVersionNumber === 'number' ? prep.prevVersionNumber : 1;
 
-      if (prevVersionId) {
-        tx.update(verCol.doc(prevVersionId), {
-          estado: 'historica',
-          reemplazadoEn: nowIso,
-          reemplazadoPorId: caller ? caller.cid : null,
-          reemplazadoPorNombre: caller ? (caller.name || 'Comercial') : null
-        });
+      if (prep.prevSnapExists && prevVersionId) {
+        const idsToArchive = (Array.isArray(prep.activeVersionIdsToArchive) && prep.activeVersionIdsToArchive.length > 0)
+          ? prep.activeVersionIdsToArchive
+          : [prevVersionId];
+        for (const archId of idsToArchive) {
+          tx.update(verCol.doc(archId), {
+            estado: 'historica',
+            reemplazadoEn: nowIso,
+            reemplazadoPorId: caller ? caller.cid : null,
+            reemplazadoPorNombre: caller ? (caller.name || 'Comercial') : null
+          });
+        }
       } else {
-        prevVersionId = `v_legacy_${prep.docKey}_${entityId}`;
+        prevVersionId = prevVersionId || `v_legacy_${prep.docKey}_${entityId}`;
         prevVersionNumber = 1;
         const legacyRec = buildVersionRecord({
           versionId: prevVersionId,
