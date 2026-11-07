@@ -1205,15 +1205,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         throw precondition(isBig && !bypass ? 'Debe adjuntar el contrato firmado para finalizar' : 'Debe adjuntar la oferta firmada para finalizar');
       }
 
-      if (!docComprobante) {
-        throw precondition('Debe adjuntar el comprobante o factura de anticipo para finalizar');
+      if (typeof input.factura_anticipo === 'string' && input.factura_anticipo.length > 0 && input.factura_anticipo.trim().length === 0) {
+        throw bad('El número de factura de anticipo no puede estar en blanco');
       }
-
       const facturaAnticipo = (input.factura_anticipo ? reqString(input.factura_anticipo, 'El número de factura de anticipo', 60) : null)
-        || datos.factura_anticipo || p.factura_anticipo;
-      if (!facturaAnticipo) {
-        throw bad('El número de factura de anticipo es obligatorio');
-      }
+        || datos.factura_anticipo || p.factura_anticipo || null;
 
       const formaPago = input.forma_pago || p.forma_pago || datos.forma_pago;
       if (!formaPago || !Object.prototype.hasOwnProperty.call(FORMAS_PAGO, formaPago)) {
@@ -1226,12 +1222,17 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       const canonicalFirmado = toCanonicalDocPointer(docFirmado);
-      const canonicalComprobante = toCanonicalDocPointer(docComprobante);
+      const canonicalComprobante = docComprobante ? toCanonicalDocPointer(docComprobante) : null;
 
       if (isBig && !bypass) datos.doc_contrato = canonicalFirmado; else datos.doc_oferta_firmada = canonicalFirmado;
       datos.doc_firmado = canonicalFirmado;
-      datos.doc_comprobante = canonicalComprobante;
-      datos.factura_anticipo = facturaAnticipo;
+      if (canonicalComprobante) {
+        datos.doc_comprobante = canonicalComprobante;
+      }
+      if (facturaAnticipo) {
+        datos.factura_anticipo = facturaAnticipo;
+        patch.factura_anticipo = facturaAnticipo;
+      }
       if (datos.doc_oferta) {
         datos.oferta_sustento_cierre = Array.isArray(datos.doc_oferta) && datos.doc_oferta.length > 0
           ? toCanonicalDocPointer(datos.doc_oferta[0])
@@ -1250,24 +1251,31 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const subtotal = Number(p.precio_cotizado) || 0;
       const totalConIVA = isExport(client) ? subtotal : subtotal * IVA;
       const advanceAmount = round2(totalConIVA * FORMAS_PAGO[formaPago]);
+      patch.monto_anticipo_exigible = advanceAmount;
 
-      // Factura de anticipo generada transaccional e idempotentemente
+      // Factura de anticipo generada transaccional e idempotentemente solo si el CCF ya fue emitido y adjuntado
       const facturas = Array.isArray(p.facturas) ? p.facturas.slice() : [];
-      const alreadyHasAdvance = facturas.some(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
-      if (!alreadyHasAdvance) {
-        facturas.push({
-          id: uniqueId([], Date.now()),
-          numero: facturaAnticipo,
-          monto: advanceAmount,
-          doc_factura: canonicalComprobante,
-          pagos: [],
-          fecha: at,
-          opId: opId || null
-        });
+      const hasCompleteAdvanceCcf = Boolean(facturaAnticipo && canonicalComprobante);
+      if (hasCompleteAdvanceCcf) {
+        const alreadyHasAdvance = facturas.some(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
+        if (!alreadyHasAdvance) {
+          facturas.push({
+            id: uniqueId([], Date.now()),
+            numero: facturaAnticipo,
+            monto: advanceAmount,
+            doc_factura: canonicalComprobante,
+            pagos: [],
+            fecha: at,
+            opId: opId || null
+          });
+        }
       }
       patch.facturas = facturas;
+      patch.ccf_anticipo_emitido = facturas.length > 0;
 
-      let logMsg = `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros con factura ${facturaAnticipo} por ${fmtMoney(advanceAmount)}`;
+      let logMsg = hasCompleteAdvanceCcf
+        ? `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros con factura ${facturaAnticipo} por ${fmtMoney(advanceAmount)}`
+        : `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros (Modalidad: ${formaPago}, Anticipo exigible: ${fmtMoney(advanceAmount)}, CCF de anticipo: pendiente de emisión)`;
       if (bypass) logMsg += ` (Autorizado sin contrato por gerente: ${datos.autorizado_por || 'Gerente'})`;
 
       const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
@@ -1290,12 +1298,26 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       addAudit(tx, caller, 'finalizeProspect', prospectId, {
         forma_pago: formaPago,
-        factura_anticipo: facturaAnticipo,
+        factura_anticipo: facturaAnticipo || null,
+        ccf_anticipo_emitido: hasCompleteAdvanceCcf,
         monto_anticipo: advanceAmount,
         estado: 'ganado'
       });
 
-      return { status: 'finalized', etapa: 'cierre', estado: 'ganado', facturaAnticipo, montoAnticipo: advanceAmount };
+      return {
+        status: 'finalized',
+        etapa: 'cierre',
+        estado: 'ganado',
+        forma_pago: formaPago,
+        facturaAnticipo: facturaAnticipo || null,
+        ccfAnticipoEmitido: hasCompleteAdvanceCcf,
+        ccf_anticipo_emitido: hasCompleteAdvanceCcf,
+        montoAnticipo: advanceAmount,
+        monto_anticipo_exigible: advanceAmount,
+        facturas: patch.facturas,
+        fecha_inicio_cierre: p.fecha_inicio_cierre || (p.stage_timestamps && p.stage_timestamps.cierre) || null,
+        fecha_cierre: patch.fecha_cierre
+      };
     });
   }
 
@@ -1619,6 +1641,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (exceeds(alreadyInvoiced + amount, totalConIVA)) {
         throw precondition(`El monto a facturar excede el saldo restante del proyecto. Saldo máximo a facturar: ${fmtMoney(totalConIVA - alreadyInvoiced)}`);
       }
+      const isFirstInvoice = editing ? (idx === 0) : (facturas.length === 0);
       if (editing) {
         const cur = facturas[idx];
         if (cur.numero === number && cur.monto === amount && !doc) return { status: 'unchanged' };
@@ -1631,9 +1654,28 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         facturas.push(invoice);
         text = `Factura/CCF emitida: ${number} por ${fmtMoney(amount)}`;
       }
-      tx.update(ref, { facturas, logs: withLog(p, caller, text) });
+      const updatePatch = {
+        facturas,
+        ccf_anticipo_emitido: facturas.length > 0,
+        logs: withLog(p, caller, text)
+      };
+      if (isFirstInvoice) {
+        const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
+        updatePatch.factura_anticipo = number;
+        datos.factura_anticipo = number;
+        if (doc) {
+          datos.doc_comprobante = toCanonicalDocPointer(doc);
+        }
+        updatePatch.datos = datos;
+      }
+      tx.update(ref, updatePatch);
       addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount });
-      return { status: editing ? 'updated' : 'created', invoice };
+      return {
+        status: editing ? 'updated' : 'created',
+        invoice,
+        ccf_anticipo_emitido: updatePatch.ccf_anticipo_emitido,
+        factura_anticipo: updatePatch.factura_anticipo || p.factura_anticipo || null
+      };
     });
   }
 
@@ -1966,7 +2008,379 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  return { advanceStage, revertStage, saveClosingDocuments, finalizeProspect, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
+  // =====================================================================================================
+  // Mandatory Financial Validation Gate Before Manufacturing
+  // =====================================================================================================
+  const MANUFACTURING_ROLES = ['manager', 'gestor', 'jefe_produccion'];
+  const INVALID_FINANCIAL_STATUSES = [
+    'anulado', 'anulada', 'revertido', 'revertida', 'cancelado', 'cancelada',
+    'rechazado', 'rechazada', 'eliminado', 'eliminada', 'borrador',
+    'pendiente', 'pendiente_verificacion', 'pendiente_emision', 'promesa'
+  ];
+
+  function hasValidPaymentDoc(doc) {
+    if (!doc) return false;
+    if (typeof doc === 'string') return doc.trim().length > 0;
+    if (typeof doc === 'object') {
+      const p = doc.storagePath || doc.path || doc.fullPath || doc.url || doc.downloadURL || '';
+      const n = doc.name || '';
+      return String(p).trim().length > 0 || String(n).trim().length > 0;
+    }
+    return false;
+  }
+
+  function businessPrecondition(errorCode, message, details = {}) {
+    const err = new ServiceError('failed-precondition', message);
+    err.errorCode = errorCode;
+    err.details = { errorCode, ...details };
+    return err;
+  }
+
+  /**
+   * Pure deterministic evaluator of commercial closing and confirmed advance payments
+   * for manufacturing readiness. Never trusts frontend booleans (`anticipo_pagado`),
+   * unverified receipts, transfer promises, or invoices without confirmed payments.
+   */
+  function evaluateManufacturingReadiness({ p, client }) {
+    if (!p || typeof p !== 'object' || p.eliminado === true) {
+      return {
+        ready: false,
+        errorCode: 'OPORTUNIDAD_INVALIDA',
+        reason: 'La oportunidad no existe o fue eliminada.'
+      };
+    }
+    if (!client || typeof client !== 'object' || client.eliminado === true || client.estado_cuenta === 'fusionada') {
+      return {
+        ready: false,
+        errorCode: 'CUENTA_INVALIDA',
+        reason: 'La oportunidad no corresponde a una cuenta de cliente válida y activa.'
+      };
+    }
+
+    const datos = (p.datos && typeof p.datos === 'object') ? p.datos : {};
+    const clientDocs = (client.documentos && typeof client.documentos === 'object') ? client.documentos : {};
+
+    // 1. Validación de cierre comercial
+    const postclosingValid = p.estado === 'ganado' && hasEnteredPostclosing(p);
+    if (!postclosingValid) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La oportunidad no cuenta con un cierre comercial válido (el estado debe ser ganado).'
+      };
+    }
+
+    const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(Number(p.precio_cotizado) || 0, Number(p.costo_venta) || 0) > 10000;
+    const aprobacionSinContrato = p.aprobacion_sin_contrato || datos.aprobacion_sin_contrato || null;
+    const isApprovalInvalidated = Boolean(aprobacionSinContrato && aprobacionSinContrato.estado === 'invalidada_por_sustitucion');
+    const bypass = isBig && !isApprovalInvalidated && (isNoContractApprovalValid(p) || datos.autorizado_sin_contrato === true);
+    const hasSignedClosingDoc = hasDoc(datos.doc_firmado) || hasDoc(datos.doc_contrato) || hasDoc(datos.doc_oferta_firmada) || hasDoc(p.doc_firmado) || Boolean(p.contrato_archivo);
+    if (!hasSignedClosingDoc) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La oportunidad carece del documento contractual u oferta firmada de cierre.'
+      };
+    }
+    if (isBig && isApprovalInvalidated && !hasDoc(datos.doc_contrato)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La autorización de cierre sin contrato fue invalidada y no existe contrato firmado vigente.'
+      };
+    }
+    if (!hasDoc(clientDocs.dui) && !hasDoc(clientDocs.dui_rep)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La cuenta del cliente carece del documento de identidad obligatorio (DUI / Carnet de residente).'
+      };
+    }
+    if (isBig && !bypass && client.tipo === 'juridica') {
+      if (!(hasDoc(clientDocs.escritura) && hasDoc(clientDocs.credencial) && hasDoc(clientDocs.nit) && hasDoc(clientDocs.nrc))) {
+        return {
+          ready: false,
+          errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+          reason: 'La cuenta jurídica carece de los documentos societarios obligatorios para el cierre contractual.'
+        };
+      }
+    }
+    if (p.tipo_proyecto === 'Fabricación e instalación' && !(p.encargado || datos.encargado)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'Falta asignar el encargado de instalación del proyecto.'
+      };
+    }
+
+    // 2. Validación de condición de pago autorizada (invariable: 50/50, 70/30, 100% anticipado)
+    const formaPago = p.forma_pago || datos.forma_pago || null;
+    if (!formaPago || !Object.prototype.hasOwnProperty.call(FORMAS_PAGO, formaPago)) {
+      return {
+        ready: false,
+        errorCode: 'CONDICION_PAGO_INVALIDA',
+        formaPago,
+        reason: `La condición de pago '${formaPago || 'sin definir'}' no está autorizada. DUCTSAL solo permite '50/50', '70/30' o '100% anticipado'.`
+      };
+    }
+
+    // 3. Cálculo del monto contractual y anticipo exigible
+    const subtotalContractual = subtotalOf(p);
+    if (!Number.isFinite(subtotalContractual) || subtotalContractual <= 0) {
+      return {
+        ready: false,
+        errorCode: 'MONTO_CONTRACTUAL_INVALIDO',
+        formaPago,
+        subtotalContractual,
+        reason: 'El monto contractual del proyecto debe ser mayor que cero. No se permiten ventas sin anticipo.'
+      };
+    }
+
+    const totalContractual = round2(isExport(client) ? subtotalContractual : subtotalContractual * IVA);
+    const porcentajeAnticipo = FORMAS_PAGO[formaPago];
+    const montoExigible = round2(totalContractual * porcentajeAnticipo);
+    if (!Number.isFinite(montoExigible) || montoExigible <= 0) {
+      return {
+        ready: false,
+        errorCode: 'MONTO_ANTICIPO_INVALIDO',
+        formaPago,
+        totalContractual,
+        montoExigible,
+        reason: 'El monto de anticipo exigible debe ser mayor que cero.'
+      };
+    }
+
+    // 4. Verificación estricta de pagos confirmados en facturas[].pagos[]
+    // Se ignoran booleanos de frontend (p.anticipo_pagado), facturas sin pagos, promesas,
+    // comprobantes no verificados, pagos anulados, revertidos o duplicados.
+    const facturas = Array.isArray(p.facturas) ? p.facturas : [];
+    let montoFacturado = 0;
+    let montoConfirmado = 0;
+    let hasValidIssuedInvoice = false;
+    let ccfAnticipoNumero = null;
+
+    const seenPaymentIds = new Set();
+    const seenPaymentOpIds = new Set();
+    const seenCompositeKeys = new Set();
+    const isGranContribuyente = Boolean(client && truthyFlag(client.is_gran_contribuyente));
+
+    for (const fac of facturas) {
+      if (!fac || typeof fac !== 'object') continue;
+      if (
+        fac.anulada === true || fac.anulado === true ||
+        fac.revertida === true || fac.revertido === true ||
+        fac.eliminada === true || fac.eliminado === true ||
+        fac.voided === true || fac.reversed === true
+      ) {
+        continue;
+      }
+      const facEstado = typeof fac.estado === 'string' ? fac.estado.trim().toLowerCase() : '';
+      if (facEstado && INVALID_FINANCIAL_STATUSES.includes(facEstado)) continue;
+
+      const facNumero = typeof fac.numero === 'string' ? fac.numero.trim() : '';
+      const facMonto = round2(Number(fac.monto));
+      if (!facNumero || !Number.isFinite(facMonto) || facMonto <= 0) continue;
+
+      montoFacturado = round2(montoFacturado + facMonto);
+      if (hasValidPaymentDoc(fac.doc_factura) && !hasValidIssuedInvoice) {
+        hasValidIssuedInvoice = true;
+        ccfAnticipoNumero = facNumero;
+      }
+
+      let invoiceConfirmedSum = 0;
+      const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
+      for (const pay of pagos) {
+        if (!pay || typeof pay !== 'object') continue;
+        if (
+          pay.anulado === true || pay.anulada === true ||
+          pay.revertido === true || pay.revertida === true ||
+          pay.eliminado === true || pay.eliminada === true ||
+          pay.rechazado === true || pay.rechazada === true ||
+          pay.voided === true || pay.reversed === true ||
+          pay.promesa === true || pay.es_promesa === true ||
+          pay.pendiente_verificacion === true ||
+          pay.verificado === false || pay.confirmado === false
+        ) {
+          continue;
+        }
+        const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+        if (payEstado && INVALID_FINANCIAL_STATUSES.includes(payEstado)) continue;
+
+        const metodo = typeof pay.metodo === 'string' ? pay.metodo.trim().toLowerCase() : '';
+        if (!PAYMENT_METHODS.includes(metodo)) continue;
+        if (metodo === 'retencion_1pct' && !isGranContribuyente) continue;
+        if (!hasValidPaymentDoc(pay.doc_comprobante)) continue;
+
+        const payMonto = round2(Number(pay.monto));
+        if (!Number.isFinite(payMonto) || payMonto <= 0) continue;
+
+        const payId = pay.id ? String(pay.id).trim() : '';
+        const payOpId = pay.opId ? String(pay.opId).trim() : '';
+        if (payId) {
+          if (seenPaymentIds.has(payId)) continue;
+          seenPaymentIds.add(payId);
+        }
+        if (payOpId) {
+          if (seenPaymentOpIds.has(payOpId)) continue;
+          seenPaymentOpIds.add(payOpId);
+        }
+        if (!payId && !payOpId) {
+          const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${String(pay.ref || '').trim()}`;
+          if (seenCompositeKeys.has(compKey)) continue;
+          seenCompositeKeys.add(compKey);
+        }
+
+        invoiceConfirmedSum = round2(invoiceConfirmedSum + payMonto);
+      }
+
+      const cappedInvoicePaid = Math.min(facMonto, invoiceConfirmedSum);
+      montoConfirmado = round2(montoConfirmado + cappedInvoicePaid);
+    }
+
+    const ccfAnticipoStatus = hasValidIssuedInvoice ? 'emitido' : 'pendiente';
+    const saldoPendiente = Math.max(0, round2(montoExigible - montoConfirmado));
+    const anticipoCumplido = Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100);
+    const anticipoPagoStatus = anticipoCumplido
+      ? 'pagado'
+      : (montoConfirmado > 0 ? 'parcialmente_pagado' : 'pendiente');
+
+    if (!anticipoCumplido) {
+      return {
+        ready: false,
+        errorCode: 'ANTICIPO_PENDIENTE',
+        prospectId: p.id || null,
+        accountId: client.id || p.clientId || null,
+        formaPago,
+        porcentajeAnticipo,
+        subtotalContractual,
+        totalContractual,
+        montoExigible,
+        montoFacturado,
+        montoConfirmado,
+        saldoPendiente,
+        ccfAnticipoStatus,
+        ccfAnticipoNumero,
+        anticipoPagoStatus,
+        reason: `ANTICIPO_PENDIENTE: No se puede enviar ni liberar el proyecto a fabricación. Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado: ${fmtMoney(montoConfirmado)} | Saldo pendiente: ${fmtMoney(saldoPendiente)}.`
+      };
+    }
+
+    return {
+      ready: true,
+      code: 'ANTICIPO_CONFIRMADO',
+      prospectId: p.id || null,
+      accountId: client.id || p.clientId || null,
+      formaPago,
+      porcentajeAnticipo,
+      subtotalContractual,
+      totalContractual,
+      montoExigible,
+      montoFacturado,
+      montoConfirmado,
+      saldoPendiente: 0,
+      ccfAnticipoStatus,
+      ccfAnticipoNumero,
+      anticipoPagoStatus: 'pagado'
+    };
+  }
+
+  /**
+   * Reusable transactional gate to be invoked inside any Firestore transaction
+   * that transitions, sends, or releases an opportunity/project to manufacturing.
+   */
+  async function assertManufacturingReadyTx(tx, { caller, prospectId }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!MANUFACTURING_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para validar o liberar proyectos a fabricación');
+    }
+    reqDocId(prospectId, 'prospectId');
+
+    const pRef = col('prospects').doc(prospectId);
+    const pSnap = await tx.get(pRef);
+    if (!pSnap.exists) throw notFound('Oportunidad');
+    const p = pSnap.data() || {};
+    if (p.eliminado === true) throw precondition('Este proyecto fue eliminado y no admite cambios');
+    if (caller.role === 'gestor') {
+      requireProspectAccess(caller, p);
+    }
+
+    if (!p.clientId) {
+      throw businessPrecondition('CUENTA_INVALIDA', 'CUENTA_INVALIDA: La oportunidad no tiene una cuenta asociada.', { prospectId });
+    }
+
+    const client = await loadClient(tx, p);
+    if (!client) {
+      throw businessPrecondition('CUENTA_INVALIDA', 'CUENTA_INVALIDA: La cuenta asociada a la oportunidad no existe.', { prospectId, clientId: p.clientId });
+    }
+
+    const evaluation = evaluateManufacturingReadiness({ p: { id: prospectId, ...p }, client });
+    if (!evaluation.ready) {
+      throw businessPrecondition(evaluation.errorCode || 'ANTICIPO_PENDIENTE', evaluation.reason, evaluation);
+    }
+
+    return {
+      status: 'ready_for_manufacturing',
+      ...evaluation
+    };
+  }
+
+  /**
+   * Centralized backend validation callable/method for verifying that a closed opportunity
+   * has its mandatory advance payment 100% confirmed before manufacturing release.
+   */
+  async function validateManufacturingReadiness({ caller, prospectId }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!MANUFACTURING_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para validar o liberar proyectos a fabricación');
+    }
+    reqDocId(prospectId, 'prospectId');
+    return db.runTransaction(async tx => {
+      const result = await assertManufacturingReadyTx(tx, { caller, prospectId });
+      addAudit(tx, caller, 'validateManufacturingReadiness', prospectId, {
+        ready: true,
+        forma_pago: result.formaPago,
+        monto_exigible: result.montoExigible,
+        monto_confirmado: result.montoConfirmado,
+        saldo_pendiente: result.saldoPendiente
+      });
+      return result;
+    });
+  }
+
+  return {
+    advanceStage,
+    revertStage,
+    saveClosingDocuments,
+    finalizeProspect,
+    markLost,
+    registerProposal,
+    editBasePrice,
+    saveChangeOrder,
+    deleteChangeOrder,
+    saveInvoice,
+    deleteInvoice,
+    savePayment,
+    deletePayment,
+    deleteProspect,
+    reactivateProspect,
+    evaluateManufacturingReadiness,
+    assertManufacturingReadyTx,
+    validateManufacturingReadiness
+  };
 }
 
-module.exports = { createProspectWorkflowService, hasEnteredPostclosing: fallbackHasEnteredPostclosing, POLICY, STAGES, REVERSION_PREV_STAGE, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };
+module.exports = {
+  createProspectWorkflowService,
+  hasEnteredPostclosing: fallbackHasEnteredPostclosing,
+  POLICY,
+  STAGES,
+  REVERSION_PREV_STAGE,
+  MOTIVOS_PERDIDA,
+  FORMAS_PAGO,
+  PAYMENT_METHODS,
+  ORDER_TYPES
+};

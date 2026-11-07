@@ -310,12 +310,13 @@ function defineWorkflowSuite({ label, makeEnv }) {
           await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, encargado: '' } }), 'invalid-argument');
         });
 
-        test('closing needs the signed document and the advance proof', async () => {
+        test('closing needs the signed document and allows closing without advance proof', async () => {
           await put(negociacion());
           await wf.advanceStage({ caller: caller('V1'), prospectId: 'W1', nextStage: 'cierre', data: {} });
           await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, doc_firmado: undefined } }), 'failed-precondition');
-          await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, doc_comprobante: undefined } }), 'failed-precondition');
           await rejects(wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, factura_anticipo: ' ' } }), 'invalid-argument');
+          await wf.finalizeProspect({ caller: caller('V1'), prospectId: 'W1', data: { ...CIE, doc_comprobante: undefined, factura_anticipo: undefined } });
+          expect((await prospect('W1')).estado).toBe('ganado');
         });
 
         test('closing twice produces exactly one invoice and one closing log', async () => {

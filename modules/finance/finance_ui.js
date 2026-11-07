@@ -148,6 +148,76 @@
         Object.assign(_deps, customDeps);
     }
 
+    function _evaluateFinancialMilestones(p, client) {
+        if (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.evaluateFinancialMilestones === 'function') {
+            return CrmFollowUpCalc.evaluateFinancialMilestones(p, client);
+        }
+        if (typeof window !== 'undefined' && window.CrmFollowUpCalc && typeof window.CrmFollowUpCalc.evaluateFinancialMilestones === 'function') {
+            return window.CrmFollowUpCalc.evaluateFinancialMilestones(p, client);
+        }
+        if (typeof require === 'function') {
+            try {
+                const calc = require('../../crm_followup_calc');
+                if (calc && typeof calc.evaluateFinancialMilestones === 'function') {
+                    return calc.evaluateFinancialMilestones(p, client);
+                }
+            } catch (e) { /* ignore fallback */ }
+        }
+        const terms = { '100% anticipado': 1.0, '70/30': 0.7, '50/50': 0.5 };
+        const formaPago = p && typeof p.forma_pago === 'string' ? p.forma_pago.trim() : null;
+        const pct = formaPago && Object.prototype.hasOwnProperty.call(terms, formaPago) ? terms[formaPago] : null;
+        const subtotal = _deps.getProjectSubtotal(p);
+        const isExport = Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+        const total = Math.round((isExport ? subtotal : subtotal * 1.13) * 100) / 100;
+        const montoExigible = pct !== null ? Math.round(total * pct * 100) / 100 : 0;
+        const facturas = Array.isArray(p && p.facturas) ? p.facturas : [];
+        let ccfEmitido = false;
+        let ccfNumero = null;
+        let montoConfirmado = 0;
+        facturas.forEach((f, idx) => {
+            if (!f || f.anulada === true || f.eliminada === true || f.estado === 'anulada') return;
+            const fm = parseFloat(f.monto);
+            if (!isNaN(fm) && fm > 0 && idx === 0 && f.numero && f.doc_factura) {
+                ccfEmitido = true;
+                ccfNumero = String(f.numero).trim();
+            }
+            if (Array.isArray(f.pagos)) {
+                f.pagos.forEach(pay => {
+                    if (!pay || pay.anulado === true || pay.eliminado === true || pay.revertido === true || pay.verificado === false || pay.estado === 'pendiente_verificacion') return;
+                    const pm = parseFloat(pay.monto);
+                    if (!isNaN(pm) && pm > 0 && pay.doc_comprobante) montoConfirmado += pm;
+                });
+            }
+        });
+        montoConfirmado = Math.round(montoConfirmado * 100) / 100;
+        const saldoPendienteAnticipo = Math.max(0, Math.round((montoExigible - montoConfirmado) * 100) / 100);
+        const anticipoCumplido = pct !== null && montoExigible > 0 && (montoConfirmado + 0.009 >= montoExigible);
+        const anticipoPagoStatus = anticipoCumplido ? 'pagado' : (montoConfirmado > 0.009 ? 'parcialmente_pagado' : 'pendiente');
+        const obligacionesSeguimiento = [];
+        if (!ccfEmitido) obligacionesSeguimiento.push('Emitir CCF de anticipo y adjuntar respaldo fiscal.');
+        if (!anticipoCumplido) {
+            obligacionesSeguimiento.push(
+                anticipoPagoStatus === 'parcialmente_pagado'
+                    ? `Completar cobro de anticipo (faltan $${saldoPendienteAnticipo.toFixed(2)}).`
+                    : `Registrar cobro confirmado del anticipo ($${montoExigible.toFixed(2)}).`
+            );
+        }
+        return {
+            formaPago,
+            formaPagoValida: pct !== null,
+            porcentajeAnticipo: pct,
+            ccfAnticipoStatus: ccfEmitido ? 'emitido' : 'pendiente',
+            ccfAnticipoNumero: ccfNumero,
+            anticipoPagoStatus,
+            montoExigible,
+            montoConfirmado,
+            saldoPendienteAnticipo,
+            anticipoCumplido,
+            habilitadoFabricacion: Boolean(p && p.estado === 'ganado' && pct !== null && anticipoCumplido),
+            obligacionesSeguimiento
+        };
+    }
+
     // -------------------------------------------------------------------------
     // 2. Renderizado de Proyectos y Control de Cobros
     // -------------------------------------------------------------------------
@@ -363,6 +433,20 @@
                     : `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-neutral">Sin facturar</span></div>`);
 
             const ivaLabel = mp.isExport ? '✈️ Exento (0% IVA)' : '(Inc. IVA)';
+            const pClient = clientsList.find(c => c.id === p.clientId);
+            const fm = _evaluateFinancialMilestones(p, pClient);
+            let advanceStatusBadgeHtml = '';
+            if (fm && fm.formaPagoValida) {
+                if (fm.anticipoPagoStatus === 'pagado') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.65rem; padding:1px 5px;" title="Anticipo 100% confirmado — Habilitado para fabricación">✓ Anticipo OK</span></div>`;
+                } else if (fm.anticipoPagoStatus === 'parcialmente_pagado') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.65rem; padding:1px 5px;" title="Anticipo parcialmente pagado — Faltan ${_deps.formatCurrency(fm.saldoPendienteAnticipo)}">⚠️ Anticipo Parcial</span></div>`;
+                } else if (fm.ccfAnticipoStatus !== 'emitido') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.65rem; padding:1px 5px;" title="Pendiente emitir CCF de anticipo y cobro">⏳ CCF / Anticipo Pend.</span></div>`;
+                } else {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.65rem; padding:1px 5px;" title="CCF emitido, cobro de anticipo pendiente (${_deps.formatCurrency(fm.montoExigible)})">🔒 Anticipo Pendiente</span></div>`;
+                }
+            }
 
             tr.innerHTML = `
                 <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold); font-size:0.82rem;">${_deps.escapeHtmlDoc(mp.codigo)}</strong></td>
@@ -386,7 +470,7 @@
                         ${cxcBadgeHtml}
                     </div>
                 </td>
-                <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${_deps.escapeHtmlDoc(mp.condicion)}</span></td>
+                <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${_deps.escapeHtmlDoc(mp.condicion)}</span>${advanceStatusBadgeHtml}</td>
                 <td class="col-proj-invoiced col-money" style="text-align:right;">
                     <div class="table-progress-wrap">
                         <div class="table-progress-header">
@@ -495,6 +579,45 @@
             }
         } else if (exportContainer) {
             exportContainer.style.display = 'none';
+        }
+
+        // Hitos financieros post-cierre (CCF de anticipo, Cobro de anticipo y Bloqueo de fabricación)
+        const fm = _evaluateFinancialMilestones(p, client);
+        let milestonesBanner = doc.getElementById('fin-advance-milestones-banner');
+        if (fm && fm.formaPagoValida) {
+            if (!milestonesBanner && invoicesListEl && invoicesListEl.parentNode) {
+                milestonesBanner = doc.createElement('div');
+                milestonesBanner.id = 'fin-advance-milestones-banner';
+                invoicesListEl.parentNode.insertBefore(milestonesBanner, invoicesListEl);
+            }
+            if (milestonesBanner) {
+                const ccfBadge = fm.ccfAnticipoStatus === 'emitido'
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Emitido${fm.ccfAnticipoNumero ? ' (' + _deps.escapeHtmlDoc(fm.ccfAnticipoNumero) + ')' : ''}</span>`
+                    : `<span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⏳ Pendiente de emisión</span>`;
+                const antBadge = fm.anticipoPagoStatus === 'pagado'
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Pagado (${_deps.formatCurrency(fm.montoConfirmado)} / ${_deps.formatCurrency(fm.montoExigible)})</span>`
+                    : (fm.anticipoPagoStatus === 'parcialmente_pagado'
+                        ? `<span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⚠️ Parcialmente pagado (${_deps.formatCurrency(fm.montoConfirmado)} de ${_deps.formatCurrency(fm.montoExigible)})</span>`
+                        : `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);">⏳ Pendiente (${_deps.formatCurrency(fm.montoExigible)} exigible)</span>`);
+                const fabBadge = fm.habilitadoFabricacion
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Anticipo confirmado — Habilitado para fabricación</span>`
+                    : `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);">🔒 Bloqueado para fabricación (Saldo anticipo: ${_deps.formatCurrency(fm.saldoPendienteAnticipo)})</span>`;
+                const obligHtml = Array.isArray(fm.obligacionesSeguimiento) && fm.obligacionesSeguimiento.length > 0
+                    ? `<div style="margin-top:8px; font-size:0.8rem; color:#fde68a;"><strong>Seguimiento financiero pendiente:</strong> ${fm.obligacionesSeguimiento.map(ob => _deps.escapeHtmlDoc(ob)).join(' • ')}</div>`
+                    : '';
+                milestonesBanner.style.cssText = `background:rgba(15,23,42,0.75); border:1px solid ${fm.habilitadoFabricacion ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.45)'}; border-radius:6px; padding:10px 12px; margin-bottom:14px; font-size:0.84rem;`;
+                milestonesBanner.innerHTML = `
+                    <div style="font-weight:700; color:var(--brand-gold); margin-bottom:6px;">📌 Control de Anticipo y Fabricación (${_deps.escapeHtmlDoc(fm.formaPago || '-')})</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                        <div><span style="color:var(--text-secondary);">CCF Anticipo:</span> ${ccfBadge}</div>
+                        <div><span style="color:var(--text-secondary);">Cobro Anticipo:</span> ${antBadge}</div>
+                        <div><span style="color:var(--text-secondary);">Fabricación:</span> ${fabBadge}</div>
+                    </div>
+                    ${obligHtml}
+                `;
+            }
+        } else if (milestonesBanner) {
+            milestonesBanner.style.display = 'none';
         }
 
         if (Array.isArray(p.ordenes_cambio) && p.ordenes_cambio.length > 0) {

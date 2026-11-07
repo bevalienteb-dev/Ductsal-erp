@@ -160,7 +160,7 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
       })).rejects.toThrow(/Debe adjuntar la oferta firmada para finalizar/i);
     });
 
-    test('1.2 Falla si falta doc_comprobante (Comprobante / CCF de anticipo)', async () => {
+    test('1.2 Permite finalizar cierre comercial sin doc_comprobante (CCF de anticipo separado del cierre)', async () => {
       const { fdb, wf, caller } = makeEnv();
       await fdb.seed('clients_prod/1792004495514', baseClient);
       await fdb.seed('prospects_prod/1792004940382', {
@@ -172,14 +172,17 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
         }
       });
 
-      await expect(wf.finalizeProspect({
+      const res = await wf.finalizeProspect({
         caller: caller('gestor'),
         prospectId: '1792004940382',
         data: {}
-      })).rejects.toThrow(/Debe adjuntar el comprobante o factura de anticipo para finalizar/i);
+      });
+      expect(res.estado).toBe('ganado');
+      expect(res.ccf_anticipo_emitido).toBe(false);
+      expect(res.facturas).toEqual([]);
     });
 
-    test('1.3 Falla si falta factura_anticipo', async () => {
+    test('1.3 Permite finalizar cierre comercial sin factura_anticipo (CCF de anticipo se emite en post-cierre)', async () => {
       const { fdb, wf, caller } = makeEnv();
       await fdb.seed('clients_prod/1792004495514', baseClient);
       await fdb.seed('prospects_prod/1792004940382', {
@@ -192,11 +195,14 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
         }
       });
 
-      await expect(wf.finalizeProspect({
+      const res = await wf.finalizeProspect({
         caller: caller('gestor'),
         prospectId: '1792004940382',
         data: {}
-      })).rejects.toThrow(/El número de factura de anticipo es obligatorio/i);
+      });
+      expect(res.estado).toBe('ganado');
+      expect(res.ccf_anticipo_emitido).toBe(false);
+      expect(res.facturas).toEqual([]);
     });
 
     test('1.4 Falla si falta forma_pago o es inválida', async () => {
@@ -273,7 +279,7 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
       oppUiMod.init({ alert: (m) => global.alert(m), confirm: (m) => global.confirm(m) });
     });
 
-    test('2.1 Si faltan los 4 requisitos, finalizeOpportunity() muestra el listado exacto de pendientes sin mencionar gerencia ni contrato', async () => {
+    test('2.1 Si faltan requisitos de cierre, finalizeOpportunity() muestra el listado exacto de pendientes (sin bloquear por CCF de anticipo)', async () => {
       appCore.setCurrentUser({ id: 'ALEJANDRA', role: 'gestor', nombre: 'Alejandra Ayala' });
       appCore.setClients([baseClient]);
       appCore.setProspects([baseProject202610153]);
@@ -283,11 +289,13 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
       expect(global.alert).toHaveBeenCalled();
       const alertMsg = global.alert.mock.calls[0][0];
 
-      // Debe listar los 4 campos faltantes
+      // Debe listar los campos faltantes obligatorios de cierre comercial
       expect(alertMsg).toContain('Forma de pago pactada');
-      expect(alertMsg).toContain('Número de factura de anticipo');
       expect(alertMsg).toContain('Oferta firmada por cliente');
-      expect(alertMsg).toContain('Copia de factura o comprobante de anticipo');
+
+      // Ya NO bloquea por factura o comprobante de anticipo en cierre comercial
+      expect(alertMsg).not.toContain('Número de factura de anticipo');
+      expect(alertMsg).not.toContain('Copia de factura o comprobante de anticipo');
 
       // NO debe mencionar falsamente requerimientos de gerencia ni contrato
       expect(alertMsg).not.toContain('Contrato firmado escaneado');
@@ -295,28 +303,22 @@ describe('Proyecto 202610153 (GRADO 0 - $185.48) — Diagnóstico y Validación 
       expect(alertMsg).not.toContain('autorización');
     });
 
-    test('2.2 Si solo falta el número de factura de anticipo, el mensaje señala únicamente ese campo', async () => {
+    test('2.2 Si no hay factura de anticipo pero sí forma de pago y oferta firmada, procede a confirmación sin bloquear', async () => {
       appCore.setCurrentUser({ id: 'ALEJANDRA', role: 'gestor', nombre: 'Alejandra Ayala' });
       appCore.setClients([baseClient]);
       appCore.setProspects([{
         ...baseProject202610153,
         datos: {
           doc_firmado: { name: 'oferta.pdf' },
-          doc_comprobante: { name: 'comprobante.pdf' },
           forma_pago: '100% anticipado'
-          // factura_anticipo falta
+          // factura_anticipo y doc_comprobante ausentes (se registran en post-cierre)
         }
       }]);
 
       await appCore.finalizeOpportunity('1792004940382');
 
-      expect(global.alert).toHaveBeenCalled();
-      const alertMsg = global.alert.mock.calls[0][0];
-
-      expect(alertMsg).toContain('Número de factura de anticipo');
-      expect(alertMsg).not.toContain('Oferta firmada por cliente');
-      expect(alertMsg).not.toContain('Copia de factura o comprobante de anticipo');
-      expect(alertMsg).not.toContain('Forma de pago pactada');
+      expect(global.alert).not.toHaveBeenCalled();
+      expect(global.confirm).toHaveBeenCalled();
     });
   });
 });

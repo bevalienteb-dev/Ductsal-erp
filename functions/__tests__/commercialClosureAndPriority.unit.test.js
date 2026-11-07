@@ -407,28 +407,6 @@ describe('2. Regla de Negocio: Cierre Comercial Ordinario sin Permiso Especial',
       }
     })).rejects.toThrow(/Debe adjuntar la oferta firmada para finalizar/i);
 
-    // Falta comprobante de anticipo
-    await expect(wf.finalizeProspect({
-      caller: callerVendedor,
-      prospectId: 'prj-5000',
-      data: {
-        doc_firmado: fileObj('oferta.pdf'),
-        forma_pago: '100% anticipado',
-        factura_anticipo: 'FCF-001'
-      }
-    })).rejects.toThrow(/Debe adjuntar el comprobante o factura de anticipo para finalizar/i);
-
-    // Falta número de factura
-    await expect(wf.finalizeProspect({
-      caller: callerVendedor,
-      prospectId: 'prj-5000',
-      data: {
-        doc_firmado: fileObj('oferta.pdf'),
-        doc_comprobante: fileObj('comprobante.pdf'),
-        forma_pago: '100% anticipado'
-      }
-    })).rejects.toThrow(/El número de factura de anticipo es obligatorio/i);
-
     // Falta forma de pago
     await expect(wf.finalizeProspect({
       caller: callerVendedor,
@@ -439,6 +417,18 @@ describe('2. Regla de Negocio: Cierre Comercial Ordinario sin Permiso Especial',
         factura_anticipo: 'FCF-001'
       }
     })).rejects.toThrow(/Forma de pago inválida/i);
+
+    // Cierre comercial válido sin CCF de anticipo (separado del cierre comercial)
+    const closedWithoutCcf = await wf.finalizeProspect({
+      caller: callerVendedor,
+      prospectId: 'prj-5000',
+      data: {
+        doc_firmado: fileObj('oferta.pdf'),
+        forma_pago: '100% anticipado'
+      }
+    });
+    expect(closedWithoutCcf.estado).toBe('ganado');
+    expect(closedWithoutCcf.ccf_anticipo_emitido).toBe(false);
   });
 
   test('2.4 Regla 4: Las autorizaciones de operaciones diferentes continúan requiriendo permisos gerenciales', async () => {
@@ -568,11 +558,11 @@ describe('2. Regla de Negocio: Cierre Comercial Ordinario sin Permiso Especial',
     expect(global.alert).toHaveBeenCalled();
     const msg = global.alert.mock.calls[0][0];
 
-    // Verifica que se señalan con transparencia los 4 recaudos pendientes
+    // Verifica que se señalan con transparencia los recaudos obligatorios de cierre comercial (sin bloquear por CCF de anticipo)
     expect(msg).toContain('Forma de pago pactada');
-    expect(msg).toContain('Número de factura de anticipo');
     expect(msg).toContain('Oferta firmada por cliente');
-    expect(msg).toContain('Copia de factura o comprobante de anticipo');
+    expect(msg).not.toContain('Número de factura de anticipo');
+    expect(msg).not.toContain('Copia de factura o comprobante de anticipo');
 
     // Verifica que NO se le imputa error de permisos ni requerimiento de gerencia
     expect(msg).not.toContain('permiso');

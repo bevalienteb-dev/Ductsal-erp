@@ -415,11 +415,8 @@
             const docFirmado = datos.doc_firmado || datos.doc_contrato || datos.doc_oferta_firmada;
             if (!docFirmado) pendingDocumentation.push('Contrato u oferta firmada');
 
-            const docComp = datos.doc_comprobante;
-            if (!docComp) pendingDocumentation.push('Comprobante o CCF de anticipo');
-
-            const facAnticipo = prospect.factura_anticipo || datos.factura_anticipo;
-            if (!facAnticipo) pendingDocumentation.push('Número de factura de anticipo');
+            // El CCF de anticipo y su cobro se gestionan como hitos financieros posteriores al cierre comercial
+            // y como requisito bloqueante antes de fabricación (no bloquean el cierre comercial).
 
             const formaPago = prospect.forma_pago || datos.forma_pago;
             if (!formaPago) pendingDocumentation.push('Forma de pago acordada');
@@ -1203,6 +1200,231 @@
         };
     }
 
+    const AUTHORIZED_PAYMENT_TERMS = {
+        '100% anticipado': 1.0,
+        '70/30': 0.7,
+        '50/50': 0.5
+    };
+    const VALID_PAYMENT_METHODS = ['transferencia', 'cheque', 'retencion_1pct'];
+    const INVALID_RECORD_STATUSES = [
+        'anulado', 'anulada', 'revertido', 'revertida', 'cancelado', 'cancelada',
+        'rechazado', 'rechazada', 'eliminado', 'eliminada', 'borrador',
+        'pendiente', 'pendiente_verificacion', 'pendiente_emision', 'promesa'
+    ];
+
+    function round2Money(n) {
+        return Math.round((Number(n) || 0) * 100) / 100;
+    }
+
+    function hasValidFileSupport(doc) {
+        if (!doc) return false;
+        if (typeof doc === 'string') return doc.trim().length > 0;
+        if (typeof doc === 'object') {
+            const p = doc.storagePath || doc.path || doc.fullPath || doc.url || doc.downloadURL || '';
+            const n = doc.name || '';
+            return String(p).trim().length > 0 || String(n).trim().length > 0;
+        }
+        return false;
+    }
+
+    /**
+     * Evalúa los hitos financieros posteriores al cierre comercial (CCF de anticipo,
+     * cobro confirmado de anticipo y habilitación financiera para fabricación) reutilizando
+     * exclusivamente los registros reales de `facturas` y `pagos`.
+     */
+    function evaluateFinancialMilestones(prospect, client = null) {
+        if (!prospect || typeof prospect !== 'object') {
+            return {
+                formaPago: null,
+                condicionPagoValida: false,
+                porcentajeAnticipo: 0,
+                subtotalContractual: 0,
+                totalContractual: 0,
+                montoExigible: 0,
+                montoFacturado: 0,
+                montoConfirmado: 0,
+                saldoPendienteAnticipo: 0,
+                ccfAnticipoStatus: 'pendiente',
+                ccfAnticipoNumero: null,
+                anticipoPagoStatus: 'pendiente',
+                anticipoCumplido: false,
+                habilitadoFabricacion: false,
+                obligacionesSeguimiento: []
+            };
+        }
+
+        const datos = (prospect.datos && typeof prospect.datos === 'object') ? prospect.datos : {};
+        const activeClient = client || ((prospect.client && typeof prospect.client === 'object') ? prospect.client : null);
+        const isExport = Boolean(activeClient && (activeClient.es_exportacion === true || activeClient.es_exportacion === 'true'));
+        const isGranContribuyente = Boolean(activeClient && (activeClient.is_gran_contribuyente === true || activeClient.is_gran_contribuyente === 'true'));
+
+        const formaPago = prospect.forma_pago || datos.forma_pago || null;
+        const condicionPagoValida = Boolean(formaPago && Object.prototype.hasOwnProperty.call(AUTHORIZED_PAYMENT_TERMS, formaPago));
+        const porcentajeAnticipo = condicionPagoValida ? AUTHORIZED_PAYMENT_TERMS[formaPago] : 0;
+
+        let baseSubtotal = Number(prospect.precio_cotizado) || 0;
+        if (Array.isArray(prospect.ordenes_cambio)) {
+            prospect.ordenes_cambio.forEach(o => {
+                if (!o || typeof o !== 'object') return;
+                if (o.anulado === true || o.eliminado === true) return;
+                const val = Math.abs(Number(o.precio) || 0);
+                baseSubtotal += (o.tipo === 'aumento' ? val : -val);
+            });
+        }
+        const subtotalContractual = round2Money(baseSubtotal);
+        const totalContractual = subtotalContractual > 0
+            ? round2Money(isExport ? subtotalContractual : subtotalContractual * 1.13)
+            : 0;
+        const montoExigible = (condicionPagoValida && totalContractual > 0)
+            ? round2Money(totalContractual * porcentajeAnticipo)
+            : 0;
+
+        const facturas = Array.isArray(prospect.facturas) ? prospect.facturas : [];
+        let montoFacturado = 0;
+        let montoConfirmado = 0;
+        let ccfAnticipoNumero = null;
+        let hasValidIssuedInvoice = false;
+
+        const seenPaymentIds = new Set();
+        const seenPaymentOpIds = new Set();
+        const seenCompositeKeys = new Set();
+
+        for (const fac of facturas) {
+            if (!fac || typeof fac !== 'object') continue;
+            if (fac.anulada === true || fac.anulado === true || fac.revertida === true || fac.revertido === true || fac.eliminada === true || fac.eliminado === true) {
+                continue;
+            }
+            const facEstado = typeof fac.estado === 'string' ? fac.estado.trim().toLowerCase() : '';
+            if (facEstado && INVALID_RECORD_STATUSES.includes(facEstado)) continue;
+
+            const facNumero = typeof fac.numero === 'string' ? fac.numero.trim() : '';
+            const facMonto = round2Money(Number(fac.monto));
+            if (!facNumero || !Number.isFinite(facMonto) || facMonto <= 0) continue;
+
+            montoFacturado = round2Money(montoFacturado + facMonto);
+            if (hasValidFileSupport(fac.doc_factura)) {
+                if (!hasValidIssuedInvoice) {
+                    hasValidIssuedInvoice = true;
+                    ccfAnticipoNumero = facNumero;
+                }
+            }
+
+            let invoiceConfirmedSum = 0;
+            const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
+            for (const pay of pagos) {
+                if (!pay || typeof pay !== 'object') continue;
+                if (
+                    pay.anulado === true || pay.anulada === true ||
+                    pay.revertido === true || pay.revertida === true ||
+                    pay.eliminado === true || pay.eliminada === true ||
+                    pay.rechazado === true || pay.rechazada === true ||
+                    pay.voided === true || pay.reversed === true ||
+                    pay.promesa === true || pay.es_promesa === true ||
+                    pay.pendiente_verificacion === true ||
+                    pay.verificado === false || pay.confirmado === false
+                ) {
+                    continue;
+                }
+                const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+                if (payEstado && INVALID_RECORD_STATUSES.includes(payEstado)) continue;
+
+                const metodo = typeof pay.metodo === 'string' ? pay.metodo.trim() : '';
+                if (!VALID_PAYMENT_METHODS.includes(metodo)) continue;
+                if (metodo === 'retencion_1pct' && activeClient && !isGranContribuyente) continue;
+                if (!hasValidFileSupport(pay.doc_comprobante)) continue;
+
+                const payMonto = round2Money(Number(pay.monto));
+                if (!Number.isFinite(payMonto) || payMonto <= 0) continue;
+
+                const payId = pay.id ? String(pay.id).trim() : '';
+                const payOpId = pay.opId ? String(pay.opId).trim() : '';
+                if (payId) {
+                    if (seenPaymentIds.has(payId)) continue;
+                    seenPaymentIds.add(payId);
+                }
+                if (payOpId) {
+                    if (seenPaymentOpIds.has(payOpId)) continue;
+                    seenPaymentOpIds.add(payOpId);
+                }
+                if (!payId && !payOpId) {
+                    const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${String(pay.ref || '').trim()}`;
+                    if (seenCompositeKeys.has(compKey)) continue;
+                    seenCompositeKeys.add(compKey);
+                }
+
+                invoiceConfirmedSum = round2Money(invoiceConfirmedSum + payMonto);
+            }
+
+            // El monto aplicado por factura nunca puede superar el monto de esa factura
+            const cappedInvoicePaid = Math.min(facMonto, invoiceConfirmedSum);
+            montoConfirmado = round2Money(montoConfirmado + cappedInvoicePaid);
+        }
+
+        // Compatibilidad con registros históricos que tenían factura_anticipo + doc_comprobante antes de facturas[]
+        if (!hasValidIssuedInvoice && facturas.length === 0) {
+            const histFac = typeof (prospect.factura_anticipo || datos.factura_anticipo) === 'string'
+                ? String(prospect.factura_anticipo || datos.factura_anticipo).trim()
+                : '';
+            if (histFac && hasValidFileSupport(datos.doc_comprobante || prospect.doc_comprobante)) {
+                hasValidIssuedInvoice = true;
+                ccfAnticipoNumero = histFac;
+            }
+        }
+
+        const ccfAnticipoStatus = hasValidIssuedInvoice ? 'emitido' : 'pendiente';
+        const saldoPendienteAnticipo = montoExigible > 0
+            ? Math.max(0, round2Money(montoExigible - montoConfirmado))
+            : 0;
+        const anticipoCumplido = Boolean(
+            condicionPagoValida &&
+            montoExigible > 0 &&
+            Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100)
+        );
+
+        let anticipoPagoStatus = 'pendiente';
+        if (anticipoCumplido) {
+            anticipoPagoStatus = 'pagado';
+        } else if (montoConfirmado > 0) {
+            anticipoPagoStatus = 'parcialmente_pagado';
+        }
+
+        const isClosedWon = prospect.estado === 'ganado' && prospect.eliminado !== true;
+        const habilitadoFabricacion = Boolean(isClosedWon && anticipoCumplido);
+
+        const obligacionesSeguimiento = [];
+        if (isClosedWon) {
+            if (ccfAnticipoStatus === 'pendiente') {
+                obligacionesSeguimiento.push('Emitir y adjuntar CCF de anticipo');
+            }
+            if (anticipoPagoStatus === 'pendiente') {
+                obligacionesSeguimiento.push(`Gestionar y registrar pago de anticipo exigible (${formaPago || 'sin modalidad'})`);
+            } else if (anticipoPagoStatus === 'parcialmente_pagado') {
+                obligacionesSeguimiento.push('Completar cobro del saldo pendiente de anticipo');
+            }
+            if (!anticipoCumplido) {
+                obligacionesSeguimiento.push('Bloqueo financiero activo: no liberar a fabricación hasta confirmar el 100% del anticipo exigible');
+            }
+        }
+
+        return {
+            formaPago,
+            condicionPagoValida,
+            porcentajeAnticipo,
+            subtotalContractual,
+            totalContractual,
+            montoExigible,
+            montoFacturado,
+            montoConfirmado,
+            saldoPendienteAnticipo,
+            ccfAnticipoStatus,
+            ccfAnticipoNumero,
+            anticipoPagoStatus,
+            anticipoCumplido,
+            habilitadoFabricacion,
+            obligacionesSeguimiento
+        };
+    }
+
     return {
         TIMEZONE_COMMERCIAL,
         FOLLOWUP_CADENCE,
@@ -1210,6 +1432,7 @@
         FOLLOWUP_CHANNEL_LABELS,
         FOLLOWUP_RESULTS,
         FOLLOWUP_RESULT_LABELS,
+        AUTHORIZED_PAYMENT_TERMS,
         getWorkCalendar,
         getCommercialYMD,
         parseDate,
@@ -1223,6 +1446,7 @@
         suggestNextInternalTaskDate,
         classifyFollowUp,
         calculateStageSla,
+        evaluateFinancialMilestones,
         resolveSellerName,
         generateAgenda,
         calculateManagerAttentionItems,

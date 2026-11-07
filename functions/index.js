@@ -1789,7 +1789,11 @@ function clientsServiceFor(suffix) {
 }
 
 function toHttpsError(e) {
-  if (e instanceof ServiceError || (e && e.name === 'ServiceError' && e.code)) return new functions.https.HttpsError(e.code, e.message);
+  if (e instanceof ServiceError || (e && e.name === 'ServiceError' && e.code)) {
+    return e.details !== undefined
+      ? new functions.https.HttpsError(e.code, e.message, e.details)
+      : new functions.https.HttpsError(e.code, e.message);
+  }
   if (e && e.constructor && e.constructor.name === 'HttpsError') return e;
   console.error('clients service failure:', e && e.message);
   return new functions.https.HttpsError('internal', 'Internal error');
@@ -2099,6 +2103,10 @@ exports.deleteProspectAdmin = functions.https.onCall((data, context) => runWorkf
 /** { prospectId, motivo, dbSuffix? } -> { status: 'reactivated' | 'unchanged', estado, etapa, motivo_reactivacion } (manager only, live check) */
 exports.reactivateLostProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.reactivateProspect({ caller, prospectId: d.prospectId, motivo: d.motivo })));
+
+/** { prospectId, dbSuffix? } -> { status: 'authorized', ready: true, code: 'ANTICIPO_CONFIRMADO', montoExigible, montoConfirmado, ... } (manager / gestor / jefe_produccion) */
+exports.validateManufacturingReadinessAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.validateManufacturingReadiness({ caller, prospectId: d.prospectId })));
 
 // ======================================================================================================
 // SEC-05: Secure Document Download (Universal Downloads & Large File Streaming)

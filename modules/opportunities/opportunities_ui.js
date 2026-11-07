@@ -2207,8 +2207,40 @@ function renderFollowUpSummary(p) {
         </div>`;
     }
 
+    let postClosingFinancialHtml = '';
+    if (p.estado === 'ganado' && typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.evaluateFinancialMilestones === 'function') {
+        const clientObj = getProspectClient(p.clientId);
+        const fm = CrmFollowUpCalc.evaluateFinancialMilestones(p, clientObj);
+        const ccfBadge = fm.ccfAnticipoStatus === 'emitido'
+            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Emitido ${fm.ccfAnticipoNumero ? '(' + escapeHtmlDoc(fm.ccfAnticipoNumero) + ')' : ''}</span>`
+            : `<span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.72rem;">⏳ Pendiente</span>`;
+        const antBadge = fm.anticipoPagoStatus === 'pagado'
+            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Pagado (${formatCurrency(fm.montoConfirmado)})</span>`
+            : (fm.anticipoPagoStatus === 'parcialmente_pagado'
+                ? `<span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.72rem;">⚠️ Parcialmente pagado (${formatCurrency(fm.montoConfirmado)} / ${formatCurrency(fm.montoExigible)})</span>`
+                : `<span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.72rem;">⏳ Pendiente (Exigible: ${formatCurrency(fm.montoExigible)})</span>`);
+        const fabBadge = fm.habilitadoFabricacion
+            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Anticipo confirmado para fabricación</span>`
+            : `<span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.72rem;">🔒 Bloqueado fabricación (Faltan ${formatCurrency(fm.saldoPendienteAnticipo)})</span>`;
+        const obligHtml = Array.isArray(fm.obligacionesSeguimiento) && fm.obligacionesSeguimiento.length > 0
+            ? `<div style="margin-top:6px; font-size:0.74rem; color:#fde68a;"><strong>Obligaciones pendientes:</strong><ul style="margin:4px 0 0 16px; padding:0;">${fm.obligacionesSeguimiento.map(ob => `<li>${escapeHtmlDoc(ob)}</li>`).join('')}</ul></div>`
+            : '';
+        postClosingFinancialHtml = `
+            <div style="margin-top:8px; padding:8px 10px; background:rgba(15,23,42,0.75); border:1px solid ${fm.habilitadoFabricacion ? 'rgba(16,185,129,0.35)' : 'rgba(245,158,11,0.4)'}; border-radius:6px;">
+                <div style="font-size:0.78rem; font-weight:700; color:var(--brand-gold); margin-bottom:6px;">💰 Hitos Financieros Post-Cierre (${escapeHtmlDoc(fm.formaPago || '-')})</div>
+                <div style="display:flex; flex-direction:column; gap:5px; font-size:0.76rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>1. CCF de anticipo:</span> ${ccfBadge}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>2. Cobro de anticipo:</span> ${antBadge}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>3. Fabricación:</span> ${fabBadge}</div>
+                </div>
+                ${obligHtml}
+            </div>
+        `;
+    }
+
     summaryEl.innerHTML = `
         <div class="followup-panel-card">
+            ${postClosingFinancialHtml}
             <div class="followup-card-row">
                 <div class="followup-card-row-header">
                     <span>💬 Último Contacto</span>
@@ -3240,15 +3272,9 @@ function renderClosingDocumentationPanel(p) {
         else pendingList.push("Oferta firmada por cliente");
     }
 
-    // Comprobante anticipo
-    reqList.push("Comprobante / CCF de anticipo");
+    // Comprobante y CCF de anticipo: hitos financieros posteriores (no bloquean el cierre comercial)
     if (hasDocComprobante) okList.push("Comprobante / CCF de anticipo");
-    else pendingList.push("Comprobante / CCF de anticipo");
-
-    // Factura anticipo
-    reqList.push("Número de Factura de anticipo");
     if (hasFacturaAnticipo) okList.push(`Factura de anticipo (#${p.factura_anticipo || datos.factura_anticipo})`);
-    else pendingList.push("Número de Factura de anticipo");
 
     // Forma de pago
     reqList.push("Forma de pago acordada");
@@ -3673,8 +3699,8 @@ function renderClosingDocumentationPanel(p) {
                 </div>
 
                 <div class="form-group">
-                    <label>Número Factura de Anticipo</label>
-                    <input type="text" id="closing-fac-anticipo" value="${escapeHtmlDoc(currentFac)}" placeholder="Ej. FCF-001" required ${isWon ? 'disabled' : ''}>
+                    <label>Número Factura / CCF de Anticipo <span style="font-size:0.72rem; color:var(--text-secondary); font-weight:normal;">(Opcional en cierre comercial — Hito posterior)</span></label>
+                    <input type="text" id="closing-fac-anticipo" value="${escapeHtmlDoc(currentFac)}" placeholder="Ej. FCF-001 (o registrar en postcierre)" ${isWon ? 'disabled' : ''}>
                 </div>
 
                 ${p.tipo_proyecto === 'Fabricación e instalación' ? `
@@ -3753,10 +3779,10 @@ function renderClosingDocumentationPanel(p) {
                     </div>
                 </div>
 
-                <!-- Subida de Factura / Comprobante -->
+                <!-- Subida de Factura / Comprobante (Hito posterior no bloqueante para cierre comercial) -->
                 <div class="form-group full-width" style="padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                        <label style="margin: 0;">Copia de Factura o Comprobante de Anticipo Emitido</label>
+                        <label style="margin: 0;">Copia de Factura o CCF de Anticipo Emitido <span style="font-size:0.72rem; color:var(--text-secondary); font-weight:normal;">(Opcional al cerrar — Requerido y pagado antes de fabricación)</span></label>
                         ${hasDocComprobante ? `
                             <div style="display: flex; gap: 4px; align-items: center;">
                                 <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.75rem;" onclick="viewStoredClientDoc('${compDocStoreId}')" title="Ver archivo actual">👁️ Ver</button>
@@ -4091,12 +4117,10 @@ async function finalizeOpportunity(prospectId) {
         }
     }
     if (!formaPago) missing.push("Forma de pago pactada");
-    if (!facAnticipo) missing.push("Número de factura de anticipo");
     if (p.tipo_proyecto === 'Fabricación e instalación' && !encargado) missing.push("Encargado de instalación");
     if (!hasNewF1 && !hasExistingF1) {
         missing.push(isBigInstalacion && !isAuthorized ? "Contrato firmado escaneado" : "Oferta firmada por cliente");
     }
-    if (!hasNewF2 && !hasExistingF2) missing.push("Copia de factura o comprobante de anticipo");
 
     const reqContratoEl = document.getElementById('closing-requiere-contrato');
     const requiereContrato = reqContratoEl ? reqContratoEl.checked : (p.requiere_contrato === true || (datos && datos.requiere_contrato === true));
@@ -4135,15 +4159,19 @@ async function finalizeOpportunity(prospectId) {
         return alert("❌ No se puede finalizar la oportunidad. Faltan los siguientes requisitos obligatorios:\n\n• " + missing.join("\n• "));
     }
 
-    if (!confirm("¿Confirmas la finalización definitiva de esta oportunidad comercial?\n\n• Se marcará el estado como 'Ganado'\n• Se habilitará la transferencia a Proyectos y Cobros\n• Se generará la factura de anticipo")) {
+    const ccfConfirmNote = (facAnticipo && (hasNewF2 || hasExistingF2))
+        ? `• Se generará la factura de anticipo (${facAnticipo})`
+        : `• El CCF de anticipo y su cobro quedarán como hitos pendientes (obligatorios antes de enviar a fabricación)`;
+
+    if (!confirm(`¿Confirmas la finalización definitiva de esta oportunidad comercial?\n\n• Se marcará el estado como 'Ganado'\n• Se habilitará la transferencia a Proyectos y Cobros\n${ccfConfirmNote}`)) {
         return;
     }
 
     const data = {
         forma_pago: formaPago,
-        factura_anticipo: facAnticipo,
         requiere_contrato: requiereContrato
     };
+    if (facAnticipo) data.factura_anticipo = facAnticipo;
     if (firmanteCierre) data.firmante_cierre = firmanteCierre;
     if (encargado) data.encargado = encargado;
     if (hasNewF1 && m1El && m1El.value.trim()) data.motivo_doc_firmado = m1El.value.trim();
