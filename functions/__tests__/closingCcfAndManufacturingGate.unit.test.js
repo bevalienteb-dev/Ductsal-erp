@@ -665,19 +665,39 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
               metodo: 'Transferencia',
               doc_comprobante: null
             },
-            // 4. Pago válido de $2,000 y su duplicado con mismo id
+            // 4. Pago con campos confirmado/verificado ausentes (undefined): NO debe contabilizarse como cobrado
+            {
+              id: 'PAY-MISSING-CONFIRM',
+              monto: 5650,
+              fecha: '2026-11-07',
+              metodo: 'transferencia',
+              doc_comprobante: fileObj('sin_confirmar_backend.pdf', 'pagos')
+            },
+            // 5. Pago positivamente confirmado en backend de $2,000 y su duplicado con mismo id
             {
               id: 'PAY-DUP-1',
               monto: 2000,
               fecha: '2026-11-07',
-              metodo: 'Transferencia',
+              metodo: 'transferencia',
+              confirmado: true,
+              estado: 'confirmado',
+              confirmado_por: 'Gestor Financiero',
+              confirmado_por_uid: 'uid-GESTOR-FIN',
+              confirmado_por_rol: 'gestor',
+              confirmado_en: '2026-11-07T16:10:00.000Z',
               doc_comprobante: fileObj('valido_2000.pdf', 'pagos')
             },
             {
               id: 'PAY-DUP-1',
               monto: 2000,
               fecha: '2026-11-07',
-              metodo: 'Transferencia',
+              metodo: 'transferencia',
+              confirmado: true,
+              estado: 'confirmado',
+              confirmado_por: 'Gestor Financiero',
+              confirmado_por_uid: 'uid-GESTOR-FIN',
+              confirmado_por_rol: 'gestor',
+              confirmado_en: '2026-11-07T16:10:00.000Z',
               doc_comprobante: fileObj('valido_2000.pdf', 'pagos')
             }
           ]
@@ -703,8 +723,8 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       prospectId: 'PRJ-FORGED-01'
     })).rejects.toMatchObject({ code: 'permission-denied' });
 
-    // 10b. Con rol autorizado, ignora las banderas booleanas, descarta pagos anulados/no verificados/sin comprobante/duplicados
-    // y solo contabiliza $2,000.00 confirmados (faltan $3,650.00)
+    // 10b. Con rol autorizado, ignora las banderas booleanas, descarta pagos anulados/no verificados/sin comprobante/sin confirmación positiva/duplicados
+    // y solo contabiliza $2,000.00 positivamente confirmados (faltan $3,650.00)
     await expect(wf.validateManufacturingReadiness({
       caller: caller('manager'),
       prospectId: 'PRJ-FORGED-01'
@@ -714,8 +734,368 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
         errorCode: 'ANTICIPO_PENDIENTE',
         montoExigible: 5650,
         montoConfirmado: 2000,
+        montoRegistradoNoConfirmado: 5650,
         saldoPendiente: 3650
       })
     });
+  });
+
+  test('Escenario 11: Pago histórico con confirmado/verificado ausentes NO habilita fabricación hasta ser confirmado positivamente por backend autorizado', async () => {
+    const { fdb, wf, caller } = makeEnv();
+    await fdb.seed('clients_prod/CLI-ACERO-01', baseClient);
+
+    // Oportunidad con pago histórico legítimo (sin campos confirmado/verificado) por el 100% del anticipo ($5,650.00)
+    await fdb.seed('prospects_prod/PRJ-LEGACY-PAY', {
+      ...baseClosingProspect,
+      id: 'PRJ-LEGACY-PAY',
+      codigo: '202611011',
+      etapa: 'cierre',
+      estado: 'ganado',
+      ganada: true,
+      forma_pago: '50/50',
+      encargado: 'Ing. Carlos Pérez',
+      fecha_cierre: '2026-10-15T16:00:00.000Z',
+      datos: {
+        ...baseClosingProspect.datos,
+        doc_firmado: fileObj('contrato_firmado_legacy.pdf'),
+        forma_pago: '50/50'
+      },
+      facturas: [
+        {
+          id: 'INV-LEGACY-01',
+          numero: 'CCF-LEGACY-101',
+          monto: 5650,
+          fecha: '2026-10-16',
+          doc_factura: fileObj('ccf_legacy_101.pdf', 'facturas'),
+          pagos: [
+            {
+              id: 'PAY-LEGACY-01',
+              monto: 5650,
+              fecha: '2026-10-17',
+              metodo: 'transferencia',
+              ref: 'TRX-LEGACY-99',
+              doc_comprobante: fileObj('comprobante_legacy.pdf', 'pagos')
+              // confirmado y verificado ausentes (undefined)
+            }
+          ]
+        }
+      ]
+    });
+
+    const beforeDoc = (await fdb.collection('prospects_prod').doc('PRJ-LEGACY-PAY').get()).data();
+    const fmBefore = CrmFollowUpCalc.evaluateFinancialMilestones(beforeDoc, baseClient);
+    expect(fmBefore.montoConfirmado).toBe(0);
+    expect(fmBefore.montoRegistradoNoConfirmado).toBe(5650);
+    expect(fmBefore.habilitadoFabricacion).toBe(false);
+
+    // No habilita fabricación automáticamente sin confirmación positiva de backend
+    await expect(wf.validateManufacturingReadiness({
+      caller: caller('manager'),
+      prospectId: 'PRJ-LEGACY-PAY'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        errorCode: 'ANTICIPO_PENDIENTE',
+        montoExigible: 5650,
+        montoConfirmado: 0,
+        montoRegistradoNoConfirmado: 5650,
+        saldoPendiente: 5650
+      })
+    });
+
+    // Un gestor confirma explícitamente el pago histórico mediante el flujo autorizado savePayment({ confirmar: true })
+    const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
+    const confirmRes = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-LEGACY-PAY',
+      invoiceId: 'INV-LEGACY-01',
+      paymentId: 'PAY-LEGACY-01',
+      monto: 5650,
+      fecha: '2026-10-17',
+      metodo: 'transferencia',
+      ref: 'TRX-LEGACY-99',
+      confirmar: true
+    });
+
+    expect(confirmRes.payment.confirmado).toBe(true);
+    expect(confirmRes.payment.estado).toBe('confirmado');
+    expect(confirmRes.payment.confirmado_por_uid).toBe('uid-GESTOR-FIN');
+    expect(confirmRes.payment.confirmado_por_rol).toBe('gestor');
+    expect(confirmRes.payment.confirmado_en).toBeTruthy();
+
+    const readyRes = await wf.validateManufacturingReadiness({
+      caller: caller('jefe_produccion'),
+      prospectId: 'PRJ-LEGACY-PAY'
+    });
+    expect(readyRes.ready).toBe(true);
+    expect(readyRes.montoConfirmado).toBe(5650);
+    expect(readyRes.montoRegistradoNoConfirmado).toBe(0);
+  });
+
+  test('Escenario 12: Pagos de facturas ajenas al anticipo NO habilitan fabricación y la factura de anticipo se preserva ante reordenamiento o intentos de borrado', async () => {
+    const { fdb, wf, caller } = makeEnv();
+    await fdb.seed('clients_prod/CLI-ACERO-01', baseClient);
+    await fdb.seed('prospects_prod/PRJ-MULTI-INV', {
+      ...baseClosingProspect,
+      id: 'PRJ-MULTI-INV',
+      codigo: '202611012'
+    });
+
+    const vendedora = caller('vendedor', 'ALEJANDRA-AYALA', 'Alejandra Ayala');
+    const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
+
+    await wf.finalizeProspect({
+      caller: vendedora,
+      prospectId: 'PRJ-MULTI-INV',
+      data: {
+        doc_firmado: fileObj('contrato_multi.pdf'),
+        forma_pago: '50/50',
+        encargado: 'Ing. Carlos Pérez'
+      }
+    });
+
+    // 1. Emitir factura de anticipo ($5,650.00) sin pagos
+    const advCreated = await wf.saveInvoice({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      opId: 'OP-ADV-INV',
+      numero: 'CCF-ANT-001',
+      monto: 5650,
+      doc_factura: fileObj('ccf_ant_001.pdf', 'facturas')
+    });
+    const advId = advCreated.invoice.id;
+    expect(advCreated.invoice.es_anticipo).toBe(true);
+    expect(advCreated.invoice.tipo_factura).toBe('anticipo');
+
+    // 2. Registrar orden de cambio en aumento (+$2,000 + IVA = $2,260) y su factura independiente
+    await wf.saveChangeOrder({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      opId: 'OP-CO-001',
+      tipo: 'aumento',
+      precio: 2000,
+      costo: 1000,
+      desc: 'Ductería adicional cuarto limpio',
+      doc_oferta: fileObj('oc_aumento.pdf')
+    });
+
+    const otherCreated = await wf.saveInvoice({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      opId: 'OP-ORD-INV',
+      numero: 'CCF-OC-002',
+      monto: 5650,
+      doc_factura: fileObj('ccf_oc_002.pdf', 'facturas')
+    });
+    const otherId = otherCreated.invoice.id;
+    expect(otherCreated.invoice.es_anticipo).toBe(false);
+    expect(otherCreated.invoice.tipo_factura).toBe('ordinaria');
+
+    // 3. Registrar pago confirmado de $5,650.00 en la SEGUNDA factura (ajena al anticipo)
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      invoiceId: otherId,
+      opId: 'OP-PAY-OTHER',
+      monto: 5650,
+      metodo: 'transferencia',
+      ref: 'TRX-OTHER-01',
+      doc_comprobante: fileObj('pago_otra_factura.pdf', 'pagos')
+    });
+
+    // Verificar que el pago de otra factura NO se suma al anticipo y fabricación sigue bloqueada
+    await expect(wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        errorCode: 'ANTICIPO_PENDIENTE',
+        montoExigible: 5650,
+        montoConfirmado: 0,
+        montoConfirmadoOtrasFacturas: 5650,
+        saldoPendiente: 5650
+      })
+    });
+
+    // 4. Reordenar el arreglo facturas (colocar la factura ordinaria en índice 0 y la de anticipo en índice 1)
+    const snap = await fdb.collection('prospects_prod').doc('PRJ-MULTI-INV').get();
+    const curData = snap.data();
+    const reordered = [curData.facturas[1], curData.facturas[0]];
+    await fdb.seed('prospects_prod/PRJ-MULTI-INV', {
+      ...curData,
+      facturas: reordered
+    });
+
+    // Intentar eliminar la factura de anticipo (aunque ahora esté en índice 1) debe ser bloqueado
+    await expect(wf.deleteInvoice({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      invoiceId: advId
+    })).rejects.toThrow(/factura de anticipo.*no puede ser eliminada/i);
+
+    // Aún reordenada, la factura ordinaria en índice 0 NO se confunde con la de anticipo
+    await expect(wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        errorCode: 'ANTICIPO_PENDIENTE',
+        ccfAnticipoId: advId,
+        ccfAnticipoNumero: 'CCF-ANT-001',
+        montoConfirmado: 0,
+        montoConfirmadoOtrasFacturas: 5650
+      })
+    });
+
+    // 5. Pagar la factura de anticipo real (índice 1) habilita fabricación
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV',
+      invoiceId: advId,
+      opId: 'OP-PAY-ADV-REAL',
+      monto: 5650,
+      metodo: 'transferencia',
+      ref: 'TRX-ADV-REAL',
+      doc_comprobante: fileObj('pago_anticipo_real.pdf', 'pagos')
+    });
+
+    const readyRes = await wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-MULTI-INV'
+    });
+    expect(readyRes.ready).toBe(true);
+    expect(readyRes.ccfAnticipoId).toBe(advId);
+    expect(readyRes.montoConfirmado).toBe(5650);
+    expect(readyRes.montoConfirmadoOtrasFacturas).toBe(5650);
+  });
+
+  test('Escenario 13: Tratamiento fiscal de retencion_1pct en el anticipo (Gran Contribuyente 99% efectivo + 1% retención vs. excesos o sin efectivo)', async () => {
+    const { fdb, wf, caller } = makeEnv();
+    const granContribClient = {
+      ...baseClient,
+      id: 'CLI-GRAN-01',
+      is_gran_contribuyente: true,
+      es_exportacion: false
+    };
+    await fdb.seed('clients_prod/CLI-GRAN-01', granContribClient);
+    await fdb.seed('prospects_prod/PRJ-RET-01', {
+      ...baseClosingProspect,
+      id: 'PRJ-RET-01',
+      clientId: 'CLI-GRAN-01',
+      codigo: '202611013'
+    });
+
+    const vendedora = caller('vendedor', 'ALEJANDRA-AYALA', 'Alejandra Ayala');
+    const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
+
+    await wf.finalizeProspect({
+      caller: vendedora,
+      prospectId: 'PRJ-RET-01',
+      data: {
+        doc_firmado: fileObj('contrato_gran_contrib.pdf'),
+        forma_pago: '50/50',
+        encargado: 'Ing. Carlos Pérez',
+        factura_anticipo: 'CCF-RET-001',
+        doc_comprobante: fileObj('ccf_ret_001.pdf', 'facturas')
+      }
+    });
+
+    // Anticipo 50% de $11,300.00 = $5,650.00 (Subtotal sin IVA del anticipo = $5,000.00, IVA = $650.00, Retención 1% = $50.00)
+    const snap = await fdb.collection('prospects_prod').doc('PRJ-RET-01').get();
+    const invId = snap.data().facturas[0].id;
+
+    // 13a. Registrar únicamente retención 1% ($50.00) sin cobro efectivo -> montoEfectivoConfirmado = 0 -> retención reconocida = 0
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      opId: 'OP-RET-ONLY',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'COMP-RET-001',
+      doc_comprobante: fileObj('comprobante_retencion_50.pdf', 'pagos')
+    });
+
+    await expect(wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        errorCode: 'ANTICIPO_PENDIENTE',
+        montoExigible: 5650,
+        montoEfectivoConfirmado: 0,
+        montoRetencionConfirmada: 0,
+        montoConfirmado: 0
+      })
+    });
+
+    // 13b. Registrar transferencia por $5,000.00 + retención excesiva adicional por $600.00 (total retención bruta $650.00 > tope 1% $56.50)
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      opId: 'OP-CASH-5000',
+      monto: 5000,
+      metodo: 'transferencia',
+      ref: 'TRX-5000',
+      doc_comprobante: fileObj('vaucher_5000.pdf', 'pagos')
+    });
+    const excessRet = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      opId: 'OP-RET-EXCESS',
+      monto: 600,
+      metodo: 'retencion_1pct',
+      ref: 'COMP-RET-EXCESS',
+      doc_comprobante: fileObj('retencion_exceso.pdf', 'pagos')
+    });
+
+    await expect(wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        errorCode: 'ANTICIPO_PENDIENTE',
+        montoExigible: 5650,
+        montoEfectivoConfirmado: 5000,
+        montoRetencionConfirmada: 56.5,
+        montoRetencionExcedente: 593.5,
+        montoConfirmado: 5056.5
+      })
+    });
+
+    // 13c. Eliminar la retención excesiva y registrar el complemento efectivo ($600.00) para llegar a $5,600.00 efectivo + $50.00 retención 1% = $5,650.00
+    await wf.deletePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      paymentId: excessRet.payment.id
+    });
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      opId: 'OP-CASH-600',
+      monto: 600,
+      metodo: 'transferencia',
+      ref: 'TRX-600',
+      doc_comprobante: fileObj('vaucher_600.pdf', 'pagos')
+    });
+
+    const readyRes = await wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01'
+    });
+    expect(readyRes.ready).toBe(true);
+    expect(readyRes.montoExigible).toBe(5650);
+    expect(readyRes.montoEfectivoConfirmado).toBe(5600);
+    expect(readyRes.montoRetencionConfirmada).toBe(50);
+    expect(readyRes.montoConfirmado).toBe(5650);
+    expect(readyRes.saldoPendiente).toBe(0);
   });
 });

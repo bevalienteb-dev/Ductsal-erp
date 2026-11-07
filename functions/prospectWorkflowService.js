@@ -1257,17 +1257,23 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const facturas = Array.isArray(p.facturas) ? p.facturas.slice() : [];
       const hasCompleteAdvanceCcf = Boolean(facturaAnticipo && canonicalComprobante);
       if (hasCompleteAdvanceCcf) {
-        const alreadyHasAdvance = facturas.some(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
-        if (!alreadyHasAdvance) {
+        const existingAdv = facturas.find(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
+        if (!existingAdv) {
+          const advId = uniqueId([], Date.now());
           facturas.push({
-            id: uniqueId([], Date.now()),
+            id: advId,
             numero: facturaAnticipo,
             monto: advanceAmount,
             doc_factura: canonicalComprobante,
+            es_anticipo: true,
+            tipo_factura: 'anticipo',
             pagos: [],
             fecha: at,
             opId: opId || null
           });
+          patch.factura_anticipo_id = advId;
+        } else if (existingAdv.id) {
+          patch.factura_anticipo_id = existingAdv.id;
         }
       }
       patch.facturas = facturas;
@@ -1612,7 +1618,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // =====================================================================================================
   // Invoices
   // =====================================================================================================
-  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, opId }) {
+  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, es_anticipo, opId }) {
     authorize(caller, 'saveInvoice');
     reqDocId(prospectId, 'prospectId');
     const editing = invoiceId !== undefined && invoiceId !== null && invoiceId !== '';
@@ -1641,27 +1647,55 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (exceeds(alreadyInvoiced + amount, totalConIVA)) {
         throw precondition(`El monto a facturar excede el saldo restante del proyecto. Saldo máximo a facturar: ${fmtMoney(totalConIVA - alreadyInvoiced)}`);
       }
-      const isFirstInvoice = editing ? (idx === 0) : (facturas.length === 0);
+      const resolvedAdv = resolveAdvanceInvoice(p, facturas);
+      let isAdvanceInvoice = false;
       if (editing) {
         const cur = facturas[idx];
+        isAdvanceInvoice = Boolean(
+          (resolvedAdv.invoice && resolvedAdv.invoice.id === cur.id) ||
+          cur.es_anticipo === true ||
+          cur.tipo_factura === 'anticipo' ||
+          (p.factura_anticipo_id && cur.id === p.factura_anticipo_id)
+        );
         if (cur.numero === number && cur.monto === amount && !doc) return { status: 'unchanged' };
-        invoice = { ...cur, numero: number, monto: amount };
+        invoice = {
+          ...cur,
+          numero: number,
+          monto: amount,
+          es_anticipo: isAdvanceInvoice,
+          tipo_factura: isAdvanceInvoice ? 'anticipo' : (cur.tipo_factura || 'ordinaria')
+        };
         if (doc) invoice.doc_factura = doc;
         facturas[idx] = invoice;
         text = `Factura editada: ${number} por ${fmtMoney(amount)}`;
       } else {
-        invoice = { id: uniqueId(facturas.map(f => f && f.id), Date.now()), numero: number, monto: amount, doc_factura: doc, pagos: [], fecha: iso(), opId };
+        isAdvanceInvoice = (es_anticipo === false)
+          ? false
+          : (!resolvedAdv.invoice && !resolvedAdv.ambiguous && facturas.length === 0);
+        invoice = {
+          id: uniqueId(facturas.map(f => f && f.id), Date.now()),
+          numero: number,
+          monto: amount,
+          doc_factura: doc,
+          es_anticipo: isAdvanceInvoice,
+          tipo_factura: isAdvanceInvoice ? 'anticipo' : 'ordinaria',
+          pagos: [],
+          fecha: iso(),
+          opId
+        };
         facturas.push(invoice);
         text = `Factura/CCF emitida: ${number} por ${fmtMoney(amount)}`;
       }
+      const postAdv = resolveAdvanceInvoice({ ...p, facturas }, facturas);
       const updatePatch = {
         facturas,
-        ccf_anticipo_emitido: facturas.length > 0,
+        ccf_anticipo_emitido: Boolean(postAdv.invoice && hasValidPaymentDoc(postAdv.invoice.doc_factura)),
         logs: withLog(p, caller, text)
       };
-      if (isFirstInvoice) {
+      if (isAdvanceInvoice) {
         const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
         updatePatch.factura_anticipo = number;
+        updatePatch.factura_anticipo_id = invoice.id;
         datos.factura_anticipo = number;
         if (doc) {
           datos.doc_comprobante = toCanonicalDocPointer(doc);
@@ -1669,7 +1703,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         updatePatch.datos = datos;
       }
       tx.update(ref, updatePatch);
-      addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount });
+      addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount, es_anticipo: isAdvanceInvoice });
       return {
         status: editing ? 'updated' : 'created',
         invoice,
@@ -1689,8 +1723,18 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const facturas = facturasOf(p);
       const i = facturas.findIndex(f => f && f.id === invoiceId);
       if (i === -1) return { status: 'absent' };
-      if (i === 0) throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
       const f = facturas[i];
+      const resolvedAdv = resolveAdvanceInvoice(p, facturas);
+      const isTargetAdvanceInvoice = Boolean(
+        f.es_anticipo === true ||
+        f.tipo_factura === 'anticipo' ||
+        (p.factura_anticipo_id && f.id === p.factura_anticipo_id) ||
+        (resolvedAdv.invoice && resolvedAdv.invoice.id === f.id) ||
+        (!resolvedAdv.invoice && i === 0 && f.es_anticipo !== false)
+      );
+      if (isTargetAdvanceInvoice) {
+        throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
+      }
       tx.update(ref, { facturas: facturas.slice(0, i).concat(facturas.slice(i + 1)), logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
       addAudit(tx, caller, 'deleteInvoice', prospectId, { invoiceId, numero: f.numero, monto: f.monto, payments: (f.pagos || []).length });
       addDeletionNotice(tx, caller, p, client, 'Factura', `${f.numero} (${fmtMoney(f.monto)})`);
@@ -1705,11 +1749,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // array position, which is stale as soon as someone else edits the same invoice.
   const payKeyMatches = (pay, key) => !!pay && (pay.id === key || pay.fecha === key);
 
-  async function savePayment({ caller, prospectId, invoiceId, paymentKey, monto, metodo, ref: reference, doc_comprobante, opId }) {
+  async function savePayment({ caller, prospectId, invoiceId, paymentKey, paymentId, monto, metodo, ref: reference, doc_comprobante, confirmar, opId }) {
     authorize(caller, 'savePayment');
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
-    const editing = paymentKey !== undefined && paymentKey !== null && paymentKey !== '';
-    if (editing) reqString(paymentKey, 'paymentKey', 64); else reqOpId(opId);
+    const resolvedPaymentKey = (paymentKey !== undefined && paymentKey !== null && paymentKey !== '')
+      ? paymentKey
+      : paymentId;
+    const editing = resolvedPaymentKey !== undefined && resolvedPaymentKey !== null && resolvedPaymentKey !== '';
+    if (editing) reqString(resolvedPaymentKey, 'paymentKey', 64); else reqOpId(opId);
     const amount = money(monto, 'El monto del abono', { positive: true });
     if (!PAYMENT_METHODS.includes(metodo)) throw bad('Forma de pago inválida');
     const refText = reqString(reference, 'La referencia', 100);
@@ -1734,35 +1781,68 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (metodo === 'retencion_1pct' && !(client && truthyFlag(client.is_gran_contribuyente))) {
         throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
       }
-      const at = editing ? fac.pagos.findIndex(x => payKeyMatches(x, paymentKey)) : -1;
+      const at = editing ? fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey)) : -1;
       if (editing && at === -1) throw notFound('Abono');
       const collected = fac.pagos.reduce((a, x, i) => (i === at ? a : a + (parseFloat(x.monto) || 0)), 0);
       const pending = (Number(fac.monto) || 0) - collected;
       if (exceeds(amount, pending)) throw precondition(`El abono supera el saldo de esta factura. Saldo pendiente: ${fmtMoney(pending)}`);
 
       let payment; let text;
+      const nowAt = iso();
       if (editing) {
         const cur = fac.pagos[at];
-        if (cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc) return { status: 'unchanged' };
+        const wantsExplicitConfirm = confirmar === true && !isPositivelyConfirmedPayment(cur);
+        if (cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc && !wantsExplicitConfirm) {
+          return { status: 'unchanged' };
+        }
+        const effectiveDoc = doc || cur.doc_comprobante || null;
+        if (confirmar === true && !hasValidPaymentDoc(effectiveDoc)) {
+          throw bad('No se puede confirmar un abono sin comprobante de respaldo válido');
+        }
         payment = { ...cur, monto: amount, metodo, ref: refText };
         if (doc) payment.doc_comprobante = doc;
+        if (hasValidPaymentDoc(effectiveDoc)) {
+          payment.confirmado = true;
+          payment.estado = 'confirmado';
+          payment.confirmado_por = caller.cid || caller.uid;
+          payment.confirmado_por_uid = caller.uid;
+          payment.confirmado_por_rol = caller.role;
+          payment.confirmado_en = nowAt;
+        }
         fac.pagos[at] = payment;
         text = `Abono editado en factura ${fac.numero}: ${fmtMoney(amount)} [${metodo}]`;
       } else {
-        payment = { id: uniqueId(fac.pagos.map(x => x && x.id), Date.now()), monto: amount, metodo, ref: refText, doc_comprobante: doc, fecha: iso(), opId };
+        payment = {
+          id: uniqueId(fac.pagos.map(x => x && x.id), Date.now()),
+          monto: amount,
+          metodo,
+          ref: refText,
+          doc_comprobante: doc,
+          fecha: nowAt,
+          opId,
+          confirmado: true,
+          estado: 'confirmado',
+          confirmado_por: caller.cid || caller.uid,
+          confirmado_por_uid: caller.uid,
+          confirmado_por_rol: caller.role,
+          confirmado_en: nowAt
+        };
         fac.pagos.push(payment);
         text = `Pago recibido: ${fmtMoney(amount)} vía ${metodo} a cuenta de Factura ${fac.numero}`;
       }
       tx.update(pRef, { facturas, logs: withLog(p, caller, text) });
-      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, { invoiceId, numero: fac.numero, monto: amount, metodo });
+      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, { invoiceId, numero: fac.numero, monto: amount, metodo, confirmado: Boolean(payment.confirmado) });
       return { status: editing ? 'updated' : 'created', payment };
     });
   }
 
-  async function deletePayment({ caller, prospectId, invoiceId, paymentKey }) {
+  async function deletePayment({ caller, prospectId, invoiceId, paymentKey, paymentId }) {
     authorize(caller, 'deletePayment');
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
-    reqString(paymentKey, 'paymentKey', 64);
+    const resolvedPaymentKey = (paymentKey !== undefined && paymentKey !== null && paymentKey !== '')
+      ? paymentKey
+      : paymentId;
+    reqString(resolvedPaymentKey, 'paymentKey', 64);
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
@@ -1770,7 +1850,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
       const fac = facturas.find(f => f && f.id === invoiceId);
       if (!fac) throw notFound('Factura');
-      const at = fac.pagos.findIndex(x => payKeyMatches(x, paymentKey));
+      const at = fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey));
       if (at === -1) return { status: 'absent' };
       const pay = fac.pagos[at];
       fac.pagos.splice(at, 1);
@@ -2029,6 +2109,120 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     return false;
   }
 
+  function isActiveInvoice(fac) {
+    if (!fac || typeof fac !== 'object') return false;
+    if (
+      fac.anulada === true || fac.anulado === true ||
+      fac.revertida === true || fac.revertido === true ||
+      fac.eliminada === true || fac.eliminado === true ||
+      fac.voided === true || fac.reversed === true
+    ) {
+      return false;
+    }
+    const facEstado = typeof fac.estado === 'string' ? fac.estado.trim().toLowerCase() : '';
+    if (facEstado && INVALID_FINANCIAL_STATUSES.includes(facEstado)) return false;
+    const facNumero = typeof fac.numero === 'string' ? fac.numero.trim() : '';
+    const facMonto = round2(Number(fac.monto));
+    return Boolean(facNumero && Number.isFinite(facMonto) && facMonto > 0);
+  }
+
+  /**
+   * Identifica de forma estable y segura la factura de anticipo de la oportunidad,
+   * soportando tanto el marcador explícito (`es_anticipo: true`, `tipo_factura: 'anticipo'`,
+   * `factura_anticipo_id`) como expedientes históricos legítimos, sin confundirse ante
+   * reordenamientos, ediciones o facturas posteriores (órdenes de cambio / saldo).
+   */
+  function resolveAdvanceInvoice(p, facturasList) {
+    const rawList = Array.isArray(facturasList)
+      ? facturasList
+      : (p && Array.isArray(p.facturas) ? p.facturas : []);
+    const active = rawList.filter(isActiveInvoice);
+    if (active.length === 0) {
+      return { invoice: null, ambiguous: false, source: 'none' };
+    }
+
+    const explicitMatches = active.filter((fac) => {
+      if (fac.es_anticipo === true) return true;
+      const tipo = typeof (fac.tipo_factura || fac.tipo) === 'string'
+        ? String(fac.tipo_factura || fac.tipo).trim().toLowerCase()
+        : '';
+      return tipo === 'anticipo';
+    });
+    if (explicitMatches.length > 1) {
+      return { invoice: null, ambiguous: true, source: 'multiple_es_anticipo' };
+    }
+
+    const prospectAdvId = p && typeof p.factura_anticipo_id === 'string' ? p.factura_anticipo_id.trim() : '';
+    if (prospectAdvId) {
+      const byProspectId = active.find((fac) => fac.id === prospectAdvId);
+      if (byProspectId && byProspectId.es_anticipo !== false) {
+        if (explicitMatches.length === 1 && explicitMatches[0].id !== byProspectId.id) {
+          return { invoice: null, ambiguous: true, source: 'conflicting_factura_anticipo_id' };
+        }
+        return { invoice: byProspectId, ambiguous: false, source: 'factura_anticipo_id' };
+      }
+    }
+
+    if (explicitMatches.length === 1) {
+      return { invoice: explicitMatches[0], ambiguous: false, source: 'es_anticipo' };
+    }
+
+    const prospectAdvNum = p && typeof p.factura_anticipo === 'string' ? p.factura_anticipo.trim() : '';
+    if (prospectAdvNum) {
+      const byNum = active.filter(
+        (fac) => String(fac.numero || '').trim() === prospectAdvNum && fac.es_anticipo !== false
+      );
+      if (byNum.length === 1) {
+        return { invoice: byNum[0], ambiguous: false, source: 'factura_anticipo_numero' };
+      }
+      if (byNum.length > 1) {
+        return { invoice: null, ambiguous: true, source: 'multiple_factura_anticipo_numero' };
+      }
+    }
+
+    // Compatibilidad con registros históricos sin etiqueta explícita:
+    // solo se acepta la primera factura si no fue marcada explícitamente como ordinaria / no-anticipo.
+    const first = active[0];
+    const firstTipo = typeof (first.tipo_factura || first.tipo) === 'string'
+      ? String(first.tipo_factura || first.tipo).trim().toLowerCase()
+      : '';
+    if (first.es_anticipo === false || firstTipo === 'ordinaria' || firstTipo === 'saldo' || firstTipo === 'orden_cambio') {
+      return { invoice: null, ambiguous: false, source: 'no_advance_invoice' };
+    }
+    return { invoice: first, ambiguous: false, source: active.length === 1 ? 'legacy_single' : 'legacy_first' };
+  }
+
+  /**
+   * Verifica que un pago haya sido positivamente confirmado mediante el flujo autorizado
+   * de backend (`savePayment` ejecutado por `gestor` o `manager`).
+   * Un pago con `confirmado` / `verificado` ausentes (`undefined`) NO se considera confirmado
+   * para habilitar fabricación, preservando los registros históricos sin migración destructiva.
+   */
+  function isPositivelyConfirmedPayment(pay) {
+    if (!pay || typeof pay !== 'object') return false;
+    const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+    const hasPositiveFlag = (
+      pay.confirmado === true ||
+      pay.verificado === true ||
+      payEstado === 'confirmado' ||
+      payEstado === 'verificado'
+    );
+    if (!hasPositiveFlag) return false;
+
+    const confirmedByRole = typeof pay.confirmado_por_rol === 'string'
+      ? pay.confirmado_por_rol.trim().toLowerCase()
+      : '';
+    if (confirmedByRole && !POLICY.savePayment.includes(confirmedByRole)) {
+      return false;
+    }
+
+    const hasBackendProvenance = Boolean(
+      (pay.confirmado_por_uid || pay.confirmado_por || pay.verificado_por_uid || pay.verificado_por) &&
+      (pay.confirmado_en || pay.verificado_en)
+    );
+    return hasBackendProvenance;
+  }
+
   function businessPrecondition(errorCode, message, details = {}) {
     const err = new ServiceError('failed-precondition', message);
     err.errorCode = errorCode;
@@ -2039,7 +2233,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   /**
    * Pure deterministic evaluator of commercial closing and confirmed advance payments
    * for manufacturing readiness. Never trusts frontend booleans (`anticipo_pagado`),
-   * unverified receipts, transfer promises, or invoices without confirmed payments.
+   * unverified receipts, transfer promises, payments with absent confirmation metadata,
+   * or payments applied to invoices unrelated to the advance.
    */
   function evaluateManufacturingReadiness({ p, client }) {
     if (!p || typeof p !== 'object' || p.eliminado === true) {
@@ -2124,8 +2319,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       };
     }
 
-    // 3. Cálculo del monto contractual y anticipo exigible
-    const subtotalContractual = subtotalOf(p);
+    // 3. Cálculo del monto contractual base del anticipo y monto exigible
+    const precioCotizado = round2(Number(p.precio_cotizado));
+    const subtotalActual = round2(subtotalOf(p));
+    // El anticipo exigible se calcula sobre el contrato base cerrado (o el subtotal vigente si hubo orden de cambio en disminución).
+    const subtotalContractual = (Number.isFinite(precioCotizado) && precioCotizado > 0)
+      ? (Number.isFinite(subtotalActual) && subtotalActual > 0 ? Math.min(precioCotizado, subtotalActual) : precioCotizado)
+      : subtotalActual;
     if (!Number.isFinite(subtotalContractual) || subtotalContractual <= 0) {
       return {
         ready: false,
@@ -2136,7 +2336,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       };
     }
 
-    const totalContractual = round2(isExport(client) ? subtotalContractual : subtotalContractual * IVA);
+    const clientIsExport = isExport(client);
+    const totalContractual = round2(clientIsExport ? subtotalContractual : subtotalContractual * IVA);
     const porcentajeAnticipo = FORMAS_PAGO[formaPago];
     const montoExigible = round2(totalContractual * porcentajeAnticipo);
     if (!Number.isFinite(montoExigible) || montoExigible <= 0) {
@@ -2150,45 +2351,45 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       };
     }
 
-    // 4. Verificación estricta de pagos confirmados en facturas[].pagos[]
-    // Se ignoran booleanos de frontend (p.anticipo_pagado), facturas sin pagos, promesas,
-    // comprobantes no verificados, pagos anulados, revertidos o duplicados.
+    // 4. Identificación segura de la factura de anticipo y verificación estricta de pagos confirmados
     const facturas = Array.isArray(p.facturas) ? p.facturas : [];
-    let montoFacturado = 0;
-    let montoConfirmado = 0;
-    let hasValidIssuedInvoice = false;
-    let ccfAnticipoNumero = null;
+    const activeInvoices = facturas.filter(isActiveInvoice);
+    const montoFacturadoTotal = round2(activeInvoices.reduce((acc, fac) => acc + round2(Number(fac.monto)), 0));
+
+    const advResolution = resolveAdvanceInvoice(p, facturas);
+    if (advResolution.ambiguous) {
+      return {
+        ready: false,
+        errorCode: 'FACTURA_ANTICIPO_AMBIGUA',
+        prospectId: p.id || null,
+        accountId: client.id || p.clientId || null,
+        formaPago,
+        montoExigible,
+        reason: 'FACTURA_ANTICIPO_AMBIGUA: Existen múltiples facturas marcadas como anticipo o referencias conflictivas. Debe regularizarse la factura de anticipo antes de liberar a fabricación.'
+      };
+    }
+
+    const advInvoice = advResolution.invoice;
+    const montoFacturadoAnticipo = advInvoice ? round2(Number(advInvoice.monto)) : 0;
+    const hasValidIssuedInvoice = Boolean(advInvoice && hasValidPaymentDoc(advInvoice.doc_factura));
+    const ccfAnticipoNumero = hasValidIssuedInvoice ? String(advInvoice.numero).trim() : null;
+    const ccfAnticipoId = advInvoice ? (advInvoice.id || null) : null;
+
+    let montoEfectivoConfirmado = 0;
+    let montoRetencionConfirmadaBruta = 0;
+    let montoRegistradoNoConfirmado = 0;
+    let montoConfirmadoOtrasFacturas = 0;
 
     const seenPaymentIds = new Set();
     const seenPaymentOpIds = new Set();
     const seenCompositeKeys = new Set();
     const isGranContribuyente = Boolean(client && truthyFlag(client.is_gran_contribuyente));
 
-    for (const fac of facturas) {
-      if (!fac || typeof fac !== 'object') continue;
-      if (
-        fac.anulada === true || fac.anulado === true ||
-        fac.revertida === true || fac.revertido === true ||
-        fac.eliminada === true || fac.eliminado === true ||
-        fac.voided === true || fac.reversed === true
-      ) {
-        continue;
-      }
-      const facEstado = typeof fac.estado === 'string' ? fac.estado.trim().toLowerCase() : '';
-      if (facEstado && INVALID_FINANCIAL_STATUSES.includes(facEstado)) continue;
-
-      const facNumero = typeof fac.numero === 'string' ? fac.numero.trim() : '';
-      const facMonto = round2(Number(fac.monto));
-      if (!facNumero || !Number.isFinite(facMonto) || facMonto <= 0) continue;
-
-      montoFacturado = round2(montoFacturado + facMonto);
-      if (hasValidPaymentDoc(fac.doc_factura) && !hasValidIssuedInvoice) {
-        hasValidIssuedInvoice = true;
-        ccfAnticipoNumero = facNumero;
-      }
-
-      let invoiceConfirmedSum = 0;
+    for (const fac of activeInvoices) {
+      const facNumero = String(fac.numero || '').trim();
+      const isAdvFac = Boolean(advInvoice && (fac === advInvoice || (fac.id && advInvoice.id && fac.id === advInvoice.id)));
       const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
+
       for (const pay of pagos) {
         if (!pay || typeof pay !== 'object') continue;
         if (
@@ -2208,7 +2409,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
         const metodo = typeof pay.metodo === 'string' ? pay.metodo.trim().toLowerCase() : '';
         if (!PAYMENT_METHODS.includes(metodo)) continue;
-        if (metodo === 'retencion_1pct' && !isGranContribuyente) continue;
+        if (metodo === 'retencion_1pct' && (!isGranContribuyente || clientIsExport)) continue;
         if (!hasValidPaymentDoc(pay.doc_comprobante)) continue;
 
         const payMonto = round2(Number(pay.monto));
@@ -2230,21 +2431,63 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           seenCompositeKeys.add(compKey);
         }
 
-        invoiceConfirmedSum = round2(invoiceConfirmedSum + payMonto);
-      }
+        if (!isPositivelyConfirmedPayment(pay)) {
+          if (isAdvFac) {
+            montoRegistradoNoConfirmado = round2(montoRegistradoNoConfirmado + payMonto);
+          }
+          continue;
+        }
 
-      const cappedInvoicePaid = Math.min(facMonto, invoiceConfirmedSum);
-      montoConfirmado = round2(montoConfirmado + cappedInvoicePaid);
+        if (!isAdvFac) {
+          montoConfirmadoOtrasFacturas = round2(montoConfirmadoOtrasFacturas + payMonto);
+          continue;
+        }
+
+        if (metodo === 'retencion_1pct') {
+          montoRetencionConfirmadaBruta = round2(montoRetencionConfirmadaBruta + payMonto);
+        } else {
+          montoEfectivoConfirmado = round2(montoEfectivoConfirmado + payMonto);
+        }
+      }
     }
+
+    // Tratamiento fiscal de retención 1%:
+    // - En El Salvador la retención 1% IVA se calcula sobre el subtotal sin IVA de la factura
+    //   (máximo legal tolerado: 1% del monto de la factura de anticipo para cubrir redondeos).
+    // - Solo es reconocible si aplica a cliente local Gran Contribuyente y existe cobro efectivo (> 0) en transferencia/cheque.
+    const baseSubtotalAnticipo = advInvoice
+      ? round2(clientIsExport ? montoFacturadoAnticipo : (montoFacturadoAnticipo / IVA))
+      : 0;
+    const maxRetencionReconocible = (advInvoice && isGranContribuyente && !clientIsExport && montoEfectivoConfirmado > 0)
+      ? round2(Math.max(baseSubtotalAnticipo * 0.01, montoFacturadoAnticipo * 0.01))
+      : 0;
+    const montoRetencionConfirmada = round2(Math.min(montoRetencionConfirmadaBruta, maxRetencionReconocible));
+    const montoRetencionExcedente = round2(Math.max(0, montoRetencionConfirmadaBruta - montoRetencionConfirmada));
+
+    const sumaReconocidaAnticipo = round2(montoEfectivoConfirmado + montoRetencionConfirmada);
+    const montoConfirmado = advInvoice ? round2(Math.min(montoFacturadoAnticipo, sumaReconocidaAnticipo)) : 0;
 
     const ccfAnticipoStatus = hasValidIssuedInvoice ? 'emitido' : 'pendiente';
     const saldoPendiente = Math.max(0, round2(montoExigible - montoConfirmado));
-    const anticipoCumplido = Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100);
+    const anticipoCumplido = (
+      Boolean(advInvoice) &&
+      montoEfectivoConfirmado > 0 &&
+      Math.round(montoFacturadoAnticipo * 100) >= Math.round(montoExigible * 100) &&
+      Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100)
+    );
     const anticipoPagoStatus = anticipoCumplido
       ? 'pagado'
       : (montoConfirmado > 0 ? 'parcialmente_pagado' : 'pendiente');
 
     if (!anticipoCumplido) {
+      let extraReason = '';
+      if (montoRegistradoNoConfirmado > 0 && montoConfirmado === 0) {
+        extraReason = ` Existen pagos registrados sin confirmación positiva de backend por ${fmtMoney(montoRegistradoNoConfirmado)}.`;
+      } else if (montoConfirmadoOtrasFacturas > 0) {
+        extraReason = ` Los pagos aplicados a otras facturas (${fmtMoney(montoConfirmadoOtrasFacturas)}) no sustituyen el anticipo.`;
+      } else if (montoRetencionExcedente > 0) {
+        extraReason = ` Se descartó retención 1% improcedente o en exceso por ${fmtMoney(montoRetencionExcedente)}.`;
+      }
       return {
         ready: false,
         errorCode: 'ANTICIPO_PENDIENTE',
@@ -2255,13 +2498,20 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         subtotalContractual,
         totalContractual,
         montoExigible,
-        montoFacturado,
+        montoFacturado: montoFacturadoAnticipo,
+        montoFacturadoTotal,
         montoConfirmado,
+        montoEfectivoConfirmado,
+        montoRetencionConfirmada,
+        montoRetencionExcedente,
+        montoRegistradoNoConfirmado,
+        montoConfirmadoOtrasFacturas,
         saldoPendiente,
+        ccfAnticipoId,
         ccfAnticipoStatus,
         ccfAnticipoNumero,
         anticipoPagoStatus,
-        reason: `ANTICIPO_PENDIENTE: No se puede enviar ni liberar el proyecto a fabricación. Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado: ${fmtMoney(montoConfirmado)} | Saldo pendiente: ${fmtMoney(saldoPendiente)}.`
+        reason: `ANTICIPO_PENDIENTE: No se puede enviar ni liberar el proyecto a fabricación. Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado del anticipo: ${fmtMoney(montoConfirmado)} (Efectivo: ${fmtMoney(montoEfectivoConfirmado)}, Retención 1%: ${fmtMoney(montoRetencionConfirmada)}) | Saldo pendiente: ${fmtMoney(saldoPendiente)}.${extraReason}`
       };
     }
 
@@ -2275,9 +2525,16 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       subtotalContractual,
       totalContractual,
       montoExigible,
-      montoFacturado,
+      montoFacturado: montoFacturadoAnticipo,
+      montoFacturadoTotal,
       montoConfirmado,
+      montoEfectivoConfirmado,
+      montoRetencionConfirmada,
+      montoRetencionExcedente,
+      montoRegistradoNoConfirmado,
+      montoConfirmadoOtrasFacturas,
       saldoPendiente: 0,
+      ccfAnticipoId,
       ccfAnticipoStatus,
       ccfAnticipoNumero,
       anticipoPagoStatus: 'pagado'
@@ -2287,6 +2544,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   /**
    * Reusable transactional gate to be invoked inside any Firestore transaction
    * that transitions, sends, or releases an opportunity/project to manufacturing.
+   *
+   * NOTA DE INTEGRACIÓN OPERATIVA (PENDIENTE EN REPOSITORIO `fabricacion-dev`):
+   * El flujo operativo externo de creación/liberación de órdenes de fabricación en el
+   * repositorio `fabricacion-dev` debe invocar obligatoriamente `validateManufacturingReadinessAdmin`
+   * (o `assertManufacturingReadyTx` cuando comparta transacción Firestore sobre `prospects_prod`)
+   * antes de permitir el inicio de fabricación.
    */
   async function assertManufacturingReadyTx(tx, { caller, prospectId }) {
     if (!caller || !caller.uid) {
@@ -2345,6 +2608,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         forma_pago: result.formaPago,
         monto_exigible: result.montoExigible,
         monto_confirmado: result.montoConfirmado,
+        monto_efectivo_confirmado: result.montoEfectivoConfirmado,
+        monto_retencion_confirmada: result.montoRetencionConfirmada,
         saldo_pendiente: result.saldoPendiente
       });
       return result;
@@ -2367,6 +2632,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     deletePayment,
     deleteProspect,
     reactivateProspect,
+    resolveAdvanceInvoice,
+    isPositivelyConfirmedPayment,
     evaluateManufacturingReadiness,
     assertManufacturingReadyTx,
     validateManufacturingReadiness

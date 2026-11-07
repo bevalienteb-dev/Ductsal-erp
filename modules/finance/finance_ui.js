@@ -166,32 +166,51 @@
         const terms = { '100% anticipado': 1.0, '70/30': 0.7, '50/50': 0.5 };
         const formaPago = p && typeof p.forma_pago === 'string' ? p.forma_pago.trim() : null;
         const pct = formaPago && Object.prototype.hasOwnProperty.call(terms, formaPago) ? terms[formaPago] : null;
-        const subtotal = _deps.getProjectSubtotal(p);
+        const basePrecio = parseFloat(p && p.precio_cotizado) || 0;
+        const currentSubtotal = _deps.getProjectSubtotal(p);
+        const subtotal = basePrecio > 0 ? (currentSubtotal > 0 ? Math.min(basePrecio, currentSubtotal) : basePrecio) : currentSubtotal;
         const isExport = Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+        const isGranContribuyente = Boolean(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true'));
         const total = Math.round((isExport ? subtotal : subtotal * 1.13) * 100) / 100;
         const montoExigible = pct !== null ? Math.round(total * pct * 100) / 100 : 0;
         const facturas = Array.isArray(p && p.facturas) ? p.facturas : [];
-        let ccfEmitido = false;
-        let ccfNumero = null;
-        let montoConfirmado = 0;
-        facturas.forEach((f, idx) => {
-            if (!f || f.anulada === true || f.eliminada === true || f.estado === 'anulada') return;
-            const fm = parseFloat(f.monto);
-            if (!isNaN(fm) && fm > 0 && idx === 0 && f.numero && f.doc_factura) {
-                ccfEmitido = true;
-                ccfNumero = String(f.numero).trim();
-            }
-            if (Array.isArray(f.pagos)) {
-                f.pagos.forEach(pay => {
-                    if (!pay || pay.anulado === true || pay.eliminado === true || pay.revertido === true || pay.verificado === false || pay.estado === 'pendiente_verificacion') return;
-                    const pm = parseFloat(pay.monto);
-                    if (!isNaN(pm) && pm > 0 && pay.doc_comprobante) montoConfirmado += pm;
-                });
-            }
-        });
-        montoConfirmado = Math.round(montoConfirmado * 100) / 100;
+        const activeFacturas = facturas.filter(f => f && !f.anulada && !f.eliminada && f.estado !== 'anulada' && parseFloat(f.monto) > 0 && f.numero);
+        let advInv = activeFacturas.find(f => f.es_anticipo === true || String(f.tipo_factura || f.tipo || '').toLowerCase() === 'anticipo');
+        if (!advInv && p && p.factura_anticipo_id) {
+            advInv = activeFacturas.find(f => f.id === p.factura_anticipo_id && f.es_anticipo !== false);
+        }
+        if (!advInv && activeFacturas.length > 0 && activeFacturas[0].es_anticipo !== false && String(activeFacturas[0].tipo_factura || '').toLowerCase() !== 'ordinaria') {
+            advInv = activeFacturas[0];
+        }
+        const ccfEmitido = Boolean(advInv && advInv.numero && advInv.doc_factura);
+        const ccfNumero = ccfEmitido ? String(advInv.numero).trim() : null;
+        const advMonto = advInv ? (Math.round(parseFloat(advInv.monto) * 100) / 100) : 0;
+        let montoEfectivoConfirmado = 0;
+        let montoRetencionBruta = 0;
+        if (advInv && Array.isArray(advInv.pagos)) {
+            advInv.pagos.forEach(pay => {
+                if (!pay || pay.anulado === true || pay.eliminado === true || pay.revertido === true || pay.verificado === false || pay.confirmado === false || pay.estado === 'pendiente_verificacion') return;
+                const isConfirmed = (pay.confirmado === true || pay.verificado === true || pay.estado === 'confirmado' || pay.estado === 'verificado') &&
+                    Boolean((pay.confirmado_por_uid || pay.confirmado_por || pay.verificado_por_uid || pay.verificado_por) && (pay.confirmado_en || pay.verificado_en));
+                if (!isConfirmed) return;
+                const pm = parseFloat(pay.monto);
+                if (isNaN(pm) || pm <= 0 || !pay.doc_comprobante) return;
+                const metodo = String(pay.metodo || '').trim().toLowerCase();
+                if (metodo === 'retencion_1pct') {
+                    if (!client || (isGranContribuyente && !isExport)) montoRetencionBruta += pm;
+                } else if (metodo === 'transferencia' || metodo === 'cheque') {
+                    montoEfectivoConfirmado += pm;
+                }
+            });
+        }
+        montoEfectivoConfirmado = Math.round(montoEfectivoConfirmado * 100) / 100;
+        const maxRetencion = (advInv && (!client || (isGranContribuyente && !isExport)) && montoEfectivoConfirmado > 0)
+            ? Math.round(advMonto * 0.01 * 100) / 100
+            : 0;
+        const montoRetencionConfirmada = Math.round(Math.min(montoRetencionBruta, maxRetencion) * 100) / 100;
+        const montoConfirmado = advInv ? Math.min(advMonto, Math.round((montoEfectivoConfirmado + montoRetencionConfirmada) * 100) / 100) : 0;
         const saldoPendienteAnticipo = Math.max(0, Math.round((montoExigible - montoConfirmado) * 100) / 100);
-        const anticipoCumplido = pct !== null && montoExigible > 0 && (montoConfirmado + 0.009 >= montoExigible);
+        const anticipoCumplido = Boolean(pct !== null && montoExigible > 0 && advInv && montoEfectivoConfirmado > 0 && (advMonto + 0.009 >= montoExigible) && (montoConfirmado + 0.009 >= montoExigible));
         const anticipoPagoStatus = anticipoCumplido ? 'pagado' : (montoConfirmado > 0.009 ? 'parcialmente_pagado' : 'pendiente');
         const obligacionesSeguimiento = [];
         if (!ccfEmitido) obligacionesSeguimiento.push('Emitir CCF de anticipo y adjuntar respaldo fiscal.');
@@ -211,6 +230,8 @@
             anticipoPagoStatus,
             montoExigible,
             montoConfirmado,
+            montoEfectivoConfirmado,
+            montoRetencionConfirmada,
             saldoPendienteAnticipo,
             anticipoCumplido,
             habilitadoFabricacion: Boolean(p && p.estado === 'ganado' && pct !== null && anticipoCumplido),
