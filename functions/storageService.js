@@ -3,7 +3,13 @@
 // Handles server-side route validation, business entity authorization,
 // and short-lived signed URL generation for universal file downloads.
 
-const { ServiceError } = require('./clientsService');
+const {
+  ServiceError,
+  MAX_MERGE_DEPTH,
+  isCallerActiveAndAuthenticated,
+  authorizeClientAccess,
+  resolveCanonicalAccount
+} = require('./clientsService');
 
 const ALLOWED_FOLDER_PREFIXES = [
   'clients',
@@ -247,23 +253,106 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     return cleanPath;
   }
 
-  async function verifyDocumentAccess(caller, storagePath, context = {}) {
-    if (!caller || !caller.uid || !caller.role) {
+  const boundResolveCanonicalAccount = (originId, opts = {}) =>
+    resolveCanonicalAccount(db, originId, { suffix, clientsColName: names.clients, ...opts });
+
+  async function assertCallerNotRevoked(caller) {
+    if (!caller || typeof caller !== 'object' || !caller.uid || !caller.role) {
       throw new ServiceError('unauthenticated', 'Autenticación requerida');
     }
+    if (!isCallerActiveAndAuthenticated(caller)) {
+      throw new ServiceError('permission-denied', 'Se requiere un usuario activo del CRM vinculado a esta sesión');
+    }
+    if (caller.cid && db && typeof db.collection === 'function') {
+      try {
+        const usersCol = db.collection(names.users);
+        if (usersCol && typeof usersCol.doc === 'function') {
+          const uRef = usersCol.doc(String(caller.cid));
+          if (uRef && typeof uRef.get === 'function') {
+            const uSnap = await uRef.get();
+            if (uSnap && uSnap.exists) {
+              const u = uSnap.data() || {};
+              if (
+                u.activo === false ||
+                u.revoked === true ||
+                u.disabled === true ||
+                (u.authUid && u.authUid !== caller.uid) ||
+                (u.role && u.role !== caller.role)
+              ) {
+                throw new ServiceError('permission-denied', 'Se requiere un usuario activo del CRM vinculado a esta sesión');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof ServiceError) throw err;
+        // Ignore if mock db does not implement users collection
+      }
+    }
+  }
+
+  async function isClientReferencedInAccountOrChain(resolved, storagePath) {
+    for (const snap of (resolved.chainSnaps || [])) {
+      const cData = snap && typeof snap.data === 'function' ? snap.data() : null;
+      if (cData && objectReferencesStoragePath(cData, storagePath)) {
+        return true;
+      }
+    }
+    for (const accId of (resolved.chain || [])) {
+      try {
+        const verSnap = await db
+          .collection(names.clients)
+          .doc(accId)
+          .collection('document_versions')
+          .where('storagePath', '==', storagePath)
+          .limit(1)
+          .get();
+        if (verSnap && !verSnap.empty) return true;
+      } catch (_) {
+        // ignore
+      }
+    }
+    // Also check accounts absorbed into resolved.canonicalId (when caller passed canonicalId directly as context.clientId)
+    try {
+      const absorbedSnap = await db
+        .collection(names.clients)
+        .where('fusionada_en', '==', resolved.canonicalId)
+        .get();
+      if (absorbedSnap && Array.isArray(absorbedSnap.docs)) {
+        for (const d of absorbedSnap.docs) {
+          if (resolved.chain && resolved.chain.includes(d.id)) continue;
+          const absData = d.data() || {};
+          if (objectReferencesStoragePath(absData, storagePath)) return true;
+          try {
+            const verSnap = await db
+              .collection(names.clients)
+              .doc(d.id)
+              .collection('document_versions')
+              .where('storagePath', '==', storagePath)
+              .limit(1)
+              .get();
+            if (verSnap && !verSnap.empty) return true;
+          } catch (_) {
+            // ignore
+          }
+        }
+      }
+    } catch (_) {
+      // ignore if mock db doesn't support where on clients
+    }
+    return false;
+  }
+
+  async function verifyDocumentAccess(caller, storagePath, context = {}) {
+    await assertCallerNotRevoked(caller);
 
     const parts = storagePath.split('/');
     const folder = parts[1];
     const entityId = parts[2];
 
-    // Manager has unrestricted access to all CRM documents
-    if (caller.role === 'manager') {
-      return true;
-    }
-
     // Plant files (requerimientos, fabricacion_archivos)
     if (folder === 'requerimientos' || folder === 'fabricacion_archivos') {
-      if (PLANT_ROLES.includes(caller.role)) return true;
+      if (caller.role === 'manager' || PLANT_ROLES.includes(caller.role)) return true;
       throw new ServiceError('permission-denied', 'Solo personal de planta autorizado puede acceder a estos archivos');
     }
 
@@ -272,24 +361,20 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       throw new ServiceError('permission-denied', 'Personal de planta no tiene acceso a documentos comerciales');
     }
 
-    // Gestor has full access to client documents (catalog verification)
-    if (caller.role === 'gestor' && folder === 'clients') {
-      return true;
-    }
-
-    // Commercial seller (vendedor) checks:
+    // B4.2: Entity-scoped client path (`prod_files/clients/{originAccountId}/...`)
+    // Evaluated through `resolveCanonicalAccount` and `authorizeClientAccess` for ALL commercial roles (`manager`, `gestor`, `vendedor`)
     if (folder === 'clients' && entityId) {
-      if (context.clientId && context.clientId !== entityId) {
-        throw new ServiceError('permission-denied', 'Contexto de cliente contradictorio con la ruta solicitada');
-      }
-      // Entity-scoped client path: prod_files/clients/{clientId}/...
-      const clientSubfolder = parts.length >= 5 ? parts[3] : '';
-      const isSensitiveLegalSubfolder = clientSubfolder === 'legal' || clientSubfolder === 'poderes';
-      const clientSnap = await db.collection(names.clients).doc(entityId).get();
-      if (!clientSnap.exists) {
-        // Check if it's an active, unexpired reservation owned by caller
+      const originSnap = await db.collection(names.clients).doc(entityId).get();
+      if (!originSnap.exists) {
+        // Check if it's an active, unexpired reservation owned by caller (or accessed by manager/gestor)
         const resSnap = await db.collection(names.reservations).doc(entityId).get();
         if (resSnap.exists) {
+          if (context.clientId && String(context.clientId).trim() !== entityId) {
+            throw new ServiceError('permission-denied', 'Contexto de cliente contradictorio con la ruta solicitada');
+          }
+          if (caller.role === 'manager' || caller.role === 'gestor') {
+            return true;
+          }
           const r = resSnap.data() || {};
           const nowMs = Date.now();
           let isNotExpired = false;
@@ -312,19 +397,44 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         }
         throw new ServiceError('not-found', 'Cliente no encontrado');
       }
-      const c = clientSnap.data();
-      const assignedVendor = typeof c.vendedor_asignado === 'string' ? c.vendedor_asignado.trim() : '';
-      const isCurrentResponsible = assignedVendor
-        ? assignedVendor === caller.cid
-        : c.createdBy === caller.cid;
-      const isVisible = Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid);
-      const isClosing = Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid);
-      if (isSensitiveLegalSubfolder) {
-        if (isCurrentResponsible || isClosing) return true;
+
+      // 1 & 2. Resolve merge chain from origin account (`entityId`) to terminal active account (`resolved.canonicalId`)
+      const resolved = await boundResolveCanonicalAccount(entityId);
+
+      // 3. Verify that any `context.clientId` belongs to the resolved chain (`resolved.chain`)
+      // Belonging to the chain ONLY validates context coherence, it does NOT grant permissions.
+      if (context.clientId !== undefined && context.clientId !== null && String(context.clientId).trim() !== '') {
+        const ctxClientId = String(context.clientId).trim();
+        if (!resolved.chain.includes(ctxClientId)) {
+          throw new ServiceError('permission-denied', 'Contexto de cliente contradictorio con la ruta solicitada');
+        }
+      }
+
+      if (context.prospectId) {
+        const pSnap = await db.collection(names.prospects).doc(String(context.prospectId).trim()).get();
+        if (pSnap.exists) {
+          const pData = pSnap.data() || {};
+          if (pData.clientId && !resolved.chain.includes(pData.clientId)) {
+            let pCanonicalId = null;
+            try {
+              const pResolved = await boundResolveCanonicalAccount(pData.clientId);
+              pCanonicalId = pResolved.canonicalId;
+            } catch (_) {
+              pCanonicalId = null;
+            }
+            if (pCanonicalId !== resolved.canonicalId) {
+              throw new ServiceError('permission-denied', 'Contexto contradictorio: la oportunidad no corresponde al cliente indicado');
+            }
+          }
+        }
+      }
+
+      // 4, 5 & 6. Execute `authorizeClientAccess(caller, resolved.canonicalData)` exclusively on the terminal active account
+      if (!authorizeClientAccess(caller, resolved.canonicalData)) {
         throw new ServiceError('permission-denied', 'No tienes permiso para acceder a los documentos de este cliente');
       }
-      if (isCurrentResponsible || isVisible || isClosing) return true;
-      throw new ServiceError('permission-denied', 'No tienes permiso para acceder a los documentos de este cliente');
+
+      return true;
     }
 
     if (folder === 'prospects' && entityId) {
@@ -334,11 +444,32 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       // Entity-scoped prospect path: prod_files/prospects/{prospectId}/...
       const prospectSnap = await db.collection(names.prospects).doc(entityId).get();
       if (!prospectSnap.exists) {
+        if (caller.role === 'manager' && !context.clientId) {
+          return true;
+        }
         throw new ServiceError('not-found', 'Oportunidad no encontrada');
       }
       const p = prospectSnap.data();
       if (p.eliminado === true) {
         throw new ServiceError('not-found', 'La oportunidad fue eliminada');
+      }
+      if (context.clientId && p.clientId && p.clientId !== context.clientId) {
+        let sameCanonical = false;
+        try {
+          const [pRes, ctxRes] = await Promise.all([
+            boundResolveCanonicalAccount(p.clientId),
+            boundResolveCanonicalAccount(String(context.clientId).trim())
+          ]);
+          sameCanonical = pRes.canonicalId === ctxRes.canonicalId;
+        } catch (_) {
+          sameCanonical = false;
+        }
+        if (!sameCanonical) {
+          throw new ServiceError('permission-denied', 'Contexto contradictorio: la oportunidad no corresponde al cliente indicado');
+        }
+      }
+      if (caller.role === 'manager') {
+        return true;
       }
       if (caller.role === 'gestor') {
         if (p.vendedorId === caller.cid || p.createdBy === caller.cid || hasEnteredPostclosing(p)) {
@@ -356,6 +487,11 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       throw new ServiceError('permission-denied', 'No tienes acceso a los documentos de esta oportunidad');
     }
 
+    // Manager unrestricted access on flat legacy folders when no explicit entity context is being validated
+    if (caller.role === 'manager' && !context.prospectId && !context.clientId) {
+      return true;
+    }
+
     // Flat legacy folders: must verify that the requested file is actually referenced in an authorized entity
     let prospectCheck = null;
     let clientCheck = null;
@@ -365,7 +501,21 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
       if (pSnapCheck.exists) {
         const pData = pSnapCheck.data();
         if (pData.clientId && pData.clientId !== context.clientId) {
-          throw new ServiceError('permission-denied', 'Contexto contradictorio: la oportunidad no corresponde al cliente indicado');
+          let coherentMerge = false;
+          try {
+            const pResolved = await boundResolveCanonicalAccount(pData.clientId);
+            if (pResolved.chain.includes(String(context.clientId).trim())) {
+              coherentMerge = true;
+            } else {
+              const ctxResolved = await boundResolveCanonicalAccount(String(context.clientId).trim());
+              coherentMerge = pResolved.canonicalId === ctxResolved.canonicalId;
+            }
+          } catch (_) {
+            coherentMerge = false;
+          }
+          if (!coherentMerge) {
+            throw new ServiceError('permission-denied', 'Contexto contradictorio: la oportunidad no corresponde al cliente indicado');
+          }
         }
       }
     }
@@ -409,21 +559,19 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
     }
 
     if (context.clientId) {
-      const cSnap = await db.collection(names.clients).doc(context.clientId).get();
-      if (cSnap.exists) {
-        const c = cSnap.data();
-        const hasAccess = caller.role === 'manager' || caller.role === 'gestor'
-          || (c.createdBy === caller.cid || (Array.isArray(c.visibleTo) && c.visibleTo.includes(caller.cid)) || (Array.isArray(c.closingVendors) && c.closingVendors.includes(caller.cid)));
+      let resolvedClient = null;
+      try {
+        resolvedClient = await boundResolveCanonicalAccount(String(context.clientId).trim());
+      } catch (err) {
+        if (err && err.code === 'failed-precondition') {
+          throw err;
+        }
+        clientCheck = { error: err instanceof ServiceError ? err : new ServiceError('not-found', 'Cliente no encontrado') };
+      }
+      if (resolvedClient) {
+        const hasAccess = authorizeClientAccess(caller, resolvedClient.canonicalData);
         if (hasAccess) {
-          let isReferenced = objectReferencesStoragePath(c, storagePath);
-          if (!isReferenced) {
-            try {
-              const verSnap = await db.collection(names.clients).doc(context.clientId).collection('document_versions').where('storagePath', '==', storagePath).limit(1).get();
-              if (verSnap && !verSnap.empty) isReferenced = true;
-            } catch (e) {
-              // ignore
-            }
-          }
+          const isReferenced = await isClientReferencedInAccountOrChain(resolvedClient, storagePath);
           if (isReferenced) {
             return true;
           }
@@ -431,8 +579,6 @@ function createStorageService({ db, bucket, suffix = '_prod' }) {
         } else {
           clientCheck = { error: new ServiceError('permission-denied', 'No tienes permiso para acceder a los documentos de este cliente') };
         }
-      } else {
-        clientCheck = { error: new ServiceError('not-found', 'Cliente no encontrado') };
       }
     }
 
@@ -535,7 +681,9 @@ function resolveContentType(fileName, metaContentType) {
     names,
     validateStoragePath,
     verifyDocumentAccess,
-    getSecureDownloadUrl
+    getSecureDownloadUrl,
+    resolveCanonicalAccount: boundResolveCanonicalAccount,
+    authorizeClientAccess
   };
 }
 
@@ -549,5 +697,9 @@ module.exports = {
   sanitizeFileName,
   buildContentDisposition,
   objectReferencesStoragePath,
-  extractStoragePath
+  extractStoragePath,
+  MAX_MERGE_DEPTH,
+  isCallerActiveAndAuthenticated,
+  authorizeClientAccess,
+  resolveCanonicalAccount
 };

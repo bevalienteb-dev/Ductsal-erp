@@ -151,7 +151,8 @@ describe('create: exact duplicates by NIT / DUI (normalised)', () => {
     expect(text).not.toContain('7000-0001');
     expect(text).not.toContain('06141234561234');
     expect(text).not.toContain(V1);
-    expect(dup.matches[0].hint).toMatch(/····/);
+    expect(dup.matches[0].hint).toBeNull();
+    expect(dup.matches[0].restricted).toBe(true);
     expect(dup.matches[0].inPortfolio).toBe(false); // the caller is told the client exists, not given its data
   });
   test('inPortfolio is true when the existing client belongs to the caller', async () => {
@@ -159,6 +160,7 @@ describe('create: exact duplicates by NIT / DUI (normalised)', () => {
     const dup = await svc.create({ caller: asV1, opId: opId(), client: empresa({ nit: '06141234561234' }) });
     expect(dup.status).toBe('duplicate');
     expect(dup.matches[0].inPortfolio).toBe(true);
+    expect(dup.matches[0].hint).toMatch(/····/);
   });
   test('an exact duplicate cannot be forced with confirmReview', async () => {
     await svc.create({ caller: asV1, opId: opId(), client: empresa({ nit: '06141234561234' }) });

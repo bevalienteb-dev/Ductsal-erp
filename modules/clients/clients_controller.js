@@ -28,6 +28,8 @@
             window.onClientCatalogSearchInput = api.onClientCatalogSearchInput;
             window.runClientCatalogSearch = api.runClientCatalogSearch;
             window.deleteClient = api.deleteClient;
+            window.previewAccountMerge = api.previewAccountMerge;
+            window.executeAccountMerge = api.executeAccountMerge;
         }
     }
 })(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this), function () {
@@ -165,11 +167,38 @@
                 related.add(p.clientId);
             }
         });
-        return clientsList.filter(c =>
-            c.createdBy === currentUser.id ||
-            related.has(c.id) ||
-            (Array.isArray(c.visibleTo) && c.visibleTo.includes(currentUser.id))
+        const byId = Object.create(null);
+        clientsList.forEach(c => {
+            if (c && c.id) byId[c.id] = c;
+        });
+        const resolveCanonical = (account) => {
+            let cur = account;
+            let depth = 0;
+            const visited = new Set();
+            while (cur && typeof cur.fusionada_en === 'string' && cur.fusionada_en.trim() && depth < 5) {
+                const nextId = cur.fusionada_en.trim();
+                if (visited.has(nextId)) break;
+                visited.add(nextId);
+                const next = byId[nextId];
+                if (!next) break;
+                cur = next;
+                depth += 1;
+            }
+            return cur || account;
+        };
+        const isAuthorizedAccount = (acc) => Boolean(
+            acc && (
+                acc.createdBy === currentUser.id ||
+                related.has(acc.id) ||
+                (Array.isArray(acc.visibleTo) && acc.visibleTo.includes(currentUser.id))
+            )
         );
+        return clientsList.filter(c => {
+            const target = (c && typeof c.fusionada_en === 'string' && c.fusionada_en.trim())
+                ? resolveCanonical(c)
+                : c;
+            return isAuthorizedAccount(target);
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -216,7 +245,10 @@
 
     function getSelectorClientsLocal() {
         const currentUser = _deps.getCurrentUser();
-        return (currentUser && currentUser.role === 'vendedor') ? getVisibleClients() : _deps.getClients();
+        const base = (currentUser && currentUser.role === 'vendedor') ? getVisibleClients() : _deps.getClients();
+        return Array.isArray(base)
+            ? base.filter(c => !(c && typeof c.fusionada_en === 'string' && c.fusionada_en.trim()))
+            : [];
     }
 
     let catalogueSearchTimer = null;
@@ -269,6 +301,7 @@
     // Creates / edits a client through Cloud Functions with server reservation and hierarchical storage.
     // Returns the saved client, or null when nothing was saved (duplicate, review declined, error, no session).
     async function persistClientViaServer(c, editId) {
+        const options = arguments[2] && typeof arguments[2] === 'object' ? arguments[2] : {};
         const fb = _deps.getFirebase();
         const CrmClients = _deps.getCrmClients();
         const crmClients = CrmClients;
@@ -277,8 +310,32 @@
             _deps.alert(CrmClients && CrmClients.NO_SESSION_MESSAGE ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
             return null;
         }
-        let confirmReview = false;
+        let confirmReview = Boolean(options.confirmReview);
+        let reviewJustification = typeof options.reviewJustification === 'string' && options.reviewJustification.trim()
+            ? options.reviewJustification.trim()
+            : undefined;
         const dbSuffix = _deps.getDbSuffix();
+
+        const isContextualDuplicatePanelActive = () => {
+            if (typeof _deps.renderDuplicateFeedback === 'function') return true;
+            if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+                const panel = document.getElementById('client-duplicate-feedback-panel');
+                if (panel && ((panel.dataset && panel.dataset.b42Contextual === 'true') || (typeof panel.getAttribute === 'function' && panel.getAttribute('data-b42-contextual') === 'true'))) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        const notifyDuplicateFeedback = (kind, resObj) => {
+            if (typeof _deps.renderDuplicateFeedback === 'function') {
+                _deps.renderDuplicateFeedback(kind, resObj, c, editId);
+            } else if (typeof renderClientDuplicateFeedback === 'function') {
+                renderClientDuplicateFeedback(kind, resObj, c, editId);
+            } else if (typeof window !== 'undefined' && window.ClientsUI && typeof window.ClientsUI.renderClientDuplicateFeedback === 'function') {
+                window.ClientsUI.renderClientDuplicateFeedback(kind, resObj, c, editId);
+            }
+        };
 
         // A) EDIT EXISTING CLIENT
         if (editId) {
@@ -322,7 +379,7 @@
             for (let attempt = 0; attempt < 2; attempt++) {
                 let res;
                 try {
-                    res = await crmClients.updateClient(fb, { id: editId, client: c, dbSuffix, confirmReview });
+                    res = await crmClients.updateClient(fb, { id: editId, client: c, dbSuffix, confirmReview, reviewJustification });
                 } catch (err) {
                     _deps.hideLoading();
                     _deps.alert(crmClients.errorMessage(err));
@@ -330,11 +387,17 @@
                 }
                 if (res.status === 'duplicate') {
                     _deps.hideLoading();
+                    notifyDuplicateFeedback('duplicate', res);
                     _deps.alert(crmClients.duplicateMessage(res));
                     return null;
                 }
                 if (res.status === 'needs-review') {
                     _deps.hideLoading();
+                    notifyDuplicateFeedback('needs-review', res);
+                    if (isContextualDuplicatePanelActive()) {
+                        _deps.alert(crmClients.reviewMessage(res));
+                        return null;
+                    }
                     if (!_deps.confirm(crmClients.reviewMessage(res))) return null;
                     _deps.showLoading('Guardando cliente...');
                     confirmReview = true;
@@ -358,7 +421,7 @@
         for (let attempt = 0; attempt < 2; attempt++) {
             let res;
             try {
-                res = await crmClients.reserveCreation(fb, { client: c, dbSuffix, confirmReview });
+                res = await crmClients.reserveCreation(fb, { client: c, dbSuffix, confirmReview, reviewJustification });
             } catch (err) {
                 _deps.hideLoading();
                 _deps.alert(crmClients.errorMessage(err));
@@ -367,9 +430,10 @@
 
             if (res.status === 'duplicate') {
                 _deps.hideLoading();
+                notifyDuplicateFeedback('duplicate', res);
                 _deps.alert(crmClients.duplicateMessage(res));
                 const modalOpen = typeof document !== 'undefined' && document.getElementById('newProspectModal') && document.getElementById('newProspectModal').style.display === 'block';
-                if (modalOpen && res.matches && res.matches.length === 1) {
+                if (!isContextualDuplicatePanelActive() && modalOpen && res.matches && res.matches.length === 1 && res.matches[0].inPortfolio !== false) {
                     _deps.closeModal('clientDetailContent');
                     _deps.selectClientInSelector(res.matches[0].clientId, res.matches[0].nombre);
                 }
@@ -378,6 +442,11 @@
 
             if (res.status === 'needs-review') {
                 _deps.hideLoading();
+                notifyDuplicateFeedback('needs-review', res);
+                if (isContextualDuplicatePanelActive()) {
+                    _deps.alert(crmClients.reviewMessage(res));
+                    return null;
+                }
                 if (!_deps.confirm(crmClients.reviewMessage(res))) return null;
                 _deps.showLoading('Confirmando revisión de cliente...');
                 confirmReview = true;
@@ -413,7 +482,7 @@
         _deps.showLoading('Formalizando creación del cliente...');
         let finRes;
         try {
-            finRes = await crmClients.finalizeCreation(fb, { reservationId, client: c, dbSuffix, confirmReview });
+            finRes = await crmClients.finalizeCreation(fb, { reservationId, client: c, dbSuffix, confirmReview, reviewJustification });
         } catch (finErr) {
             _deps.hideLoading();
             _deps.alert(crmClients.errorMessage(finErr));
@@ -422,6 +491,7 @@
 
         if (finRes.status === 'duplicate') {
             _deps.hideLoading();
+            notifyDuplicateFeedback('duplicate', finRes);
             _deps.alert(crmClients.duplicateMessage(finRes));
             return null;
         }
@@ -486,6 +556,83 @@
             .catch(err => _deps.alert(CrmCommercial.errorMessage(err)));
     }
 
+    // -------------------------------------------------------------------------
+    // 7. Fusión Administrativa Excepcional de Cuentas Duplicadas (Fase 2 B4.3)
+    // -------------------------------------------------------------------------
+    async function previewAccountMerge(sourceId, destinationId) {
+        const currentUser = _deps.getCurrentUser();
+        if (!currentUser || currentUser.role !== 'manager') {
+            _deps.alert('Permiso denegado: solo el gerente puede previsualizar o ejecutar la fusión administrativa de cuentas.');
+            return null;
+        }
+        const fb = _deps.getFirebase();
+        const CrmClients = _deps.getCrmClients();
+        if (!CrmClients || typeof CrmClients.hasSessionSync !== 'function' || !CrmClients.hasSessionSync(fb)) {
+            _deps.alert(CrmClients && CrmClients.NO_SESSION_MESSAGE ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+            return null;
+        }
+        _deps.showLoading('Generando vista previa comparativa de fusión...');
+        try {
+            const res = await CrmClients.previewMergeAccounts(fb, {
+                sourceId,
+                destinationId,
+                dbSuffix: _deps.getDbSuffix()
+            });
+            return res;
+        } catch (err) {
+            _deps.alert(CrmClients.errorMessage ? CrmClients.errorMessage(err) : (err.message || 'Error al generar vista previa de fusión.'));
+            return null;
+        } finally {
+            _deps.hideLoading();
+        }
+    }
+
+    async function executeAccountMerge(payload = {}) {
+        const currentUser = _deps.getCurrentUser();
+        if (!currentUser || currentUser.role !== 'manager') {
+            _deps.alert('Permiso denegado: solo el gerente puede ejecutar la fusión administrativa de cuentas.');
+            return null;
+        }
+        const fb = _deps.getFirebase();
+        const CrmClients = _deps.getCrmClients();
+        if (!CrmClients || typeof CrmClients.hasSessionSync !== 'function' || !CrmClients.hasSessionSync(fb)) {
+            _deps.alert(CrmClients && CrmClients.NO_SESSION_MESSAGE ? CrmClients.NO_SESSION_MESSAGE : 'No se pudo cargar el módulo de clientes. Recarga la página.');
+            return null;
+        }
+        _deps.showLoading('Ejecutando fusión administrativa de cuentas...');
+        try {
+            const res = await CrmClients.mergeAccounts(fb, {
+                sourceId: payload.sourceId,
+                destinationId: payload.destinationId,
+                justification: payload.justification,
+                legalIdentityVerified: Boolean(payload.legalIdentityVerified),
+                verificationEvidence: payload.verificationEvidence,
+                expectedStateHash: payload.expectedStateHash,
+                dbSuffix: _deps.getDbSuffix()
+            });
+            if (res && (res.status === 'merged' || res.status === 'already-merged')) {
+                const updatedList = [...(_deps.getClients() || [])];
+                const idx = updatedList.findIndex(x => x && x.id === payload.sourceId);
+                if (idx > -1) {
+                    updatedList[idx] = Object.assign({}, updatedList[idx], {
+                        fusionada_en: payload.destinationId,
+                        fusionada_at: res.mergedAt || new Date().toISOString(),
+                        fusionada_por: currentUser.id,
+                        fusionada_motivo: payload.justification || '',
+                        estado_cuenta: 'fusionada'
+                    });
+                    _deps.setClients(updatedList);
+                }
+            }
+            return res;
+        } catch (err) {
+            _deps.alert(CrmClients.errorMessage ? CrmClients.errorMessage(err) : (err.message || 'Error al fusionar cuentas.'));
+            return null;
+        } finally {
+            _deps.hideLoading();
+        }
+    }
+
     const ClientsController = {
         init: initClientsController,
         initClientsController,
@@ -499,6 +646,8 @@
         runClientCatalogSearch,
         persistClientViaServer,
         deleteClient,
+        previewAccountMerge,
+        executeAccountMerge,
         _deps
     };
 

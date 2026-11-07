@@ -15,15 +15,36 @@
 
 const DUI_DIGITS = 9;
 const NIT_DIGITS = [9, 14];   // 14 = current NIT; 9 = historical NIT of a natural person (equals the DUI number)
+const NRC_MIN_DIGITS = 5;
+const NRC_MAX_DIGITS = 8;
+
+const FILLER_RE = /^(?:n\/?a|s\/?n|sin(?:\s+(?:nit|nrc|dui|dato|datos|registro|documento))?|pendiente|por\s+definir|ninguno|no\s+tiene|no\s+aplica|null|undefined|none|[-._/\s0–—]+)$/i;
 
 function onlyDigits(raw) {
   return String(raw === undefined || raw === null ? '' : raw).replace(/\D+/g, '');
+}
+
+function isFillerValue(raw) {
+  if (raw === undefined || raw === null) return true;
+  const s = String(raw).trim();
+  if (!s) return true;
+  if (FILLER_RE.test(s)) return true;
+  const d = onlyDigits(s);
+  if (d && /^0+$/.test(d)) return true;
+  return false;
+}
+
+function hasUnexpectedAlpha(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  return /[a-zA-Z]/.test(s);
 }
 
 // Returns { status: 'empty' | 'ok' | 'padded' | 'invalid', digits, key }.
 // 'padded': spreadsheets drop leading zeros, so 8 digits (DUI) / 13 digits (NIT) are restored with ONE zero.
 // 'invalid': present but not a recognisable document -> no key (cannot be compared reliably); the caller warns.
 function normalizeDui(raw) {
+  if (isFillerValue(raw)) return { status: 'empty', digits: '', key: null };
+  if (hasUnexpectedAlpha(raw)) return { status: 'invalid', digits: '', key: null };
   const d = onlyDigits(raw);
   if (!d) return { status: 'empty', digits: '', key: null };
   if (d.length === DUI_DIGITS) return { status: 'ok', digits: d, key: 'DUI_' + d };
@@ -32,6 +53,8 @@ function normalizeDui(raw) {
 }
 
 function normalizeNit(raw) {
+  if (isFillerValue(raw)) return { status: 'empty', digits: '', key: null };
+  if (hasUnexpectedAlpha(raw)) return { status: 'invalid', digits: '', key: null };
   const d = onlyDigits(raw);
   if (!d) return { status: 'empty', digits: '', key: null };
   if (NIT_DIGITS.includes(d.length)) return { status: 'ok', digits: d, key: 'NIT_' + d };
@@ -40,31 +63,44 @@ function normalizeNit(raw) {
   return { status: 'invalid', digits: d, key: null };
 }
 
+function normalizeNrc(raw) {
+  if (isFillerValue(raw)) return { status: 'empty', digits: '', key: null };
+  if (hasUnexpectedAlpha(raw)) return { status: 'invalid', digits: '', key: null };
+  const d = onlyDigits(raw);
+  if (!d) return { status: 'empty', digits: '', key: null };
+  if (d.length >= NRC_MIN_DIGITS && d.length <= NRC_MAX_DIGITS) {
+    return { status: 'ok', digits: d, key: 'NRC_' + d };
+  }
+  return { status: 'invalid', digits: d, key: null };
+}
+
 // Identity documents of a client according to its type (see header).
 function identifiersOf(client) {
   const c = client || {};
   const nit = normalizeNit(c.nit);
+  const nrc = normalizeNrc(c.nrc);
   const dui = c.tipo === 'natural' ? normalizeDui(c.dui) : { status: 'empty', digits: '', key: null };
-  return { nit, dui };
+  return { nit, nrc, dui };
 }
 
 // Keys (index document ids) a client holds.
 function keysOf(client) {
-  const { nit, dui } = identifiersOf(client);
-  return [nit.key, dui.key].filter(Boolean);
+  const { nit, nrc, dui } = identifiersOf(client);
+  return [nit.key, nrc.key, dui.key].filter(Boolean);
 }
 
 function formatWarnings(client) {
-  const { nit, dui } = identifiersOf(client);
+  const { nit, nrc, dui } = identifiersOf(client);
   const w = [];
   if (nit.status === 'invalid') w.push('El NIT no tiene un formato reconocible (se esperan 14 dígitos, o 9 en personas naturales); no se pudo comprobar duplicados por NIT.');
+  if (nrc.status === 'invalid') w.push('El NRC no tiene un formato reconocible (se esperan entre 5 y 8 dígitos); no se pudo comprobar duplicados por NRC.');
   if (dui.status === 'invalid') w.push('El DUI no tiene un formato reconocible (se esperan 9 dígitos); no se pudo comprobar duplicados por DUI.');
   return w;
 }
 
 // ---------- names ----------
-const PARTICLES = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y']);
-const COMPANY_NOISE = new Set(['sa', 's', 'a', 'c', 'v', 'cv', 'sociedad', 'anonima', 'capital', 'variable', 'ltda', 'limitada', 'sas', 'srl', 'inc', 'corp', 'co', 'sapi']);
+const PARTICLES = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y', 'e']);
+const COMPANY_NOISE = new Set(['sa', 's', 'a', 'c', 'v', 'cv', 'rl', 'sociedad', 'anonima', 'capital', 'variable', 'ltda', 'limitada', 'responsabilidad', 'sas', 'srl', 'inc', 'corp', 'co', 'sapi', 'cia', 'compania']);
 
 function foldText(s) {
   return String(s === undefined || s === null ? '' : s)
@@ -76,7 +112,7 @@ function displayName(client) {
   const c = client || {};
   const name = c.tipo === 'natural'
     ? [c.nombres, c.apellidos].filter(Boolean).join(' ')
-    : (c.empresa || '');
+    : (c.empresa || c.razonSocial || c.nombreComercial || '');
   return String(name).trim();
 }
 
@@ -85,6 +121,35 @@ function nameTokens(client) {
   const text = foldText(displayName(c));
   const juridica = c.tipo !== 'natural';
   return Array.from(new Set(text.split(' ').filter(t => t && !PARTICLES.has(t) && !(juridica && COMPANY_NOISE.has(t)))));
+}
+
+function editDistanceLeq1(a, b) {
+  if (a === b) return true;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0, diffs = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) {
+      i++; j++;
+    } else {
+      diffs++;
+      if (diffs > 1) return false;
+      if (la > lb) i++;
+      else if (lb > la) j++;
+      else { i++; j++; }
+    }
+  }
+  if (i < la || j < lb) diffs++;
+  return diffs <= 1;
+}
+
+function tokensApproxMatch(t1, t2) {
+  if (t1 === t2) return true;
+  if (t1.length >= 5 && t2.length >= 5) {
+    if (t1 + 's' === t2 || t2 + 's' === t1 || t1 + 'es' === t2 || t2 + 'es' === t1) return true;
+    if (editDistanceLeq1(t1, t2)) return true;
+  }
+  return false;
 }
 
 // 'same' | 'similar' | null
@@ -96,8 +161,18 @@ function compareNames(aTokens, bTokens) {
   const small = a.size <= b.size ? a : b, big = a.size <= b.size ? b : a;
   const subset = Array.from(small).every(t => big.has(t));
   if (subset && small.size >= 2) return 'similar';
+  if (subset && small.size === 1 && big.size === 2 && Array.from(small)[0].length >= 5) return 'similar';
   const union = a.size + b.size - inter;
   if (inter >= 2 && inter / union >= 0.75) return 'similar';
+  // Approximate match for multi-word names with minor inflection/typo on one token
+  if (a.size >= 2 && b.size >= 2) {
+    const smallArr = Array.from(small);
+    const bigArr = Array.from(big);
+    const approxHits = smallArr.filter(st => bigArr.some(bt => tokensApproxMatch(st, bt))).length;
+    if (approxHits === smallArr.length && (inter >= 1 || smallArr.length >= 2) && Math.abs(a.size - b.size) <= 1) {
+      if (inter >= 1) return 'similar';
+    }
+  }
   return null;
 }
 
@@ -114,7 +189,7 @@ function emailKey(raw) {
 // ---------- matching ----------
 // Compares a candidate (the client being created / edited) with ONE existing client.
 // Returns null or { level: 'exact' | 'review' | 'info', reasons: [...] }.
-//   exact  : same NIT, or same DUI (natural clients) -> creation is refused
+//   exact  : same NIT, same NRC, or same DUI (natural clients) -> creation is refused
 //   review : same / similar name, or an identity document found in the other field -> warn, user confirms
 //   info   : only phone / e-mail in common -> shown, never required to confirm
 function matchClients(candidate, existing) {
@@ -124,6 +199,7 @@ function matchClients(candidate, existing) {
   const raise = l => { const order = { info: 1, review: 2, exact: 3 }; if (!level || order[l] > order[level]) level = l; };
 
   if (a.nit.key && a.nit.key === b.nit.key) { reasons.push('nit'); raise('exact'); }
+  if (a.nrc.key && a.nrc.key === b.nrc.key) { reasons.push('nrc'); raise('exact'); }
   if (a.dui.key && a.dui.key === b.dui.key) { reasons.push('dui'); raise('exact'); }
 
   // Same digits, different namespace: NIT <-> DUI. A review hint, never an automatic block.
@@ -144,9 +220,12 @@ function matchClients(candidate, existing) {
 
 // Finds the matches of `candidate` among `clients` (ignoring `ignoreId`), strongest first.
 function findMatches(candidate, clients, ignoreId) {
+  const isIgnored = ignoreId instanceof Set
+    ? (id => ignoreId.has(id))
+    : (id => Boolean(ignoreId && id === ignoreId));
   const out = [];
   for (const c of clients || []) {
-    if (!c || c.id === ignoreId) continue;
+    if (!c || isIgnored(c.id)) continue;
     const m = matchClients(candidate, c);
     if (m) out.push({ clientId: c.id, ...m });
   }
@@ -159,12 +238,12 @@ function maskDigits(digits, label) {
   return digits ? `${label} ····${digits.slice(-4)}` : '';
 }
 function identifierHint(client) {
-  const { nit, dui } = identifiersOf(client);
-  return maskDigits(dui.digits, 'DUI') || maskDigits(nit.digits, 'NIT');
+  const { nit, nrc, dui } = identifiersOf(client);
+  return maskDigits(dui.digits, 'DUI') || maskDigits(nit.digits, 'NIT') || maskDigits(nrc.digits, 'NRC');
 }
 
 module.exports = {
-  onlyDigits, normalizeDui, normalizeNit, identifiersOf, keysOf, formatWarnings,
+  onlyDigits, isFillerValue, normalizeDui, normalizeNit, normalizeNrc, identifiersOf, keysOf, formatWarnings,
   foldText, displayName, nameTokens, compareNames, phoneKey, emailKey,
   matchClients, findMatches, maskDigits, identifierHint
 };

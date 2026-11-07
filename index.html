@@ -1981,6 +1981,83 @@
                         <button type="button" id="btn-client-header-b3-history" class="btn-secondary" style="display:none; color:#fbbf24; border-color:rgba(251,191,36,0.4);" onclick="ClientDocuments.openDossierHistoryView(document.getElementById('client-id-edit').value)">
                             🗂️ Historial de Representación y Poderes
                         </button>
+                        <button type="button" id="btn-client-header-merge" class="btn-secondary" style="display:none; color:#c084fc; border-color:rgba(192,132,252,0.45);" onclick="ClientsUI.openAccountMergePanel(document.getElementById('client-id-edit').value)">
+                            🔀 Fusionar Cuenta Duplicada
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Banner de cuenta absorbida (Fase 2 · Bloque B4.3) -->
+                <div id="client-absorbed-status-banner" style="display:none; margin-bottom: 1.25rem; padding: 1rem 1.25rem; border-radius: 8px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.45); color: #bfdbfe;"></div>
+
+                <!-- Panel gerencial contextual de fusión administrativa de cuentas (Fase 2 · Bloque B4.3) -->
+                <div id="client-merge-admin-panel" class="card glass-panel" style="display:none; margin-bottom: 1.25rem; padding: 1.35rem; background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(15, 23, 42, 0.88)); border: 1px solid rgba(192, 132, 252, 0.45);">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:0.85rem;">
+                        <div>
+                            <h3 style="margin:0; font-size:1.1rem; color:#e9d5ff; display:flex; align-items:center; gap:8px;">
+                                <span>🔀</span> Fusión Administrativa Excepcional de Cuentas Duplicadas (Gerencia)
+                            </h3>
+                            <p style="margin:4px 0 0 0; font-size:0.82rem; color:#cbd5e1;">
+                                Operación excepcional, auditada y sin pérdida de historial comercial, contactos, oportunidades, documentos ni facturación.
+                            </p>
+                        </div>
+                        <button type="button" class="btn-secondary" id="btn-b43-close-merge-panel" style="padding:4px 10px; font-size:0.78rem;" onclick="ClientsUI.closeAccountMergePanel()">✕ Cerrar panel</button>
+                    </div>
+
+                    <div id="b43-merge-source-summary" style="padding:10px 12px; border-radius:6px; background:rgba(15,23,42,0.7); border:1px solid rgba(255,255,255,0.12); margin-bottom:12px; font-size:0.84rem; color:#e2e8f0;"></div>
+
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; align-items:end; margin-bottom:12px;">
+                        <div>
+                            <label for="b43-merge-dest-search" style="display:block; font-size:0.8rem; font-weight:600; color:#e2e8f0; margin-bottom:4px;">Filtrar cuenta destino (canónica que permanece activa)</label>
+                            <input type="text" id="b43-merge-dest-search" placeholder="Buscar por razón social, nombre, NIT o NRC..." oninput="ClientsUI.filterMergeDestinationSelect()" style="width:100%; padding:8px 10px; border-radius:6px; background:rgba(15,23,42,0.85); color:white; border:1px solid rgba(148,163,184,0.35); font-size:0.84rem;">
+                        </div>
+                        <div>
+                            <label for="b43-merge-dest-select" style="display:block; font-size:0.8rem; font-weight:600; color:#e2e8f0; margin-bottom:4px;">Cuenta Destino Canónica <span style="color:#f87171;">*</span></label>
+                            <select id="b43-merge-dest-select" onchange="ClientsUI.onMergeDestinationChange()" style="width:100%; padding:8px 10px; border-radius:6px; background:rgba(15,23,42,0.85); color:white; border:1px solid rgba(148,163,184,0.35); font-size:0.84rem;">
+                                <option value="">-- Selecciona la cuenta canónica destino --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <button type="button" class="btn-primary" id="btn-b43-load-preview" style="width:100%; padding:8px 14px; font-size:0.84rem; font-weight:600; background:#7c3aed; border-color:#8b5cf6;" onclick="ClientsUI.loadAccountMergePreview()">
+                                🔍 Evaluar Identidad y Vista Previa
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="b43-merge-feedback" style="display:none; margin-bottom:12px; padding:10px 12px; border-radius:6px; font-size:0.84rem;"></div>
+
+                    <div id="b43-merge-preview-container" style="display:none; margin-bottom:12px;"></div>
+
+                    <div id="b43-merge-confirm-section" style="display:none; padding:12px 14px; border-radius:8px; background:rgba(15,23,42,0.8); border:1px solid rgba(192,132,252,0.35);">
+                        <div id="b43-manual-verification-box" style="display:none; margin-bottom:12px; padding:10px 12px; border-radius:6px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.45); color:#fde68a;">
+                            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:0.84rem; font-weight:600; color:#fbbf24; margin-bottom:6px;">
+                                <input type="checkbox" id="b43-legal-identity-verified" style="margin-top:3px;">
+                                <span>Confirmo verificación gerencial expresa de identidad jurídica (requerido cuando una cuenta carece de NIT/NRC/DUI coincidente exacto).</span>
+                            </label>
+                            <label for="b43-verification-evidence" style="display:block; font-size:0.8rem; color:#fef3c7; margin-bottom:4px;">Evidencia documental verificada (ej. escritura pública, tarjeta NIT/NRC física, contrato) <span style="color:#f87171;">*</span></label>
+                            <input type="text" id="b43-verification-evidence" placeholder="Describe la evidencia documental revisada (mín. 10 caracteres)..." style="width:100%; padding:7px 10px; border-radius:6px; background:rgba(15,23,42,0.9); color:white; border:1px solid rgba(245,158,11,0.45); font-size:0.83rem;">
+                        </div>
+
+                        <div style="margin-bottom:10px;">
+                            <label for="b43-merge-justification" style="display:block; font-size:0.83rem; font-weight:600; color:white; margin-bottom:4px;">
+                                Justificación administrativa obligatoria de la fusión <span style="color:#f87171;">*</span>
+                            </label>
+                            <textarea id="b43-merge-justification" rows="2" placeholder="Documenta el motivo de la fusión administrativa excepcional (mín. 5 caracteres)..." style="width:100%; padding:8px 10px; border-radius:6px; background:rgba(15,23,42,0.9); color:white; border:1px solid rgba(148,163,184,0.35); font-size:0.84rem; resize:vertical;"></textarea>
+                        </div>
+
+                        <div style="margin-bottom:12px;">
+                            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:0.82rem; color:#e2e8f0; line-height:1.45;">
+                                <input type="checkbox" id="b43-merge-explicit-confirm" style="margin-top:3px;">
+                                <span>Confirmo que ambas cuentas representan exactamente a la misma entidad jurídica y comprendo que el acceso a los registros históricos quedará gobernado por los permisos de la cuenta canónica destino conforme a B4.1.</span>
+                            </label>
+                        </div>
+
+                        <div style="display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn-secondary" id="btn-b43-cancel-merge" style="padding:6px 12px; font-size:0.82rem;" onclick="ClientsUI.closeAccountMergePanel()">Cancelar</button>
+                            <button type="button" class="btn-primary" id="btn-b43-execute-merge" style="padding:6px 14px; font-size:0.82rem; font-weight:600; background:#dc2626; border-color:#ef4444;" onclick="ClientsUI.confirmAndExecuteAccountMerge()">
+                                🔀 Confirmar y Ejecutar Fusión Administrativa
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -2329,10 +2406,15 @@
                             <small>* Campos obligatorios según el tipo de persona seleccionada, además de al menos un medio de contacto.</small>
                         </div>
 
+                        <div id="client-duplicate-feedback-panel" data-b42-contextual="true" style="display:none; margin-bottom: 1rem;"></div>
+
                         <div class="client-modal-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                             <div>
                                 <button type="button" id="btn-client-modal-contacts" class="btn-secondary" style="display:none; color:#38bdf8; border-color:rgba(56,189,248,0.4);" onclick="ContactsUI.openAccountContactsModal(document.getElementById('client-id-edit').value)">
                                     👥 Gestionar Contactos (Hub &amp; Spoke)
+                                </button>
+                                <button type="button" id="btn-client-modal-merge" class="btn-secondary" style="display:none; color:#c084fc; border-color:rgba(192,132,252,0.45); margin-left:6px;" onclick="ClientsUI.openAccountMergePanel(document.getElementById('client-id-edit').value)">
+                                    🔀 Fusionar Cuenta Duplicada
                                 </button>
                             </div>
                             <div style="display:flex; gap:8px;">
