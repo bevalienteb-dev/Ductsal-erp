@@ -4058,9 +4058,10 @@ function handlePaymentMethodChange() {
         if (f) {
             const client = clients.find(c => c.id === p.clientId);
             const isExport = client && (client.es_exportacion === true || client.es_exportacion === 'true');
-            const subtotalFactura = isExport ? f.monto : (f.monto / 1.13);
-            const montoRetencion = Math.round(subtotalFactura * 0.01 * 100) / 100;
-            document.getElementById('pay-monto').value = montoRetencion;
+            const subtotalFactura = isExport ? 0 : (Math.round((f.monto / 1.13) * 100) / 100);
+            const montoRetencion = subtotalFactura >= 100 ? (Math.round(subtotalFactura * 0.01 * 100) / 100) : 0;
+            const targetMontoEl = document.getElementById('pay-monto-nuevo') || document.getElementById('pay-monto');
+            if (targetMontoEl) targetMontoEl.value = montoRetencion.toFixed(2);
         }
     }
 }
@@ -4143,6 +4144,7 @@ async function processPayment(e) {
 
     if (!editKey && fileEl && (!fileEl.files || fileEl.files.length === 0)) return alert("Debe adjuntar el comprobante de pago.");
     if (isNaN(m) || m <= 0) return alert("Ingrese un monto de pago válido.");
+    if (!ref || !ref.replace(/[\s\-_./\\#,;:]+/g, '')) return alert("Debe ingresar el número de comprobante o referencia.");
     if (!p.facturas || !p.facturas.some(f => f.id === invId)) return;
 
     const res = await runWorkflowOp('Subiendo comprobante de pago...', async fb => {

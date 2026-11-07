@@ -667,9 +667,9 @@ function defineWorkflowSuite({ label, makeEnv }) {
       });
       test('the 1% retention exists only for large-taxpayer clients', async () => {
         await put(won());
-        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() }), 'failed-precondition');
+        await rejects(wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 70, metodo: 'retencion_1pct', opId: op() }), 'failed-precondition');
         await put(won({ clientId: 'CG' }));
-        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, metodo: 'retencion_1pct', opId: op() })).status).toBe('created');
+        expect((await wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 70, metodo: 'retencion_1pct', opId: op() })).status).toBe('created');
       });
       test('same opId does not duplicate the payment; other data with that opId is refused', async () => {
         await put(won());
@@ -682,8 +682,8 @@ function defineWorkflowSuite({ label, makeEnv }) {
       test('two simultaneous payments that exceed the balance together: exactly one is accepted', async () => {
         await put(won());
         const res = await Promise.allSettled([
-          wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5000, opId: op() }),
-          wf.savePayment({ caller: caller('MGR'), prospectId: 'W1', invoiceId: 'F1', ...PAY, monto: 5000, opId: op() })
+          wf.savePayment({ caller: caller('GES'), prospectId: 'W1', invoiceId: 'F1', ...PAY, ref: 'REF-SIM-1', monto: 5000, opId: op() }),
+          wf.savePayment({ caller: caller('MGR'), prospectId: 'W1', invoiceId: 'F1', ...PAY, ref: 'REF-SIM-2', monto: 5000, opId: op() })
         ]);
         expect(res.filter(r => r.status === 'fulfilled')).toHaveLength(1);
         expect((await prospect('W1')).facturas[0].pagos).toHaveLength(1);

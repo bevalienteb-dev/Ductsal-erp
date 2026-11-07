@@ -116,7 +116,13 @@
             if (fac && inputMonto) inputMonto.dataset.invoiceTotal = fac.monto;
 
             const client = clientList.find(c => c && c.id === p.clientId);
-            isGranContribuyente = !!(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true'));
+            const isExport = !!(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+            const cat = typeof (client && (client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_contribuyente)) === 'string'
+                ? String(client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_contribuyente).trim().toLowerCase()
+                : '';
+            const isOtherContribuyente = Boolean(cat && (cat.includes('mediano') || cat.includes('pequeno') || cat.includes('pequeño') || cat === 'otro' || cat === 'otros'));
+            isGranContribuyente = !!(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true')) && !isExport && !isOtherContribuyente;
+            if (inputMonto) inputMonto.dataset.isExport = isExport ? 'true' : 'false';
 
             if (selectMetodo) {
                 const opt = document.createElement('option');
@@ -129,8 +135,9 @@
     }
 
     /**
-     * Calcula automáticamente el 1% de la factura cuando se selecciona
-     * el método de pago 'retencion_1pct' para un Gran Contribuyente.
+     * Calcula automáticamente el 1% sobre la base gravada sin IVA de la factura
+     * (Art. 162 Código Tributario El Salvador: monto / 1.13, base mínima $100.00)
+     * cuando se selecciona el método 'retencion_1pct' para un Gran Contribuyente local.
      */
     function handlePaymentMethodChange() {
         if (typeof document === 'undefined') return;
@@ -140,8 +147,15 @@
 
         if (selectMetodo.value === 'retencion_1pct') {
             const totalFactura = parseFloat(inputMonto.dataset.invoiceTotal);
-            if (!isNaN(totalFactura)) {
-                inputMonto.value = (totalFactura * 0.01).toFixed(2);
+            const isExport = inputMonto.dataset.isExport === 'true';
+            if (!isNaN(totalFactura) && totalFactura > 0) {
+                if (isExport) {
+                    inputMonto.value = '0.00';
+                    return;
+                }
+                const baseSinIva = Math.round((totalFactura / 1.13) * 100) / 100;
+                const retencion = baseSinIva >= 100 ? (Math.round(baseSinIva * 0.01 * 100) / 100) : 0;
+                inputMonto.value = retencion.toFixed(2);
             }
         }
     }
@@ -197,7 +211,13 @@
             });
 
             const client = clientList.find(c => c && c.id === p.clientId);
-            const isGranContribuyente = !!(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true'));
+            const isExport = !!(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+            const cat = typeof (client && (client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_contribuyente)) === 'string'
+                ? String(client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_contribuyente).trim().toLowerCase()
+                : '';
+            const isOtherContribuyente = Boolean(cat && (cat.includes('mediano') || cat.includes('pequeno') || cat.includes('pequeño') || cat === 'otro' || cat === 'otros'));
+            const isGranContribuyente = !!(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true')) && !isExport && !isOtherContribuyente;
+            if (inputMonto) inputMonto.dataset.isExport = isExport ? 'true' : 'false';
 
             const opt = document.createElement('option');
             opt.value = 'retencion_1pct';
@@ -241,6 +261,9 @@
             return alert("Debe adjuntar el comprobante de pago.");
         }
         if (isNaN(m) || m <= 0) return alert("Ingrese un monto de pago válido.");
+        if (!ref || !ref.replace(/[\s\-_./\\#,;:]+/g, '')) {
+            return alert("Debe ingresar el número de comprobante o referencia.");
+        }
         if (!Array.isArray(p.facturas) || !p.facturas.some(f => f && f.id === invId)) return;
 
         const dbSuffix = _deps.getDbSuffix();

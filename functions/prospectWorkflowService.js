@@ -1735,7 +1735,18 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (isTargetAdvanceInvoice) {
         throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
       }
+      const lockRefsToDelete = [];
+      for (const pay of (Array.isArray(f.pagos) ? f.pagos : [])) {
+        if (!pay || typeof pay !== 'object') continue;
+        const nRef = normalizePaymentReference(pay.ref || '');
+        if (!nRef) continue;
+        const lId = buildPaymentRefLockId({ metodo: pay.metodo, normRef: nRef, prospectId, invoiceId: f.id });
+        const lRef = col('payment_refs').doc(lId);
+        const lSnap = await tx.get(lRef);
+        if (lSnap.exists) lockRefsToDelete.push(lRef);
+      }
       tx.update(ref, { facturas: facturas.slice(0, i).concat(facturas.slice(i + 1)), logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
+      for (const lRef of lockRefsToDelete) tx.delete(lRef);
       addAudit(tx, caller, 'deleteInvoice', prospectId, { invoiceId, numero: f.numero, monto: f.monto, payments: (f.pagos || []).length });
       addDeletionNotice(tx, caller, p, client, 'Factura', `${f.numero} (${fmtMoney(f.monto)})`);
       return { status: 'deleted' };
@@ -1743,13 +1754,85 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   }
 
   // =====================================================================================================
-  // Payments
+  // Payments & Fiscal Withholding (Art. 162 Código Tributario El Salvador)
   // =====================================================================================================
+  // Regla comercial de DUCTSAL para esta fase:
+  // Aunque el Art. 162 del Código Tributario contempla otros agentes de retención designados,
+  // en el CRM DUCTSAL la retención del 1% de IVA se habilita exclusivamente para clientes locales
+  // con `is_gran_contribuyente === true` (no aplica a medianos/pequeños contribuyentes ni a exportación).
+  const RETENCION_1PCT_RATE = 0.01;
+  const RETENCION_MIN_BASE_SIN_IVA = 100; // Umbral legal aplicable Art. 162: $100.00 sin IVA
+
+  function normalizePaymentReference(ref) {
+    if (typeof ref !== 'string') return '';
+    const raw = ref.normalize('NFKC').trim().toUpperCase();
+    if (!raw) return '';
+    return raw.replace(/[\s\-_./#]+/g, '');
+  }
+
+  function isActivePaymentRecord(pay) {
+    if (!pay || typeof pay !== 'object') return false;
+    if (
+      pay.anulado === true || pay.anulada === true ||
+      pay.revertido === true || pay.revertida === true ||
+      pay.eliminado === true || pay.eliminada === true ||
+      pay.rechazado === true || pay.rechazada === true ||
+      pay.voided === true || pay.reversed === true ||
+      pay.promesa === true || pay.es_promesa === true ||
+      pay.pendiente_verificacion === true ||
+      pay.verificado === false || pay.confirmado === false
+    ) {
+      return false;
+    }
+    const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+    if (payEstado && INVALID_FINANCIAL_STATUSES.includes(payEstado)) return false;
+    return true;
+  }
+
+  function isClientGranContribuyenteLocal(client) {
+    if (!client || typeof client !== 'object') return false;
+    if (isExport(client)) return false;
+    if (!truthyFlag(client.is_gran_contribuyente)) return false;
+    const cat = String(client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_fiscal || '').trim().toLowerCase();
+    if (cat && ['mediano', 'pequeno', 'pequeño', 'mediano_contribuyente', 'pequeno_contribuyente', 'pequeño_contribuyente', 'otro', 'otros'].includes(cat)) {
+      return false;
+    }
+    return true;
+  }
+
+  function calculateInvoiceRetencionLimit(facMonto, client) {
+    const montoFactura = round2(Number(facMonto));
+    if (!Number.isFinite(montoFactura) || montoFactura <= 0) {
+      return { eligible: false, baseGravadaSinIva: 0, maxRetencion: 0, reason: 'INVALID_INVOICE_AMOUNT' };
+    }
+    if (isExport(client)) {
+      return { eligible: false, baseGravadaSinIva: montoFactura, maxRetencion: 0, reason: 'EXPORT_EXEMPT' };
+    }
+    if (!isClientGranContribuyenteLocal(client)) {
+      return { eligible: false, baseGravadaSinIva: round2(montoFactura / IVA), maxRetencion: 0, reason: 'NOT_GRAN_CONTRIBUYENTE' };
+    }
+    // Art. 162: 1% calculado estrictamente sobre la base gravada sin IVA, nunca sobre el total con IVA.
+    const baseGravadaSinIva = round2(montoFactura / IVA);
+    if (baseGravadaSinIva < RETENCION_MIN_BASE_SIN_IVA) {
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'UNDER_THRESHOLD' };
+    }
+    const maxRetencion = round2(baseGravadaSinIva * RETENCION_1PCT_RATE);
+    return { eligible: true, baseGravadaSinIva, maxRetencion, reason: null };
+  }
+
+  function buildPaymentRefLockId({ metodo, normRef, prospectId, invoiceId }) {
+    const cleanMethod = String(metodo || '').trim().toLowerCase();
+    if (cleanMethod === 'retencion_1pct') {
+      return `RET_${prospectId}_${invoiceId}_${normRef}`;
+    }
+    return `BANK_${normRef}`;
+  }
+
   // A payment is addressed by `paymentKey` = its id (new payments) or its `fecha` (historical ones have no id): never by
   // array position, which is stale as soon as someone else edits the same invoice.
   const payKeyMatches = (pay, key) => !!pay && (pay.id === key || pay.fecha === key);
 
-  async function savePayment({ caller, prospectId, invoiceId, paymentKey, paymentId, monto, metodo, ref: reference, doc_comprobante, confirmar, opId }) {
+  async function savePayment({ caller, prospectId, invoiceId, paymentKey, paymentId, fecha, monto, metodo, ref: reference, doc_comprobante, opId }) {
     authorize(caller, 'savePayment');
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
     const resolvedPaymentKey = (paymentKey !== undefined && paymentKey !== null && paymentKey !== '')
@@ -1760,46 +1843,190 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const amount = money(monto, 'El monto del abono', { positive: true });
     if (!PAYMENT_METHODS.includes(metodo)) throw bad('Forma de pago inválida');
     const refText = reqString(reference, 'La referencia', 100);
+    const normRef = normalizePaymentReference(refText);
+    if (!normRef) throw bad('Debe ingresar un número de comprobante o referencia válido');
+    let customFecha = null;
+    if (fecha !== undefined) {
+      if (fecha === null || typeof fecha !== 'string' || !fecha.trim()) {
+        throw bad('La fecha del pago es obligatoria');
+      }
+      customFecha = fecha.trim();
+      if (isNaN(Date.parse(customFecha))) {
+        throw bad('La fecha del pago es inválida');
+      }
+    }
     const doc = (doc_comprobante === undefined || doc_comprobante === null) ? null : fileRef(doc_comprobante, 'Comprobante de pago');
     if (!editing && !doc) throw bad('Debe adjuntar el comprobante de pago');
+
     return db.runTransaction(async tx => {
+      // 1. Todas las lecturas transaccionales antes de cualquier escritura
       const { ref: pRef, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
+      const fac = facturas.find(f => f && f.id === invoiceId);
+      const at = (editing && fac) ? fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey)) : -1;
+      const cur = (editing && at !== -1) ? fac.pagos[at] : null;
+
+      const lockId = buildPaymentRefLockId({ metodo, normRef, prospectId, invoiceId });
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+
+      let oldLockRef = null;
+      let oldLockSnap = null;
+      if (editing && cur) {
+        const oldNormRef = normalizePaymentReference(cur.ref || '');
+        const oldLockId = oldNormRef
+          ? buildPaymentRefLockId({ metodo: cur.metodo || metodo, normRef: oldNormRef, prospectId, invoiceId })
+          : null;
+        if (oldLockId && oldLockId !== lockId) {
+          oldLockRef = col('payment_refs').doc(oldLockId);
+          oldLockSnap = await tx.get(oldLockRef);
+        }
+      }
+
+      const allProspectsSnap = await tx.get(col('prospects'));
+
+      // 2. Idempotencia por opId en creación
       if (!editing) {
         for (const f of facturas) {
           const prior = f.pagos.find(x => x && x.opId === opId);
           if (prior) {
-            if (f.id !== invoiceId || prior.monto !== amount || prior.metodo !== metodo || prior.ref !== refText) throw precondition('opId ya usado con otros datos');
-            return { status: 'unchanged', replay: true };
+            if (f.id !== invoiceId || prior.monto !== amount || prior.metodo !== metodo || normalizePaymentReference(prior.ref) !== normRef) {
+              throw precondition('opId ya usado con otros datos');
+            }
+            return { status: 'unchanged', replay: true, payment: prior };
+          }
+        }
+        for (const docSnap of (allProspectsSnap.docs || [])) {
+          if (docSnap.id === prospectId) continue;
+          const otherP = docSnap.data() || {};
+          for (const otherF of facturasOf(otherP)) {
+            const priorOther = (Array.isArray(otherF.pagos) ? otherF.pagos : []).find(x => x && x.opId === opId);
+            if (priorOther) {
+              throw precondition('opId ya usado con otros datos');
+            }
           }
         }
       }
-      const fac = facturas.find(f => f && f.id === invoiceId);
+
+      // 3. Validación de factura destino y abono en edición
       if (!fac) throw notFound('Factura');
-      if (metodo === 'retencion_1pct' && !(client && truthyFlag(client.is_gran_contribuyente))) {
-        throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
+      if (!isActiveInvoice(fac)) {
+        throw precondition('La factura seleccionada no es válida o se encuentra anulada');
       }
-      const at = editing ? fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey)) : -1;
       if (editing && at === -1) throw notFound('Abono');
-      const collected = fac.pagos.reduce((a, x, i) => (i === at ? a : a + (parseFloat(x.monto) || 0)), 0);
+
+      // 4. Validación de elegibilidad y tope individual de retención fiscal del 1% (Art. 162)
+      let retInfo = null;
+      if (metodo === 'retencion_1pct') {
+        if (isExport(client)) {
+          throw precondition('La retención del 1% no aplica a facturas de exportación exentas de IVA');
+        }
+        if (!isClientGranContribuyenteLocal(client)) {
+          throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
+        }
+        retInfo = calculateInvoiceRetencionLimit(fac.monto, client);
+        if (!retInfo.eligible) {
+          throw precondition('La retención del 1% (Art. 162) solo aplica cuando la base gravada sin IVA de la factura es igual o mayor a $100.00');
+        }
+        if (round2(amount) > round2(retInfo.maxRetencion + 0.01)) {
+          throw precondition(`El monto de retención del 1% (${fmtMoney(amount)}) supera el límite fiscal permitido del 1% sobre la base gravada sin IVA (${fmtMoney(retInfo.maxRetencion)}) para esta factura.`);
+        }
+      }
+
+      // 5. Detección obligatoria de números de comprobante duplicados (concurrencia + transversal)
+      const DUP_REF_MSG = 'Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.';
+      const editingCanonicalKey = editing && cur ? String(cur.id || cur.fecha) : null;
+
+      if (lockSnap.exists) {
+        const ld = lockSnap.data() || {};
+        if (ld.active !== false) {
+          const isSameEditedPayment = Boolean(
+            editing &&
+            ld.prospectId === prospectId &&
+            ld.invoiceId === invoiceId &&
+            ld.paymentKey === editingCanonicalKey
+          );
+          if (!isSameEditedPayment) {
+            throw precondition(DUP_REF_MSG);
+          }
+        }
+      }
+
+      const checkInvoicesForDuplicateRef = (otherProspectId, otherProspectData, otherFacturasList) => {
+        if (!otherProspectData || otherProspectData.eliminado === true) return;
+        for (const otherFac of otherFacturasList) {
+          if (!isActiveInvoice(otherFac)) continue;
+          const otherPagos = Array.isArray(otherFac.pagos) ? otherFac.pagos : [];
+          for (let idx = 0; idx < otherPagos.length; idx++) {
+            const otherPay = otherPagos[idx];
+            if (!isActivePaymentRecord(otherPay)) continue;
+            if (editing && otherProspectId === prospectId && otherFac.id === invoiceId && idx === at) {
+              continue;
+            }
+            const otherNormRef = normalizePaymentReference(otherPay.ref || '');
+            if (!otherNormRef || otherNormRef !== normRef) continue;
+
+            const otherMetodo = typeof otherPay.metodo === 'string' ? otherPay.metodo.trim().toLowerCase() : '';
+            if (metodo === 'retencion_1pct' && otherMetodo === 'retencion_1pct') {
+              // Constancia consolidada legítima: solo se permite si pertenece al mismo cliente y se aplica a otra factura distinta
+              const sameClient = Boolean(p.clientId && otherProspectData.clientId && p.clientId === otherProspectData.clientId);
+              const differentInvoice = !(otherProspectId === prospectId && otherFac.id === invoiceId);
+              if (sameClient && differentInvoice) {
+                continue;
+              }
+            }
+            throw precondition(DUP_REF_MSG);
+          }
+        }
+      };
+
+      checkInvoicesForDuplicateRef(prospectId, p, facturas);
+      for (const docSnap of (allProspectsSnap.docs || [])) {
+        if (docSnap.id === prospectId) continue;
+        const otherP = docSnap.data() || {};
+        checkInvoicesForDuplicateRef(docSnap.id, otherP, facturasOf(otherP));
+      }
+
+      // 5b. Tope acumulado de retención 1% en la misma factura
+      if (metodo === 'retencion_1pct' && retInfo) {
+        const existingRetencionOnInvoice = round2(
+          fac.pagos.reduce((acc, x, idx) => {
+            if (idx === at || !isActivePaymentRecord(x)) return acc;
+            const m = typeof x.metodo === 'string' ? x.metodo.trim().toLowerCase() : '';
+            return m === 'retencion_1pct' ? acc + (parseFloat(x.monto) || 0) : acc;
+          }, 0)
+        );
+        if (round2(existingRetencionOnInvoice + amount) > round2(retInfo.maxRetencion + 0.01)) {
+          throw precondition(`El monto de retención del 1% (${fmtMoney(amount)}) supera el límite fiscal permitido del 1% sobre la base gravada sin IVA (${fmtMoney(retInfo.maxRetencion)}) para esta factura.`);
+        }
+      }
+
+      // 6. Verificación de saldo pendiente de la factura
+      const collected = fac.pagos.reduce((a, x, i) => (i === at || !isActivePaymentRecord(x) ? a : a + (parseFloat(x.monto) || 0)), 0);
       const pending = (Number(fac.monto) || 0) - collected;
       if (exceeds(amount, pending)) throw precondition(`El abono supera el saldo de esta factura. Saldo pendiente: ${fmtMoney(pending)}`);
 
+      // 7. Construcción y confirmación automática en backend (campos de auditoría no falsificables)
       let payment; let text;
       const nowAt = iso();
       if (editing) {
-        const cur = fac.pagos[at];
-        const wantsExplicitConfirm = confirmar === true && !isPositivelyConfirmedPayment(cur);
-        if (cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc && !wantsExplicitConfirm) {
-          return { status: 'unchanged' };
-        }
         const effectiveDoc = doc || cur.doc_comprobante || null;
-        if (confirmar === true && !hasValidPaymentDoc(effectiveDoc)) {
-          throw bad('No se puede confirmar un abono sin comprobante de respaldo válido');
+        const needsBackendConfirm = !isPositivelyConfirmedPayment(cur) && hasValidPaymentDoc(effectiveDoc);
+        if (!needsBackendConfirm && cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc && (!customFecha || cur.fecha === customFecha)) {
+          return { status: 'unchanged', payment: cur };
         }
-        payment = { ...cur, monto: amount, metodo, ref: refText };
+        payment = {
+          ...cur,
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
+          monto: amount,
+          metodo,
+          ref: refText,
+          ref_normalizada: normRef,
+          fecha: customFecha || cur.fecha || nowAt
+        };
         if (doc) payment.doc_comprobante = doc;
         if (hasValidPaymentDoc(effectiveDoc)) {
           payment.confirmado = true;
@@ -1814,11 +2041,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       } else {
         payment = {
           id: uniqueId(fac.pagos.map(x => x && x.id), Date.now()),
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
           monto: amount,
           metodo,
           ref: refText,
+          ref_normalizada: normRef,
           doc_comprobante: doc,
-          fecha: nowAt,
+          fecha: customFecha || nowAt,
           opId,
           confirmado: true,
           estado: 'confirmado',
@@ -1830,8 +2060,35 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         fac.pagos.push(payment);
         text = `Pago recibido: ${fmtMoney(amount)} vía ${metodo} a cuenta de Factura ${fac.numero}`;
       }
+
       tx.update(pRef, { facturas, logs: withLog(p, caller, text) });
-      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, { invoiceId, numero: fac.numero, monto: amount, metodo, confirmado: Boolean(payment.confirmado) });
+      tx.set(lockRef, {
+        active: true,
+        normRef,
+        ref: refText,
+        metodo,
+        monto: amount,
+        prospectId,
+        invoiceId: fac.id,
+        clientId: p.clientId || null,
+        paymentKey: String(payment.id || payment.fecha),
+        opId: payment.opId || null,
+        updatedAt: nowAt,
+        updatedBy: caller.cid || caller.uid
+      });
+      if (editing && oldLockRef && oldLockSnap && oldLockSnap.exists) {
+        tx.delete(oldLockRef);
+      }
+      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, {
+        invoiceId: fac.id,
+        paymentKey: String(payment.id || payment.fecha),
+        numero: fac.numero,
+        monto: amount,
+        metodo,
+        ref: refText,
+        ref_normalizada: normRef,
+        confirmado: Boolean(payment.confirmado)
+      });
       return { status: editing ? 'updated' : 'created', payment };
     });
   }
@@ -1853,9 +2110,25 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const at = fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey));
       if (at === -1) return { status: 'absent' };
       const pay = fac.pagos[at];
+      const normRef = normalizePaymentReference(pay.ref || '');
+      let lockRefToDelete = null;
+      if (normRef) {
+        const lockId = buildPaymentRefLockId({ metodo: pay.metodo, normRef, prospectId, invoiceId: fac.id });
+        const candidateRef = col('payment_refs').doc(lockId);
+        const lSnap = await tx.get(candidateRef);
+        if (lSnap.exists) lockRefToDelete = candidateRef;
+      }
       fac.pagos.splice(at, 1);
       tx.update(ref, { facturas, logs: withLog(p, caller, `Abono eliminado de factura ${fac.numero}: ${fmtMoney(pay.monto)}`) });
-      addAudit(tx, caller, 'deletePayment', prospectId, { invoiceId, numero: fac.numero, monto: pay.monto, metodo: pay.metodo });
+      if (lockRefToDelete) tx.delete(lockRefToDelete);
+      addAudit(tx, caller, 'deletePayment', prospectId, {
+        invoiceId,
+        paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey),
+        numero: fac.numero,
+        monto: pay.monto,
+        metodo: pay.metodo,
+        ref: pay.ref || null
+      });
       addDeletionNotice(tx, caller, p, client, 'Abono', `${fmtMoney(pay.monto)} de la factura ${fac.numero}`);
       return { status: 'deleted' };
     });
@@ -2383,7 +2656,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const seenPaymentIds = new Set();
     const seenPaymentOpIds = new Set();
     const seenCompositeKeys = new Set();
-    const isGranContribuyente = Boolean(client && truthyFlag(client.is_gran_contribuyente));
+    const seenVoucherRefs = new Set();
+    const comprobantesDuplicadosDetectados = [];
+    const isGranContribuyente = isClientGranContribuyenteLocal(client);
 
     for (const fac of activeInvoices) {
       const facNumero = String(fac.numero || '').trim();
@@ -2392,25 +2667,15 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       for (const pay of pagos) {
         if (!pay || typeof pay !== 'object') continue;
-        if (
-          pay.anulado === true || pay.anulada === true ||
-          pay.revertido === true || pay.revertida === true ||
-          pay.eliminado === true || pay.eliminada === true ||
-          pay.rechazado === true || pay.rechazada === true ||
-          pay.voided === true || pay.reversed === true ||
-          pay.promesa === true || pay.es_promesa === true ||
-          pay.pendiente_verificacion === true ||
-          pay.verificado === false || pay.confirmado === false
-        ) {
-          continue;
-        }
-        const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
-        if (payEstado && INVALID_FINANCIAL_STATUSES.includes(payEstado)) continue;
+        if (!isActivePaymentRecord(pay)) continue;
 
         const metodo = typeof pay.metodo === 'string' ? pay.metodo.trim().toLowerCase() : '';
         if (!PAYMENT_METHODS.includes(metodo)) continue;
         if (metodo === 'retencion_1pct' && (!isGranContribuyente || clientIsExport)) continue;
         if (!hasValidPaymentDoc(pay.doc_comprobante)) continue;
+
+        const normRef = normalizePaymentReference(pay.ref || '');
+        if (typeof pay.ref === 'string' && !normRef) continue;
 
         const payMonto = round2(Number(pay.monto));
         if (!Number.isFinite(payMonto) || payMonto <= 0) continue;
@@ -2418,15 +2683,59 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         const payId = pay.id ? String(pay.id).trim() : '';
         const payOpId = pay.opId ? String(pay.opId).trim() : '';
         if (payId) {
-          if (seenPaymentIds.has(payId)) continue;
+          if (seenPaymentIds.has(payId)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_payment_id'
+            });
+            continue;
+          }
           seenPaymentIds.add(payId);
         }
         if (payOpId) {
-          if (seenPaymentOpIds.has(payOpId)) continue;
+          if (seenPaymentOpIds.has(payOpId)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId || null,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_op_id'
+            });
+            continue;
+          }
           seenPaymentOpIds.add(payOpId);
         }
+        if (normRef) {
+          const refDedupeKey = metodo === 'retencion_1pct'
+            ? `RET_${fac.id || facNumero}_${normRef}`
+            : `BANK_${normRef}`;
+          if (seenVoucherRefs.has(refDedupeKey)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId || null,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_voucher_ref'
+            });
+            continue;
+          }
+          seenVoucherRefs.add(refDedupeKey);
+        }
+
         if (!payId && !payOpId) {
-          const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${String(pay.ref || '').trim()}`;
+          const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${normRef}`;
           if (seenCompositeKeys.has(compKey)) continue;
           seenCompositeKeys.add(compKey);
         }
@@ -2451,15 +2760,16 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
     }
 
-    // Tratamiento fiscal de retención 1%:
-    // - En El Salvador la retención 1% IVA se calcula sobre el subtotal sin IVA de la factura
-    //   (máximo legal tolerado: 1% del monto de la factura de anticipo para cubrir redondeos).
-    // - Solo es reconocible si aplica a cliente local Gran Contribuyente y existe cobro efectivo (> 0) en transferencia/cheque.
+    // Tratamiento fiscal de retención 1% (Art. 162 Código Tributario El Salvador):
+    // - La retención del 1% de IVA se calcula exclusivamente sobre la base gravada sin IVA (monto / 1.13),
+    //   nunca sobre el total con IVA, y requiere base gravada >= $100.00.
+    // - Reduce el saldo pendiente por cobrar de la factura, no constituye efectivo depositado,
+    //   y no depende artificialmente de que exista una transferencia bancaria previa.
     const baseSubtotalAnticipo = advInvoice
       ? round2(clientIsExport ? montoFacturadoAnticipo : (montoFacturadoAnticipo / IVA))
       : 0;
-    const maxRetencionReconocible = (advInvoice && isGranContribuyente && !clientIsExport && montoEfectivoConfirmado > 0)
-      ? round2(Math.max(baseSubtotalAnticipo * 0.01, montoFacturadoAnticipo * 0.01))
+    const maxRetencionReconocible = (advInvoice && isGranContribuyente && !clientIsExport && baseSubtotalAnticipo >= 100)
+      ? round2(baseSubtotalAnticipo * 0.01)
       : 0;
     const montoRetencionConfirmada = round2(Math.min(montoRetencionConfirmadaBruta, maxRetencionReconocible));
     const montoRetencionExcedente = round2(Math.max(0, montoRetencionConfirmadaBruta - montoRetencionConfirmada));
@@ -2471,7 +2781,6 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const saldoPendiente = Math.max(0, round2(montoExigible - montoConfirmado));
     const anticipoCumplido = (
       Boolean(advInvoice) &&
-      montoEfectivoConfirmado > 0 &&
       Math.round(montoFacturadoAnticipo * 100) >= Math.round(montoExigible * 100) &&
       Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100)
     );
@@ -2506,6 +2815,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         montoRetencionExcedente,
         montoRegistradoNoConfirmado,
         montoConfirmadoOtrasFacturas,
+        comprobantesDuplicadosDetectados,
         saldoPendiente,
         ccfAnticipoId,
         ccfAnticipoStatus,
@@ -2533,6 +2843,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       montoRetencionExcedente,
       montoRegistradoNoConfirmado,
       montoConfirmadoOtrasFacturas,
+      comprobantesDuplicadosDetectados,
       saldoPendiente: 0,
       ccfAnticipoId,
       ccfAnticipoStatus,
@@ -2634,6 +2945,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     reactivateProspect,
     resolveAdvanceInvoice,
     isPositivelyConfirmedPayment,
+    normalizePaymentReference,
+    calculateInvoiceRetencionLimit,
+    isClientGranContribuyenteLocal,
     evaluateManufacturingReadiness,
     assertManufacturingReadyTx,
     validateManufacturingReadiness

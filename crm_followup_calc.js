@@ -1307,6 +1307,27 @@
         return { invoice: first, ambiguous: false, source: active.length === 1 ? 'legacy_single' : 'legacy_first' };
     }
 
+    function normalizePaymentReferenceRecord(ref) {
+        if (ref === null || ref === undefined) return '';
+        const str = String(ref).normalize('NFKC').trim().toUpperCase();
+        return str.replace(/[\s\-_./\\#,;:]+/g, '');
+    }
+
+    function isClientGranContribuyenteLocalRecord(clientObj) {
+        if (!clientObj || typeof clientObj !== 'object') return false;
+        const isExport = Boolean(clientObj.es_exportacion === true || clientObj.es_exportacion === 'true');
+        if (isExport) return false;
+        const isGran = Boolean(clientObj.is_gran_contribuyente === true || clientObj.is_gran_contribuyente === 'true');
+        if (!isGran) return false;
+        const cat = typeof (clientObj.categoria_contribuyente || clientObj.tipo_contribuyente || clientObj.clasificacion_contribuyente) === 'string'
+            ? String(clientObj.categoria_contribuyente || clientObj.tipo_contribuyente || clientObj.clasificacion_contribuyente).trim().toLowerCase()
+            : '';
+        if (cat && (cat.includes('mediano') || cat.includes('pequeno') || cat.includes('pequeño') || cat === 'otro' || cat === 'otros')) {
+            return false;
+        }
+        return true;
+    }
+
     function isPositivelyConfirmedPaymentRecord(pay) {
         if (!pay || typeof pay !== 'object') return false;
         const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
@@ -1354,6 +1375,7 @@
                 montoRetencionConfirmada: 0,
                 montoRegistradoNoConfirmado: 0,
                 montoConfirmadoOtrasFacturas: 0,
+                comprobantesDuplicadosDetectados: [],
                 saldoPendienteAnticipo: 0,
                 ccfAnticipoId: null,
                 ccfAnticipoStatus: 'pendiente',
@@ -1368,7 +1390,7 @@
         const datos = (prospect.datos && typeof prospect.datos === 'object') ? prospect.datos : {};
         const activeClient = client || ((prospect.client && typeof prospect.client === 'object') ? prospect.client : null);
         const isExport = Boolean(activeClient && (activeClient.es_exportacion === true || activeClient.es_exportacion === 'true'));
-        const isGranContribuyente = Boolean(activeClient && (activeClient.is_gran_contribuyente === true || activeClient.is_gran_contribuyente === 'true'));
+        const isGranContribuyente = isClientGranContribuyenteLocalRecord(activeClient);
 
         const formaPago = prospect.forma_pago || datos.forma_pago || null;
         const condicionPagoValida = Boolean(formaPago && Object.prototype.hasOwnProperty.call(AUTHORIZED_PAYMENT_TERMS, formaPago));
@@ -1415,6 +1437,8 @@
         const seenPaymentIds = new Set();
         const seenPaymentOpIds = new Set();
         const seenCompositeKeys = new Set();
+        const seenVoucherRefs = new Set();
+        const comprobantesDuplicadosDetectados = [];
 
         for (const fac of activeInvoices) {
             const facNumero = String(fac.numero || '').trim();
@@ -1442,21 +1466,68 @@
                 if (metodo === 'retencion_1pct' && activeClient && (!isGranContribuyente || isExport)) continue;
                 if (!hasValidFileSupport(pay.doc_comprobante)) continue;
 
+                const normRef = normalizePaymentReferenceRecord(pay.ref || '');
+                if (typeof pay.ref === 'string' && !normRef) continue;
+
                 const payMonto = round2Money(Number(pay.monto));
                 if (!Number.isFinite(payMonto) || payMonto <= 0) continue;
 
                 const payId = pay.id ? String(pay.id).trim() : '';
                 const payOpId = pay.opId ? String(pay.opId).trim() : '';
                 if (payId) {
-                    if (seenPaymentIds.has(payId)) continue;
+                    if (seenPaymentIds.has(payId)) {
+                        comprobantesDuplicadosDetectados.push({
+                            invoiceId: fac.id || null,
+                            invoiceNumero: facNumero,
+                            paymentId: payId,
+                            ref: String(pay.ref || '').trim(),
+                            normalizedRef: normRef,
+                            metodo,
+                            monto: payMonto,
+                            reason: 'duplicate_payment_id'
+                        });
+                        continue;
+                    }
                     seenPaymentIds.add(payId);
                 }
                 if (payOpId) {
-                    if (seenPaymentOpIds.has(payOpId)) continue;
+                    if (seenPaymentOpIds.has(payOpId)) {
+                        comprobantesDuplicadosDetectados.push({
+                            invoiceId: fac.id || null,
+                            invoiceNumero: facNumero,
+                            paymentId: payId || null,
+                            ref: String(pay.ref || '').trim(),
+                            normalizedRef: normRef,
+                            metodo,
+                            monto: payMonto,
+                            reason: 'duplicate_op_id'
+                        });
+                        continue;
+                    }
                     seenPaymentOpIds.add(payOpId);
                 }
+                if (normRef) {
+                    const refDedupeKey = metodo === 'retencion_1pct'
+                        ? `RET_${fac.id || facNumero}_${normRef}`
+                        : `BANK_${normRef}`;
+                    if (seenVoucherRefs.has(refDedupeKey)) {
+                        comprobantesDuplicadosDetectados.push({
+                            invoiceId: fac.id || null,
+                            invoiceNumero: facNumero,
+                            paymentId: payId || null,
+                            ref: String(pay.ref || '').trim(),
+                            normalizedRef: normRef,
+                            metodo,
+                            monto: payMonto,
+                            reason: 'duplicate_voucher_ref'
+                        });
+                        continue;
+                    }
+                    seenVoucherRefs.add(refDedupeKey);
+                }
+
                 if (!payId && !payOpId) {
-                    const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${String(pay.ref || '').trim()}`;
+                    const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${normRef}`;
                     if (seenCompositeKeys.has(compKey)) continue;
                     seenCompositeKeys.add(compKey);
                 }
@@ -1484,9 +1555,9 @@
         const baseSubtotalAnticipo = advInvoice
             ? round2Money(isExport ? montoFacturado : (montoFacturado / 1.13))
             : 0;
-        const canApplyRetencion = Boolean(advInvoice && (!activeClient || (isGranContribuyente && !isExport)) && montoEfectivoConfirmado > 0);
+        const canApplyRetencion = Boolean(advInvoice && (!activeClient || (isGranContribuyente && !isExport)) && baseSubtotalAnticipo >= 100);
         const maxRetencionReconocible = canApplyRetencion
-            ? round2Money(Math.max(baseSubtotalAnticipo * 0.01, montoFacturado * 0.01))
+            ? round2Money(baseSubtotalAnticipo * 0.01)
             : 0;
         const montoRetencionConfirmada = round2Money(Math.min(montoRetencionConfirmadaBruta, maxRetencionReconocible));
         const sumaReconocidaAnticipo = round2Money(montoEfectivoConfirmado + montoRetencionConfirmada);
@@ -1512,7 +1583,6 @@
             montoExigible > 0 &&
             advInvoice &&
             !advResolution.ambiguous &&
-            montoEfectivoConfirmado > 0 &&
             Math.round(montoFacturado * 100) >= Math.round(montoExigible * 100) &&
             Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100)
         );
@@ -1560,6 +1630,7 @@
             montoRetencionConfirmada,
             montoRegistradoNoConfirmado,
             montoConfirmadoOtrasFacturas,
+            comprobantesDuplicadosDetectados,
             saldoPendienteAnticipo,
             ccfAnticipoId,
             ccfAnticipoStatus,

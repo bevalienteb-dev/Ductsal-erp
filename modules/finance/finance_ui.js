@@ -204,13 +204,14 @@
             });
         }
         montoEfectivoConfirmado = Math.round(montoEfectivoConfirmado * 100) / 100;
-        const maxRetencion = (advInv && (!client || (isGranContribuyente && !isExport)) && montoEfectivoConfirmado > 0)
-            ? Math.round(advMonto * 0.01 * 100) / 100
+        const advBaseSinIva = advInv ? (isExport ? advMonto : Math.round((advMonto / 1.13) * 100) / 100) : 0;
+        const maxRetencion = (advInv && (!client || (isGranContribuyente && !isExport)) && advBaseSinIva >= 100)
+            ? Math.round(advBaseSinIva * 0.01 * 100) / 100
             : 0;
         const montoRetencionConfirmada = Math.round(Math.min(montoRetencionBruta, maxRetencion) * 100) / 100;
         const montoConfirmado = advInv ? Math.min(advMonto, Math.round((montoEfectivoConfirmado + montoRetencionConfirmada) * 100) / 100) : 0;
         const saldoPendienteAnticipo = Math.max(0, Math.round((montoExigible - montoConfirmado) * 100) / 100);
-        const anticipoCumplido = Boolean(pct !== null && montoExigible > 0 && advInv && montoEfectivoConfirmado > 0 && (advMonto + 0.009 >= montoExigible) && (montoConfirmado + 0.009 >= montoExigible));
+        const anticipoCumplido = Boolean(pct !== null && montoExigible > 0 && advInv && (advMonto + 0.009 >= montoExigible) && (montoConfirmado + 0.009 >= montoExigible));
         const anticipoPagoStatus = anticipoCumplido ? 'pagado' : (montoConfirmado > 0.009 ? 'parcialmente_pagado' : 'pendiente');
         const obligacionesSeguimiento = [];
         if (!ccfEmitido) obligacionesSeguimiento.push('Emitir CCF de anticipo y adjuntar respaldo fiscal.');
@@ -695,8 +696,20 @@
             const fMonto = parseFloat(f.monto) || 0;
             totalFacturado += fMonto;
             let pCobrado = 0;
+            let pEfectivo = 0;
+            let pRetencion = 0;
             if (Array.isArray(f.pagos)) {
-                pCobrado = f.pagos.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0);
+                f.pagos.forEach(b => {
+                    const bm = parseFloat(b && b.monto) || 0;
+                    if (bm > 0) {
+                        pCobrado += bm;
+                        if (b && b.metodo === 'retencion_1pct') {
+                            pRetencion += bm;
+                        } else {
+                            pEfectivo += bm;
+                        }
+                    }
+                });
             }
             totalCobrado += pCobrado;
             let pSaldo = fMonto - pCobrado;
@@ -715,24 +728,24 @@
                         </div>
                         <div class="invoice-payments-list">
                             ${f.pagos.map((pay, i) => {
-                                let docLink = '';
-                                if (pay.doc_comprobante) {
-                                    docLink = `<div class="payment-doc-chip">
+                    let docLink = '';
+                    if (pay.doc_comprobante) {
+                        docLink = `<div class="payment-doc-chip">
                                         <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-link" title="Previsualizar comprobante">📄 Comprobante</a>
                                         <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-dl" title="Descargar comprobante">⬇️</a>
                                     </div>`;
-                                } else {
-                                    docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
-                                }
-                                let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
-                                let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
-                                let editDelPaySpans = !isFinancialReadOnly
-                                    ? `<div class="payment-item-actions">
+                    } else {
+                        docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
+                    }
+                    let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
+                    let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
+                    let editDelPaySpans = !isFinancialReadOnly
+                        ? `<div class="payment-item-actions">
                                            <button type="button" class="btn-subtle-edit" onclick="editPayment('${f.id}', ${i})" title="Editar abono">✏️ [Editar]</button>
                                            <button type="button" class="btn-subtle-delete" onclick="deletePayment('${f.id}', ${i})" title="Eliminar abono">🗑️ [Eliminar]</button>
                                        </div>`
-                                    : '';
-                                return `
+                        : '';
+                    return `
                                     <div class="payment-item-card">
                                         <div class="pay-item-top">
                                             <div class="pay-item-main">
@@ -754,7 +767,7 @@
                                         </div>
                                     </div>
                                 `;
-                            }).join('')}
+                }).join('')}
                         </div>
                     </div>
                 `;
@@ -763,8 +776,8 @@
             const invActionSpans = !isFinancialReadOnly
                 ? `<button type="button" class="btn-subtle-edit" onclick="editInvoice('${f.id}')" title="Editar datos de la factura">✏️ [Editar Factura]</button>
                    ${invoiceIndex > 0
-                       ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
-                       : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
+                    ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
+                    : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
                 : '';
             const btnAbonarHtml = (!isPaid && !isFinancialReadOnly)
                 ? `<button type="button" class="btn-abono-primary" onclick="showPaymentForm('${f.id}', '${f.numero}')"><span style="margin-right:4px;">💰</span>+ Abonar a Factura</button>`
@@ -798,6 +811,7 @@
                             <div class="inv-strip-col">
                                 <span class="inv-strip-label">Total Abonado</span>
                                 <span class="inv-strip-val fin-val-green tabular-nums">${_deps.formatCurrency(pCobrado)}</span>
+                                ${pRetencion > 0 ? `<span style="display:block; font-size:0.72rem; color:var(--text-secondary);">Efectivo: ${_deps.formatCurrency(pEfectivo)} | Retención 1%: ${_deps.formatCurrency(pRetencion)}</span>` : ''}
                             </div>
                             <div class="inv-strip-col">
                                 <span class="inv-strip-label">Saldo Pendiente</span>

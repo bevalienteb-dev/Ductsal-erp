@@ -803,7 +803,7 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       })
     });
 
-    // Un gestor confirma explícitamente el pago histórico mediante el flujo autorizado savePayment({ confirmar: true })
+    // Un gestor actualiza/registra el pago histórico mediante el flujo autorizado savePayment (reconocimiento automático en backend sin paso 'confirmar')
     const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
     const confirmRes = await wf.savePayment({
       caller: gestor,
@@ -813,8 +813,7 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       monto: 5650,
       fecha: '2026-10-17',
       metodo: 'transferencia',
-      ref: 'TRX-LEGACY-99',
-      confirmar: true
+      ref: 'TRX-LEGACY-99'
     });
 
     expect(confirmRes.payment.confirmado).toBe(true);
@@ -971,7 +970,7 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
     expect(readyRes.montoConfirmadoOtrasFacturas).toBe(5650);
   });
 
-  test('Escenario 13: Tratamiento fiscal de retencion_1pct en el anticipo (Gran Contribuyente 99% efectivo + 1% retención vs. excesos o sin efectivo)', async () => {
+  test('Escenario 13: Tratamiento fiscal de retencion_1pct sobre base sin IVA (Gran Contribuyente, reducción de CxC sin incrementar efectivo depositado, y bloqueo de excesos)', async () => {
     const { fdb, wf, caller } = makeEnv();
     const granContribClient = {
       ...baseClient,
@@ -1002,16 +1001,29 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       }
     });
 
-    // Anticipo 50% de $11,300.00 = $5,650.00 (Subtotal sin IVA del anticipo = $5,000.00, IVA = $650.00, Retención 1% = $50.00)
+    // Anticipo 50% de $11,300.00 = $5,650.00 (Base gravada sin IVA = $5,000.00, IVA = $650.00, Retención 1% sobre base sin IVA = $50.00; NUNCA $56.50)
     const snap = await fdb.collection('prospects_prod').doc('PRJ-RET-01').get();
     const invId = snap.data().facturas[0].id;
 
-    // 13a. Registrar únicamente retención 1% ($50.00) sin cobro efectivo -> montoEfectivoConfirmado = 0 -> retención reconocida = 0
+    // 13a. Intentar registrar retención calculada sobre total con IVA ($56.50) es rechazado por superar el 1% de la base gravada sin IVA ($50.00)
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-RET-01',
+      invoiceId: invId,
+      opId: 'OP-RET-IVA-ERR',
+      monto: 56.50,
+      metodo: 'retencion_1pct',
+      ref: 'COMP-RET-ERR',
+      doc_comprobante: fileObj('retencion_con_iva.pdf', 'pagos')
+    })).rejects.toThrow(/base gravada sin IVA.*50\.00/i);
+
+    // 13b. Registrar retención válida del 1% sobre base sin IVA ($50.00) ANTES de la transferencia bancaria:
+    // Reduce la CxC y el saldo pendiente a $5,600.00 sin requerir transferencia previa y sin incrementar montoEfectivoConfirmado
     await wf.savePayment({
       caller: gestor,
       prospectId: 'PRJ-RET-01',
       invoiceId: invId,
-      opId: 'OP-RET-ONLY',
+      opId: 'OP-RET-VALID',
       monto: 50,
       metodo: 'retencion_1pct',
       ref: 'COMP-RET-001',
@@ -1025,66 +1037,25 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       code: 'failed-precondition',
       details: expect.objectContaining({
         errorCode: 'ANTICIPO_PENDIENTE',
+        montoFacturado: 5650,
         montoExigible: 5650,
         montoEfectivoConfirmado: 0,
-        montoRetencionConfirmada: 0,
-        montoConfirmado: 0
+        montoRetencionConfirmada: 50,
+        montoConfirmado: 50,
+        saldoPendiente: 5600
       })
     });
 
-    // 13b. Registrar transferencia por $5,000.00 + retención excesiva adicional por $600.00 (total retención bruta $650.00 > tope 1% $56.50)
+    // 13c. Registrar transferencia bancaria por los $5,600.00 restantes -> $5,600.00 efectivo + $50.00 retención 1% = $5,650.00 -> Fabricación habilitada
     await wf.savePayment({
       caller: gestor,
       prospectId: 'PRJ-RET-01',
       invoiceId: invId,
-      opId: 'OP-CASH-5000',
-      monto: 5000,
+      opId: 'OP-CASH-5600',
+      monto: 5600,
       metodo: 'transferencia',
-      ref: 'TRX-5000',
-      doc_comprobante: fileObj('vaucher_5000.pdf', 'pagos')
-    });
-    const excessRet = await wf.savePayment({
-      caller: gestor,
-      prospectId: 'PRJ-RET-01',
-      invoiceId: invId,
-      opId: 'OP-RET-EXCESS',
-      monto: 600,
-      metodo: 'retencion_1pct',
-      ref: 'COMP-RET-EXCESS',
-      doc_comprobante: fileObj('retencion_exceso.pdf', 'pagos')
-    });
-
-    await expect(wf.validateManufacturingReadiness({
-      caller: gestor,
-      prospectId: 'PRJ-RET-01'
-    })).rejects.toMatchObject({
-      code: 'failed-precondition',
-      details: expect.objectContaining({
-        errorCode: 'ANTICIPO_PENDIENTE',
-        montoExigible: 5650,
-        montoEfectivoConfirmado: 5000,
-        montoRetencionConfirmada: 56.5,
-        montoRetencionExcedente: 593.5,
-        montoConfirmado: 5056.5
-      })
-    });
-
-    // 13c. Eliminar la retención excesiva y registrar el complemento efectivo ($600.00) para llegar a $5,600.00 efectivo + $50.00 retención 1% = $5,650.00
-    await wf.deletePayment({
-      caller: gestor,
-      prospectId: 'PRJ-RET-01',
-      invoiceId: invId,
-      paymentId: excessRet.payment.id
-    });
-    await wf.savePayment({
-      caller: gestor,
-      prospectId: 'PRJ-RET-01',
-      invoiceId: invId,
-      opId: 'OP-CASH-600',
-      monto: 600,
-      metodo: 'transferencia',
-      ref: 'TRX-600',
-      doc_comprobante: fileObj('vaucher_600.pdf', 'pagos')
+      ref: 'TRX-5600',
+      doc_comprobante: fileObj('vaucher_5600.pdf', 'pagos')
     });
 
     const readyRes = await wf.validateManufacturingReadiness({
@@ -1092,10 +1063,398 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       prospectId: 'PRJ-RET-01'
     });
     expect(readyRes.ready).toBe(true);
+    expect(readyRes.montoFacturado).toBe(5650);
     expect(readyRes.montoExigible).toBe(5650);
     expect(readyRes.montoEfectivoConfirmado).toBe(5600);
     expect(readyRes.montoRetencionConfirmada).toBe(50);
     expect(readyRes.montoConfirmado).toBe(5650);
     expect(readyRes.saldoPendiente).toBe(0);
+  });
+
+  test('Escenario 14: Detección obligatoria de números de comprobante duplicados (misma factura, otra factura, otra oportunidad, concurrencia, idempotencia opId, edición/eliminación y constancia consolidada)', async () => {
+    const { fdb, wf, caller } = makeEnv();
+    const granContribClient = {
+      ...baseClient,
+      id: 'CLI-GRAN-DUP',
+      is_gran_contribuyente: true,
+      es_exportacion: false
+    };
+    const otherClient = {
+      ...baseClient,
+      id: 'CLI-OTHER-DUP',
+      is_gran_contribuyente: true,
+      es_exportacion: false
+    };
+    await fdb.seed('clients_prod/CLI-GRAN-DUP', granContribClient);
+    await fdb.seed('clients_prod/CLI-OTHER-DUP', otherClient);
+
+    const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
+    const manager = caller('manager', 'MGR-FIN', 'Gerente Financiero');
+
+    // Oportunidad 1 con dos facturas activas ($5,650 anticipo y $5,650 saldo)
+    await fdb.seed('prospects_prod/PRJ-DUP-01', {
+      ...baseClosingProspect,
+      id: 'PRJ-DUP-01',
+      clientId: 'CLI-GRAN-DUP',
+      estado: 'ganado',
+      forma_pago: '50/50',
+      factura_anticipo_id: 'INV-DUP-1A',
+      facturas: [
+        { id: 'INV-DUP-1A', numero: 'CCF-1A', monto: 5650, es_anticipo: true, tipo_factura: 'anticipo', doc_factura: fileObj('f1a.pdf', 'facturas'), pagos: [] },
+        { id: 'INV-DUP-1B', numero: 'CCF-1B', monto: 5650, es_anticipo: false, tipo_factura: 'ordinaria', doc_factura: fileObj('f1b.pdf', 'facturas'), pagos: [] }
+      ]
+    });
+
+    // Oportunidad 2 (mismo cliente) y Oportunidad 3 (otro cliente)
+    await fdb.seed('prospects_prod/PRJ-DUP-02', {
+      ...baseClosingProspect,
+      id: 'PRJ-DUP-02',
+      clientId: 'CLI-GRAN-DUP',
+      estado: 'ganado',
+      forma_pago: '50/50',
+      factura_anticipo_id: 'INV-DUP-2A',
+      facturas: [
+        { id: 'INV-DUP-2A', numero: 'CCF-2A', monto: 5650, es_anticipo: true, tipo_factura: 'anticipo', doc_factura: fileObj('f2a.pdf', 'facturas'), pagos: [] }
+      ]
+    });
+    await fdb.seed('prospects_prod/PRJ-DUP-03', {
+      ...baseClosingProspect,
+      id: 'PRJ-DUP-03',
+      clientId: 'CLI-OTHER-DUP',
+      estado: 'ganado',
+      forma_pago: '50/50',
+      factura_anticipo_id: 'INV-DUP-3A',
+      facturas: [
+        { id: 'INV-DUP-3A', numero: 'CCF-3A', monto: 5650, es_anticipo: true, tipo_factura: 'anticipo', doc_factura: fileObj('f3a.pdf', 'facturas'), pagos: [] }
+      ]
+    });
+
+    // 1. Registrar pago válido con comprobante y referencia única
+    const firstPay = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      opId: 'OP-DUP-FIRST',
+      fecha: '2026-11-07',
+      monto: 2000,
+      metodo: 'transferencia',
+      ref: 'AB-00123-9',
+      doc_comprobante: fileObj('voucher_ab001239.pdf', 'pagos')
+    });
+    expect(firstPay.status).toBe('created');
+    expect(firstPay.payment.confirmado).toBe(true);
+
+    // 2. Reintento idempotente con el mismo opId NO dispara error falso de duplicado
+    const replayPay = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      opId: 'OP-DUP-FIRST',
+      fecha: '2026-11-07',
+      monto: 2000,
+      metodo: 'transferencia',
+      ref: 'AB-00123-9',
+      doc_comprobante: fileObj('voucher_ab001239.pdf', 'pagos')
+    });
+    expect(replayPay.status).toBe('unchanged');
+    expect(replayPay.replay).toBe(true);
+
+    // 3. Rechazar comprobante con número de referencia duplicado (con espacios/guiones/minúsculas) en la MISMA factura
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      opId: 'OP-DUP-SAME-INV',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: '  ab 00123 9 ',
+      doc_comprobante: fileObj('voucher_dup1.pdf', 'pagos')
+    })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+
+    // 4. Rechazar comprobante con número de referencia duplicado en OTRA factura de la misma oportunidad
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1B',
+      opId: 'OP-DUP-OTHER-INV',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'AB001239',
+      doc_comprobante: fileObj('voucher_dup2.pdf', 'pagos')
+    })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+
+    // 5. Rechazar comprobante con número de referencia duplicado en OTRA oportunidad del CRM
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-02',
+      invoiceId: 'INV-DUP-2A',
+      opId: 'OP-DUP-OTHER-OPP',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'AB-00123/9',
+      doc_comprobante: fileObj('voucher_dup3.pdf', 'pagos')
+    })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+
+    // 6. Solicitudes concurrentes con la misma referencia bancaria: exactamente una se crea y la otra se rechaza
+    const concurrentRes = await Promise.allSettled([
+      wf.savePayment({
+        caller: gestor,
+        prospectId: 'PRJ-DUP-01',
+        invoiceId: 'INV-DUP-1A',
+        opId: 'OP-CONC-1',
+        monto: 500,
+        metodo: 'cheque',
+        ref: 'CHK-778899',
+        doc_comprobante: fileObj('chk1.pdf', 'pagos')
+      }),
+      wf.savePayment({
+        caller: manager,
+        prospectId: 'PRJ-DUP-02',
+        invoiceId: 'INV-DUP-2A',
+        opId: 'OP-CONC-2',
+        monto: 500,
+        metodo: 'cheque',
+        ref: 'chk 7788-99',
+        doc_comprobante: fileObj('chk2.pdf', 'pagos')
+      })
+    ]);
+    expect(concurrentRes.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(concurrentRes.filter(r => r.status === 'rejected')).toHaveLength(1);
+
+    // 7. Edición de un pago existente conservando su propia referencia NO se marca como duplicado contra sí mismo
+    const editedSameRef = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      paymentId: firstPay.payment.id,
+      monto: 2100,
+      metodo: 'transferencia',
+      ref: 'AB-00123-9'
+    });
+    expect(editedSameRef.status).toBe('updated');
+    expect(editedSameRef.payment.monto).toBe(2100);
+
+    // 8. Cambiar la referencia en edición libera la referencia anterior, y eliminar un pago libera su referencia
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      paymentId: firstPay.payment.id,
+      monto: 2100,
+      metodo: 'transferencia',
+      ref: 'AB-00123-NEW'
+    });
+    // Ahora 'AB-00123-9' quedó libre y puede usarse legítimamente
+    const reusedAfterEdit = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1B',
+      opId: 'OP-REUSE-AFTER-EDIT',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'AB-00123-9',
+      doc_comprobante: fileObj('voucher_reused.pdf', 'pagos')
+    });
+    expect(reusedAfterEdit.status).toBe('created');
+
+    await wf.deletePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1B',
+      paymentId: reusedAfterEdit.payment.id
+    });
+    const reusedAfterDelete = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-02',
+      invoiceId: 'INV-DUP-2A',
+      opId: 'OP-REUSE-AFTER-DEL',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'AB-00123-9',
+      doc_comprobante: fileObj('voucher_reused2.pdf', 'pagos')
+    });
+    expect(reusedAfterDelete.status).toBe('created');
+
+    // 9. Constancia de retención 1% consolidada: permite aplicar el mismo número de constancia a distintas facturas del MISMO cliente (cada una por su 1% = $50.00), pero bloquea repetirla en la misma factura o en otro cliente
+    const ret1A = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      opId: 'OP-RET-CONS-1A',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'CR-CONSOLIDADA-2026-01',
+      doc_comprobante: fileObj('cr_consolidada.pdf', 'pagos')
+    });
+    expect(ret1A.status).toBe('created');
+
+    // Misma factura -> bloqueado
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1A',
+      opId: 'OP-RET-CONS-1A-DUP',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'cr consolidada 2026 01',
+      doc_comprobante: fileObj('cr_consolidada.pdf', 'pagos')
+    })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+
+    // Otra factura del MISMO cliente -> permitido
+    const ret1B = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-01',
+      invoiceId: 'INV-DUP-1B',
+      opId: 'OP-RET-CONS-1B',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'CR-CONSOLIDADA-2026-01',
+      doc_comprobante: fileObj('cr_consolidada.pdf', 'pagos')
+    });
+    expect(ret1B.status).toBe('created');
+
+    // Factura de OTRO cliente distinto -> bloqueado
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-03',
+      invoiceId: 'INV-DUP-3A',
+      opId: 'OP-RET-CONS-OTHER-CLI',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'CR-CONSOLIDADA-2026-01',
+      doc_comprobante: fileObj('cr_consolidada.pdf', 'pagos')
+    })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+  });
+
+  test('Escenario 15: Caso obligatorio ($10,000 anticipo exigible, $4,000 pagados, $6,000 pendientes -> ANTICIPO_PENDIENTE) y validación de mediano/pequeño contribuyente y facturas inválidas', async () => {
+    const { fdb, wf, caller } = makeEnv();
+    const gestor = caller('gestor', 'GESTOR-FIN', 'Gestor Financiero');
+
+    // Cliente local exportación 0% IVA (o base $20,000 con 50/50) para que el anticipo exigible sea exactamente $10,000.00
+    const client10k = {
+      ...baseClient,
+      id: 'CLI-10K',
+      es_exportacion: true,
+      is_gran_contribuyente: false
+    };
+    await fdb.seed('clients_prod/CLI-10K', client10k);
+    await fdb.seed('prospects_prod/PRJ-MANDATORY-10K', {
+      ...baseClosingProspect,
+      id: 'PRJ-MANDATORY-10K',
+      clientId: 'CLI-10K',
+      estado: 'ganado',
+      etapa: 'cierre',
+      precio_cotizado: 20000, // 50/50 sobre $20,000 = $10,000 anticipo exigible
+      forma_pago: '50/50',
+      datos: {
+        doc_firmado: fileObj('contrato_10k.pdf'),
+        forma_pago: '50/50',
+        encargado: 'Ing. Carlos Pérez'
+      },
+      factura_anticipo_id: 'INV-10K-ADV',
+      facturas: [
+        {
+          id: 'INV-10K-ADV',
+          numero: 'CCF-10K-001',
+          monto: 10000,
+          es_anticipo: true,
+          tipo_factura: 'anticipo',
+          doc_factura: fileObj('ccf_10k.pdf', 'facturas'),
+          pagos: []
+        },
+        {
+          id: 'INV-ANULADA',
+          numero: 'CCF-VOID-999',
+          monto: 5000,
+          anulada: true,
+          estado: 'anulada',
+          doc_factura: fileObj('ccf_void.pdf', 'facturas'),
+          pagos: []
+        }
+      ]
+    });
+
+    // Rechazo de pago sin factura o sobre factura anulada/inválida
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MANDATORY-10K',
+      invoiceId: '',
+      monto: 4000,
+      metodo: 'transferencia',
+      ref: 'TRX-NO-INV',
+      doc_comprobante: fileObj('v.pdf', 'pagos')
+    })).rejects.toThrow(/invoiceId/i);
+
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MANDATORY-10K',
+      invoiceId: 'INV-ANULADA',
+      opId: 'OP-VOID-INV',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'TRX-VOID-INV',
+      doc_comprobante: fileObj('v.pdf', 'pagos')
+    })).rejects.toThrow(/válida o se encuentra anulada/i);
+
+    // Registrar pago válido de $4,000 con comprobante sobre el anticipo exigible de $10,000
+    const pay4k = await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MANDATORY-10K',
+      invoiceId: 'INV-10K-ADV',
+      opId: 'OP-4000-MANDATORY',
+      fecha: '2026-11-07',
+      monto: 4000,
+      metodo: 'transferencia',
+      ref: 'TRX-4000-PARCIAL',
+      doc_comprobante: fileObj('comprobante_4000.pdf', 'pagos')
+    });
+    expect(pay4k.status).toBe('created');
+    expect(pay4k.payment.confirmado).toBe(true);
+
+    // Caso obligatorio: Anticipo exigible $10,000 | Pagos registrados con comprobante $4,000 | Saldo pendiente $6,000 -> ANTICIPO_PENDIENTE (Fabricación bloqueada)
+    await expect(wf.validateManufacturingReadiness({
+      caller: gestor,
+      prospectId: 'PRJ-MANDATORY-10K'
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: expect.objectContaining({
+        ready: false,
+        errorCode: 'ANTICIPO_PENDIENTE',
+        montoExigible: 10000,
+        montoConfirmado: 4000,
+        montoEfectivoConfirmado: 4000,
+        saldoPendiente: 6000,
+        anticipoPagoStatus: 'parcialmente_pagado'
+      })
+    });
+
+    // Verificar también que un cliente clasificado como Mediano o Pequeño Contribuyente tiene rechazada la retención 1%
+    await fdb.seed('clients_prod/CLI-MEDIANO', {
+      ...baseClient,
+      id: 'CLI-MEDIANO',
+      is_gran_contribuyente: true,
+      categoria_contribuyente: 'mediano',
+      es_exportacion: false
+    });
+    await fdb.seed('prospects_prod/PRJ-MEDIANO', {
+      ...baseClosingProspect,
+      id: 'PRJ-MEDIANO',
+      clientId: 'CLI-MEDIANO',
+      estado: 'ganado',
+      forma_pago: '50/50',
+      facturas: [
+        { id: 'INV-MED-1', numero: 'CCF-MED-1', monto: 5650, es_anticipo: true, tipo_factura: 'anticipo', doc_factura: fileObj('fmed.pdf', 'facturas'), pagos: [] }
+      ]
+    });
+    await expect(wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-MEDIANO',
+      invoiceId: 'INV-MED-1',
+      opId: 'OP-MED-1',
+      monto: 50,
+      metodo: 'retencion_1pct',
+      ref: 'RET-MED-01',
+      doc_comprobante: fileObj('ret_med.pdf', 'pagos')
+    })).rejects.toThrow(/Gran Contribuyente/i);
   });
 });
