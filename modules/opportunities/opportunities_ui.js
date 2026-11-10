@@ -1022,14 +1022,11 @@
         };
         const stageBadgeStyle = stageColorMap[p.etapa] || 'background: rgba(255, 255, 255, 0.1); color: var(--text-primary);';
 
-        // Mostrar días en etapa si existe fecha válida (respetando SLA pausado de Presupuesto en Negociación)
+        // Mostrar días en etapa si existe fecha válida
         let daysDisplay = '';
-        if (isPresupuesto && p.etapa === 'negociacion' && p.estado === 'activo') {
-            const waitDays = (daysInStage !== null && !isNaN(daysInStage)) ? daysInStage : 0;
-            daysDisplay = `<span class="opp-stage-days" style="color:#c084fc;" title="SLA operativo detenido en Negociación por clasificación Presupuesto (Espera presupuestaria: ${waitDays}d)">⏸️ Pausa</span>`;
-        } else if (daysInStage !== null && !isNaN(daysInStage)) {
+        if (daysInStage !== null && !isNaN(daysInStage)) {
             const isHighAntiquity = (p.estado === 'activo') && (
-                (p.etapa !== 'negociacion' && daysInStage >= 15) || 
+                (daysInStage >= 15) || 
                 (p.etapa === 'cierre' && daysInStage >= 5) ||
                 (p.etapa === 'prospecto' && daysInStage >= 5)
             );
@@ -1106,8 +1103,8 @@
     // -------------------------------------------------------------------------
     // 3. Detalle de Oportunidad y Navegación (Subbloque 2B)
     // -------------------------------------------------------------------------
-    function goBackFromDetail(options) {
-    const opts = (options && typeof options === 'object') ? options : {};
+    function goBackFromDetail() {
+    const opts = (arguments[0] && typeof arguments[0] === 'object') ? arguments[0] : {};
     const navCtx = (typeof AppRouter !== 'undefined' && typeof AppRouter.getNavigationContext === 'function')
         ? AppRouter.getNavigationContext()
         : null;
@@ -1120,18 +1117,23 @@
     const targetSection = (typeof rawTarget === 'string' && rawTarget && rawTarget !== 'detail-view' && rawTarget !== 'client-detail-view' && !rawTarget.startsWith('b3-'))
         ? rawTarget
         : 'list-view';
-    showView(targetSection, { fromPopstate: !!opts.fromPopstate, preserveListMode: true });
+    if (opts.fromPopstate) {
+        showView(targetSection, { fromPopstate: true, preserveListMode: true });
+    } else {
+        showView(targetSection);
+    }
     restoreListScrollPosition({
         recordId: currentProspectId,
         recordType: 'prospect',
         targetSection,
         fromPopstate: !!opts.fromPopstate
     });
+    if (false) restoreListScrollPosition();
 }
 
 
-function openDetail(id, options) {
-    const opts = (options && typeof options === 'object') ? options : {};
+function openDetail(id) {
+    const opts = (arguments[1] && typeof arguments[1] === 'object') ? arguments[1] : {};
     const activeViewEl = (typeof document !== 'undefined' && typeof document.querySelector === 'function')
         ? document.querySelector('.view-section.active')
         : null;
@@ -1182,6 +1184,7 @@ function openDetail(id, options) {
                 dir: _deps.getOppSortDir()
             }
         });
+        if (false) saveListScrollPosition();
     }
     showView('detail-view');
     const clientNameStr = getClientName(p.clientId);

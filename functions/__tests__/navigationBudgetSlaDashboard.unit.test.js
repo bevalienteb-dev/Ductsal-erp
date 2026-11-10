@@ -12,6 +12,7 @@ const AppRouter = require('../../core/app_router');
 const OpportunitiesController = require('../../modules/opportunities/opportunities_controller');
 const OpportunitiesUI = require('../../modules/opportunities/opportunities_ui');
 const ClientsUI = require('../../modules/clients/clients_ui');
+const DashboardUI = require('../../modules/dashboard/dashboard_ui');
 const { createFakeFirestore } = require('../test-helpers/fakeFirestore');
 const { createCommercialService } = require('../commercialService');
 const { createProspectWorkflowService } = require('../prospectWorkflowService');
@@ -130,7 +131,10 @@ function makeMockDom() {
     'stage-title-text', 'stage-workflow-box', 'stage-tracker', 'btn-advance', 'btn-revert', 'btn-new-proposal', 'btn-lose',
     'detail-time-in-stage', 'detail-last-contact', 'detail-badges', 'info-list', 'docs-list', 'docs-count-badge',
     'logs-container', 'detail-followup-badge', 'detail-followup-summary',
-    'clients-table-body', 'cli-search', 'client-detail-content'
+    'clients-table-body', 'cli-search', 'client-detail-content',
+    'dash-stagnant-table-body', 'dash-active-times-body', 'dash-stagnant-empty-box', 'dash-stagnant-table-wrapper', 'dash-stagnant-counter-badge',
+    'dash-wip-stage-prospecto', 'dash-wip-stage-levantamiento', 'dash-wip-stage-cotizacion', 'dash-wip-stage-negociacion', 'dash-wip-stage-cierre',
+    'metric-alertas-count', 'metric-alertas-sub'
   ].forEach(id => makeEl(id));
 
   elements['stage-title-text'].parentElement = makeEl('stage-title-parent');
@@ -404,6 +408,173 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
 
     jest.useRealTimers();
   });
+
+  test('1.4: Regresar desde oportunidad abierta en el dashboard, botón Atrás del navegador y ciclos repetidos sin errores ni pérdida de contexto', () => {
+    jest.useFakeTimers();
+    const { doc, elements, mainContent } = makeMockDom();
+    global.document = doc;
+
+    let winScrollY = 0;
+    let popstateHandler = null;
+    global.window = {
+      scrollY: 0,
+      pageYOffset: 0,
+      innerHeight: 800,
+      scrollTo: (arg1, arg2) => {
+        winScrollY = typeof arg1 === 'object' ? arg1.top : arg2;
+        global.window.scrollY = winScrollY;
+      },
+      history: {
+        state: null,
+        pushState: (st) => { global.window.history.state = st; },
+        replaceState: (st) => { global.window.history.state = st; }
+      },
+      addEventListener: (evt, fn) => {
+        if (evt === 'popstate') popstateHandler = fn;
+      }
+    };
+
+    const sampleProspects = [
+      { id: 'OPP-DASH-1', codigo: '202605101', proyecto: 'Centro Logístico', clientId: 'CLI-1', vendedorId: 'USR-V1', etapa: 'cotizacion', clasificacion: 'ejecucion', estado: 'activo', precio_cotizado: 45000, fecha_creacion: '2026-04-01T10:00:00.000Z', stage_timestamps: { cotizacion: '2026-04-02T10:00:00.000Z' } },
+      { id: 'OPP-DASH-2', codigo: '202605102', proyecto: 'Bodega Frigorífica', clientId: 'CLI-2', vendedorId: 'USR-V1', etapa: 'negociacion', clasificacion: 'presupuesto', estado: 'activo', precio_cotizado: 60000, fecha_creacion: '2026-05-02T10:00:00.000Z', stage_timestamps: { negociacion: '2026-05-05T10:00:00.000Z' } }
+    ];
+    const sampleClients = [
+      { id: 'CLI-1', tipo: 'juridica', empresa: 'Logística Integral SA', contacto: 'Ing. Mario', nit: '0614-010190-101-1', telefono: '2200-1100', correo: 'info@log.com', documentos: { dui: '111' } },
+      { id: 'CLI-2', tipo: 'juridica', empresa: 'Frigoríficos del Sur', contacto: 'Lic. Ana', nit: '0614-020290-102-2', telefono: '2200-2200', correo: 'info@frigo.com', documentos: { dui: '222' } }
+    ];
+
+    let listMode = 'pipeline';
+    let dashRenderedCount = 0;
+
+    const renderDashboardStub = () => {
+      dashRenderedCount++;
+      elements['dash-stagnant-table-body'].innerHTML = `<tr data-prospect-id="OPP-DASH-1"><td>202605101</td></tr>`;
+    };
+
+    AppRouter.initAppRouter({
+      getDocument: () => doc,
+      getWindow: () => global.window,
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getAppState: () => AppState,
+      getCurrentListMode: () => listMode,
+      setCurrentListMode: (m) => { listMode = m; },
+      switchListMode: (m) => { listMode = m; OpportunitiesUI.renderList({ doc }); },
+      renderDashboard: renderDashboardStub,
+      renderList: () => OpportunitiesUI.renderList({ doc }),
+      renderClientsTable: () => ClientsUI.renderClientsTable(),
+      goBackFromDetail: (opts) => OpportunitiesUI.goBackFromDetail(opts),
+      closeClientDetailView: (opts) => ClientsUI.closeClientDetailView(opts)
+    });
+
+    OpportunitiesController.initOpportunitiesController({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getProspects: () => sampleProspects,
+      renderList: () => OpportunitiesUI.renderList({ doc })
+    });
+
+    OpportunitiesUI.initOpportunitiesUI({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getProspects: () => sampleProspects,
+      getClients: () => sampleClients,
+      getOppStatusFilter: () => OpportunitiesController.getOppStatusFilter(),
+      getOppClasifFilter: () => OpportunitiesController.getOppClasifFilter(),
+      getOppStageFilter: () => OpportunitiesController.getOppStageFilter(),
+      getOppSortCol: () => OpportunitiesController.getOppSortCol(),
+      getOppSortDir: () => OpportunitiesController.getOppSortDir(),
+      saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      showView: (v, opts) => AppRouter.showView(v, opts),
+      getLastViewedSection: () => AppRouter.getLastViewedSection()
+    });
+
+    ClientsUI.initClientsModule({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getClients: () => sampleClients,
+      getVisibleClients: () => sampleClients,
+      getProspects: () => sampleProspects,
+      showView: (v, opts) => AppRouter.showView(v, opts),
+      getLastViewedSection: () => AppRouter.getLastViewedSection(),
+      saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts)
+    });
+
+    // A) Abrir oportunidad desde el Dashboard y regresar al Dashboard (no a list-view)
+    AppRouter.showView('dashboard-view');
+    global.window.scrollY = 580;
+    mainContent.scrollTop = 580;
+
+    OpportunitiesUI.openDetail('OPP-DASH-1');
+    expect(elements['detail-view'].classList.contains('active')).toBe(true);
+    expect(AppRouter.getLastViewedSection()).toBe('dashboard-view');
+
+    global.window.scrollY = 0;
+    mainContent.scrollTop = 0;
+
+    // Presionar Volver desde una oportunidad abierta en el dashboard
+    OpportunitiesUI.goBackFromDetail();
+    jest.runAllTimers();
+
+    expect(elements['dashboard-view'].classList.contains('active')).toBe(true);
+    expect(elements['list-view'].classList.contains('active')).toBe(false);
+    expect(global.window.scrollY).toBe(580);
+    expect(mainContent.scrollTop).toBe(580);
+    const dashRow = doc.querySelector('[data-prospect-id="OPP-DASH-1"]');
+    expect(dashRow).not.toBeNull();
+    expect(dashRow.classList.contains('row-context-restored')).toBe(true);
+
+    // B) Usar botón Atrás del navegador (popstate) desde una oportunidad abierta en list-view
+    AppRouter.showView('list-view');
+    OpportunitiesController.setOppClasifFilter('presupuesto');
+    elements['opp-search'].value = 'Bodega';
+    OpportunitiesUI.renderList({ doc });
+    global.window.scrollY = 275;
+    mainContent.scrollTop = 275;
+
+    OpportunitiesUI.openDetail('OPP-DASH-2');
+    expect(elements['detail-view'].classList.contains('active')).toBe(true);
+    global.window.scrollY = 0;
+    mainContent.scrollTop = 0;
+
+    popstateHandler({ state: { crmView: 'list-view', listMode: 'pipeline' } });
+    jest.runAllTimers();
+
+    expect(elements['list-view'].classList.contains('active')).toBe(true);
+    expect(OpportunitiesController.getOppClasifFilter()).toBe('presupuesto');
+    expect(elements['opp-search'].value).toBe('Bodega');
+    expect(global.window.scrollY).toBe(275);
+
+    // C) Repetir la operación 5 ciclos consecutivos alternando Oportunidades, Clientes y Dashboard sin pérdida de contexto
+    for (let cycle = 1; cycle <= 5; cycle++) {
+      const scrollOpp = 150 + cycle * 40;
+      AppRouter.showView('list-view');
+      global.window.scrollY = scrollOpp;
+      mainContent.scrollTop = scrollOpp;
+      OpportunitiesUI.openDetail('OPP-DASH-2');
+      expect(elements['detail-view'].classList.contains('active')).toBe(true);
+      OpportunitiesUI.goBackFromDetail();
+      jest.runAllTimers();
+      expect(elements['list-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(scrollOpp);
+      expect(OpportunitiesController.getOppClasifFilter()).toBe('presupuesto');
+      expect(elements['opp-search'].value).toBe('Bodega');
+
+      const scrollCli = 200 + cycle * 30;
+      AppRouter.showView('clients-view');
+      elements['cli-search'].value = 'Frigo';
+      ClientsUI.renderClientsTable();
+      global.window.scrollY = scrollCli;
+      mainContent.scrollTop = scrollCli;
+      ClientsUI.openClientDetailView('CLI-2');
+      expect(elements['client-detail-view'].classList.contains('active')).toBe(true);
+      ClientsUI.closeClientDetailView();
+      jest.runAllTimers();
+      expect(elements['clients-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(scrollCli);
+      expect(elements['cli-search'].value).toBe('Frigo');
+    }
+
+    jest.useRealTimers();
+  });
 });
 
 describe('BLOQUE 2 — SLA de proyectos clasificados como Presupuesto', () => {
@@ -648,6 +819,166 @@ describe('BLOQUE 2 — SLA de proyectos clasificados como Presupuesto', () => {
     expect(sla.isOverdue).toBe(true);
     expect(sla.estadoSla).toBe('vencido');
   });
+
+  test('2.5: Compatibilidad con presupuestos históricos que YA se encontraban en Negociación antes del cambio (sin sla_pausado_en ni migración previa)', async () => {
+    const env = makeBackendEnv(new Date('2026-10-15T14:00:00.000Z'));
+    const { fdb, wf, commercial, caller } = env;
+    const seller = caller('vendedor', 'USR-V1', 'Alejandra Ayala');
+
+    // Oportunidad histórica creada en febrero y que entró a Negociación el 16 de febrero de 2026 ANTES del cambio
+    // (no tiene sla_pausado_en, ni sla_estado, ni seguimiento.cadencia.sla_pausado persistidos en Firestore)
+    const legacyBudgetInNeg = {
+      id: 'OPP-LEGACY-BUDGET-01',
+      codigo: '202602008',
+      proyecto: 'Planta Solar Fase II (Presupuesto Histórico)',
+      clientId: 'C-PRES',
+      vendedorId: 'USR-V1',
+      createdBy: 'USR-V1',
+      estado: 'activo',
+      etapa: 'negociacion',
+      clasificacion: 'presupuesto',
+      fecha_creacion: '2026-02-02T09:00:00.000Z',
+      stage_timestamps: {
+        prospecto: '2026-02-02T09:00:00.000Z',
+        levantamiento: '2026-02-04T09:00:00.000Z',
+        cotizacion: '2026-02-09T09:00:00.000Z',
+        negociacion: '2026-02-16T09:00:00.000Z'
+      },
+      tiempos_etapas_acumulados: {
+        prospecto: 2,
+        levantamiento: 3,
+        cotizacion: 5
+      },
+      logs: [
+        { date: '2026-02-16T09:00:00.000Z', text: 'Avanzó a Negociación con oferta presupuestaria' }
+      ]
+    };
+
+    const evalNow = new Date('2026-10-15T14:00:00.000Z'); // 8 meses después
+
+    // 1. Es reconocida automáticamente como presupuesto con SLA pausado sin necesidad de avanzar, retroceder ni reclasificar
+    const sla = CrmFollowUpCalc.calculateStageSla(legacyBudgetInNeg, evalNow);
+    expect(sla.slaPaused).toBe(true);
+    expect(sla.estadoSla).toBe('pausado_presupuesto');
+    expect(sla.isOverdue).toBe(false);
+    // No acumula como tiempo operativo la espera presupuestaria histórica (elapsedBusinessDays === 0)
+    expect(sla.elapsedBusinessDays).toBe(0);
+    // Conserva intactos los tiempos anteriores (2 + 3 + 5 = 10 días hábiles operativos)
+    expect(sla.tiempoOperativoAcumuladoDias).toBe(10);
+    expect(sla.tiempoOperativoDias).toBe(10);
+    // Conserva la antigüedad calendario total (255 días) y la espera presupuestaria histórica (241 días desde el 16 de febrero)
+    expect(sla.tiempoEsperaPresupuestoDias).toBe(241);
+    expect(sla.antiguedadTotalDias).toBe(255);
+
+    // 2. No requiere ninguna acción artificial para quedar al día en Agenda, Atención del Gerente ni WIP del Dashboard
+    const followUp = CrmFollowUpCalc.classifyFollowUp(legacyBudgetInNeg, evalNow);
+    expect(followUp.status).toBe('al_dia');
+    expect(followUp.inAgenda).toBe(false);
+
+    const attention = CrmFollowUpCalc.calculateManagerAttentionItems([legacyBudgetInNeg], null, {
+      filterStatus: 'pendientes',
+      now: evalNow
+    });
+    expect(attention.items).toHaveLength(0);
+    expect(attention.counts.totalPending).toBe(0);
+
+    const wip = CrmDashboardCalc.calculateActiveWipTimes([legacyBudgetInNeg], null, evalNow);
+    expect(wip.totalOverLimit).toBe(0);
+    expect(wip.allItems[0].isOverLimit).toBe(false);
+    expect(wip.allItems[0].slaPaused).toBe(true);
+
+    // 3. Si ese presupuesto histórico posteriormente se reactiva a Ejecución o se revierte, tampoco contamina tiempos_etapas_acumulados.negociacion
+    await fdb.seed('prospects_prod/OPP-LEGACY-BUDGET-01', legacyBudgetInNeg);
+    const recRes = await commercial.reclassifyProspect({
+      caller: seller,
+      prospectId: 'OPP-LEGACY-BUDGET-01',
+      clasificacion: 'ejecucion',
+      motivo: 'Cliente histórico obtuvo financiamiento y reactiva proyecto para ejecución',
+      opId: 'op_legacy_budget_react_01'
+    });
+    expect(recRes.status).toBe('reclassified');
+    expect(recRes.tiempo_espera_presupuesto_acumulado_dias).toBe(241);
+
+    const afterReact = await fdb.data('prospects_prod/OPP-LEGACY-BUDGET-01');
+    expect(afterReact.tiempos_etapas_acumulados).toEqual({
+      prospecto: 2,
+      levantamiento: 3,
+      cotizacion: 5
+    });
+    expect(afterReact.tiempo_espera_presupuesto_acumulado_dias).toBe(241);
+    expect(afterReact.logs.length).toBeGreaterThanOrEqual(2); // Conserva bitácora original + auditoría de reclasificación
+  });
+
+  test('2.6: Reclasificación de Ejecución a Presupuesto cuando la oportunidad YA está en Negociación activa la pausa correctamente y preserva los días operativos previos', async () => {
+    const env = makeBackendEnv(new Date('2026-06-05T15:00:00.000Z')); // Viernes 5 de junio de 2026
+    const { fdb, commercial, caller } = env;
+    const seller = caller('vendedor', 'USR-V1', 'Alejandra Ayala');
+
+    // Oportunidad de Ejecución que entró a Negociación el lunes 1 de junio (4 días hábiles transcurridos en Negociación)
+    await fdb.seed('prospects_prod/OPP-EJEC-TO-PRESUP', {
+      id: 'OPP-EJEC-TO-PRESUP',
+      codigo: '202606001',
+      proyecto: 'Ampliación Planta Farmacéutica',
+      clientId: 'C-PRES',
+      vendedorId: 'USR-V1',
+      createdBy: 'USR-V1',
+      estado: 'activo',
+      etapa: 'negociacion',
+      clasificacion: 'ejecucion',
+      fecha_creacion: '2026-05-25T09:00:00.000Z',
+      stage_timestamps: {
+        prospecto: '2026-05-25T09:00:00.000Z',
+        levantamiento: '2026-05-26T09:00:00.000Z',
+        cotizacion: '2026-05-28T09:00:00.000Z',
+        negociacion: '2026-06-01T15:00:00.000Z'
+      },
+      tiempos_etapas_acumulados: {
+        prospecto: 1,
+        levantamiento: 2,
+        cotizacion: 2
+      },
+      seguimiento: {
+        proxima_accion: {
+          fecha: '2026-06-08',
+          tipo: 'llamada',
+          descripcion: 'Llamada de seguimiento'
+        }
+      }
+    });
+
+    const recRes = await commercial.reclassifyProspect({
+      caller: seller,
+      prospectId: 'OPP-EJEC-TO-PRESUP',
+      clasificacion: 'presupuesto',
+      motivo: 'El cliente pospuso la ejecución para el presupuesto de inversión del próximo trimestre',
+      opId: 'op_reclass_ejec_to_presup_01'
+    });
+
+    expect(recRes.status).toBe('reclassified');
+    expect(recRes.clasificacion).toBe('presupuesto');
+    expect(recRes.sla_estado).toBe('pausado_presupuesto');
+
+    const updated = await fdb.data('prospects_prod/OPP-EJEC-TO-PRESUP');
+    expect(updated.clasificacion).toBe('presupuesto');
+    expect(updated.sla_estado).toBe('pausado_presupuesto');
+    expect(updated.sla_pausado_en).toBe('2026-06-05T15:00:00.000Z');
+    expect(updated.sla_pausado_etapa).toBe('negociacion');
+    expect(updated.seguimiento.proxima_accion).toBeNull();
+    expect(updated.seguimiento.cadencia.sla_pausado).toBe(true);
+    // Capturó los 4 días hábiles operativos transcurridos en Negociación antes de pausar
+    expect(updated.tiempos_etapas_acumulados.negociacion).toBe(4);
+
+    // 90 días después (3 de septiembre de 2026), el tiempo operativo sigue en 9d (1+2+2+4) y la espera presupuestaria es de 90d
+    const later = new Date('2026-09-03T15:00:00.000Z');
+    const sla = CrmFollowUpCalc.calculateStageSla(updated, later);
+    expect(sla.slaPaused).toBe(true);
+    expect(sla.estadoSla).toBe('pausado_presupuesto');
+    expect(sla.isOverdue).toBe(false);
+    expect(sla.elapsedBusinessDays).toBe(0);
+    expect(sla.tiempoOperativoAcumuladoDias).toBe(9);
+    expect(sla.tiempoOperativoDias).toBe(9);
+    expect(sla.tiempoEsperaPresupuestoDias).toBe(90);
+  });
 });
 
 describe('BLOQUE 3 — Indicadores del Dashboard y caso concreto 0-17', () => {
@@ -793,6 +1124,88 @@ describe('BLOQUE 3 — Indicadores del Dashboard y caso concreto 0-17', () => {
     // Evaluación en Dashboard — WIP OverLimit
     const wip = CrmDashboardCalc.calculateActiveWipTimes(universe, null, evalNow);
     expect(wip.overLimitItems.map(i => i.id)).toEqual(['OPP-OVERDUE-COT']);
+  });
+
+  test('3.3: Umbral de 45 días hábiles (permanencia_pipeline) descuenta espera presupuestaria, no se presenta como incumplimiento operativo del vendedor y mantiene consistencia en el Dashboard', () => {
+    const evalNow = new Date('2026-11-10T15:00:00.000Z');
+
+    // A) Oportunidad reactivada que tiene > 100 días de antigüedad total, pero 90 días fueron espera presupuestaria legítima
+    const oppReactivadaSinAbandono = {
+      id: 'OPP-REACT-CLEAN',
+      codigo: '202605088',
+      proyecto: 'Centro Comercial Fase III',
+      clientId: 'CLI-88',
+      vendedorId: 'USR-ALEJANDRA',
+      estado: 'activo',
+      etapa: 'negociacion',
+      clasificacion: 'ejecucion',
+      fecha_creacion: '2026-06-01T10:00:00.000Z',
+      tiempo_espera_presupuesto_acumulado_dias: 150, // ~105 días hábiles de espera presupuestaria previa
+      stage_timestamps: {
+        negociacion: '2026-11-02T10:00:00.000Z'
+      }
+    };
+
+    const attClean = CrmFollowUpCalc.calculateManagerAttentionItems([oppReactivadaSinAbandono], null, {
+      filterStatus: 'pendientes',
+      now: evalNow
+    });
+    expect(attClean.items).toHaveLength(0);
+
+    // B) Oportunidad de Ejecución en Negociación abandonada sin seguimiento vigente y > 45 días hábiles operativos
+    const oppAntiguedadProlongada = {
+      id: 'OPP-LONG-AGE',
+      codigo: '202607044',
+      proyecto: 'Complejo Industrial Sin Seguimiento',
+      clientId: 'CLI-44',
+      vendedor: 'Alejandra Ayala',
+      vendedorId: 'USR-ALEJANDRA',
+      estado: 'activo',
+      etapa: 'negociacion',
+      clasificacion: 'ejecucion',
+      fecha_creacion: '2026-07-01T10:00:00.000Z',
+      stage_timestamps: {
+        negociacion: '2026-07-10T10:00:00.000Z'
+      }
+    };
+
+    const attAge = CrmFollowUpCalc.calculateManagerAttentionItems([oppAntiguedadProlongada], null, {
+      filterStatus: 'pendientes',
+      now: evalNow
+    });
+    expect(attAge.items).toHaveLength(1);
+    const ageMotivo = attAge.items[0].motivoObjects.find(m => m.tipo === 'permanencia_pipeline');
+    expect(ageMotivo).toBeDefined();
+    expect(ageMotivo.esIncumplimientoOperativo).toBe(false);
+    expect(ageMotivo.categoria).toBe('antiguedad_pipeline');
+    expect(ageMotivo.descripcion).toContain('Antigüedad prolongada en pipeline sin cierre');
+
+    // C) Verificar consistencia visual del Dashboard (renderDashboardActiveTimes):
+    //    permanencia_pipeline se muestra con badge azul "🗓️ Antigüedad Pipeline" (y NO como "⏰ Límite Etapa")
+    const { doc, elements } = makeMockDom();
+    const origDoc = global.document;
+    global.document = doc;
+    try {
+      DashboardUI.setDeps({
+        getDocument: () => doc,
+        getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+        getProspects: () => [caso017, oppAntiguedadProlongada],
+        getUsers: () => [],
+        getCrmDashboardCalc: () => CrmDashboardCalc,
+        getCrmFollowUpCalc: () => CrmFollowUpCalc,
+        getClientName: () => 'Inversiones Industriales'
+      });
+
+      const wipData = CrmDashboardCalc.calculateActiveWipTimes([caso017, oppAntiguedadProlongada], null, evalNow);
+      DashboardUI.renderDashboardActiveTimes(wipData.allItems);
+
+      expect(elements['dash-stagnant-counter-badge'].textContent).toBe('1 pendiente');
+      expect(elements['dash-active-times-body'].innerHTML).toContain('Antigüedad Pipeline');
+      expect(elements['dash-active-times-body'].innerHTML).not.toContain('Límite Etapa');
+      expect(elements['dash-active-times-body'].innerHTML).not.toContain('CASA 725');
+    } finally {
+      global.document = origDoc;
+    }
   });
 });
 

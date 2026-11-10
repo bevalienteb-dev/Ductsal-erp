@@ -2415,7 +2415,8 @@ function showView(viewId, options) {
 
 let lastListScrollY = 0;
 
-function saveListScrollPosition(opts) {
+function saveListScrollPosition() {
+    const opts = arguments[0];
     if (typeof AppRouter !== 'undefined' && typeof AppRouter.saveListScrollPosition === 'function') {
         AppRouter.saveListScrollPosition(opts);
         lastListScrollY = AppRouter.getLastListScrollY();
@@ -2429,7 +2430,8 @@ function saveListScrollPosition(opts) {
     return lastListScrollY;
 }
 
-function restoreListScrollPosition(opts) {
+function restoreListScrollPosition() {
+    const opts = arguments[0];
     if (typeof AppRouter !== 'undefined' && typeof AppRouter.restoreListScrollPosition === 'function') {
         return AppRouter.restoreListScrollPosition(opts);
     }

@@ -1223,12 +1223,14 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
           patch.sla_pausado_etapa = 'negociacion';
           patch.sla_estado = 'pausado_presupuesto';
           const curSeg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
-          if (curSeg.cadencia && typeof curSeg.cadencia === 'object') {
-            patch.seguimiento = {
-              ...curSeg,
-              cadencia: { ...curSeg.cadencia, sla_pausado: true }
-            };
-          }
+          patch.seguimiento = {
+            ...curSeg,
+            proxima_accion: null,
+            cadencia: {
+              ...(curSeg.cadencia && typeof curSeg.cadencia === 'object' ? curSeg.cadencia : {}),
+              sla_pausado: true
+            }
+          };
         }
       }
 

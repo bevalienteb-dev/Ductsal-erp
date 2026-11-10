@@ -1112,8 +1112,11 @@
             // Criterio E (Fase 4D + Bloque 3): Permanencia prolongada activa en pipeline (> 45 días hábiles sin cierre)
             // Unificación de fuente de verdad: si la oportunidad está operativamente al día en su etapa o cadencia de seguimiento
             // (ej. caso 0-17 en Negociación con próxima acción vigente y sin vencimiento), NO se clasifica como vencida/estancada.
+            // La espera presupuestaria acumulada no computa como tiempo operativo ni como incumplimiento del vendedor.
             if (p.estado === 'activo' && p.fecha_creacion && p.clasificacion !== 'presupuesto' && !slaInfo.slaPaused) {
-                const pipelineBusinessDays = slaInfo.antiguedadTotalDiasHabiles;
+                const waitHabiles = Number(slaInfo.tiempoEsperaPresupuestoDiasHabiles)
+                    || Math.floor(((Number(p.tiempo_espera_presupuesto_acumulado_dias) || 0) * 5) / 7);
+                const pipelineBusinessDays = Math.max(0, slaInfo.antiguedadTotalDiasHabiles - waitHabiles);
                 const isUpToDateInNegociacion = (p.etapa === 'negociacion')
                     && !followUpInfo.isEscaladoGerencia
                     && (followUpInfo.status === 'al_dia' || followUpInfo.status === 'hoy' || followUpInfo.status === 'proxima');
@@ -1130,8 +1133,10 @@
                     motivos.push({
                         tipo: 'permanencia_pipeline',
                         subtipo: 'estancamiento_pipeline',
-                        descripcion: `Oportunidad estancada en pipeline (${pipelineBusinessDays} días hábiles sin cierre)`,
-                        limite: 'Máximo 45 días hábiles en pipeline',
+                        categoria: 'antiguedad_pipeline',
+                        esIncumplimientoOperativo: false,
+                        descripcion: `Antigüedad prolongada en pipeline sin cierre (${pipelineBusinessDays} días hábiles acumulados)`,
+                        limite: 'Referencia gerencial 45 días hábiles en pipeline',
                         esperado: '<= 45 días hábiles',
                         observado: `${pipelineBusinessDays} días hábiles`,
                         fecha: (typeof p.fecha_creacion === 'string' ? p.fecha_creacion.slice(0, 10) : getCommercialYMD(p.fecha_creacion)) || null,
