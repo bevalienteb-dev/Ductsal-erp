@@ -148,6 +148,98 @@
         Object.assign(_deps, customDeps);
     }
 
+    function _evaluateFinancialMilestones(p, client) {
+        if (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.evaluateFinancialMilestones === 'function') {
+            return CrmFollowUpCalc.evaluateFinancialMilestones(p, client);
+        }
+        if (typeof window !== 'undefined' && window.CrmFollowUpCalc && typeof window.CrmFollowUpCalc.evaluateFinancialMilestones === 'function') {
+            return window.CrmFollowUpCalc.evaluateFinancialMilestones(p, client);
+        }
+        if (typeof require === 'function') {
+            try {
+                const calc = require('../../crm_followup_calc');
+                if (calc && typeof calc.evaluateFinancialMilestones === 'function') {
+                    return calc.evaluateFinancialMilestones(p, client);
+                }
+            } catch (e) { /* ignore fallback */ }
+        }
+        const terms = { '100% anticipado': 1.0, '70/30': 0.7, '50/50': 0.5 };
+        const formaPago = p && typeof p.forma_pago === 'string' ? p.forma_pago.trim() : null;
+        const pct = formaPago && Object.prototype.hasOwnProperty.call(terms, formaPago) ? terms[formaPago] : null;
+        const basePrecio = parseFloat(p && p.precio_cotizado) || 0;
+        const currentSubtotal = _deps.getProjectSubtotal(p);
+        const subtotal = basePrecio > 0 ? (currentSubtotal > 0 ? Math.min(basePrecio, currentSubtotal) : basePrecio) : currentSubtotal;
+        const isExport = Boolean(client && (client.es_exportacion === true || client.es_exportacion === 'true'));
+        const isGranContribuyente = Boolean(client && (client.is_gran_contribuyente === true || client.is_gran_contribuyente === 'true'));
+        const total = Math.round((isExport ? subtotal : subtotal * 1.13) * 100) / 100;
+        const montoExigible = pct !== null ? Math.round(total * pct * 100) / 100 : 0;
+        const facturas = Array.isArray(p && p.facturas) ? p.facturas : [];
+        const activeFacturas = facturas.filter(f => f && !f.anulada && !f.eliminada && f.estado !== 'anulada' && parseFloat(f.monto) > 0 && f.numero);
+        let advInv = activeFacturas.find(f => f.es_anticipo === true || String(f.tipo_factura || f.tipo || '').toLowerCase() === 'anticipo');
+        if (!advInv && p && p.factura_anticipo_id) {
+            advInv = activeFacturas.find(f => f.id === p.factura_anticipo_id && f.es_anticipo !== false);
+        }
+        if (!advInv && activeFacturas.length > 0 && activeFacturas[0].es_anticipo !== false && String(activeFacturas[0].tipo_factura || '').toLowerCase() !== 'ordinaria') {
+            advInv = activeFacturas[0];
+        }
+        const ccfEmitido = Boolean(advInv && advInv.numero && advInv.doc_factura);
+        const ccfNumero = ccfEmitido ? String(advInv.numero).trim() : null;
+        const advMonto = advInv ? (Math.round(parseFloat(advInv.monto) * 100) / 100) : 0;
+        let montoEfectivoConfirmado = 0;
+        let montoRetencionBruta = 0;
+        if (advInv && Array.isArray(advInv.pagos)) {
+            advInv.pagos.forEach(pay => {
+                if (!pay || pay.anulado === true || pay.eliminado === true || pay.revertido === true || pay.verificado === false || pay.confirmado === false || pay.estado === 'pendiente_verificacion') return;
+                const isConfirmed = (pay.confirmado === true || pay.verificado === true || pay.estado === 'confirmado' || pay.estado === 'verificado') &&
+                    Boolean((pay.confirmado_por_uid || pay.confirmado_por || pay.verificado_por_uid || pay.verificado_por) && (pay.confirmado_en || pay.verificado_en));
+                if (!isConfirmed) return;
+                const pm = parseFloat(pay.monto);
+                if (isNaN(pm) || pm <= 0 || !pay.doc_comprobante) return;
+                const metodo = String(pay.metodo || '').trim().toLowerCase();
+                if (metodo === 'retencion_1pct') {
+                    if (!client || (isGranContribuyente && !isExport)) montoRetencionBruta += pm;
+                } else if (metodo === 'transferencia' || metodo === 'cheque') {
+                    montoEfectivoConfirmado += pm;
+                }
+            });
+        }
+        montoEfectivoConfirmado = Math.round(montoEfectivoConfirmado * 100) / 100;
+        const advBaseSinIva = advInv ? (isExport ? advMonto : Math.round((advMonto / 1.13) * 100) / 100) : 0;
+        const maxRetencion = (advInv && (!client || (isGranContribuyente && !isExport)) && advBaseSinIva >= 100)
+            ? Math.round(advBaseSinIva * 0.01 * 100) / 100
+            : 0;
+        const montoRetencionConfirmada = Math.round(Math.min(montoRetencionBruta, maxRetencion) * 100) / 100;
+        const montoConfirmado = advInv ? Math.min(advMonto, Math.round((montoEfectivoConfirmado + montoRetencionConfirmada) * 100) / 100) : 0;
+        const saldoPendienteAnticipo = Math.max(0, Math.round((montoExigible - montoConfirmado) * 100) / 100);
+        const anticipoCumplido = Boolean(pct !== null && montoExigible > 0 && advInv && (advMonto + 0.009 >= montoExigible) && (montoConfirmado + 0.009 >= montoExigible));
+        const anticipoPagoStatus = anticipoCumplido ? 'pagado' : (montoConfirmado > 0.009 ? 'parcialmente_pagado' : 'pendiente');
+        const obligacionesSeguimiento = [];
+        if (!ccfEmitido) obligacionesSeguimiento.push('Emitir CCF de anticipo y adjuntar respaldo fiscal.');
+        if (!anticipoCumplido) {
+            obligacionesSeguimiento.push(
+                anticipoPagoStatus === 'parcialmente_pagado'
+                    ? `Completar cobro de anticipo (faltan $${saldoPendienteAnticipo.toFixed(2)}).`
+                    : `Registrar cobro confirmado del anticipo ($${montoExigible.toFixed(2)}).`
+            );
+        }
+        return {
+            formaPago,
+            formaPagoValida: pct !== null,
+            porcentajeAnticipo: pct,
+            ccfAnticipoStatus: ccfEmitido ? 'emitido' : 'pendiente',
+            ccfAnticipoNumero: ccfNumero,
+            anticipoPagoStatus,
+            montoExigible,
+            montoConfirmado,
+            montoEfectivoConfirmado,
+            montoRetencionConfirmada,
+            saldoPendienteAnticipo,
+            anticipoCumplido,
+            habilitadoFabricacion: Boolean(p && p.estado === 'ganado' && pct !== null && anticipoCumplido),
+            obligacionesSeguimiento
+        };
+    }
+
     // -------------------------------------------------------------------------
     // 2. Renderizado de Proyectos y Control de Cobros
     // -------------------------------------------------------------------------
@@ -363,6 +455,20 @@
                     : `<div class="proj-cxc-badge-wrap"><span class="proj-cxc-badge proj-cxc-neutral">Sin facturar</span></div>`);
 
             const ivaLabel = mp.isExport ? '✈️ Exento (0% IVA)' : '(Inc. IVA)';
+            const pClient = clientsList.find(c => c.id === p.clientId);
+            const fm = _evaluateFinancialMilestones(p, pClient);
+            let advanceStatusBadgeHtml = '';
+            if (fm && fm.formaPagoValida) {
+                if (fm.anticipoPagoStatus === 'pagado') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.65rem; padding:1px 5px;" title="Anticipo 100% confirmado — Habilitado para fabricación">✓ Anticipo OK</span></div>`;
+                } else if (fm.anticipoPagoStatus === 'parcialmente_pagado') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.65rem; padding:1px 5px;" title="Anticipo parcialmente pagado — Faltan ${_deps.formatCurrency(fm.saldoPendienteAnticipo)}">⚠️ Anticipo Parcial</span></div>`;
+                } else if (fm.ccfAnticipoStatus !== 'emitido') {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.65rem; padding:1px 5px;" title="Pendiente emitir CCF de anticipo y cobro">⏳ CCF / Anticipo Pend.</span></div>`;
+                } else {
+                    advanceStatusBadgeHtml = `<div style="margin-top:3px;"><span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.65rem; padding:1px 5px;" title="CCF emitido, cobro de anticipo pendiente (${_deps.formatCurrency(fm.montoExigible)})">🔒 Anticipo Pendiente</span></div>`;
+                }
+            }
 
             tr.innerHTML = `
                 <td class="col-proj-code" style="white-space:nowrap;"><strong style="font-family:monospace; color:var(--brand-gold); font-size:0.82rem;">${_deps.escapeHtmlDoc(mp.codigo)}</strong></td>
@@ -386,7 +492,7 @@
                         ${cxcBadgeHtml}
                     </div>
                 </td>
-                <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${_deps.escapeHtmlDoc(mp.condicion)}</span></td>
+                <td class="col-proj-condition"><span class="badge bg-neutral" style="font-size:0.75rem;">${_deps.escapeHtmlDoc(mp.condicion)}</span>${advanceStatusBadgeHtml}</td>
                 <td class="col-proj-invoiced col-money" style="text-align:right;">
                     <div class="table-progress-wrap">
                         <div class="table-progress-header">
@@ -497,6 +603,45 @@
             exportContainer.style.display = 'none';
         }
 
+        // Hitos financieros post-cierre (CCF de anticipo, Cobro de anticipo y Bloqueo de fabricación)
+        const fm = _evaluateFinancialMilestones(p, client);
+        let milestonesBanner = doc.getElementById('fin-advance-milestones-banner');
+        if (fm && fm.formaPagoValida) {
+            if (!milestonesBanner && invoicesListEl && invoicesListEl.parentNode) {
+                milestonesBanner = doc.createElement('div');
+                milestonesBanner.id = 'fin-advance-milestones-banner';
+                invoicesListEl.parentNode.insertBefore(milestonesBanner, invoicesListEl);
+            }
+            if (milestonesBanner) {
+                const ccfBadge = fm.ccfAnticipoStatus === 'emitido'
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Emitido${fm.ccfAnticipoNumero ? ' (' + _deps.escapeHtmlDoc(fm.ccfAnticipoNumero) + ')' : ''}</span>`
+                    : `<span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⏳ Pendiente de emisión</span>`;
+                const antBadge = fm.anticipoPagoStatus === 'pagado'
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Pagado (${_deps.formatCurrency(fm.montoConfirmado)} / ${_deps.formatCurrency(fm.montoExigible)})</span>`
+                    : (fm.anticipoPagoStatus === 'parcialmente_pagado'
+                        ? `<span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⚠️ Parcialmente pagado (${_deps.formatCurrency(fm.montoConfirmado)} de ${_deps.formatCurrency(fm.montoExigible)})</span>`
+                        : `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);">⏳ Pendiente (${_deps.formatCurrency(fm.montoExigible)} exigible)</span>`);
+                const fabBadge = fm.habilitadoFabricacion
+                    ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4);">✅ Anticipo confirmado — Habilitado para fabricación</span>`
+                    : `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);">🔒 Bloqueado para fabricación (Saldo anticipo: ${_deps.formatCurrency(fm.saldoPendienteAnticipo)})</span>`;
+                const obligHtml = Array.isArray(fm.obligacionesSeguimiento) && fm.obligacionesSeguimiento.length > 0
+                    ? `<div style="margin-top:8px; font-size:0.8rem; color:#fde68a;"><strong>Seguimiento financiero pendiente:</strong> ${fm.obligacionesSeguimiento.map(ob => _deps.escapeHtmlDoc(ob)).join(' • ')}</div>`
+                    : '';
+                milestonesBanner.style.cssText = `background:rgba(15,23,42,0.75); border:1px solid ${fm.habilitadoFabricacion ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.45)'}; border-radius:6px; padding:10px 12px; margin-bottom:14px; font-size:0.84rem;`;
+                milestonesBanner.innerHTML = `
+                    <div style="font-weight:700; color:var(--brand-gold); margin-bottom:6px;">📌 Control de Anticipo y Fabricación (${_deps.escapeHtmlDoc(fm.formaPago || '-')})</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                        <div><span style="color:var(--text-secondary);">CCF Anticipo:</span> ${ccfBadge}</div>
+                        <div><span style="color:var(--text-secondary);">Cobro Anticipo:</span> ${antBadge}</div>
+                        <div><span style="color:var(--text-secondary);">Fabricación:</span> ${fabBadge}</div>
+                    </div>
+                    ${obligHtml}
+                `;
+            }
+        } else if (milestonesBanner) {
+            milestonesBanner.style.display = 'none';
+        }
+
         if (Array.isArray(p.ordenes_cambio) && p.ordenes_cambio.length > 0) {
             p.ordenes_cambio.forEach(o => {
                 let sign = o.tipo === 'aumento' ? '+' : '-';
@@ -551,8 +696,20 @@
             const fMonto = parseFloat(f.monto) || 0;
             totalFacturado += fMonto;
             let pCobrado = 0;
+            let pEfectivo = 0;
+            let pRetencion = 0;
             if (Array.isArray(f.pagos)) {
-                pCobrado = f.pagos.reduce((a, b) => a + (parseFloat(b.monto) || 0), 0);
+                f.pagos.forEach(b => {
+                    const bm = parseFloat(b && b.monto) || 0;
+                    if (bm > 0) {
+                        pCobrado += bm;
+                        if (b && b.metodo === 'retencion_1pct') {
+                            pRetencion += bm;
+                        } else {
+                            pEfectivo += bm;
+                        }
+                    }
+                });
             }
             totalCobrado += pCobrado;
             let pSaldo = fMonto - pCobrado;
@@ -571,24 +728,24 @@
                         </div>
                         <div class="invoice-payments-list">
                             ${f.pagos.map((pay, i) => {
-                                let docLink = '';
-                                if (pay.doc_comprobante) {
-                                    docLink = `<div class="payment-doc-chip">
+                    let docLink = '';
+                    if (pay.doc_comprobante) {
+                        docLink = `<div class="payment-doc-chip">
                                         <a href="javascript:void(0)" onclick="viewSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-link" title="Previsualizar comprobante">📄 Comprobante</a>
                                         <a href="javascript:void(0)" onclick="downloadSecureDocument(prospects.find(x => x.id === '${p.id}')?.facturas?.find(fac => fac.id === '${f.id}')?.pagos?.[${i}]?.doc_comprobante, 'Comprobante', { prospectId: '${p.id}' })" class="btn-doc-dl" title="Descargar comprobante">⬇️</a>
                                     </div>`;
-                                } else {
-                                    docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
-                                }
-                                let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
-                                let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
-                                let editDelPaySpans = !isFinancialReadOnly
-                                    ? `<div class="payment-item-actions">
+                    } else {
+                        docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
+                    }
+                    let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
+                    let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
+                    let editDelPaySpans = !isFinancialReadOnly
+                        ? `<div class="payment-item-actions">
                                            <button type="button" class="btn-subtle-edit" onclick="editPayment('${f.id}', ${i})" title="Editar abono">✏️ [Editar]</button>
                                            <button type="button" class="btn-subtle-delete" onclick="deletePayment('${f.id}', ${i})" title="Eliminar abono">🗑️ [Eliminar]</button>
                                        </div>`
-                                    : '';
-                                return `
+                        : '';
+                    return `
                                     <div class="payment-item-card">
                                         <div class="pay-item-top">
                                             <div class="pay-item-main">
@@ -610,7 +767,7 @@
                                         </div>
                                     </div>
                                 `;
-                            }).join('')}
+                }).join('')}
                         </div>
                     </div>
                 `;
@@ -619,8 +776,8 @@
             const invActionSpans = !isFinancialReadOnly
                 ? `<button type="button" class="btn-subtle-edit" onclick="editInvoice('${f.id}')" title="Editar datos de la factura">✏️ [Editar Factura]</button>
                    ${invoiceIndex > 0
-                       ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
-                       : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
+                    ? `<button type="button" class="btn-subtle-delete" onclick="deleteInvoice('${f.id}')" title="Eliminar factura e historial de pagos">🗑️ [Eliminar Factura]</button>`
+                    : `<span class="badge-anticipo-lock" title="La factura de anticipo no puede ser eliminada">🔒 Anticipo</span>`}`
                 : '';
             const btnAbonarHtml = (!isPaid && !isFinancialReadOnly)
                 ? `<button type="button" class="btn-abono-primary" onclick="showPaymentForm('${f.id}', '${f.numero}')"><span style="margin-right:4px;">💰</span>+ Abonar a Factura</button>`
@@ -654,6 +811,7 @@
                             <div class="inv-strip-col">
                                 <span class="inv-strip-label">Total Abonado</span>
                                 <span class="inv-strip-val fin-val-green tabular-nums">${_deps.formatCurrency(pCobrado)}</span>
+                                ${pRetencion > 0 ? `<span style="display:block; font-size:0.72rem; color:var(--text-secondary);">Efectivo: ${_deps.formatCurrency(pEfectivo)} | Retención 1%: ${_deps.formatCurrency(pRetencion)}</span>` : ''}
                             </div>
                             <div class="inv-strip-col">
                                 <span class="inv-strip-label">Saldo Pendiente</span>

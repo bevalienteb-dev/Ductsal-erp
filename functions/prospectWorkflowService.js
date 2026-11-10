@@ -1205,15 +1205,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         throw precondition(isBig && !bypass ? 'Debe adjuntar el contrato firmado para finalizar' : 'Debe adjuntar la oferta firmada para finalizar');
       }
 
-      if (!docComprobante) {
-        throw precondition('Debe adjuntar el comprobante o factura de anticipo para finalizar');
+      if (typeof input.factura_anticipo === 'string' && input.factura_anticipo.length > 0 && input.factura_anticipo.trim().length === 0) {
+        throw bad('El número de factura de anticipo no puede estar en blanco');
       }
-
       const facturaAnticipo = (input.factura_anticipo ? reqString(input.factura_anticipo, 'El número de factura de anticipo', 60) : null)
-        || datos.factura_anticipo || p.factura_anticipo;
-      if (!facturaAnticipo) {
-        throw bad('El número de factura de anticipo es obligatorio');
-      }
+        || datos.factura_anticipo || p.factura_anticipo || null;
 
       const formaPago = input.forma_pago || p.forma_pago || datos.forma_pago;
       if (!formaPago || !Object.prototype.hasOwnProperty.call(FORMAS_PAGO, formaPago)) {
@@ -1226,12 +1222,17 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       const canonicalFirmado = toCanonicalDocPointer(docFirmado);
-      const canonicalComprobante = toCanonicalDocPointer(docComprobante);
+      const canonicalComprobante = docComprobante ? toCanonicalDocPointer(docComprobante) : null;
 
       if (isBig && !bypass) datos.doc_contrato = canonicalFirmado; else datos.doc_oferta_firmada = canonicalFirmado;
       datos.doc_firmado = canonicalFirmado;
-      datos.doc_comprobante = canonicalComprobante;
-      datos.factura_anticipo = facturaAnticipo;
+      if (canonicalComprobante) {
+        datos.doc_comprobante = canonicalComprobante;
+      }
+      if (facturaAnticipo) {
+        datos.factura_anticipo = facturaAnticipo;
+        patch.factura_anticipo = facturaAnticipo;
+      }
       if (datos.doc_oferta) {
         datos.oferta_sustento_cierre = Array.isArray(datos.doc_oferta) && datos.doc_oferta.length > 0
           ? toCanonicalDocPointer(datos.doc_oferta[0])
@@ -1250,24 +1251,37 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const subtotal = Number(p.precio_cotizado) || 0;
       const totalConIVA = isExport(client) ? subtotal : subtotal * IVA;
       const advanceAmount = round2(totalConIVA * FORMAS_PAGO[formaPago]);
+      patch.monto_anticipo_exigible = advanceAmount;
 
-      // Factura de anticipo generada transaccional e idempotentemente
+      // Factura de anticipo generada transaccional e idempotentemente solo si el CCF ya fue emitido y adjuntado
       const facturas = Array.isArray(p.facturas) ? p.facturas.slice() : [];
-      const alreadyHasAdvance = facturas.some(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
-      if (!alreadyHasAdvance) {
-        facturas.push({
-          id: uniqueId([], Date.now()),
-          numero: facturaAnticipo,
-          monto: advanceAmount,
-          doc_factura: canonicalComprobante,
-          pagos: [],
-          fecha: at,
-          opId: opId || null
-        });
+      const hasCompleteAdvanceCcf = Boolean(facturaAnticipo && canonicalComprobante);
+      if (hasCompleteAdvanceCcf) {
+        const existingAdv = facturas.find(f => f && (f.numero === facturaAnticipo || (opId && f.opId === opId)));
+        if (!existingAdv) {
+          const advId = uniqueId([], Date.now());
+          facturas.push({
+            id: advId,
+            numero: facturaAnticipo,
+            monto: advanceAmount,
+            doc_factura: canonicalComprobante,
+            es_anticipo: true,
+            tipo_factura: 'anticipo',
+            pagos: [],
+            fecha: at,
+            opId: opId || null
+          });
+          patch.factura_anticipo_id = advId;
+        } else if (existingAdv.id) {
+          patch.factura_anticipo_id = existingAdv.id;
+        }
       }
       patch.facturas = facturas;
+      patch.ccf_anticipo_emitido = facturas.length > 0;
 
-      let logMsg = `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros con factura ${facturaAnticipo} por ${fmtMoney(advanceAmount)}`;
+      let logMsg = hasCompleteAdvanceCcf
+        ? `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros con factura ${facturaAnticipo} por ${fmtMoney(advanceAmount)}`
+        : `¡VENTA FINALIZADA! Proyecto ${p.codigo || ''} formalizado y transferido a Proyectos y Cobros (Modalidad: ${formaPago}, Anticipo exigible: ${fmtMoney(advanceAmount)}, CCF de anticipo: pendiente de emisión)`;
       if (bypass) logMsg += ` (Autorizado sin contrato por gerente: ${datos.autorizado_por || 'Gerente'})`;
 
       const transitions = Array.isArray(p.stage_transitions) ? p.stage_transitions : [];
@@ -1290,12 +1304,26 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       addAudit(tx, caller, 'finalizeProspect', prospectId, {
         forma_pago: formaPago,
-        factura_anticipo: facturaAnticipo,
+        factura_anticipo: facturaAnticipo || null,
+        ccf_anticipo_emitido: hasCompleteAdvanceCcf,
         monto_anticipo: advanceAmount,
         estado: 'ganado'
       });
 
-      return { status: 'finalized', etapa: 'cierre', estado: 'ganado', facturaAnticipo, montoAnticipo: advanceAmount };
+      return {
+        status: 'finalized',
+        etapa: 'cierre',
+        estado: 'ganado',
+        forma_pago: formaPago,
+        facturaAnticipo: facturaAnticipo || null,
+        ccfAnticipoEmitido: hasCompleteAdvanceCcf,
+        ccf_anticipo_emitido: hasCompleteAdvanceCcf,
+        montoAnticipo: advanceAmount,
+        monto_anticipo_exigible: advanceAmount,
+        facturas: patch.facturas,
+        fecha_inicio_cierre: p.fecha_inicio_cierre || (p.stage_timestamps && p.stage_timestamps.cierre) || null,
+        fecha_cierre: patch.fecha_cierre
+      };
     });
   }
 
@@ -1590,7 +1618,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // =====================================================================================================
   // Invoices
   // =====================================================================================================
-  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, opId }) {
+  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, es_anticipo, opId }) {
     authorize(caller, 'saveInvoice');
     reqDocId(prospectId, 'prospectId');
     const editing = invoiceId !== undefined && invoiceId !== null && invoiceId !== '';
@@ -1619,21 +1647,69 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (exceeds(alreadyInvoiced + amount, totalConIVA)) {
         throw precondition(`El monto a facturar excede el saldo restante del proyecto. Saldo máximo a facturar: ${fmtMoney(totalConIVA - alreadyInvoiced)}`);
       }
+      const resolvedAdv = resolveAdvanceInvoice(p, facturas);
+      let isAdvanceInvoice = false;
       if (editing) {
         const cur = facturas[idx];
+        isAdvanceInvoice = Boolean(
+          (resolvedAdv.invoice && resolvedAdv.invoice.id === cur.id) ||
+          cur.es_anticipo === true ||
+          cur.tipo_factura === 'anticipo' ||
+          (p.factura_anticipo_id && cur.id === p.factura_anticipo_id)
+        );
         if (cur.numero === number && cur.monto === amount && !doc) return { status: 'unchanged' };
-        invoice = { ...cur, numero: number, monto: amount };
+        invoice = {
+          ...cur,
+          numero: number,
+          monto: amount,
+          es_anticipo: isAdvanceInvoice,
+          tipo_factura: isAdvanceInvoice ? 'anticipo' : (cur.tipo_factura || 'ordinaria')
+        };
         if (doc) invoice.doc_factura = doc;
         facturas[idx] = invoice;
         text = `Factura editada: ${number} por ${fmtMoney(amount)}`;
       } else {
-        invoice = { id: uniqueId(facturas.map(f => f && f.id), Date.now()), numero: number, monto: amount, doc_factura: doc, pagos: [], fecha: iso(), opId };
+        isAdvanceInvoice = (es_anticipo === false)
+          ? false
+          : (!resolvedAdv.invoice && !resolvedAdv.ambiguous && facturas.length === 0);
+        invoice = {
+          id: uniqueId(facturas.map(f => f && f.id), Date.now()),
+          numero: number,
+          monto: amount,
+          doc_factura: doc,
+          es_anticipo: isAdvanceInvoice,
+          tipo_factura: isAdvanceInvoice ? 'anticipo' : 'ordinaria',
+          pagos: [],
+          fecha: iso(),
+          opId
+        };
         facturas.push(invoice);
         text = `Factura/CCF emitida: ${number} por ${fmtMoney(amount)}`;
       }
-      tx.update(ref, { facturas, logs: withLog(p, caller, text) });
-      addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount });
-      return { status: editing ? 'updated' : 'created', invoice };
+      const postAdv = resolveAdvanceInvoice({ ...p, facturas }, facturas);
+      const updatePatch = {
+        facturas,
+        ccf_anticipo_emitido: Boolean(postAdv.invoice && hasValidPaymentDoc(postAdv.invoice.doc_factura)),
+        logs: withLog(p, caller, text)
+      };
+      if (isAdvanceInvoice) {
+        const datos = { ...(p.datos && typeof p.datos === 'object' ? p.datos : {}) };
+        updatePatch.factura_anticipo = number;
+        updatePatch.factura_anticipo_id = invoice.id;
+        datos.factura_anticipo = number;
+        if (doc) {
+          datos.doc_comprobante = toCanonicalDocPointer(doc);
+        }
+        updatePatch.datos = datos;
+      }
+      tx.update(ref, updatePatch);
+      addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount, es_anticipo: isAdvanceInvoice });
+      return {
+        status: editing ? 'updated' : 'created',
+        invoice,
+        ccf_anticipo_emitido: updatePatch.ccf_anticipo_emitido,
+        factura_anticipo: updatePatch.factura_anticipo || p.factura_anticipo || null
+      };
     });
   }
 
@@ -1647,9 +1723,37 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const facturas = facturasOf(p);
       const i = facturas.findIndex(f => f && f.id === invoiceId);
       if (i === -1) return { status: 'absent' };
-      if (i === 0) throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
       const f = facturas[i];
+      const resolvedAdv = resolveAdvanceInvoice(p, facturas);
+      const isTargetAdvanceInvoice = Boolean(
+        f.es_anticipo === true ||
+        f.tipo_factura === 'anticipo' ||
+        (p.factura_anticipo_id && f.id === p.factura_anticipo_id) ||
+        (resolvedAdv.invoice && resolvedAdv.invoice.id === f.id) ||
+        (!resolvedAdv.invoice && i === 0 && f.es_anticipo !== false)
+      );
+      if (isTargetAdvanceInvoice) {
+        throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
+      }
+      const lockSnapshotsById = new Map();
+      for (const pay of (Array.isArray(f.pagos) ? f.pagos : [])) {
+        if (!pay || typeof pay !== 'object') continue;
+        const nRef = normalizePaymentReference(pay.ref || '');
+        if (!nRef) continue;
+        const lId = buildPaymentRefLockId({ metodo: pay.metodo, normRef: nRef });
+        let entry = lockSnapshotsById.get(lId);
+        if (!entry) {
+          const lRef = col('payment_refs').doc(lId);
+          const lSnap = await tx.get(lRef);
+          entry = { lRef, lSnap, keys: [] };
+          lockSnapshotsById.set(lId, entry);
+        }
+        entry.keys.push(String(pay.id || pay.fecha || ''));
+      }
       tx.update(ref, { facturas: facturas.slice(0, i).concat(facturas.slice(i + 1)), logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
+      for (const { lRef, lSnap } of lockSnapshotsById.values()) {
+        releasePaymentRefLock(tx, lRef, lSnap, { prospectId, invoiceId: f.id, paymentKey: null });
+      }
       addAudit(tx, caller, 'deleteInvoice', prospectId, { invoiceId, numero: f.numero, monto: f.monto, payments: (f.pagos || []).length });
       addDeletionNotice(tx, caller, p, client, 'Factura', `${f.numero} (${fmtMoney(f.monto)})`);
       return { status: 'deleted' };
@@ -1657,70 +1761,495 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   }
 
   // =====================================================================================================
-  // Payments
+  // Payments & Fiscal Withholding (Art. 162 Código Tributario El Salvador)
   // =====================================================================================================
+  // Regla comercial de DUCTSAL para esta fase:
+  // Aunque el Art. 162 del Código Tributario contempla otros agentes de retención designados,
+  // en el CRM DUCTSAL la retención del 1% de IVA se habilita exclusivamente para clientes locales
+  // con `is_gran_contribuyente === true` (no aplica a medianos/pequeños contribuyentes ni a exportación).
+  const RETENCION_1PCT_RATE = 0.01;
+  const RETENCION_MIN_BASE_SIN_IVA = 100; // Umbral legal aplicable Art. 162: $100.00 sin IVA
+
+  const INVALID_PAYMENT_REF_MARKERS = new Set([
+    'UNDEFINED', 'NULL', 'NONE', 'NIL', 'NAN', 'FALSE', 'TRUE',
+    'NA', 'N/A', 'SN', 'S/N', 'SINREF', 'SINREFERENCIA',
+    'PENDIENTE', 'NINGUNA', 'NINGUNO', '0', '00', '000', '0000'
+  ]);
+
+  function normalizePaymentReference(ref) {
+    if (typeof ref !== 'string') return '';
+    const raw = ref.normalize('NFKC').trim().toUpperCase();
+    if (!raw) return '';
+    return raw.replace(/[\s\-_./#]+/g, '');
+  }
+
+  function isInvalidPaymentReference(rawRef, normRef = normalizePaymentReference(rawRef)) {
+    if (!normRef) return true;
+    const trimmedUpper = typeof rawRef === 'string' ? rawRef.normalize('NFKC').trim().toUpperCase() : '';
+    if (INVALID_PAYMENT_REF_MARKERS.has(trimmedUpper) || INVALID_PAYMENT_REF_MARKERS.has(normRef)) {
+      return true;
+    }
+    return false;
+  }
+
+  function isActivePaymentRecord(pay) {
+    if (!pay || typeof pay !== 'object') return false;
+    if (
+      pay.anulado === true || pay.anulada === true ||
+      pay.revertido === true || pay.revertida === true ||
+      pay.eliminado === true || pay.eliminada === true ||
+      pay.rechazado === true || pay.rechazada === true ||
+      pay.voided === true || pay.reversed === true ||
+      pay.promesa === true || pay.es_promesa === true ||
+      pay.pendiente_verificacion === true ||
+      pay.verificado === false || pay.confirmado === false
+    ) {
+      return false;
+    }
+    const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+    if (payEstado && INVALID_FINANCIAL_STATUSES.includes(payEstado)) return false;
+    return true;
+  }
+
+  function isClientGranContribuyenteLocal(client) {
+    if (!client || typeof client !== 'object') return false;
+    if (isExport(client)) return false;
+    if (!truthyFlag(client.is_gran_contribuyente)) return false;
+    const cat = String(client.categoria_contribuyente || client.tipo_contribuyente || client.clasificacion_fiscal || '').trim().toLowerCase();
+    if (cat && ['mediano', 'pequeno', 'pequeño', 'mediano_contribuyente', 'pequeno_contribuyente', 'pequeño_contribuyente', 'otro', 'otros'].includes(cat)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Resuelve la base gravada sin IVA de una factura o importe de factura.
+   * En el modelo real de facturación de DUCTSAL ERP (`saveInvoice`, `finalizeProspect`, `#inv-monto-label`),
+   * `fac.monto` representa:
+   * - Clientes locales (`!isExport`): el monto total facturado CON IVA (`subtotal * 1.13`).
+   * - Clientes de exportación (`isExport`): el monto facturado SIN IVA (0% exportación).
+   * Si el objeto factura declara explícitamente un importe ya expresado sin IVA (`subtotal_sin_iva`,
+   * `monto_sin_iva`, `base_gravada`, `incluye_iva === false` o `sin_iva === true`), se utiliza directamente
+   * sin volver a dividir entre 1.13.
+   */
+  function resolveInvoiceBaseSinIva(facOrMonto, client) {
+    const isObj = Boolean(facOrMonto && typeof facOrMonto === 'object');
+    const rawMonto = isObj ? Number(facOrMonto.monto) : Number(facOrMonto);
+    const montoFactura = round2(rawMonto);
+    if (!Number.isFinite(montoFactura) || montoFactura <= 0) {
+      return { montoFactura: 0, baseGravadaSinIva: 0, alreadyWithoutIva: false };
+    }
+    if (isExport(client)) {
+      return { montoFactura, baseGravadaSinIva: montoFactura, alreadyWithoutIva: true };
+    }
+    if (isObj) {
+      const explicitNet = Number(
+        facOrMonto.subtotal_sin_iva ??
+        facOrMonto.monto_sin_iva ??
+        facOrMonto.base_gravada ??
+        facOrMonto.base_sin_iva
+      );
+      if (Number.isFinite(explicitNet) && explicitNet > 0) {
+        return { montoFactura, baseGravadaSinIva: round2(explicitNet), alreadyWithoutIva: true };
+      }
+      if (facOrMonto.incluye_iva === false || facOrMonto.sin_iva === true) {
+        return { montoFactura, baseGravadaSinIva: montoFactura, alreadyWithoutIva: true };
+      }
+    }
+    return { montoFactura, baseGravadaSinIva: round2(montoFactura / IVA), alreadyWithoutIva: false };
+  }
+
+  function calculateInvoiceRetencionLimit(facOrMonto, client) {
+    const { montoFactura, baseGravadaSinIva } = resolveInvoiceBaseSinIva(facOrMonto, client);
+    if (!Number.isFinite(montoFactura) || montoFactura <= 0 || baseGravadaSinIva <= 0) {
+      return { eligible: false, baseGravadaSinIva: 0, maxRetencion: 0, reason: 'INVALID_INVOICE_AMOUNT' };
+    }
+    if (isExport(client)) {
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'EXPORT_EXEMPT' };
+    }
+    if (!isClientGranContribuyenteLocal(client)) {
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'NOT_GRAN_CONTRIBUYENTE' };
+    }
+    // Art. 162: 1% calculado estrictamente sobre la base gravada sin IVA, nunca sobre el total con IVA.
+    if (baseGravadaSinIva < RETENCION_MIN_BASE_SIN_IVA) {
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'UNDER_THRESHOLD' };
+    }
+    const maxRetencion = round2(baseGravadaSinIva * RETENCION_1PCT_RATE);
+    return { eligible: true, baseGravadaSinIva, maxRetencion, reason: null };
+  }
+
+  function buildPaymentRefLockId({ metodo, normRef }) {
+    const cleanMethod = String(metodo || '').trim().toLowerCase();
+    if (cleanMethod === 'retencion_1pct') {
+      return `RET_${normRef}`;
+    }
+    return `BANK_${normRef}`;
+  }
+
+  function extractLockEntries(lockData) {
+    if (!lockData || typeof lockData !== 'object' || lockData.active === false) return [];
+    if (lockData.entries && typeof lockData.entries === 'object') {
+      return Object.values(lockData.entries).filter(e => e && typeof e === 'object');
+    }
+    if (lockData.prospectId && lockData.invoiceId) {
+      return [{
+        prospectId: lockData.prospectId,
+        invoiceId: lockData.invoiceId,
+        paymentKey: lockData.paymentKey,
+        clientId: lockData.clientId || null,
+        opId: lockData.opId || null,
+        monto: lockData.monto,
+        metodo: lockData.metodo
+      }];
+    }
+    return [];
+  }
+
+  function upsertPaymentRefLock(tx, lockRef, lockSnap, { normRef, refText, metodo, amount, prospectId, invoiceId, clientId, paymentKey, opId, nowAt, updatedBy }) {
+    const prevData = (lockSnap && lockSnap.exists && lockSnap.data() && lockSnap.data().active !== false)
+      ? lockSnap.data()
+      : null;
+    const nextEntries = {};
+    for (const entry of extractLockEntries(prevData)) {
+      if (entry.prospectId && entry.invoiceId) {
+        nextEntries[`${entry.prospectId}__${entry.invoiceId}`] = entry;
+      }
+    }
+    nextEntries[`${prospectId}__${invoiceId}`] = {
+      prospectId,
+      invoiceId,
+      paymentKey: String(paymentKey),
+      clientId: clientId || null,
+      opId: opId || null,
+      monto: amount,
+      metodo,
+      updatedAt: nowAt
+    };
+    tx.set(lockRef, {
+      active: true,
+      normRef,
+      ref: refText,
+      metodo,
+      monto: amount,
+      prospectId,
+      invoiceId,
+      clientId: clientId || null,
+      paymentKey: String(paymentKey),
+      opId: opId || null,
+      entries: nextEntries,
+      updatedAt: nowAt,
+      updatedBy
+    });
+  }
+
+  function releasePaymentRefLock(tx, lockRef, lockSnap, { prospectId, invoiceId, paymentKey }) {
+    if (!lockRef || !lockSnap || !lockSnap.exists) return;
+    const ld = lockSnap.data() || {};
+    if (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true) {
+      return;
+    }
+    if (ld.entries && typeof ld.entries === 'object') {
+      const nextEntries = { ...ld.entries };
+      const slotKey = `${prospectId}__${invoiceId}`;
+      if (nextEntries[slotKey] && (!paymentKey || String(nextEntries[slotKey].paymentKey) === String(paymentKey))) {
+        delete nextEntries[slotKey];
+      }
+      const remKeys = Object.keys(nextEntries);
+      if (remKeys.length === 0) {
+        tx.delete(lockRef);
+      } else {
+        const first = nextEntries[remKeys[0]];
+        tx.set(lockRef, {
+          ...ld,
+          prospectId: first.prospectId,
+          invoiceId: first.invoiceId,
+          paymentKey: first.paymentKey,
+          clientId: first.clientId || ld.clientId || null,
+          monto: first.monto,
+          entries: nextEntries
+        });
+      }
+      return;
+    }
+    tx.delete(lockRef);
+  }
+
   // A payment is addressed by `paymentKey` = its id (new payments) or its `fecha` (historical ones have no id): never by
   // array position, which is stale as soon as someone else edits the same invoice.
   const payKeyMatches = (pay, key) => !!pay && (pay.id === key || pay.fecha === key);
 
-  async function savePayment({ caller, prospectId, invoiceId, paymentKey, monto, metodo, ref: reference, doc_comprobante, opId }) {
+  async function savePayment({ caller, prospectId, invoiceId, paymentKey, paymentId, fecha, monto, metodo, ref: reference, doc_comprobante, opId }) {
     authorize(caller, 'savePayment');
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
-    const editing = paymentKey !== undefined && paymentKey !== null && paymentKey !== '';
-    if (editing) reqString(paymentKey, 'paymentKey', 64); else reqOpId(opId);
+    const resolvedPaymentKey = (paymentKey !== undefined && paymentKey !== null && paymentKey !== '')
+      ? paymentKey
+      : paymentId;
+    const editing = resolvedPaymentKey !== undefined && resolvedPaymentKey !== null && resolvedPaymentKey !== '';
+    if (editing) reqString(resolvedPaymentKey, 'paymentKey', 64); else reqOpId(opId);
     const amount = money(monto, 'El monto del abono', { positive: true });
     if (!PAYMENT_METHODS.includes(metodo)) throw bad('Forma de pago inválida');
     const refText = reqString(reference, 'La referencia', 100);
+    const normRef = normalizePaymentReference(refText);
+    if (isInvalidPaymentReference(refText, normRef)) {
+      throw bad('Debe ingresar un número de comprobante o referencia válido');
+    }
+    let customFecha = null;
+    if (fecha !== undefined) {
+      if (fecha === null || typeof fecha !== 'string' || !fecha.trim()) {
+        throw bad('La fecha del pago es obligatoria');
+      }
+      customFecha = fecha.trim();
+      if (isNaN(Date.parse(customFecha))) {
+        throw bad('La fecha del pago es inválida');
+      }
+    }
     const doc = (doc_comprobante === undefined || doc_comprobante === null) ? null : fileRef(doc_comprobante, 'Comprobante de pago');
     if (!editing && !doc) throw bad('Debe adjuntar el comprobante de pago');
+
     return db.runTransaction(async tx => {
+      // 1. Todas las lecturas transaccionales antes de cualquier escritura
       const { ref: pRef, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
       const client = await loadClient(tx, p);
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
+      const fac = facturas.find(f => f && f.id === invoiceId);
+      const at = (editing && fac) ? fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey)) : -1;
+      const cur = (editing && at !== -1) ? fac.pagos[at] : null;
+
+      const lockId = buildPaymentRefLockId({ metodo, normRef });
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+
+      let oldLockRef = null;
+      let oldLockSnap = null;
+      if (editing && cur) {
+        const oldNormRef = normalizePaymentReference(cur.ref || '');
+        const oldLockId = oldNormRef
+          ? buildPaymentRefLockId({ metodo: cur.metodo || metodo, normRef: oldNormRef })
+          : null;
+        if (oldLockId && oldLockId !== lockId) {
+          oldLockRef = col('payment_refs').doc(oldLockId);
+          oldLockSnap = await tx.get(oldLockRef);
+        }
+      }
+
+      // 2. Idempotencia por opId en creación (acotada a la oportunidad y al índice payment_refs, sin lecturas globales)
       if (!editing) {
         for (const f of facturas) {
           const prior = f.pagos.find(x => x && x.opId === opId);
           if (prior) {
-            if (f.id !== invoiceId || prior.monto !== amount || prior.metodo !== metodo || prior.ref !== refText) throw precondition('opId ya usado con otros datos');
-            return { status: 'unchanged', replay: true };
+            if (f.id !== invoiceId || prior.monto !== amount || prior.metodo !== metodo || normalizePaymentReference(prior.ref) !== normRef) {
+              throw precondition('opId ya usado con otros datos');
+            }
+            return { status: 'unchanged', replay: true, payment: prior };
+          }
+        }
+        if (lockSnap.exists) {
+          for (const entry of extractLockEntries(lockSnap.data())) {
+            if (entry.opId && entry.opId === opId) {
+              if (entry.prospectId !== prospectId || entry.invoiceId !== invoiceId || entry.monto !== amount || entry.metodo !== metodo) {
+                throw precondition('opId ya usado con otros datos');
+              }
+              return { status: 'unchanged', replay: true, payment: entry };
+            }
           }
         }
       }
-      const fac = facturas.find(f => f && f.id === invoiceId);
+
+      // 3. Validación de factura destino y abono en edición
       if (!fac) throw notFound('Factura');
-      if (metodo === 'retencion_1pct' && !(client && truthyFlag(client.is_gran_contribuyente))) {
-        throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
+      if (!isActiveInvoice(fac)) {
+        throw precondition('La factura seleccionada no es válida o se encuentra anulada');
       }
-      const at = editing ? fac.pagos.findIndex(x => payKeyMatches(x, paymentKey)) : -1;
       if (editing && at === -1) throw notFound('Abono');
-      const collected = fac.pagos.reduce((a, x, i) => (i === at ? a : a + (parseFloat(x.monto) || 0)), 0);
+
+      // 4. Validación de elegibilidad y tope individual de retención fiscal del 1% (Art. 162)
+      let retInfo = null;
+      if (metodo === 'retencion_1pct') {
+        if (isExport(client)) {
+          throw precondition('La retención del 1% no aplica a facturas de exportación exentas de IVA');
+        }
+        if (!isClientGranContribuyenteLocal(client)) {
+          throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
+        }
+        retInfo = calculateInvoiceRetencionLimit(fac, client);
+        if (!retInfo.eligible) {
+          throw precondition('La retención del 1% (Art. 162) solo aplica cuando la base gravada sin IVA de la factura es igual o mayor a $100.00');
+        }
+        if (round2(amount) > round2(retInfo.maxRetencion + 0.01)) {
+          throw precondition(`El monto de retención del 1% (${fmtMoney(amount)}) supera el límite fiscal permitido del 1% sobre la base gravada sin IVA (${fmtMoney(retInfo.maxRetencion)}) para esta factura.`);
+        }
+      }
+
+      // 5. Detección obligatoria de números de comprobante duplicados
+      // Mecanismo primario: índice transaccional O(1) en `payment_refs` + verificación en memoria de `facturas`
+      // de la oportunidad actual para compatibilidad con comprobantes históricos previos al índice.
+      const DUP_REF_MSG = 'Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.';
+      const editingCanonicalKey = editing && cur ? String(cur.id || cur.fecha) : null;
+
+      if (lockSnap.exists) {
+        const ld = lockSnap.data() || {};
+        if (
+          ld.active !== false &&
+          (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true)
+        ) {
+          throw precondition(DUP_REF_MSG);
+        }
+        for (const entry of extractLockEntries(ld)) {
+          const isSameEditedPayment = Boolean(
+            editing &&
+            entry.prospectId === prospectId &&
+            entry.invoiceId === invoiceId &&
+            String(entry.paymentKey) === editingCanonicalKey
+          );
+          if (isSameEditedPayment) continue;
+
+          const entryMetodo = typeof (entry.metodo || ld.metodo) === 'string'
+            ? String(entry.metodo || ld.metodo).trim().toLowerCase()
+            : '';
+          if (metodo === 'retencion_1pct' && entryMetodo === 'retencion_1pct') {
+            const entryClientId = entry.clientId || ld.clientId || null;
+            const sameClient = Boolean(p.clientId && entryClientId && p.clientId === entryClientId);
+            const differentInvoice = !(entry.prospectId === prospectId && entry.invoiceId === invoiceId);
+            if (sameClient && differentInvoice) {
+              continue;
+            }
+          }
+          throw precondition(DUP_REF_MSG);
+        }
+      }
+
+      for (const otherFac of facturas) {
+        if (!isActiveInvoice(otherFac)) continue;
+        const otherPagos = Array.isArray(otherFac.pagos) ? otherFac.pagos : [];
+        for (let idx = 0; idx < otherPagos.length; idx++) {
+          const otherPay = otherPagos[idx];
+          if (!isActivePaymentRecord(otherPay)) continue;
+          if (editing && otherFac.id === invoiceId && idx === at) continue;
+          const otherNormRef = normalizePaymentReference(otherPay.ref || '');
+          if (!otherNormRef || otherNormRef !== normRef) continue;
+          const otherMetodo = typeof otherPay.metodo === 'string' ? otherPay.metodo.trim().toLowerCase() : '';
+          if (metodo === 'retencion_1pct' && otherMetodo === 'retencion_1pct' && otherFac.id !== invoiceId) {
+            continue;
+          }
+          throw precondition(DUP_REF_MSG);
+        }
+      }
+
+      // 5b. Tope acumulado de retención 1% en la misma factura
+      if (metodo === 'retencion_1pct' && retInfo) {
+        const existingRetencionOnInvoice = round2(
+          fac.pagos.reduce((acc, x, idx) => {
+            if (idx === at || !isActivePaymentRecord(x)) return acc;
+            const m = typeof x.metodo === 'string' ? x.metodo.trim().toLowerCase() : '';
+            return m === 'retencion_1pct' ? acc + (parseFloat(x.monto) || 0) : acc;
+          }, 0)
+        );
+        if (round2(existingRetencionOnInvoice + amount) > round2(retInfo.maxRetencion + 0.01)) {
+          throw precondition(`El monto de retención del 1% (${fmtMoney(amount)}) supera el límite fiscal permitido del 1% sobre la base gravada sin IVA (${fmtMoney(retInfo.maxRetencion)}) para esta factura.`);
+        }
+      }
+
+      // 6. Verificación de saldo pendiente de la factura
+      const collected = fac.pagos.reduce((a, x, i) => (i === at || !isActivePaymentRecord(x) ? a : a + (parseFloat(x.monto) || 0)), 0);
       const pending = (Number(fac.monto) || 0) - collected;
       if (exceeds(amount, pending)) throw precondition(`El abono supera el saldo de esta factura. Saldo pendiente: ${fmtMoney(pending)}`);
 
+      // 7. Construcción y confirmación automática en backend (campos de auditoría no falsificables)
       let payment; let text;
+      const nowAt = iso();
       if (editing) {
-        const cur = fac.pagos[at];
-        if (cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc) return { status: 'unchanged' };
-        payment = { ...cur, monto: amount, metodo, ref: refText };
+        const effectiveDoc = doc || cur.doc_comprobante || null;
+        const needsBackendConfirm = !isPositivelyConfirmedPayment(cur) && hasValidPaymentDoc(effectiveDoc);
+        if (!needsBackendConfirm && cur.monto === amount && cur.metodo === metodo && cur.ref === refText && !doc && (!customFecha || cur.fecha === customFecha)) {
+          return { status: 'unchanged', payment: cur };
+        }
+        payment = {
+          ...cur,
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
+          monto: amount,
+          metodo,
+          ref: refText,
+          ref_normalizada: normRef,
+          fecha: customFecha || cur.fecha || nowAt
+        };
         if (doc) payment.doc_comprobante = doc;
+        if (hasValidPaymentDoc(effectiveDoc)) {
+          payment.confirmado = true;
+          payment.estado = 'confirmado';
+          payment.confirmado_por = caller.cid || caller.uid;
+          payment.confirmado_por_uid = caller.uid;
+          payment.confirmado_por_rol = caller.role;
+          payment.confirmado_en = nowAt;
+        }
         fac.pagos[at] = payment;
         text = `Abono editado en factura ${fac.numero}: ${fmtMoney(amount)} [${metodo}]`;
       } else {
-        payment = { id: uniqueId(fac.pagos.map(x => x && x.id), Date.now()), monto: amount, metodo, ref: refText, doc_comprobante: doc, fecha: iso(), opId };
+        payment = {
+          id: uniqueId(fac.pagos.map(x => x && x.id), Date.now()),
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
+          monto: amount,
+          metodo,
+          ref: refText,
+          ref_normalizada: normRef,
+          doc_comprobante: doc,
+          fecha: customFecha || nowAt,
+          opId,
+          confirmado: true,
+          estado: 'confirmado',
+          confirmado_por: caller.cid || caller.uid,
+          confirmado_por_uid: caller.uid,
+          confirmado_por_rol: caller.role,
+          confirmado_en: nowAt
+        };
         fac.pagos.push(payment);
         text = `Pago recibido: ${fmtMoney(amount)} vía ${metodo} a cuenta de Factura ${fac.numero}`;
       }
+
       tx.update(pRef, { facturas, logs: withLog(p, caller, text) });
-      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, { invoiceId, numero: fac.numero, monto: amount, metodo });
+      upsertPaymentRefLock(tx, lockRef, lockSnap, {
+        normRef,
+        refText,
+        metodo,
+        amount,
+        prospectId,
+        invoiceId: fac.id,
+        clientId: p.clientId || null,
+        paymentKey: String(payment.id || payment.fecha),
+        opId: payment.opId || null,
+        nowAt,
+        updatedBy: caller.cid || caller.uid
+      });
+      if (editing && oldLockRef && oldLockSnap && oldLockSnap.exists) {
+        releasePaymentRefLock(tx, oldLockRef, oldLockSnap, {
+          prospectId,
+          invoiceId: fac.id,
+          paymentKey: editingCanonicalKey
+        });
+      }
+      addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, {
+        invoiceId: fac.id,
+        paymentKey: String(payment.id || payment.fecha),
+        numero: fac.numero,
+        monto: amount,
+        metodo,
+        ref: refText,
+        ref_normalizada: normRef,
+        confirmado: Boolean(payment.confirmado)
+      });
       return { status: editing ? 'updated' : 'created', payment };
     });
   }
 
-  async function deletePayment({ caller, prospectId, invoiceId, paymentKey }) {
+  async function deletePayment({ caller, prospectId, invoiceId, paymentKey, paymentId }) {
     authorize(caller, 'deletePayment');
     reqDocId(prospectId, 'prospectId'); reqDocId(invoiceId, 'invoiceId');
-    reqString(paymentKey, 'paymentKey', 64);
+    const resolvedPaymentKey = (paymentKey !== undefined && paymentKey !== null && paymentKey !== '')
+      ? paymentKey
+      : paymentId;
+    reqString(resolvedPaymentKey, 'paymentKey', 64);
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
@@ -1728,12 +2257,38 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
       const fac = facturas.find(f => f && f.id === invoiceId);
       if (!fac) throw notFound('Factura');
-      const at = fac.pagos.findIndex(x => payKeyMatches(x, paymentKey));
+      const at = fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey));
       if (at === -1) return { status: 'absent' };
       const pay = fac.pagos[at];
+      const normRef = normalizePaymentReference(pay.ref || '');
+      let lockRefToRelease = null;
+      let lockSnapToRelease = null;
+      if (normRef) {
+        const lockId = buildPaymentRefLockId({ metodo: pay.metodo, normRef });
+        const candidateRef = col('payment_refs').doc(lockId);
+        const lSnap = await tx.get(candidateRef);
+        if (lSnap.exists) {
+          lockRefToRelease = candidateRef;
+          lockSnapToRelease = lSnap;
+        }
+      }
       fac.pagos.splice(at, 1);
       tx.update(ref, { facturas, logs: withLog(p, caller, `Abono eliminado de factura ${fac.numero}: ${fmtMoney(pay.monto)}`) });
-      addAudit(tx, caller, 'deletePayment', prospectId, { invoiceId, numero: fac.numero, monto: pay.monto, metodo: pay.metodo });
+      if (lockRefToRelease && lockSnapToRelease) {
+        releasePaymentRefLock(tx, lockRefToRelease, lockSnapToRelease, {
+          prospectId,
+          invoiceId: fac.id,
+          paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey)
+        });
+      }
+      addAudit(tx, caller, 'deletePayment', prospectId, {
+        invoiceId,
+        paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey),
+        numero: fac.numero,
+        monto: pay.monto,
+        metodo: pay.metodo,
+        ref: pay.ref || null
+      });
       addDeletionNotice(tx, caller, p, client, 'Abono', `${fmtMoney(pay.monto)} de la factura ${fac.numero}`);
       return { status: 'deleted' };
     });
@@ -1966,7 +2521,608 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
-  return { advanceStage, revertStage, saveClosingDocuments, finalizeProspect, markLost, registerProposal, editBasePrice, saveChangeOrder, deleteChangeOrder, saveInvoice, deleteInvoice, savePayment, deletePayment, deleteProspect, reactivateProspect };
+  // =====================================================================================================
+  // Mandatory Financial Validation Gate Before Manufacturing
+  // =====================================================================================================
+  const MANUFACTURING_ROLES = ['manager', 'gestor', 'jefe_produccion'];
+  const INVALID_FINANCIAL_STATUSES = [
+    'anulado', 'anulada', 'revertido', 'revertida', 'cancelado', 'cancelada',
+    'rechazado', 'rechazada', 'eliminado', 'eliminada', 'borrador',
+    'pendiente', 'pendiente_verificacion', 'pendiente_emision', 'promesa'
+  ];
+
+  function hasValidPaymentDoc(doc) {
+    if (!doc) return false;
+    if (typeof doc === 'string') return doc.trim().length > 0;
+    if (typeof doc === 'object') {
+      const p = doc.storagePath || doc.path || doc.fullPath || doc.url || doc.downloadURL || '';
+      const n = doc.name || '';
+      return String(p).trim().length > 0 || String(n).trim().length > 0;
+    }
+    return false;
+  }
+
+  function isActiveInvoice(fac) {
+    if (!fac || typeof fac !== 'object') return false;
+    if (
+      fac.anulada === true || fac.anulado === true ||
+      fac.revertida === true || fac.revertido === true ||
+      fac.eliminada === true || fac.eliminado === true ||
+      fac.voided === true || fac.reversed === true
+    ) {
+      return false;
+    }
+    const facEstado = typeof fac.estado === 'string' ? fac.estado.trim().toLowerCase() : '';
+    if (facEstado && INVALID_FINANCIAL_STATUSES.includes(facEstado)) return false;
+    const facNumero = typeof fac.numero === 'string' ? fac.numero.trim() : '';
+    const facMonto = round2(Number(fac.monto));
+    return Boolean(facNumero && Number.isFinite(facMonto) && facMonto > 0);
+  }
+
+  /**
+   * Identifica de forma estable y segura la factura de anticipo de la oportunidad,
+   * soportando tanto el marcador explícito (`es_anticipo: true`, `tipo_factura: 'anticipo'`,
+   * `factura_anticipo_id`) como expedientes históricos legítimos, sin confundirse ante
+   * reordenamientos, ediciones o facturas posteriores (órdenes de cambio / saldo).
+   */
+  function resolveAdvanceInvoice(p, facturasList) {
+    const rawList = Array.isArray(facturasList)
+      ? facturasList
+      : (p && Array.isArray(p.facturas) ? p.facturas : []);
+    const active = rawList.filter(isActiveInvoice);
+    if (active.length === 0) {
+      return { invoice: null, ambiguous: false, source: 'none' };
+    }
+
+    const explicitMatches = active.filter((fac) => {
+      if (fac.es_anticipo === true) return true;
+      const tipo = typeof (fac.tipo_factura || fac.tipo) === 'string'
+        ? String(fac.tipo_factura || fac.tipo).trim().toLowerCase()
+        : '';
+      return tipo === 'anticipo';
+    });
+    if (explicitMatches.length > 1) {
+      return { invoice: null, ambiguous: true, source: 'multiple_es_anticipo' };
+    }
+
+    const prospectAdvId = p && typeof p.factura_anticipo_id === 'string' ? p.factura_anticipo_id.trim() : '';
+    if (prospectAdvId) {
+      const byProspectId = active.find((fac) => fac.id === prospectAdvId);
+      if (byProspectId && byProspectId.es_anticipo !== false) {
+        if (explicitMatches.length === 1 && explicitMatches[0].id !== byProspectId.id) {
+          return { invoice: null, ambiguous: true, source: 'conflicting_factura_anticipo_id' };
+        }
+        return { invoice: byProspectId, ambiguous: false, source: 'factura_anticipo_id' };
+      }
+    }
+
+    if (explicitMatches.length === 1) {
+      return { invoice: explicitMatches[0], ambiguous: false, source: 'es_anticipo' };
+    }
+
+    const prospectAdvNum = p && typeof p.factura_anticipo === 'string' ? p.factura_anticipo.trim() : '';
+    if (prospectAdvNum) {
+      const byNum = active.filter(
+        (fac) => String(fac.numero || '').trim() === prospectAdvNum && fac.es_anticipo !== false
+      );
+      if (byNum.length === 1) {
+        return { invoice: byNum[0], ambiguous: false, source: 'factura_anticipo_numero' };
+      }
+      if (byNum.length > 1) {
+        return { invoice: null, ambiguous: true, source: 'multiple_factura_anticipo_numero' };
+      }
+    }
+
+    // Compatibilidad con registros históricos sin etiqueta explícita:
+    // solo se acepta la primera factura si no fue marcada explícitamente como ordinaria / no-anticipo.
+    const first = active[0];
+    const firstTipo = typeof (first.tipo_factura || first.tipo) === 'string'
+      ? String(first.tipo_factura || first.tipo).trim().toLowerCase()
+      : '';
+    if (first.es_anticipo === false || firstTipo === 'ordinaria' || firstTipo === 'saldo' || firstTipo === 'orden_cambio') {
+      return { invoice: null, ambiguous: false, source: 'no_advance_invoice' };
+    }
+    return { invoice: first, ambiguous: false, source: active.length === 1 ? 'legacy_single' : 'legacy_first' };
+  }
+
+  /**
+   * Verifica que un pago haya sido positivamente confirmado mediante el flujo autorizado
+   * de backend (`savePayment` ejecutado por `gestor` o `manager`).
+   * Un pago con `confirmado` / `verificado` ausentes (`undefined`) NO se considera confirmado
+   * para habilitar fabricación, preservando los registros históricos sin migración destructiva.
+   */
+  function isPositivelyConfirmedPayment(pay) {
+    if (!pay || typeof pay !== 'object') return false;
+    const payEstado = typeof pay.estado === 'string' ? pay.estado.trim().toLowerCase() : '';
+    const hasPositiveFlag = (
+      pay.confirmado === true ||
+      pay.verificado === true ||
+      payEstado === 'confirmado' ||
+      payEstado === 'verificado'
+    );
+    if (!hasPositiveFlag) return false;
+
+    const confirmedByRole = typeof pay.confirmado_por_rol === 'string'
+      ? pay.confirmado_por_rol.trim().toLowerCase()
+      : '';
+    if (confirmedByRole && !POLICY.savePayment.includes(confirmedByRole)) {
+      return false;
+    }
+
+    const hasBackendProvenance = Boolean(
+      (pay.confirmado_por_uid || pay.confirmado_por || pay.verificado_por_uid || pay.verificado_por) &&
+      (pay.confirmado_en || pay.verificado_en)
+    );
+    return hasBackendProvenance;
+  }
+
+  function businessPrecondition(errorCode, message, details = {}) {
+    const err = new ServiceError('failed-precondition', message);
+    err.errorCode = errorCode;
+    err.details = { errorCode, ...details };
+    return err;
+  }
+
+  /**
+   * Pure deterministic evaluator of commercial closing and confirmed advance payments
+   * for manufacturing readiness. Never trusts frontend booleans (`anticipo_pagado`),
+   * unverified receipts, transfer promises, payments with absent confirmation metadata,
+   * or payments applied to invoices unrelated to the advance.
+   */
+  function evaluateManufacturingReadiness({ p, client }) {
+    if (!p || typeof p !== 'object' || p.eliminado === true) {
+      return {
+        ready: false,
+        errorCode: 'OPORTUNIDAD_INVALIDA',
+        reason: 'La oportunidad no existe o fue eliminada.'
+      };
+    }
+    if (!client || typeof client !== 'object' || client.eliminado === true || client.estado_cuenta === 'fusionada') {
+      return {
+        ready: false,
+        errorCode: 'CUENTA_INVALIDA',
+        reason: 'La oportunidad no corresponde a una cuenta de cliente válida y activa.'
+      };
+    }
+
+    const datos = (p.datos && typeof p.datos === 'object') ? p.datos : {};
+    const clientDocs = (client.documentos && typeof client.documentos === 'object') ? client.documentos : {};
+
+    // 1. Validación de cierre comercial
+    const postclosingValid = p.estado === 'ganado' && hasEnteredPostclosing(p);
+    if (!postclosingValid) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La oportunidad no cuenta con un cierre comercial válido (el estado debe ser ganado).'
+      };
+    }
+
+    const isBig = p.tipo_proyecto === 'Fabricación e instalación' && Math.max(Number(p.precio_cotizado) || 0, Number(p.costo_venta) || 0) > 10000;
+    const aprobacionSinContrato = p.aprobacion_sin_contrato || datos.aprobacion_sin_contrato || null;
+    const isApprovalInvalidated = Boolean(aprobacionSinContrato && aprobacionSinContrato.estado === 'invalidada_por_sustitucion');
+    const bypass = isBig && !isApprovalInvalidated && (isNoContractApprovalValid(p) || datos.autorizado_sin_contrato === true);
+    const hasSignedClosingDoc = hasDoc(datos.doc_firmado) || hasDoc(datos.doc_contrato) || hasDoc(datos.doc_oferta_firmada) || hasDoc(p.doc_firmado) || Boolean(p.contrato_archivo);
+    if (!hasSignedClosingDoc) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La oportunidad carece del documento contractual u oferta firmada de cierre.'
+      };
+    }
+    if (isBig && isApprovalInvalidated && !hasDoc(datos.doc_contrato)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La autorización de cierre sin contrato fue invalidada y no existe contrato firmado vigente.'
+      };
+    }
+    if (!hasDoc(clientDocs.dui) && !hasDoc(clientDocs.dui_rep)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'La cuenta del cliente carece del documento de identidad obligatorio (DUI / Carnet de residente).'
+      };
+    }
+    if (isBig && !bypass && client.tipo === 'juridica') {
+      if (!(hasDoc(clientDocs.escritura) && hasDoc(clientDocs.credencial) && hasDoc(clientDocs.nit) && hasDoc(clientDocs.nrc))) {
+        return {
+          ready: false,
+          errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+          reason: 'La cuenta jurídica carece de los documentos societarios obligatorios para el cierre contractual.'
+        };
+      }
+    }
+    if (p.tipo_proyecto === 'Fabricación e instalación' && !(p.encargado || datos.encargado)) {
+      return {
+        ready: false,
+        errorCode: 'CIERRE_COMERCIAL_INVALIDO',
+        reason: 'Falta asignar el encargado de instalación del proyecto.'
+      };
+    }
+
+    // 2. Validación de condición de pago autorizada (invariable: 50/50, 70/30, 100% anticipado)
+    const formaPago = p.forma_pago || datos.forma_pago || null;
+    if (!formaPago || !Object.prototype.hasOwnProperty.call(FORMAS_PAGO, formaPago)) {
+      return {
+        ready: false,
+        errorCode: 'CONDICION_PAGO_INVALIDA',
+        formaPago,
+        reason: `La condición de pago '${formaPago || 'sin definir'}' no está autorizada. DUCTSAL solo permite '50/50', '70/30' o '100% anticipado'.`
+      };
+    }
+
+    // 3. Cálculo del monto contractual base del anticipo y monto exigible
+    const precioCotizado = round2(Number(p.precio_cotizado));
+    const subtotalActual = round2(subtotalOf(p));
+    // El anticipo exigible se calcula sobre el contrato base cerrado (o el subtotal vigente si hubo orden de cambio en disminución).
+    const subtotalContractual = (Number.isFinite(precioCotizado) && precioCotizado > 0)
+      ? (Number.isFinite(subtotalActual) && subtotalActual > 0 ? Math.min(precioCotizado, subtotalActual) : precioCotizado)
+      : subtotalActual;
+    if (!Number.isFinite(subtotalContractual) || subtotalContractual <= 0) {
+      return {
+        ready: false,
+        errorCode: 'MONTO_CONTRACTUAL_INVALIDO',
+        formaPago,
+        subtotalContractual,
+        reason: 'El monto contractual del proyecto debe ser mayor que cero. No se permiten ventas sin anticipo.'
+      };
+    }
+
+    const clientIsExport = isExport(client);
+    const totalContractual = round2(clientIsExport ? subtotalContractual : subtotalContractual * IVA);
+    const porcentajeAnticipo = FORMAS_PAGO[formaPago];
+    const montoExigible = round2(totalContractual * porcentajeAnticipo);
+    if (!Number.isFinite(montoExigible) || montoExigible <= 0) {
+      return {
+        ready: false,
+        errorCode: 'MONTO_ANTICIPO_INVALIDO',
+        formaPago,
+        totalContractual,
+        montoExigible,
+        reason: 'El monto de anticipo exigible debe ser mayor que cero.'
+      };
+    }
+
+    // 4. Identificación segura de la factura de anticipo y verificación estricta de pagos confirmados
+    const facturas = Array.isArray(p.facturas) ? p.facturas : [];
+    const activeInvoices = facturas.filter(isActiveInvoice);
+    const montoFacturadoTotal = round2(activeInvoices.reduce((acc, fac) => acc + round2(Number(fac.monto)), 0));
+
+    const advResolution = resolveAdvanceInvoice(p, facturas);
+    if (advResolution.ambiguous) {
+      return {
+        ready: false,
+        errorCode: 'FACTURA_ANTICIPO_AMBIGUA',
+        prospectId: p.id || null,
+        accountId: client.id || p.clientId || null,
+        formaPago,
+        montoExigible,
+        reason: 'FACTURA_ANTICIPO_AMBIGUA: Existen múltiples facturas marcadas como anticipo o referencias conflictivas. Debe regularizarse la factura de anticipo antes de liberar a fabricación.'
+      };
+    }
+
+    const advInvoice = advResolution.invoice;
+    const montoFacturadoAnticipo = advInvoice ? round2(Number(advInvoice.monto)) : 0;
+    const hasValidIssuedInvoice = Boolean(advInvoice && hasValidPaymentDoc(advInvoice.doc_factura));
+    const ccfAnticipoNumero = hasValidIssuedInvoice ? String(advInvoice.numero).trim() : null;
+    const ccfAnticipoId = advInvoice ? (advInvoice.id || null) : null;
+
+    let montoEfectivoConfirmado = 0;
+    let montoRetencionConfirmadaBruta = 0;
+    let montoRegistradoNoConfirmado = 0;
+    let montoConfirmadoOtrasFacturas = 0;
+
+    const seenPaymentIds = new Set();
+    const seenPaymentOpIds = new Set();
+    const seenCompositeKeys = new Set();
+    const seenVoucherRefs = new Set();
+    const comprobantesDuplicadosDetectados = [];
+    const isGranContribuyente = isClientGranContribuyenteLocal(client);
+
+    for (const fac of activeInvoices) {
+      const facNumero = String(fac.numero || '').trim();
+      const isAdvFac = Boolean(advInvoice && (fac === advInvoice || (fac.id && advInvoice.id && fac.id === advInvoice.id)));
+      const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
+
+      for (const pay of pagos) {
+        if (!pay || typeof pay !== 'object') continue;
+        if (!isActivePaymentRecord(pay)) continue;
+
+        const metodo = typeof pay.metodo === 'string' ? pay.metodo.trim().toLowerCase() : '';
+        if (!PAYMENT_METHODS.includes(metodo)) continue;
+        if (metodo === 'retencion_1pct' && (!isGranContribuyente || clientIsExport)) continue;
+        if (!hasValidPaymentDoc(pay.doc_comprobante)) continue;
+
+        const normRef = normalizePaymentReference(pay.ref || '');
+        if (typeof pay.ref === 'string' && !normRef) continue;
+
+        const payMonto = round2(Number(pay.monto));
+        if (!Number.isFinite(payMonto) || payMonto <= 0) continue;
+
+        const payId = pay.id ? String(pay.id).trim() : '';
+        const payOpId = pay.opId ? String(pay.opId).trim() : '';
+        if (payId) {
+          if (seenPaymentIds.has(payId)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_payment_id'
+            });
+            continue;
+          }
+          seenPaymentIds.add(payId);
+        }
+        if (payOpId) {
+          if (seenPaymentOpIds.has(payOpId)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId || null,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_op_id'
+            });
+            continue;
+          }
+          seenPaymentOpIds.add(payOpId);
+        }
+        if (normRef) {
+          const refDedupeKey = metodo === 'retencion_1pct'
+            ? `RET_${fac.id || facNumero}_${normRef}`
+            : `BANK_${normRef}`;
+          if (seenVoucherRefs.has(refDedupeKey)) {
+            comprobantesDuplicadosDetectados.push({
+              invoiceId: fac.id || null,
+              invoiceNumero: facNumero,
+              paymentId: payId || null,
+              ref: String(pay.ref || '').trim(),
+              normalizedRef: normRef,
+              metodo,
+              monto: payMonto,
+              reason: 'duplicate_voucher_ref'
+            });
+            continue;
+          }
+          seenVoucherRefs.add(refDedupeKey);
+        }
+
+        if (!payId && !payOpId) {
+          const compKey = `${fac.id || facNumero}|${pay.fecha || ''}|${payMonto}|${metodo}|${normRef}`;
+          if (seenCompositeKeys.has(compKey)) continue;
+          seenCompositeKeys.add(compKey);
+        }
+
+        if (!isPositivelyConfirmedPayment(pay)) {
+          if (isAdvFac) {
+            montoRegistradoNoConfirmado = round2(montoRegistradoNoConfirmado + payMonto);
+          }
+          continue;
+        }
+
+        if (!isAdvFac) {
+          montoConfirmadoOtrasFacturas = round2(montoConfirmadoOtrasFacturas + payMonto);
+          continue;
+        }
+
+        if (metodo === 'retencion_1pct') {
+          montoRetencionConfirmadaBruta = round2(montoRetencionConfirmadaBruta + payMonto);
+        } else {
+          montoEfectivoConfirmado = round2(montoEfectivoConfirmado + payMonto);
+        }
+      }
+    }
+
+    // Tratamiento fiscal de retención 1% (Art. 162 Código Tributario El Salvador):
+    // - La retención del 1% de IVA se calcula exclusivamente sobre la base gravada sin IVA,
+    //   nunca sobre el total con IVA, y requiere base gravada >= $100.00.
+    // - En DUCTSAL ERP, `fac.monto` almacena el total facturado CON IVA para clientes locales (`!isExport`);
+    //   si la factura especifica explícitamente su base sin IVA (`subtotal_sin_iva`, `monto_sin_iva`,
+    //   `incluye_iva: false`, etc.), `resolveInvoiceBaseSinIva` no vuelve a dividir entre 1.13.
+    const advBaseInfo = advInvoice ? resolveInvoiceBaseSinIva(advInvoice, client) : { baseGravadaSinIva: 0 };
+    const baseSubtotalAnticipo = advBaseInfo.baseGravadaSinIva;
+    const maxRetencionReconocible = (advInvoice && isGranContribuyente && !clientIsExport && baseSubtotalAnticipo >= 100)
+      ? round2(baseSubtotalAnticipo * 0.01)
+      : 0;
+    const montoRetencionConfirmada = round2(Math.min(montoRetencionConfirmadaBruta, maxRetencionReconocible));
+    const montoRetencionExcedente = round2(Math.max(0, montoRetencionConfirmadaBruta - montoRetencionConfirmada));
+
+    const sumaReconocidaAnticipo = round2(montoEfectivoConfirmado + montoRetencionConfirmada);
+    const montoConfirmado = advInvoice ? round2(Math.min(montoFacturadoAnticipo, sumaReconocidaAnticipo)) : 0;
+
+    const ccfAnticipoStatus = hasValidIssuedInvoice ? 'emitido' : 'pendiente';
+    const saldoPendiente = Math.max(0, round2(montoExigible - montoConfirmado));
+    const anticipoCumplido = (
+      Boolean(advInvoice) &&
+      Math.round(montoFacturadoAnticipo * 100) >= Math.round(montoExigible * 100) &&
+      Math.round(montoConfirmado * 100) >= Math.round(montoExigible * 100)
+    );
+    const anticipoPagoStatus = anticipoCumplido
+      ? 'pagado'
+      : (montoConfirmado > 0 ? 'parcialmente_pagado' : 'pendiente');
+
+    if (!anticipoCumplido) {
+      let extraReason = '';
+      if (montoRegistradoNoConfirmado > 0 && montoConfirmado === 0) {
+        extraReason = ` Existen pagos registrados sin confirmación positiva de backend por ${fmtMoney(montoRegistradoNoConfirmado)}.`;
+      } else if (montoConfirmadoOtrasFacturas > 0) {
+        extraReason = ` Los pagos aplicados a otras facturas (${fmtMoney(montoConfirmadoOtrasFacturas)}) no sustituyen el anticipo.`;
+      } else if (montoRetencionExcedente > 0) {
+        extraReason = ` Se descartó retención 1% improcedente o en exceso por ${fmtMoney(montoRetencionExcedente)}.`;
+      }
+      return {
+        ready: false,
+        errorCode: 'ANTICIPO_PENDIENTE',
+        prospectId: p.id || null,
+        accountId: client.id || p.clientId || null,
+        formaPago,
+        porcentajeAnticipo,
+        subtotalContractual,
+        totalContractual,
+        montoExigible,
+        montoFacturado: montoFacturadoAnticipo,
+        montoFacturadoTotal,
+        montoConfirmado,
+        montoEfectivoConfirmado,
+        montoRetencionConfirmada,
+        montoRetencionExcedente,
+        montoRegistradoNoConfirmado,
+        montoConfirmadoOtrasFacturas,
+        comprobantesDuplicadosDetectados,
+        saldoPendiente,
+        ccfAnticipoId,
+        ccfAnticipoStatus,
+        ccfAnticipoNumero,
+        anticipoPagoStatus,
+        reason: `ANTICIPO_PENDIENTE: No se puede enviar ni liberar el proyecto a fabricación. Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado del anticipo: ${fmtMoney(montoConfirmado)} (Efectivo: ${fmtMoney(montoEfectivoConfirmado)}, Retención 1%: ${fmtMoney(montoRetencionConfirmada)}) | Saldo pendiente: ${fmtMoney(saldoPendiente)}.${extraReason}`
+      };
+    }
+
+    return {
+      ready: true,
+      code: 'ANTICIPO_CONFIRMADO',
+      prospectId: p.id || null,
+      accountId: client.id || p.clientId || null,
+      formaPago,
+      porcentajeAnticipo,
+      subtotalContractual,
+      totalContractual,
+      montoExigible,
+      montoFacturado: montoFacturadoAnticipo,
+      montoFacturadoTotal,
+      montoConfirmado,
+      montoEfectivoConfirmado,
+      montoRetencionConfirmada,
+      montoRetencionExcedente,
+      montoRegistradoNoConfirmado,
+      montoConfirmadoOtrasFacturas,
+      comprobantesDuplicadosDetectados,
+      saldoPendiente: 0,
+      ccfAnticipoId,
+      ccfAnticipoStatus,
+      ccfAnticipoNumero,
+      anticipoPagoStatus: 'pagado'
+    };
+  }
+
+  /**
+   * Reusable transactional gate to be invoked inside any Firestore transaction
+   * that transitions, sends, or releases an opportunity/project to manufacturing.
+   *
+   * NOTA DE INTEGRACIÓN OPERATIVA (PENDIENTE EN REPOSITORIO `fabricacion-dev`):
+   * El flujo operativo externo de creación/liberación de órdenes de fabricación en el
+   * repositorio `fabricacion-dev` debe invocar obligatoriamente `validateManufacturingReadinessAdmin`
+   * (o `assertManufacturingReadyTx` cuando comparta transacción Firestore sobre `prospects_prod`)
+   * antes de permitir el inicio de fabricación.
+   */
+  async function assertManufacturingReadyTx(tx, { caller, prospectId }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!MANUFACTURING_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para validar o liberar proyectos a fabricación');
+    }
+    reqDocId(prospectId, 'prospectId');
+
+    const pRef = col('prospects').doc(prospectId);
+    const pSnap = await tx.get(pRef);
+    if (!pSnap.exists) throw notFound('Oportunidad');
+    const p = pSnap.data() || {};
+    if (p.eliminado === true) throw precondition('Este proyecto fue eliminado y no admite cambios');
+    if (caller.role === 'gestor') {
+      requireProspectAccess(caller, p);
+    }
+
+    if (!p.clientId) {
+      throw businessPrecondition('CUENTA_INVALIDA', 'CUENTA_INVALIDA: La oportunidad no tiene una cuenta asociada.', { prospectId });
+    }
+
+    const client = await loadClient(tx, p);
+    if (!client) {
+      throw businessPrecondition('CUENTA_INVALIDA', 'CUENTA_INVALIDA: La cuenta asociada a la oportunidad no existe.', { prospectId, clientId: p.clientId });
+    }
+
+    const evaluation = evaluateManufacturingReadiness({ p: { id: prospectId, ...p }, client });
+    if (!evaluation.ready) {
+      throw businessPrecondition(evaluation.errorCode || 'ANTICIPO_PENDIENTE', evaluation.reason, evaluation);
+    }
+
+    return {
+      status: 'ready_for_manufacturing',
+      ...evaluation
+    };
+  }
+
+  /**
+   * Centralized backend validation callable/method for verifying that a closed opportunity
+   * has its mandatory advance payment 100% confirmed before manufacturing release.
+   */
+  async function validateManufacturingReadiness({ caller, prospectId }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!MANUFACTURING_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para validar o liberar proyectos a fabricación');
+    }
+    reqDocId(prospectId, 'prospectId');
+    return db.runTransaction(async tx => {
+      const result = await assertManufacturingReadyTx(tx, { caller, prospectId });
+      addAudit(tx, caller, 'validateManufacturingReadiness', prospectId, {
+        ready: true,
+        forma_pago: result.formaPago,
+        monto_exigible: result.montoExigible,
+        monto_confirmado: result.montoConfirmado,
+        monto_efectivo_confirmado: result.montoEfectivoConfirmado,
+        monto_retencion_confirmada: result.montoRetencionConfirmada,
+        saldo_pendiente: result.saldoPendiente
+      });
+      return result;
+    });
+  }
+
+  return {
+    advanceStage,
+    revertStage,
+    saveClosingDocuments,
+    finalizeProspect,
+    markLost,
+    registerProposal,
+    editBasePrice,
+    saveChangeOrder,
+    deleteChangeOrder,
+    saveInvoice,
+    deleteInvoice,
+    savePayment,
+    deletePayment,
+    deleteProspect,
+    reactivateProspect,
+    resolveAdvanceInvoice,
+    isPositivelyConfirmedPayment,
+    normalizePaymentReference,
+    resolveInvoiceBaseSinIva,
+    calculateInvoiceRetencionLimit,
+    isClientGranContribuyenteLocal,
+    evaluateManufacturingReadiness,
+    assertManufacturingReadyTx,
+    validateManufacturingReadiness
+  };
 }
 
-module.exports = { createProspectWorkflowService, hasEnteredPostclosing: fallbackHasEnteredPostclosing, POLICY, STAGES, REVERSION_PREV_STAGE, MOTIVOS_PERDIDA, FORMAS_PAGO, PAYMENT_METHODS, ORDER_TYPES };
+module.exports = {
+  createProspectWorkflowService,
+  hasEnteredPostclosing: fallbackHasEnteredPostclosing,
+  POLICY,
+  STAGES,
+  REVERSION_PREV_STAGE,
+  MOTIVOS_PERDIDA,
+  FORMAS_PAGO,
+  PAYMENT_METHODS,
+  ORDER_TYPES
+};

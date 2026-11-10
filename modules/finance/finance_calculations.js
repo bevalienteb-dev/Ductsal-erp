@@ -152,6 +152,8 @@
 
         let totalFacturado = 0;
         let totalCobrado = 0;
+        let montoEfectivoConfirmado = 0;
+        let montoRetencionConfirmada = 0;
 
         if (Array.isArray(p.facturas)) {
             p.facturas.forEach(f => {
@@ -161,12 +163,21 @@
                 if (Array.isArray(f.pagos)) {
                     f.pagos.forEach(pay => {
                         const m = parseFloat(pay && pay.monto);
-                        if (!isNaN(m) && m > 0) totalCobrado += m;
+                        if (!isNaN(m) && m > 0) {
+                            totalCobrado += m;
+                            if (pay && pay.metodo === 'retencion_1pct') {
+                                montoRetencionConfirmada += m;
+                            } else {
+                                montoEfectivoConfirmado += m;
+                            }
+                        }
                     });
                 }
             });
         }
 
+        montoEfectivoConfirmado = Math.round(montoEfectivoConfirmado * 100) / 100;
+        montoRetencionConfirmada = Math.round(montoRetencionConfirmada * 100) / 100;
         const saldoCxC = Math.max(0, Math.round((totalFacturado - totalCobrado) * 100) / 100);
         const porFacturar = Math.max(0, Math.round((total - totalFacturado) * 100) / 100);
         const pctFacturado = total > 0 ? Math.min(100, (totalFacturado / total) * 100) : 0;
@@ -182,6 +193,8 @@
             margenPct,
             totalFacturado,
             totalCobrado,
+            montoEfectivoConfirmado,
+            montoRetencionConfirmada,
             saldoCxC,
             porFacturar,
             pctFacturado,
@@ -195,18 +208,42 @@
     /**
      * Calcula los saldos y estado de una factura individual.
      * @param {Object} f - Factura
-     * @returns {Object} { cobrado, saldo, isPaid }
+     * @returns {Object} { cobrado, montoEfectivoConfirmado, montoRetencionConfirmada, saldo, saldoPendiente, isPaid }
      */
     function calculateInvoiceStatus(f) {
-        if (!f || typeof f !== 'object') return { cobrado: 0, saldo: 0, isPaid: false };
+        if (!f || typeof f !== 'object') {
+            return { cobrado: 0, montoEfectivoConfirmado: 0, montoRetencionConfirmada: 0, saldo: 0, saldoPendiente: 0, isPaid: false };
+        }
         const monto = parseFloat(f.monto) || 0;
         let cobrado = 0;
+        let montoEfectivoConfirmado = 0;
+        let montoRetencionConfirmada = 0;
         if (Array.isArray(f.pagos)) {
-            cobrado = f.pagos.reduce((acc, pay) => acc + (parseFloat(pay && pay.monto) || 0), 0);
+            f.pagos.forEach(pay => {
+                const m = parseFloat(pay && pay.monto) || 0;
+                if (m > 0) {
+                    cobrado += m;
+                    if (pay && pay.metodo === 'retencion_1pct') {
+                        montoRetencionConfirmada += m;
+                    } else {
+                        montoEfectivoConfirmado += m;
+                    }
+                }
+            });
         }
+        cobrado = Math.round(cobrado * 100) / 100;
+        montoEfectivoConfirmado = Math.round(montoEfectivoConfirmado * 100) / 100;
+        montoRetencionConfirmada = Math.round(montoRetencionConfirmada * 100) / 100;
         const saldo = Math.max(0, Math.round((monto - cobrado) * 100) / 100);
         const isPaid = (monto - cobrado) <= 0.009;
-        return { cobrado, saldo, isPaid };
+        return {
+            cobrado,
+            montoEfectivoConfirmado,
+            montoRetencionConfirmada,
+            saldo,
+            saldoPendiente: saldo,
+            isPaid
+        };
     }
 
     function setDeps(deps) {

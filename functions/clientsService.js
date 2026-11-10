@@ -40,6 +40,7 @@ function namesFor(suffix) {
     identifiers: `clientIdentifiers${suffix}`,
     ops: `clientOps${suffix}`,
     reservations: `client_reservations${suffix}`,
+    payment_refs: `payment_refs${suffix}`,
     audit: `commercialAudit${suffix}`
   };
 }

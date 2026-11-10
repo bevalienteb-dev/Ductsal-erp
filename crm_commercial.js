@@ -247,6 +247,11 @@
         return call(fb, 'reactivateLostProspectAdmin', { prospectId, motivo, dbSuffix });
     }
 
+    // Mandatory financial validation gate before releasing / sending a closed project to manufacturing.
+    function validateManufacturingReadiness(fb, { prospectId, dbSuffix }) {
+        return call(fb, 'validateManufacturingReadinessAdmin', { prospectId, dbSuffix });
+    }
+
     // ---------- wording ----------
     function serverMessage(err) {
         const m = err && typeof err.message === 'string' ? err.message.trim() : '';
@@ -298,6 +303,7 @@
         deletePayment,
         deleteProspect,
         reactivateProspect,
+        validateManufacturingReadiness,
         newOpId,
         generateCryptoOpId: newOpId,
         errorMessage,

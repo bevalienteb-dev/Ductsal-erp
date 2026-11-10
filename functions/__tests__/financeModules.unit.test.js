@@ -192,7 +192,7 @@ describe('Phase 6.4: Finance Subsystem Modules', () => {
   // 4. FinancePayments
   // =========================================================================
   describe('4. FinancePayments', () => {
-    test('handlePaymentMethodChange calculates 1% retention for Grandes Contribuyentes', () => {
+    test('handlePaymentMethodChange calculates 1% retention on net base without IVA for Grandes Contribuyentes', () => {
       const els = {
         'pay-metodo': { value: 'retencion_1pct' },
         'pay-invoice-id': { value: 'F1' },
@@ -201,7 +201,7 @@ describe('Phase 6.4: Finance Subsystem Modules', () => {
       global.document = { getElementById: (id) => els[id] };
 
       FinancePayments.handlePaymentMethodChange();
-      expect(els['pay-monto-nuevo'].value).toBe('113.00'); // 1% of 11300
+      expect(els['pay-monto-nuevo'].value).toBe('100.00'); // 1% of $10,000 net base without IVA (11300 / 1.13)
     });
 
     test('blocks vendedor role with alert across all operations', async () => {
