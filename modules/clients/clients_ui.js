@@ -156,6 +156,18 @@
             if (typeof closeModal === 'function') return closeModal(id);
             if (typeof window !== 'undefined' && typeof window.closeModal === 'function') return window.closeModal(id);
         },
+        saveListScrollPosition: (opts) => {
+            if (typeof saveListScrollPosition === 'function') return saveListScrollPosition(opts);
+            if (typeof window !== 'undefined' && typeof window.saveListScrollPosition === 'function') return window.saveListScrollPosition(opts);
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.saveListScrollPosition === 'function') return AppRouter.saveListScrollPosition(opts);
+            return 0;
+        },
+        restoreListScrollPosition: (opts) => {
+            if (typeof restoreListScrollPosition === 'function') return restoreListScrollPosition(opts);
+            if (typeof window !== 'undefined' && typeof window.restoreListScrollPosition === 'function') return window.restoreListScrollPosition(opts);
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.restoreListScrollPosition === 'function') return AppRouter.restoreListScrollPosition(opts);
+            return 0;
+        },
         showLoading: (msg) => {
             if (typeof showLoading === 'function') return showLoading(msg);
             if (typeof window !== 'undefined' && typeof window.showLoading === 'function') return window.showLoading(msg);
@@ -417,7 +429,7 @@
             actionsHtml += `</div>`;
 
             tbody.innerHTML += `
-                <tr class="client-table-row">
+                <tr class="client-table-row" data-client-id="${esc(c.id)}">
                     <td class="col-cli-type" style="white-space:nowrap;">${typeBadge}</td>
                     <td class="col-cli-name">
                         <div class="cell-ellipsis cli-name-wrap" style="font-weight:600; color:white; max-width:240px;" title="${esc(mainName)}">
@@ -471,35 +483,64 @@
         }
     }
 
-    let _clientViewOrigin = { view: 'clients-view', prospectId: null, fromNewProspect: false };
+    let _clientViewOrigin = { view: 'clients-view', prospectId: null, clientId: null, fromNewProspect: false, searchVal: '', sortCol: '', sortDir: 'asc' };
 
-    function _navigateView(viewId) {
-        if (typeof showView === 'function') {
-            showView(viewId);
+    function _navigateView(viewId, navOptions) {
+        if (typeof _deps.showView === 'function') {
+            _deps.showView(viewId, navOptions);
+        } else if (typeof showView === 'function') {
+            showView(viewId, navOptions);
         } else if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
-            AppRouter.showView(viewId);
+            AppRouter.showView(viewId, navOptions);
         }
     }
 
     function openClientDetailView(clientId = null, options = {}) {
         if (typeof document === 'undefined') return;
 
-        // Determinar origen de navegación para retorno limpio desde la vista de pantalla completa
+        // Determinar origen de navegación y preservar contexto de tabla (filtros, búsqueda, orden, scroll, fila)
         const newProspectEl = document.getElementById('newProspectModal');
         const detailViewEl = document.getElementById('detail-view');
+        const searchInput = document.getElementById('cli-search');
+        const currentSearchVal = (searchInput && typeof searchInput.value === 'string') ? searchInput.value : '';
+
+        let originView = 'clients-view';
+        let originProspectId = null;
+        let fromNewProspect = false;
+
         if (options && options.originView) {
-            _clientViewOrigin = {
-                view: options.originView,
-                prospectId: options.prospectId || null,
-                fromNewProspect: false
-            };
+            originView = options.originView;
+            originProspectId = options.prospectId || null;
         } else if (newProspectEl && newProspectEl.style && newProspectEl.style.display === 'block') {
-            _clientViewOrigin = { view: 'list-view', prospectId: null, fromNewProspect: true };
+            originView = 'list-view';
+            fromNewProspect = true;
         } else if (detailViewEl && detailViewEl.classList && typeof detailViewEl.classList.contains === 'function' && detailViewEl.classList.contains('active')) {
-            const currentId = (typeof window !== 'undefined' && window.currentDetailId) ? window.currentDetailId : null;
-            _clientViewOrigin = { view: 'detail-view', prospectId: currentId, fromNewProspect: false };
+            originView = 'detail-view';
+            originProspectId = (typeof window !== 'undefined' && window.currentDetailId) ? window.currentDetailId : null;
         } else {
-            _clientViewOrigin = { view: 'clients-view', prospectId: null, fromNewProspect: false };
+            originView = 'clients-view';
+        }
+
+        _clientViewOrigin = {
+            view: originView,
+            prospectId: originProspectId,
+            clientId: clientId || null,
+            fromNewProspect,
+            searchVal: currentSearchVal,
+            sortCol: cliSortCol,
+            sortDir: cliSortDir,
+            page: 1
+        };
+
+        if (originView !== 'detail-view' && typeof _deps.saveListScrollPosition === 'function') {
+            _deps.saveListScrollPosition({
+                originView,
+                recordId: clientId || null,
+                recordType: 'client',
+                page: 1,
+                filters: { cliSearch: currentSearchVal },
+                sort: { col: cliSortCol, dir: cliSortDir }
+            });
         }
 
         const form = document.getElementById('clientForm');
@@ -695,7 +736,7 @@
         _navigateView('client-detail-view');
     }
 
-    function closeClientDetailView() {
+    function closeClientDetailView(options = {}) {
         if (typeof _deps.cancelPendingClientReservation === 'function') {
             _deps.cancelPendingClientReservation();
         }
@@ -706,16 +747,45 @@
             const contentEl = document.getElementById('clientDetailContent');
             if (contentEl && contentEl.style) contentEl.style.display = 'none';
         }
+        const navOpts = {
+            fromPopstate: Boolean(options && options.fromPopstate),
+            preserveListMode: true
+        };
         if (_clientViewOrigin && _clientViewOrigin.fromNewProspect) {
-            _navigateView('list-view');
+            _navigateView('list-view', navOpts);
+            if (typeof _deps.restoreListScrollPosition === 'function') {
+                _deps.restoreListScrollPosition({ targetSection: 'list-view', fromPopstate: navOpts.fromPopstate });
+            }
         } else if (_clientViewOrigin && _clientViewOrigin.view === 'detail-view' && _clientViewOrigin.prospectId) {
-            _navigateView('detail-view');
+            _navigateView('detail-view', navOpts);
             if (typeof window !== 'undefined' && typeof window.openDetail === 'function') {
-                window.openDetail(_clientViewOrigin.prospectId);
+                window.openDetail(_clientViewOrigin.prospectId, { skipSaveContext: true });
             }
         } else {
-            _navigateView((_clientViewOrigin && _clientViewOrigin.view) || 'clients-view');
+            const targetView = (_clientViewOrigin && typeof _clientViewOrigin.view === 'string' && _clientViewOrigin.view && _clientViewOrigin.view !== 'client-detail-view')
+                ? _clientViewOrigin.view
+                : 'clients-view';
+            if (_clientViewOrigin && typeof document !== 'undefined') {
+                const searchInput = document.getElementById('cli-search');
+                if (searchInput && _clientViewOrigin.searchVal !== undefined && searchInput.value !== _clientViewOrigin.searchVal) {
+                    searchInput.value = _clientViewOrigin.searchVal;
+                }
+                if (_clientViewOrigin.sortCol !== undefined) {
+                    cliSortCol = _clientViewOrigin.sortCol;
+                    cliSortDir = _clientViewOrigin.sortDir || 'asc';
+                    updateCliSortIcons();
+                }
+            }
+            _navigateView(targetView, navOpts);
             renderClientsTable();
+            if (typeof _deps.restoreListScrollPosition === 'function') {
+                _deps.restoreListScrollPosition({
+                    recordId: (_clientViewOrigin && _clientViewOrigin.clientId) || null,
+                    recordType: 'client',
+                    targetSection: targetView,
+                    fromPopstate: navOpts.fromPopstate
+                });
+            }
         }
     }
 

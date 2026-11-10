@@ -969,7 +969,9 @@ if (typeof _initClientsFn === 'function') {
         confirm: () => true,
         openModal: (id) => (typeof openModal === 'function' ? openModal(id) : null),
         closeModal: (id) => (typeof closeModal === 'function' ? closeModal(id) : null),
-        renderClosingDocumentationPanel: (prospectId) => (typeof renderClosingDocumentationPanel === 'function' ? renderClosingDocumentationPanel(prospectId) : null)
+        renderClosingDocumentationPanel: (prospectId) => (typeof renderClosingDocumentationPanel === 'function' ? renderClosingDocumentationPanel(prospectId) : null),
+        saveListScrollPosition: (opts) => (typeof saveListScrollPosition === 'function' ? saveListScrollPosition(opts) : null),
+        restoreListScrollPosition: (opts) => (typeof restoreListScrollPosition === 'function' ? restoreListScrollPosition(opts) : null)
     });
 }
 
@@ -1079,8 +1081,10 @@ if (typeof _initOpportunitiesUIFn === 'function') {
         getDaysDifference: (d1) => (typeof getDaysDifference === 'function' ? getDaysDifference(d1) : Math.floor((new Date() - new Date(d1 || new Date())) / (1000 * 60 * 60 * 24))),
         formatDate: (d) => (typeof formatDate === 'function' ? formatDate(d) : String(d || '-').slice(0, 10)),
         hasEnteredPostclosing: (p) => (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : !!(p && (p.postcierre_habilitado === true || (p.etapa === 'cierre' && p.estado === 'ganado')))),
-        saveListScrollPosition: () => (typeof saveListScrollPosition === 'function' ? saveListScrollPosition() : null),
-        showView: (v) => (typeof showView === 'function' ? showView(v) : null),
+        saveListScrollPosition: (opts) => (typeof saveListScrollPosition === 'function' ? saveListScrollPosition(opts) : null),
+        restoreListScrollPosition: (opts) => (typeof restoreListScrollPosition === 'function' ? restoreListScrollPosition(opts) : null),
+        getLastViewedSection: () => (typeof AppRouter !== 'undefined' && typeof AppRouter.getLastViewedSection === 'function' ? AppRouter.getLastViewedSection() : (typeof lastViewedSection === 'string' && lastViewedSection ? lastViewedSection : 'list-view')),
+        showView: (v, opts) => (typeof showView === 'function' ? showView(v, opts) : null),
         renderClientContactCard: (p) => (typeof renderClientContactCard === 'function' ? renderClientContactCard(p) : null),
         renderFinancials: (p) => (typeof renderFinancials === 'function' ? renderFinancials(p) : null),
         renderDailyAgenda: () => (typeof renderDailyAgenda === 'function' ? renderDailyAgenda() : null),
@@ -1717,7 +1721,15 @@ if (typeof AppState !== 'undefined') {
         currentListMode = m;
     });
     AppState.subscribe('navigation:view', (v) => {
-        if (v !== 'detail-view') lastViewedSection = v;
+        const nextView = (v && typeof v === 'object') ? v.current : v;
+        if (typeof nextView === 'string' && nextView &&
+            nextView !== 'detail-view' &&
+            nextView !== 'client-detail-view' &&
+            !nextView.startsWith('b3-') &&
+            !nextView.includes('opportunity-contact') &&
+            !nextView.includes('opportunity-account')) {
+            lastViewedSection = nextView;
+        }
     });
     AppState.subscribe('lifecycle:initialLoadCompleted', (v) => {
         initialLoadCompleted = v;
@@ -2336,10 +2348,12 @@ async function removeSetting(type, index) {
     if (res) renderSettingsLists();
 }
 
-function showView(viewId) {
+function showView(viewId, options) {
     if (typeof AppRouter !== 'undefined' && typeof AppRouter.showView === 'function') {
-        return AppRouter.showView(viewId);
+        return AppRouter.showView(viewId, options);
     }
+    const safeViewId = (viewId && typeof viewId === 'object' && typeof viewId.current === 'string') ? viewId.current : viewId;
+    viewId = safeViewId || 'list-view';
     if (viewId === 'dashboard-view' && currentUser && currentUser.role !== 'manager') {
         alert("Acceso denegado: este módulo es exclusivo para la Gerencia General.");
         showView('list-view');
@@ -2351,7 +2365,9 @@ function showView(viewId) {
         return;
     }
     const previousSection = lastViewedSection;
-    lastViewedSection = viewId === 'detail-view' ? lastViewedSection : viewId;
+    if (viewId !== 'detail-view' && viewId !== 'client-detail-view' && !String(viewId).startsWith('b3-')) {
+        lastViewedSection = viewId;
+    }
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
     document.getElementById(viewId).classList.add('active');
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
@@ -2399,22 +2415,23 @@ function showView(viewId) {
 
 let lastListScrollY = 0;
 
-function saveListScrollPosition() {
+function saveListScrollPosition(opts) {
     if (typeof AppRouter !== 'undefined' && typeof AppRouter.saveListScrollPosition === 'function') {
-        AppRouter.saveListScrollPosition();
+        AppRouter.saveListScrollPosition(opts);
         lastListScrollY = AppRouter.getLastListScrollY();
         if (typeof window !== 'undefined') window.lastListScrollY = lastListScrollY;
-        return;
+        return lastListScrollY;
     }
     if (typeof window !== 'undefined') {
         lastListScrollY = window.scrollY || window.pageYOffset || (document.documentElement && document.documentElement.scrollTop) || 0;
         window.lastListScrollY = lastListScrollY;
     }
+    return lastListScrollY;
 }
 
-function restoreListScrollPosition() {
+function restoreListScrollPosition(opts) {
     if (typeof AppRouter !== 'undefined' && typeof AppRouter.restoreListScrollPosition === 'function') {
-        return AppRouter.restoreListScrollPosition();
+        return AppRouter.restoreListScrollPosition(opts);
     }
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
         setTimeout(() => {
@@ -2425,6 +2442,7 @@ function restoreListScrollPosition() {
             }
         }, 10);
     }
+    return lastListScrollY;
 }
 
 function goBackFromDetail() {
@@ -3496,6 +3514,7 @@ function renderDailyAgenda() {
         const p = item.prospect;
         const c = item.classification;
         const tr = document.createElement('tr');
+        if (item.id && typeof tr.setAttribute === 'function') tr.setAttribute('data-prospect-id', item.id);
         tr.classList.add('cursor-pointer');
         tr.onclick = () => openDetail(item.id);
 

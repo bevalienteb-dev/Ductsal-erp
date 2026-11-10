@@ -1150,14 +1150,37 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       };
 
       // Si pasa de presupuesto a ejecución: activar reglas comerciales correspondientes en el momento adecuado
-      // Si la oportunidad ya estaba en etapa de negociación, registrar fecha_entrega_oferta
+      // Si la oportunidad ya estaba en etapa de negociación, reanudar cómputos sin borrar historial
       if (prevClasif === 'presupuesto' && targetClasif === 'ejecucion') {
         if (p.etapa === 'negociacion') {
+          const curTs = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
+          const pauseStart = p.sla_pausado_en || curTs.negociacion || p.fecha_creacion;
+          const pMs = pauseStart ? new Date(pauseStart).getTime() : NaN;
+          const atMs = new Date(at).getTime();
+          const waitCalendarDays = (!isNaN(pMs) && !isNaN(atMs) && atMs > pMs)
+            ? Math.max(0, Math.floor((atMs - pMs) / (1000 * 60 * 60 * 24)))
+            : 0;
+          const prevWait = Number(p.tiempo_espera_presupuesto_acumulado_dias) || 0;
+          patch.tiempo_espera_presupuesto_acumulado_dias = prevWait + waitCalendarDays;
+          patch.sla_pausado_en = null;
+          patch.sla_pausado_etapa = null;
+          patch.sla_estado = 'activo';
+          patch.fecha_reactivacion_ejecucion = at;
+          patch.sla_reanudado_en = at;
+          if (!p.fecha_entrada_negociacion_original && curTs.negociacion) {
+            patch.fecha_entrada_negociacion_original = curTs.negociacion;
+          }
+          patch.stage_timestamps = { ...curTs, negociacion: at };
+
           const curDelivery = p.fecha_entrega_oferta || (p.seguimiento && p.seguimiento.cadencia && p.seguimiento.cadencia.fecha_entrega_oferta);
           if (!curDelivery) {
             patch.fecha_entrega_oferta = at;
           }
           const curSeg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+          const nextSeg = { ...curSeg };
+          if (curSeg.cadencia && typeof curSeg.cadencia === 'object') {
+            nextSeg.cadencia = { ...curSeg.cadencia, sla_pausado: false };
+          }
           if (!curSeg.proxima_accion || !curSeg.proxima_accion.fecha) {
             const cadConfig = CrmFollowUpCalc ? CrmFollowUpCalc.getCadenceConfig((curSeg.cadencia && curSeg.cadencia.tipo_cadencia) || 'estandar') : { dias_primer_contacto: 5 };
             const dias1er = cadConfig.dias_primer_contacto || 5;
@@ -1170,10 +1193,40 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
               d.setDate(d.getDate() + 7);
               proxYMD = d.toISOString().slice(0, 10);
             }
-            patch['seguimiento.proxima_accion'] = {
+            nextSeg.proxima_accion = {
               fecha: proxYMD,
               tipo: 'llamada',
               descripcion: '1er contacto de seguimiento post-oferta (activado tras confirmar oferta para ejecución)'
+            };
+          }
+          patch.seguimiento = nextSeg;
+        }
+      } else if (prevClasif === 'ejecucion' && targetClasif === 'presupuesto') {
+        if (p.etapa === 'negociacion') {
+          const curTs = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
+          const stageStart = curTs.negociacion || p.fecha_creacion;
+          const workCal = (CrmFollowUpCalc && typeof CrmFollowUpCalc.getWorkCalendar === 'function')
+            ? CrmFollowUpCalc.getWorkCalendar()
+            : null;
+          let elapsedDays = 0;
+          if (workCal && typeof workCal.getWorkTimeBetween === 'function' && stageStart) {
+            elapsedDays = workCal.getWorkTimeBetween(stageStart, at, { excludeSaturday: true });
+          }
+          const canonElapsed = Math.round(Number(elapsedDays || 0) * 2) / 2;
+          const prevTiempos = (p.tiempos_etapas_acumulados && typeof p.tiempos_etapas_acumulados === 'object') ? p.tiempos_etapas_acumulados : {};
+          const curAcc = typeof prevTiempos.negociacion === 'number' ? prevTiempos.negociacion : 0;
+          patch.tiempos_etapas_acumulados = {
+            ...prevTiempos,
+            negociacion: Math.round((curAcc + canonElapsed) * 2) / 2
+          };
+          patch.sla_pausado_en = at;
+          patch.sla_pausado_etapa = 'negociacion';
+          patch.sla_estado = 'pausado_presupuesto';
+          const curSeg = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
+          if (curSeg.cadencia && typeof curSeg.cadencia === 'object') {
+            patch.seguimiento = {
+              ...curSeg,
+              cadencia: { ...curSeg.cadencia, sla_pausado: true }
             };
           }
         }
@@ -1191,13 +1244,23 @@ function createCommercialService({ db, FieldValue, suffix, verifyManager, now = 
       tx.create(auditRef(), auditEntry(caller, 'reclassifyProspect', 'prospect', prospectId, {
         clasificacionAnterior: prevClasif,
         clasificacionNueva: targetClasif,
-        motivo: reason
+        motivo: reason,
+        etapa: p.etapa,
+        sla_estado: patch.sla_estado || p.sla_estado || null
       }));
 
       return {
         status: 'reclassified',
         clasificacion: targetClasif,
-        historial_clasificacion: nextHistorial
+        historial_clasificacion: nextHistorial,
+        sla_pausado_en: patch.sla_pausado_en !== undefined ? patch.sla_pausado_en : (p.sla_pausado_en || null),
+        sla_estado: patch.sla_estado || p.sla_estado || null,
+        fecha_reactivacion_ejecucion: patch.fecha_reactivacion_ejecucion || p.fecha_reactivacion_ejecucion || null,
+        tiempo_espera_presupuesto_acumulado_dias: patch.tiempo_espera_presupuesto_acumulado_dias !== undefined
+          ? patch.tiempo_espera_presupuesto_acumulado_dias
+          : (p.tiempo_espera_presupuesto_acumulado_dias || 0),
+        stage_timestamps: patch.stage_timestamps || p.stage_timestamps || null,
+        tiempos_etapas_acumulados: patch.tiempos_etapas_acumulados || p.tiempos_etapas_acumulados || null
       };
     });
   }

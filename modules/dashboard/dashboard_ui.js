@@ -511,7 +511,7 @@
             actionButtonsHtml += `<button class="btn-table-action btn-table-edit" onclick="openDetail('${item.id}')" title="Ver detalle completo">👁️ Ver</button>`;
 
             rowsHtml += `
-                <tr class="cursor-pointer" onclick="openDetail('${item.id}')">
+                <tr class="cursor-pointer" data-prospect-id="${escapeHtml(item.id)}" onclick="openDetail('${item.id}')">
                     <td><strong style="color: var(--brand-gold);">${escapeHtml(item.codigo || item.id.slice(-4))}</strong></td>
                     <td>
                         <strong style="color: white; display: block;">${escapeHtml(item.proyecto)}</strong>

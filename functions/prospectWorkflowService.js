@@ -348,13 +348,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         if (input.doc_costos.length > 0) datos.doc_costos = input.doc_costos;
         logMsg += ` (Cotizado: ${fmtMoney(input.precio_cotizado)}, Costo: ${fmtMoney(input.costo_venta)})`;
 
-        // Regla Fase 2.2: La transición de «Cotización» a «Negociación» determina oficialmente la entrega de la oferta al cliente
+        // Regla Fase 2.2 + Bloque 2 SLA Presupuesto:
+        // - Las oportunidades de Presupuesto pueden avanzar normalmente hasta Negociación.
+        // - Al alcanzar Negociación como Presupuesto, se detiene el reloj del SLA operativo (sla_pausado_en).
+        // - Las oportunidades de Ejecución activan su cadencia operativa habitual.
         if (p.etapa === 'cotizacion' && nextStage === 'negociacion') {
           const clasificacion = p.clasificacion || 'ejecucion';
-          if (clasificacion === 'presupuesto') {
-            throw precondition('Esta oportunidad está clasificada como "Cotización para presupuesto" (referencial o de planificación). No puede avanzar a Negociación ni activar cadencia de seguimiento mientras sea presupuestaria. Si el cliente confirmó intención comercial de ejecución, cambie primero la clasificación a "Oferta para ejecución".');
-          }
-
           const curSeguimiento = (p.seguimiento && typeof p.seguimiento === 'object') ? p.seguimiento : {};
           const curCadence = (curSeguimiento.cadencia && typeof curSeguimiento.cadencia === 'object') ? curSeguimiento.cadencia : {};
           const tipoCadencia = curCadence.tipo_cadencia || 'estandar';
@@ -369,42 +368,73 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             patch.fecha_entrega_oferta = deliveryStamp;
           }
 
-          let primerContactoYMD = '';
-          if (CrmFollowUpCalc) {
-            const primerContactoDate = CrmFollowUpCalc.addBusinessDaysForExternalContact(deliveryStamp, dias1erContacto);
-            primerContactoYMD = CrmFollowUpCalc.formatDateYMD(primerContactoDate);
-          } else {
-            const d = new Date(deliveryStamp);
-            d.setDate(d.getDate() + 7);
-            primerContactoYMD = d.toISOString().slice(0, 10);
-          }
-
-          const curProxima = curSeguimiento.proxima_accion || null;
-          const nextProxima = (curProxima && curProxima.fecha) ? curProxima : {
-            fecha: primerContactoYMD,
-            tipo: 'llamada',
-            descripcion: `Primer seguimiento comercial post-oferta (${dias1erContacto} días hábiles)`
-          };
-
-          const nextCadence = {
-            ...curCadence,
-            tipo_cadencia: tipoCadencia,
-            fecha_entrega_oferta: deliveryStamp,
-            fecha_entrega_oferta_ymd: CrmFollowUpCalc ? CrmFollowUpCalc.getCommercialYMD(deliveryStamp) : deliveryStamp.slice(0, 10),
-            entregado_por_id: caller.cid,
-            entregado_por_nombre: caller.name || 'Comercial'
-          };
-
-          patch.seguimiento = {
-            ...curSeguimiento,
-            cadencia: nextCadence,
-            proxima_accion: nextProxima
-          };
-
           const ymdDisplay = CrmFollowUpCalc ? CrmFollowUpCalc.getCommercialYMD(deliveryStamp) : deliveryStamp.slice(0, 10);
-          logMsg += ` [Entrega de Oferta Registrada: ${ymdDisplay}. Primer contacto: ${nextProxima.fecha}]`;
+
+          if (clasificacion === 'presupuesto') {
+            patch.sla_pausado_en = p.sla_pausado_en || at;
+            patch.sla_pausado_etapa = 'negociacion';
+            patch.sla_estado = 'pausado_presupuesto';
+
+            const nextCadence = {
+              ...curCadence,
+              tipo_cadencia: tipoCadencia,
+              fecha_entrega_oferta: deliveryStamp,
+              fecha_entrega_oferta_ymd: ymdDisplay,
+              entregado_por_id: caller.cid,
+              entregado_por_nombre: caller.name || 'Comercial',
+              sla_pausado: true
+            };
+
+            patch.seguimiento = {
+              ...curSeguimiento,
+              cadencia: nextCadence,
+              proxima_accion: curSeguimiento.proxima_accion || null
+            };
+
+            logMsg += ` [Entrega de Oferta Presupuestaria: ${ymdDisplay}. SLA operativo detenido en Negociación mientras conserve condición de Presupuesto]`;
+          } else {
+            patch.sla_estado = 'activo';
+
+            let primerContactoYMD = '';
+            if (CrmFollowUpCalc) {
+              const primerContactoDate = CrmFollowUpCalc.addBusinessDaysForExternalContact(deliveryStamp, dias1erContacto);
+              primerContactoYMD = CrmFollowUpCalc.formatDateYMD(primerContactoDate);
+            } else {
+              const d = new Date(deliveryStamp);
+              d.setDate(d.getDate() + 7);
+              primerContactoYMD = d.toISOString().slice(0, 10);
+            }
+
+            const curProxima = curSeguimiento.proxima_accion || null;
+            const nextProxima = (curProxima && curProxima.fecha) ? curProxima : {
+              fecha: primerContactoYMD,
+              tipo: 'llamada',
+              descripcion: `Primer seguimiento comercial post-oferta (${dias1erContacto} días hábiles)`
+            };
+
+            const nextCadence = {
+              ...curCadence,
+              tipo_cadencia: tipoCadencia,
+              fecha_entrega_oferta: deliveryStamp,
+              fecha_entrega_oferta_ymd: ymdDisplay,
+              entregado_por_id: caller.cid,
+              entregado_por_nombre: caller.name || 'Comercial',
+              sla_pausado: false
+            };
+
+            patch.seguimiento = {
+              ...curSeguimiento,
+              cadencia: nextCadence,
+              proxima_accion: nextProxima
+            };
+
+            logMsg += ` [Entrega de Oferta Registrada: ${ymdDisplay}. Primer contacto: ${nextProxima.fecha}]`;
+          }
         }
       } else {
+        if ((p.clasificacion || 'ejecucion') === 'presupuesto') {
+          throw precondition('Esta oportunidad está clasificada como "Cotización para presupuesto". Para avanzar a Cierre comercial debe reclasificarse primero a "Oferta para ejecución".');
+        }
         // cierre: La etapa de Cierre representa una oportunidad aceptada pendiente de documentación.
         // Se registra fecha de inicio de cierre y plazo límite de 5 días hábiles.
         // La oportunidad se mantiene abierta (estado = 'activo'). No se marca como ganado ni se crea factura de anticipo.
@@ -645,8 +675,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const workCal = (typeof CrmWorkCalendar !== 'undefined' && CrmWorkCalendar)
         ? CrmWorkCalendar
         : (CrmFollowUpCalc && typeof CrmFollowUpCalc.getWorkCalendar === 'function' ? CrmFollowUpCalc.getWorkCalendar() : null);
+      const isPausedBudgetInNegociacion = curStage === 'negociacion' && (p.clasificacion === 'presupuesto' || Boolean(p.sla_pausado_en));
       let elapsedDays = 0;
-      if (workCal && typeof workCal.getWorkTimeBetween === 'function' && stageStart) {
+      if (!isPausedBudgetInNegociacion && workCal && typeof workCal.getWorkTimeBetween === 'function' && stageStart) {
         elapsedDays = workCal.getWorkTimeBetween(stageStart, at, { excludeSaturday: true });
       }
       const canonElapsed = Math.round(Number(elapsedDays || 0) * 2) / 2;
@@ -654,6 +685,20 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const curAcc = typeof prevTiempos[curStage] === 'number' ? prevTiempos[curStage] : 0;
       const newAcc = Math.round((curAcc + canonElapsed) * 2) / 2;
       const tiempos_etapas_acumulados = { ...prevTiempos, [curStage]: newAcc };
+
+      if (isPausedBudgetInNegociacion) {
+        const pauseStart = p.sla_pausado_en || stageStart;
+        const pMs = pauseStart ? new Date(pauseStart).getTime() : NaN;
+        const atMs = new Date(at).getTime();
+        const waitCalendarDays = (!isNaN(pMs) && !isNaN(atMs) && atMs > pMs)
+          ? Math.max(0, Math.floor((atMs - pMs) / (1000 * 60 * 60 * 24)))
+          : 0;
+        const prevWait = Number(p.tiempo_espera_presupuesto_acumulado_dias) || 0;
+        patch.tiempo_espera_presupuesto_acumulado_dias = prevWait + waitCalendarDays;
+        patch.sla_pausado_en = null;
+        patch.sla_pausado_etapa = null;
+        patch.sla_estado = 'activo';
+      }
 
       // 2.2 Reinicio del ciclo de SLA para la etapa destino reingresada
       const prevTimestamps = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};

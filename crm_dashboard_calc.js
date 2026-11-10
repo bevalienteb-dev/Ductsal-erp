@@ -19,10 +19,20 @@
         prospecto: 5,
         levantamiento: 7,
         cotizacion: 5,
-        negociacion: 10,
+        negociacion: null,
         cierre: 5
     };
     const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+    function _getFollowUpCalc() {
+        if (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc) return CrmFollowUpCalc;
+        if (typeof window !== 'undefined' && window.CrmFollowUpCalc) return window.CrmFollowUpCalc;
+        if (typeof globalThis !== 'undefined' && globalThis.CrmFollowUpCalc) return globalThis.CrmFollowUpCalc;
+        if (typeof require === 'function') {
+            try { return require('./crm_followup_calc'); } catch (_) {}
+        }
+        return null;
+    }
 
     /**
      * Calcula el subtotal consolidado de una oportunidad incluyendo órdenes de cambio.
@@ -604,12 +614,15 @@
 
     /**
      * Calcula la antigüedad y alertas de estancamiento de todo el inventario activo abierto.
-     * Evalúa los días transcurridos desde el ingreso a la etapa vigente hasta hoy.
+     * Evalúa los días transcurridos desde el ingreso a la etapa vigente hasta hoy,
+     * utilizando la fuente de verdad canónica de SLA (CrmFollowUpCalc) cuando se usan los límites vigentes.
      */
     function calculateActiveWipTimes(activeList, kpiLimits = DEFAULT_KPI_LIMITS, now = new Date()) {
+        const useCanonicalSla = !kpiLimits || kpiLimits === DEFAULT_KPI_LIMITS;
         const limits = kpiLimits || DEFAULT_KPI_LIMITS;
         const nowDate = parseValidDate(now) || new Date();
         const nowMs = nowDate.getTime();
+        const followUpCalc = _getFollowUpCalc();
 
         const items = [];
 
@@ -617,7 +630,7 @@
             if (!p || p.estado !== 'activo' || p.eliminado === true) return;
             const etapa = p.etapa || 'prospecto';
             const ts = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
-            const stageStart = ts[etapa] || p.fecha_creacion;
+            const stageStart = (etapa === 'cierre' ? (p.fecha_inicio_cierre || ts.cierre) : ts[etapa]) || p.fecha_creacion;
             let days = 0;
 
             if (stageStart) {
@@ -627,9 +640,41 @@
                 }
             }
 
+            const isPausedBudget = Boolean(p.clasificacion === 'presupuesto' && etapa === 'negociacion');
             const limit = Object.prototype.hasOwnProperty.call(limits, etapa) ? limits[etapa] : 5;
-            const isOverLimit = limit !== null && limit !== undefined && days > limit;
-            const isWarning = !isOverLimit && limit !== null && limit !== undefined && days >= Math.max(1, limit - 2);
+            let isOverLimit = false;
+            let isWarning = false;
+            let operationalDays = days;
+            let slaStatus = 'al_dia';
+
+            if (isPausedBudget) {
+                isOverLimit = false;
+                isWarning = false;
+                operationalDays = 0;
+                slaStatus = 'pausado_presupuesto';
+            } else if (useCanonicalSla && followUpCalc && typeof followUpCalc.calculateStageSla === 'function') {
+                const slaInfo = followUpCalc.calculateStageSla(p, nowDate);
+                const followUpInfo = (typeof followUpCalc.classifyFollowUp === 'function')
+                    ? followUpCalc.classifyFollowUp(p, nowDate)
+                    : null;
+                operationalDays = slaInfo.elapsedBusinessDays || 0;
+                const hasOperationalMetadata = Boolean(p.seguimiento || p.clasificacion || p.stage_transitions || p.tiempos_etapas_acumulados);
+                if (etapa === 'negociacion') {
+                    isOverLimit = Boolean(followUpInfo && (followUpInfo.status === 'vencida' || followUpInfo.isEscaladoGerencia));
+                } else if (slaInfo.stageStart && hasOperationalMetadata) {
+                    isOverLimit = Boolean(slaInfo.isOverdue || (followUpInfo && followUpInfo.status === 'vencida'));
+                } else if (slaInfo.stageStart) {
+                    isOverLimit = Boolean(slaInfo.isOverdue) && (limit === null || limit === undefined || days > limit);
+                } else {
+                    isOverLimit = limit !== null && limit !== undefined && days > limit;
+                }
+                isWarning = !isOverLimit && limit !== null && limit !== undefined && operationalDays >= Math.max(1, limit - 1);
+                slaStatus = isOverLimit ? 'vencido' : 'al_dia';
+            } else {
+                isOverLimit = limit !== null && limit !== undefined && days > limit;
+                isWarning = !isOverLimit && limit !== null && limit !== undefined && days >= Math.max(1, limit - 2);
+                slaStatus = isOverLimit ? 'vencido' : 'al_dia';
+            }
 
             items.push({
                 id: p.id,
@@ -637,9 +682,13 @@
                 clientId: p.clientId,
                 proyecto: p.proyecto || 'Sin Nombre',
                 vendedor: p.vendedor || '-',
+                clasificacion: p.clasificacion || 'ejecucion',
                 monto: getProjectSubtotal(p),
                 etapa,
                 days,
+                operationalDays,
+                slaPaused: isPausedBudget,
+                slaStatus,
                 limit,
                 isOverLimit,
                 isWarning,
