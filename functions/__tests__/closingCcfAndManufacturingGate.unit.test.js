@@ -1324,6 +1324,47 @@ describe('Separación de CCF de anticipo del cierre comercial y bloqueo financie
       ref: 'CR-CONSOLIDADA-2026-01',
       doc_comprobante: fileObj('cr_consolidada.pdf', 'pagos')
     })).rejects.toThrow('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+
+    // 10. Verificación de eficiencia: savePayment utiliza lecturas puntuales O(1) sobre payment_refs y NO ejecuta consultas globales sobre prospects_prod
+    const origRunTx = fdb.runTransaction.bind(fdb);
+    const txTargets = [];
+    fdb.runTransaction = fn => origRunTx(tx => fn({
+      ...tx,
+      get(target) {
+        txTargets.push({ isQuery: Boolean(target && target.__query), path: target && (target.path || target.col) });
+        return tx.get(target);
+      }
+    }));
+
+    await wf.savePayment({
+      caller: gestor,
+      prospectId: 'PRJ-DUP-03',
+      invoiceId: 'INV-DUP-3A',
+      opId: 'OP-O1-EFFICIENCY',
+      monto: 1000,
+      metodo: 'transferencia',
+      ref: 'TRX-O1-9999',
+      doc_comprobante: fileObj('o1.pdf', 'pagos')
+    });
+    expect(txTargets.some(t => t.isQuery)).toBe(false);
+    expect(txTargets.map(t => t.path)).toEqual([
+      'prospects_prod/PRJ-DUP-03',
+      'clients_prod/CLI-OTHER-DUP',
+      'payment_refs_prod/BANK_TRXO19999'
+    ]);
+
+    // 11. Verificación de base sin IVA: si la factura ya expresa su base sin IVA (subtotal_sin_iva o incluye_iva: false), no vuelve a dividir entre 1.13
+    const limitWithIva = wf.calculateInvoiceRetencionLimit({ monto: 5650 }, granContribClient);
+    expect(limitWithIva.baseGravadaSinIva).toBe(5000);
+    expect(limitWithIva.maxRetencion).toBe(50);
+
+    const limitAlreadyNet = wf.calculateInvoiceRetencionLimit({ monto: 5000, incluye_iva: false }, granContribClient);
+    expect(limitAlreadyNet.baseGravadaSinIva).toBe(5000);
+    expect(limitAlreadyNet.maxRetencion).toBe(50);
+
+    const limitExplicitSubtotal = wf.calculateInvoiceRetencionLimit({ monto: 5650, subtotal_sin_iva: 5000 }, granContribClient);
+    expect(limitExplicitSubtotal.baseGravadaSinIva).toBe(5000);
+    expect(limitExplicitSubtotal.maxRetencion).toBe(50);
   });
 
   test('Escenario 15: Caso obligatorio ($10,000 anticipo exigible, $4,000 pagados, $6,000 pendientes -> ANTICIPO_PENDIENTE) y validación de mediano/pequeño contribuyente y facturas inválidas', async () => {

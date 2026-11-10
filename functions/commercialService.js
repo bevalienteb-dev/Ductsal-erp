@@ -54,6 +54,7 @@ function namesFor(suffix) {
     audit: `commercialAudit${suffix}`,       // server-only trail of the other sensitive operations
     ops: `prospectOps${suffix}`,
     counters: `prospectCounters${suffix}`,
+    payment_refs: `payment_refs${suffix}`,
     opportunityContacts: `opportunity_contacts${suffix}`
   };
 }

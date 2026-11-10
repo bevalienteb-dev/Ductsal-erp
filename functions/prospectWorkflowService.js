@@ -1735,18 +1735,25 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (isTargetAdvanceInvoice) {
         throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
       }
-      const lockRefsToDelete = [];
+      const lockSnapshotsById = new Map();
       for (const pay of (Array.isArray(f.pagos) ? f.pagos : [])) {
         if (!pay || typeof pay !== 'object') continue;
         const nRef = normalizePaymentReference(pay.ref || '');
         if (!nRef) continue;
-        const lId = buildPaymentRefLockId({ metodo: pay.metodo, normRef: nRef, prospectId, invoiceId: f.id });
-        const lRef = col('payment_refs').doc(lId);
-        const lSnap = await tx.get(lRef);
-        if (lSnap.exists) lockRefsToDelete.push(lRef);
+        const lId = buildPaymentRefLockId({ metodo: pay.metodo, normRef: nRef });
+        let entry = lockSnapshotsById.get(lId);
+        if (!entry) {
+          const lRef = col('payment_refs').doc(lId);
+          const lSnap = await tx.get(lRef);
+          entry = { lRef, lSnap, keys: [] };
+          lockSnapshotsById.set(lId, entry);
+        }
+        entry.keys.push(String(pay.id || pay.fecha || ''));
       }
       tx.update(ref, { facturas: facturas.slice(0, i).concat(facturas.slice(i + 1)), logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
-      for (const lRef of lockRefsToDelete) tx.delete(lRef);
+      for (const { lRef, lSnap } of lockSnapshotsById.values()) {
+        releasePaymentRefLock(tx, lRef, lSnap, { prospectId, invoiceId: f.id, paymentKey: null });
+      }
       addAudit(tx, caller, 'deleteInvoice', prospectId, { invoiceId, numero: f.numero, monto: f.monto, payments: (f.pagos || []).length });
       addDeletionNotice(tx, caller, p, client, 'Factura', `${f.numero} (${fmtMoney(f.monto)})`);
       return { status: 'deleted' };
@@ -1800,19 +1807,55 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     return true;
   }
 
-  function calculateInvoiceRetencionLimit(facMonto, client) {
-    const montoFactura = round2(Number(facMonto));
+  /**
+   * Resuelve la base gravada sin IVA de una factura o importe de factura.
+   * En el modelo real de facturación de DUCTSAL ERP (`saveInvoice`, `finalizeProspect`, `#inv-monto-label`),
+   * `fac.monto` representa:
+   * - Clientes locales (`!isExport`): el monto total facturado CON IVA (`subtotal * 1.13`).
+   * - Clientes de exportación (`isExport`): el monto facturado SIN IVA (0% exportación).
+   * Si el objeto factura declara explícitamente un importe ya expresado sin IVA (`subtotal_sin_iva`,
+   * `monto_sin_iva`, `base_gravada`, `incluye_iva === false` o `sin_iva === true`), se utiliza directamente
+   * sin volver a dividir entre 1.13.
+   */
+  function resolveInvoiceBaseSinIva(facOrMonto, client) {
+    const isObj = Boolean(facOrMonto && typeof facOrMonto === 'object');
+    const rawMonto = isObj ? Number(facOrMonto.monto) : Number(facOrMonto);
+    const montoFactura = round2(rawMonto);
     if (!Number.isFinite(montoFactura) || montoFactura <= 0) {
+      return { montoFactura: 0, baseGravadaSinIva: 0, alreadyWithoutIva: false };
+    }
+    if (isExport(client)) {
+      return { montoFactura, baseGravadaSinIva: montoFactura, alreadyWithoutIva: true };
+    }
+    if (isObj) {
+      const explicitNet = Number(
+        facOrMonto.subtotal_sin_iva ??
+        facOrMonto.monto_sin_iva ??
+        facOrMonto.base_gravada ??
+        facOrMonto.base_sin_iva
+      );
+      if (Number.isFinite(explicitNet) && explicitNet > 0) {
+        return { montoFactura, baseGravadaSinIva: round2(explicitNet), alreadyWithoutIva: true };
+      }
+      if (facOrMonto.incluye_iva === false || facOrMonto.sin_iva === true) {
+        return { montoFactura, baseGravadaSinIva: montoFactura, alreadyWithoutIva: true };
+      }
+    }
+    return { montoFactura, baseGravadaSinIva: round2(montoFactura / IVA), alreadyWithoutIva: false };
+  }
+
+  function calculateInvoiceRetencionLimit(facOrMonto, client) {
+    const { montoFactura, baseGravadaSinIva } = resolveInvoiceBaseSinIva(facOrMonto, client);
+    if (!Number.isFinite(montoFactura) || montoFactura <= 0 || baseGravadaSinIva <= 0) {
       return { eligible: false, baseGravadaSinIva: 0, maxRetencion: 0, reason: 'INVALID_INVOICE_AMOUNT' };
     }
     if (isExport(client)) {
-      return { eligible: false, baseGravadaSinIva: montoFactura, maxRetencion: 0, reason: 'EXPORT_EXEMPT' };
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'EXPORT_EXEMPT' };
     }
     if (!isClientGranContribuyenteLocal(client)) {
-      return { eligible: false, baseGravadaSinIva: round2(montoFactura / IVA), maxRetencion: 0, reason: 'NOT_GRAN_CONTRIBUYENTE' };
+      return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'NOT_GRAN_CONTRIBUYENTE' };
     }
     // Art. 162: 1% calculado estrictamente sobre la base gravada sin IVA, nunca sobre el total con IVA.
-    const baseGravadaSinIva = round2(montoFactura / IVA);
     if (baseGravadaSinIva < RETENCION_MIN_BASE_SIN_IVA) {
       return { eligible: false, baseGravadaSinIva, maxRetencion: 0, reason: 'UNDER_THRESHOLD' };
     }
@@ -1820,12 +1863,97 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     return { eligible: true, baseGravadaSinIva, maxRetencion, reason: null };
   }
 
-  function buildPaymentRefLockId({ metodo, normRef, prospectId, invoiceId }) {
+  function buildPaymentRefLockId({ metodo, normRef }) {
     const cleanMethod = String(metodo || '').trim().toLowerCase();
     if (cleanMethod === 'retencion_1pct') {
-      return `RET_${prospectId}_${invoiceId}_${normRef}`;
+      return `RET_${normRef}`;
     }
     return `BANK_${normRef}`;
+  }
+
+  function extractLockEntries(lockData) {
+    if (!lockData || typeof lockData !== 'object' || lockData.active === false) return [];
+    if (lockData.entries && typeof lockData.entries === 'object') {
+      return Object.values(lockData.entries).filter(e => e && typeof e === 'object');
+    }
+    if (lockData.prospectId && lockData.invoiceId) {
+      return [{
+        prospectId: lockData.prospectId,
+        invoiceId: lockData.invoiceId,
+        paymentKey: lockData.paymentKey,
+        clientId: lockData.clientId || null,
+        opId: lockData.opId || null,
+        monto: lockData.monto,
+        metodo: lockData.metodo
+      }];
+    }
+    return [];
+  }
+
+  function upsertPaymentRefLock(tx, lockRef, lockSnap, { normRef, refText, metodo, amount, prospectId, invoiceId, clientId, paymentKey, opId, nowAt, updatedBy }) {
+    const prevData = (lockSnap && lockSnap.exists && lockSnap.data() && lockSnap.data().active !== false)
+      ? lockSnap.data()
+      : null;
+    const nextEntries = {};
+    for (const entry of extractLockEntries(prevData)) {
+      if (entry.prospectId && entry.invoiceId) {
+        nextEntries[`${entry.prospectId}__${entry.invoiceId}`] = entry;
+      }
+    }
+    nextEntries[`${prospectId}__${invoiceId}`] = {
+      prospectId,
+      invoiceId,
+      paymentKey: String(paymentKey),
+      clientId: clientId || null,
+      opId: opId || null,
+      monto: amount,
+      metodo,
+      updatedAt: nowAt
+    };
+    tx.set(lockRef, {
+      active: true,
+      normRef,
+      ref: refText,
+      metodo,
+      monto: amount,
+      prospectId,
+      invoiceId,
+      clientId: clientId || null,
+      paymentKey: String(paymentKey),
+      opId: opId || null,
+      entries: nextEntries,
+      updatedAt: nowAt,
+      updatedBy
+    });
+  }
+
+  function releasePaymentRefLock(tx, lockRef, lockSnap, { prospectId, invoiceId, paymentKey }) {
+    if (!lockRef || !lockSnap || !lockSnap.exists) return;
+    const ld = lockSnap.data() || {};
+    if (ld.entries && typeof ld.entries === 'object') {
+      const nextEntries = { ...ld.entries };
+      const slotKey = `${prospectId}__${invoiceId}`;
+      if (nextEntries[slotKey] && (!paymentKey || String(nextEntries[slotKey].paymentKey) === String(paymentKey))) {
+        delete nextEntries[slotKey];
+      }
+      const remKeys = Object.keys(nextEntries);
+      if (remKeys.length === 0) {
+        tx.delete(lockRef);
+      } else {
+        const first = nextEntries[remKeys[0]];
+        tx.set(lockRef, {
+          ...ld,
+          prospectId: first.prospectId,
+          invoiceId: first.invoiceId,
+          paymentKey: first.paymentKey,
+          clientId: first.clientId || ld.clientId || null,
+          monto: first.monto,
+          entries: nextEntries
+        });
+      }
+      return;
+    }
+    tx.delete(lockRef);
   }
 
   // A payment is addressed by `paymentKey` = its id (new payments) or its `fecha` (historical ones have no id): never by
@@ -1868,7 +1996,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const at = (editing && fac) ? fac.pagos.findIndex(x => payKeyMatches(x, resolvedPaymentKey)) : -1;
       const cur = (editing && at !== -1) ? fac.pagos[at] : null;
 
-      const lockId = buildPaymentRefLockId({ metodo, normRef, prospectId, invoiceId });
+      const lockId = buildPaymentRefLockId({ metodo, normRef });
       const lockRef = col('payment_refs').doc(lockId);
       const lockSnap = await tx.get(lockRef);
 
@@ -1877,7 +2005,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (editing && cur) {
         const oldNormRef = normalizePaymentReference(cur.ref || '');
         const oldLockId = oldNormRef
-          ? buildPaymentRefLockId({ metodo: cur.metodo || metodo, normRef: oldNormRef, prospectId, invoiceId })
+          ? buildPaymentRefLockId({ metodo: cur.metodo || metodo, normRef: oldNormRef })
           : null;
         if (oldLockId && oldLockId !== lockId) {
           oldLockRef = col('payment_refs').doc(oldLockId);
@@ -1885,9 +2013,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
-      const allProspectsSnap = await tx.get(col('prospects'));
-
-      // 2. Idempotencia por opId en creación
+      // 2. Idempotencia por opId en creación (acotada a la oportunidad y al índice payment_refs, sin lecturas globales)
       if (!editing) {
         for (const f of facturas) {
           const prior = f.pagos.find(x => x && x.opId === opId);
@@ -1898,13 +2024,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             return { status: 'unchanged', replay: true, payment: prior };
           }
         }
-        for (const docSnap of (allProspectsSnap.docs || [])) {
-          if (docSnap.id === prospectId) continue;
-          const otherP = docSnap.data() || {};
-          for (const otherF of facturasOf(otherP)) {
-            const priorOther = (Array.isArray(otherF.pagos) ? otherF.pagos : []).find(x => x && x.opId === opId);
-            if (priorOther) {
-              throw precondition('opId ya usado con otros datos');
+        if (lockSnap.exists) {
+          for (const entry of extractLockEntries(lockSnap.data())) {
+            if (entry.opId && entry.opId === opId) {
+              if (entry.prospectId !== prospectId || entry.invoiceId !== invoiceId || entry.monto !== amount || entry.metodo !== metodo) {
+                throw precondition('opId ya usado con otros datos');
+              }
+              return { status: 'unchanged', replay: true, payment: entry };
             }
           }
         }
@@ -1926,7 +2052,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         if (!isClientGranContribuyenteLocal(client)) {
           throw precondition('La retención del 1% solo aplica a clientes Gran Contribuyente');
         }
-        retInfo = calculateInvoiceRetencionLimit(fac.monto, client);
+        retInfo = calculateInvoiceRetencionLimit(fac, client);
         if (!retInfo.eligible) {
           throw precondition('La retención del 1% (Art. 162) solo aplica cuando la base gravada sin IVA de la factura es igual o mayor a $100.00');
         }
@@ -1935,58 +2061,53 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
-      // 5. Detección obligatoria de números de comprobante duplicados (concurrencia + transversal)
+      // 5. Detección obligatoria de números de comprobante duplicados
+      // Mecanismo primario: índice transaccional O(1) en `payment_refs` + verificación en memoria de `facturas`
+      // de la oportunidad actual para compatibilidad con comprobantes históricos previos al índice.
       const DUP_REF_MSG = 'Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.';
       const editingCanonicalKey = editing && cur ? String(cur.id || cur.fecha) : null;
 
       if (lockSnap.exists) {
         const ld = lockSnap.data() || {};
-        if (ld.active !== false) {
+        for (const entry of extractLockEntries(ld)) {
           const isSameEditedPayment = Boolean(
             editing &&
-            ld.prospectId === prospectId &&
-            ld.invoiceId === invoiceId &&
-            ld.paymentKey === editingCanonicalKey
+            entry.prospectId === prospectId &&
+            entry.invoiceId === invoiceId &&
+            String(entry.paymentKey) === editingCanonicalKey
           );
-          if (!isSameEditedPayment) {
-            throw precondition(DUP_REF_MSG);
+          if (isSameEditedPayment) continue;
+
+          const entryMetodo = typeof (entry.metodo || ld.metodo) === 'string'
+            ? String(entry.metodo || ld.metodo).trim().toLowerCase()
+            : '';
+          if (metodo === 'retencion_1pct' && entryMetodo === 'retencion_1pct') {
+            const entryClientId = entry.clientId || ld.clientId || null;
+            const sameClient = Boolean(p.clientId && entryClientId && p.clientId === entryClientId);
+            const differentInvoice = !(entry.prospectId === prospectId && entry.invoiceId === invoiceId);
+            if (sameClient && differentInvoice) {
+              continue;
+            }
           }
+          throw precondition(DUP_REF_MSG);
         }
       }
 
-      const checkInvoicesForDuplicateRef = (otherProspectId, otherProspectData, otherFacturasList) => {
-        if (!otherProspectData || otherProspectData.eliminado === true) return;
-        for (const otherFac of otherFacturasList) {
-          if (!isActiveInvoice(otherFac)) continue;
-          const otherPagos = Array.isArray(otherFac.pagos) ? otherFac.pagos : [];
-          for (let idx = 0; idx < otherPagos.length; idx++) {
-            const otherPay = otherPagos[idx];
-            if (!isActivePaymentRecord(otherPay)) continue;
-            if (editing && otherProspectId === prospectId && otherFac.id === invoiceId && idx === at) {
-              continue;
-            }
-            const otherNormRef = normalizePaymentReference(otherPay.ref || '');
-            if (!otherNormRef || otherNormRef !== normRef) continue;
-
-            const otherMetodo = typeof otherPay.metodo === 'string' ? otherPay.metodo.trim().toLowerCase() : '';
-            if (metodo === 'retencion_1pct' && otherMetodo === 'retencion_1pct') {
-              // Constancia consolidada legítima: solo se permite si pertenece al mismo cliente y se aplica a otra factura distinta
-              const sameClient = Boolean(p.clientId && otherProspectData.clientId && p.clientId === otherProspectData.clientId);
-              const differentInvoice = !(otherProspectId === prospectId && otherFac.id === invoiceId);
-              if (sameClient && differentInvoice) {
-                continue;
-              }
-            }
-            throw precondition(DUP_REF_MSG);
+      for (const otherFac of facturas) {
+        if (!isActiveInvoice(otherFac)) continue;
+        const otherPagos = Array.isArray(otherFac.pagos) ? otherFac.pagos : [];
+        for (let idx = 0; idx < otherPagos.length; idx++) {
+          const otherPay = otherPagos[idx];
+          if (!isActivePaymentRecord(otherPay)) continue;
+          if (editing && otherFac.id === invoiceId && idx === at) continue;
+          const otherNormRef = normalizePaymentReference(otherPay.ref || '');
+          if (!otherNormRef || otherNormRef !== normRef) continue;
+          const otherMetodo = typeof otherPay.metodo === 'string' ? otherPay.metodo.trim().toLowerCase() : '';
+          if (metodo === 'retencion_1pct' && otherMetodo === 'retencion_1pct' && otherFac.id !== invoiceId) {
+            continue;
           }
+          throw precondition(DUP_REF_MSG);
         }
-      };
-
-      checkInvoicesForDuplicateRef(prospectId, p, facturas);
-      for (const docSnap of (allProspectsSnap.docs || [])) {
-        if (docSnap.id === prospectId) continue;
-        const otherP = docSnap.data() || {};
-        checkInvoicesForDuplicateRef(docSnap.id, otherP, facturasOf(otherP));
       }
 
       // 5b. Tope acumulado de retención 1% en la misma factura
@@ -2062,22 +2183,25 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       tx.update(pRef, { facturas, logs: withLog(p, caller, text) });
-      tx.set(lockRef, {
-        active: true,
+      upsertPaymentRefLock(tx, lockRef, lockSnap, {
         normRef,
-        ref: refText,
+        refText,
         metodo,
-        monto: amount,
+        amount,
         prospectId,
         invoiceId: fac.id,
         clientId: p.clientId || null,
         paymentKey: String(payment.id || payment.fecha),
         opId: payment.opId || null,
-        updatedAt: nowAt,
+        nowAt,
         updatedBy: caller.cid || caller.uid
       });
       if (editing && oldLockRef && oldLockSnap && oldLockSnap.exists) {
-        tx.delete(oldLockRef);
+        releasePaymentRefLock(tx, oldLockRef, oldLockSnap, {
+          prospectId,
+          invoiceId: fac.id,
+          paymentKey: editingCanonicalKey
+        });
       }
       addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, {
         invoiceId: fac.id,
@@ -2111,16 +2235,26 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       if (at === -1) return { status: 'absent' };
       const pay = fac.pagos[at];
       const normRef = normalizePaymentReference(pay.ref || '');
-      let lockRefToDelete = null;
+      let lockRefToRelease = null;
+      let lockSnapToRelease = null;
       if (normRef) {
-        const lockId = buildPaymentRefLockId({ metodo: pay.metodo, normRef, prospectId, invoiceId: fac.id });
+        const lockId = buildPaymentRefLockId({ metodo: pay.metodo, normRef });
         const candidateRef = col('payment_refs').doc(lockId);
         const lSnap = await tx.get(candidateRef);
-        if (lSnap.exists) lockRefToDelete = candidateRef;
+        if (lSnap.exists) {
+          lockRefToRelease = candidateRef;
+          lockSnapToRelease = lSnap;
+        }
       }
       fac.pagos.splice(at, 1);
       tx.update(ref, { facturas, logs: withLog(p, caller, `Abono eliminado de factura ${fac.numero}: ${fmtMoney(pay.monto)}`) });
-      if (lockRefToDelete) tx.delete(lockRefToDelete);
+      if (lockRefToRelease && lockSnapToRelease) {
+        releasePaymentRefLock(tx, lockRefToRelease, lockSnapToRelease, {
+          prospectId,
+          invoiceId: fac.id,
+          paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey)
+        });
+      }
       addAudit(tx, caller, 'deletePayment', prospectId, {
         invoiceId,
         paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey),
@@ -2761,13 +2895,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     }
 
     // Tratamiento fiscal de retención 1% (Art. 162 Código Tributario El Salvador):
-    // - La retención del 1% de IVA se calcula exclusivamente sobre la base gravada sin IVA (monto / 1.13),
+    // - La retención del 1% de IVA se calcula exclusivamente sobre la base gravada sin IVA,
     //   nunca sobre el total con IVA, y requiere base gravada >= $100.00.
-    // - Reduce el saldo pendiente por cobrar de la factura, no constituye efectivo depositado,
-    //   y no depende artificialmente de que exista una transferencia bancaria previa.
-    const baseSubtotalAnticipo = advInvoice
-      ? round2(clientIsExport ? montoFacturadoAnticipo : (montoFacturadoAnticipo / IVA))
-      : 0;
+    // - En DUCTSAL ERP, `fac.monto` almacena el total facturado CON IVA para clientes locales (`!isExport`);
+    //   si la factura especifica explícitamente su base sin IVA (`subtotal_sin_iva`, `monto_sin_iva`,
+    //   `incluye_iva: false`, etc.), `resolveInvoiceBaseSinIva` no vuelve a dividir entre 1.13.
+    const advBaseInfo = advInvoice ? resolveInvoiceBaseSinIva(advInvoice, client) : { baseGravadaSinIva: 0 };
+    const baseSubtotalAnticipo = advBaseInfo.baseGravadaSinIva;
     const maxRetencionReconocible = (advInvoice && isGranContribuyente && !clientIsExport && baseSubtotalAnticipo >= 100)
       ? round2(baseSubtotalAnticipo * 0.01)
       : 0;
@@ -2946,6 +3080,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     resolveAdvanceInvoice,
     isPositivelyConfirmedPayment,
     normalizePaymentReference,
+    resolveInvoiceBaseSinIva,
     calculateInvoiceRetencionLimit,
     isClientGranContribuyenteLocal,
     evaluateManufacturingReadiness,

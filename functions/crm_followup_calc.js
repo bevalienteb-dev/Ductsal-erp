@@ -1552,9 +1552,24 @@
             }
         }
 
-        const baseSubtotalAnticipo = advInvoice
-            ? round2Money(isExport ? montoFacturado : (montoFacturado / 1.13))
-            : 0;
+        let baseSubtotalAnticipo = 0;
+        if (advInvoice) {
+            const explicitNet = Number(
+                advInvoice.subtotal_sin_iva ??
+                advInvoice.monto_sin_iva ??
+                advInvoice.base_gravada ??
+                advInvoice.base_sin_iva
+            );
+            if (isExport) {
+                baseSubtotalAnticipo = montoFacturado;
+            } else if (Number.isFinite(explicitNet) && explicitNet > 0) {
+                baseSubtotalAnticipo = round2Money(explicitNet);
+            } else if (advInvoice.incluye_iva === false || advInvoice.sin_iva === true) {
+                baseSubtotalAnticipo = montoFacturado;
+            } else {
+                baseSubtotalAnticipo = round2Money(montoFacturado / 1.13);
+            }
+        }
         const canApplyRetencion = Boolean(advInvoice && (!activeClient || (isGranContribuyente && !isExport)) && baseSubtotalAnticipo >= 100);
         const maxRetencionReconocible = canApplyRetencion
             ? round2Money(baseSubtotalAnticipo * 0.01)
