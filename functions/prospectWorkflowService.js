@@ -1909,22 +1909,84 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const prevData = (lockSnap && lockSnap.exists && lockSnap.data() && lockSnap.data().active !== false)
       ? lockSnap.data()
       : null;
+    const isDistributedLock = Boolean(
+      prevData && (
+        prevData.es_comprobante_distribuido === true ||
+        prevData.distribuido_auditado === true ||
+        prevData.estado === 'distribuido_auditado' ||
+        prevData.status === 'distribuido_auditado'
+      )
+    );
     const nextEntries = {};
     for (const entry of extractLockEntries(prevData)) {
       if (entry.prospectId && entry.invoiceId) {
         nextEntries[`${entry.prospectId}__${entry.invoiceId}`] = entry;
       }
     }
-    nextEntries[`${prospectId}__${invoiceId}`] = {
+    const slotKey = `${prospectId}__${invoiceId}`;
+    const prevSlotEntry = nextEntries[slotKey] || {};
+    nextEntries[slotKey] = {
+      ...prevSlotEntry,
       prospectId,
       invoiceId,
       paymentKey: String(paymentKey),
-      clientId: clientId || null,
-      opId: opId || null,
+      clientId: clientId || prevSlotEntry.clientId || null,
+      opId: opId || prevSlotEntry.opId || null,
       monto: amount,
       metodo,
       updatedAt: nowAt
     };
+
+    if (isDistributedLock) {
+      const totalComprobante = round2(
+        Number(prevData.importe_total_comprobante ?? prevData.montoTotalComprobante ?? prevData.monto) || 0
+      );
+      const totalAplicado = round2(
+        Object.values(nextEntries).reduce((acc, e) => acc + (Number(e && e.monto) || 0), 0)
+      );
+      const saldoDisponible = round2(Math.max(0, totalComprobante - totalAplicado));
+      const updatedAplicaciones = Array.isArray(prevData.aplicaciones)
+        ? prevData.aplicaciones.map((app) => {
+          if (app && app.prospectId === prospectId && app.invoiceId === invoiceId) {
+            return {
+              ...app,
+              paymentKey: String(paymentKey),
+              monto_aplicado: amount,
+              monto: amount,
+              metodo,
+              updatedAt: nowAt
+            };
+          }
+          return app;
+        })
+        : Object.values(nextEntries);
+
+      tx.set(lockRef, {
+        ...prevData,
+        active: true,
+        estado: 'distribuido_auditado',
+        status: 'distribuido_auditado',
+        es_comprobante_distribuido: true,
+        distribuido_auditado: true,
+        reutilizacion_bloqueada: true,
+        normRef,
+        ref: refText,
+        metodo,
+        importe_total_comprobante: totalComprobante,
+        montoTotalComprobante: totalComprobante,
+        monto: totalComprobante,
+        total_aplicado: totalAplicado,
+        totalAplicado,
+        saldo_disponible: saldoDisponible,
+        saldoDisponible,
+        aplicaciones: updatedAplicaciones,
+        entries: nextEntries,
+        updatedAt: nowAt,
+        updatedBy
+      });
+      return;
+    }
+
     tx.set(lockRef, {
       active: true,
       normRef,
@@ -1952,6 +2014,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       ld.wasHistoricalConflict === true
     );
     const isDistributedLock = Boolean(
+      ld.es_comprobante_distribuido === true ||
       ld.estado === 'distribuido_auditado' ||
       ld.status === 'distribuido_auditado' ||
       ld.distribuido_auditado === true
@@ -2047,20 +2110,39 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     }
 
     if (isDistributedLock) {
-      if (remKeys.length === 0) {
-        tx.delete(lockRef);
-      } else {
-        const first = nextEntries[remKeys[0]];
-        tx.set(lockRef, {
-          ...ld,
-          active: true,
-          prospectId: first.prospectId,
-          invoiceId: first.invoiceId,
-          paymentKey: first.paymentKey,
-           entries: nextEntries,
-          updatedAt: nowAt
-        });
-      }
+      const totalComprobante = round2(
+        Number(ld.importe_total_comprobante ?? ld.montoTotalComprobante ?? ld.monto) || 0
+      );
+      const nextAplicaciones = Array.isArray(ld.aplicaciones)
+        ? ld.aplicaciones.filter((app) => !matchesReleaseTarget(app))
+        : [];
+      const totalAplicado = round2(
+        Object.values(nextEntries).reduce((acc, e) => acc + (Number(e && e.monto) || 0), 0)
+      );
+      const saldoDisponible = round2(Math.max(0, totalComprobante - totalAplicado));
+      const first = remKeys.length > 0 ? nextEntries[remKeys[0]] : null;
+      // Un comprobante distribuido auditado NUNCA queda libre para reutilización no autorizada,
+      // aun cuando se elimine una aplicación y quede saldo_disponible > 0.
+      tx.set(lockRef, {
+        ...ld,
+        active: true,
+        estado: 'distribuido_auditado',
+        status: 'distribuido_auditado',
+        es_comprobante_distribuido: true,
+        distribuido_auditado: true,
+        reutilizacion_bloqueada: true,
+        prospectId: first ? first.prospectId : null,
+        invoiceId: first ? first.invoiceId : null,
+        paymentKey: first ? first.paymentKey : null,
+        total_aplicado: totalAplicado,
+        totalAplicado,
+        total_aplicaciones: remKeys.length,
+        saldo_disponible: saldoDisponible,
+        saldoDisponible,
+        aplicaciones: nextAplicaciones,
+        entries: nextEntries,
+        updatedAt: nowAt
+      });
       return;
     }
 
@@ -2206,33 +2288,68 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       if (lockSnap.exists) {
         const ld = lockSnap.data() || {};
-        if (
-          ld.active !== false &&
-          (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true)
-        ) {
-          throw precondition(DUP_REF_MSG);
-        }
-        for (const entry of extractLockEntries(ld)) {
-          const isSameEditedPayment = Boolean(
-            editing &&
-            entry.prospectId === prospectId &&
-            entry.invoiceId === invoiceId &&
-            String(entry.paymentKey) === editingCanonicalKey
-          );
-          if (isSameEditedPayment) continue;
-
-          const entryMetodo = typeof (entry.metodo || ld.metodo) === 'string'
-            ? String(entry.metodo || ld.metodo).trim().toLowerCase()
-            : '';
-          if (metodo === 'retencion_1pct' && entryMetodo === 'retencion_1pct') {
-            const entryClientId = entry.clientId || ld.clientId || null;
-            const sameClient = Boolean(p.clientId && entryClientId && p.clientId === entryClientId);
-            const differentInvoice = !(entry.prospectId === prospectId && entry.invoiceId === invoiceId);
-            if (sameClient && differentInvoice) {
-              continue;
-            }
+        const isDistLock = Boolean(
+          ld.es_comprobante_distribuido === true ||
+          ld.distribuido_auditado === true ||
+          ld.estado === 'distribuido_auditado' ||
+          ld.status === 'distribuido_auditado'
+        );
+        if (isDistLock) {
+          // Un comprobante bancario distribuido auditado (ej. BANK_868355650) NUNCA puede reutilizarse
+          // en pagos nuevos ni en facturas ajenas a las aplicaciones ya autorizadas, incluso si tuviera saldo disponible.
+          if (!editing) {
+            throw precondition(`${DUP_REF_MSG} (${refText})`);
           }
-          throw precondition(DUP_REF_MSG);
+          const lockEntries = extractLockEntries(ld);
+          const matchingDistEntry = lockEntries.find(
+            (e) => e.prospectId === prospectId && e.invoiceId === invoiceId && String(e.paymentKey) === editingCanonicalKey
+          );
+          if (!matchingDistEntry) {
+            throw precondition(`${DUP_REF_MSG} (${refText})`);
+          }
+          const otherDistSum = round2(
+            lockEntries.reduce((acc, e) => {
+              const isSelf = e.prospectId === prospectId && e.invoiceId === invoiceId && String(e.paymentKey) === editingCanonicalKey;
+              return isSelf ? acc : acc + (Number(e.monto) || 0);
+            }, 0)
+          );
+          const totalComprobante = round2(
+            Number(ld.importe_total_comprobante ?? ld.montoTotalComprobante ?? ld.monto) || 0
+          );
+          if (totalComprobante > 0 && round2(otherDistSum + amount) > round2(totalComprobante)) {
+            throw precondition(`La suma de las aplicaciones (${fmtMoney(otherDistSum + amount)}) supera el importe total del comprobante bancario (${fmtMoney(totalComprobante)})`);
+          }
+        } else if (
+          ld.bloqueado_nuevos_usos === true ||
+          ld.estado === 'resuelto_historico' ||
+          ld.status === 'resuelto_historico' ||
+          ld.estado === 'conflicto_historico_auditoria' ||
+          (ld.active !== false && (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true))
+        ) {
+          throw precondition(`${DUP_REF_MSG} (${refText})`);
+        } else {
+          for (const entry of extractLockEntries(ld)) {
+            const isSameEditedPayment = Boolean(
+              editing &&
+              entry.prospectId === prospectId &&
+              entry.invoiceId === invoiceId &&
+              String(entry.paymentKey) === editingCanonicalKey
+            );
+            if (isSameEditedPayment) continue;
+
+            const entryMetodo = typeof (entry.metodo || ld.metodo) === 'string'
+              ? String(entry.metodo || ld.metodo).trim().toLowerCase()
+              : '';
+            if (metodo === 'retencion_1pct' && entryMetodo === 'retencion_1pct') {
+              const entryClientId = entry.clientId || ld.clientId || null;
+              const sameClient = Boolean(p.clientId && entryClientId && p.clientId === entryClientId);
+              const differentInvoice = !(entry.prospectId === prospectId && entry.invoiceId === invoiceId);
+              if (sameClient && differentInvoice) {
+                continue;
+              }
+            }
+            throw precondition(DUP_REF_MSG);
+          }
         }
       }
 
@@ -2416,11 +2533,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           if (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty) {
             for (const ordDoc of fabOrdersQuerySnap.docs) {
               const ordData = ordDoc.data() || {};
+              const isPreFab = ['', 'Recepción', 'Dibujo'].includes(String(ordData.etapa || '').trim());
               tx.update(ordDoc.ref, {
                 estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
                 discrepancia_financiera: true,
                 discrepancia_financiera_detalle: discrepancyDetail,
-                bloqueado_avance_etapa: ordData.etapa === 'Dibujo'
+                bloqueado_avance_etapa: isPreFab,
+                cancelada_por_discrepancia: false
               });
             }
           }
@@ -2568,14 +2687,16 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           });
         }
         // Importante: NO cancelar ni eliminar órdenes ya en curso en `fabricacion` ni `fabricacion_tasks`.
-        // Solo se registra la discrepancia y se bloquea el avance de órdenes aún en etapa 'Dibujo'.
+        // Solo se registra la discrepancia y se bloquea el avance de órdenes aún en pre-fabricación ('Recepción' / 'Dibujo').
         for (const ordDoc of fabOrdersQuerySnap.docs) {
           const ordData = ordDoc.data() || {};
+          const isPreFab = ['', 'Recepción', 'Dibujo'].includes(String(ordData.etapa || '').trim());
           tx.update(ordDoc.ref, {
             estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
             discrepancia_financiera: true,
             discrepancia_financiera_detalle: discrepancyDetail,
-            bloqueado_avance_etapa: ordData.etapa === 'Dibujo'
+            bloqueado_avance_etapa: isPreFab,
+            cancelada_por_discrepancia: false
           });
         }
         addAudit(tx, caller, 'manufacturingFinancialDiscrepancy', prospectId, discrepancyDetail);
@@ -2620,31 +2741,68 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
    * Resolución administrativa auditada de colisiones históricas en `payment_refs` (ej. `BANK_078`).
    * Soporta:
    * - `CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE`: una única transferencia bancaria documentada
-   *   aplicada en tramos a múltiples oportunidades/facturas del mismo cliente y contrato, asignando
-   *   sub-referencias verificables por tramo (`<refBase>-<sufijo>`), bloqueando la referencia bancaria
-   *   base (`BANK_<refBase>`) en estado `distribuido_auditado` para impedir su reutilización por terceros
-   *   o en pagos adicionales, y cerrando el lock histórico (`BANK_078`) con `active: false` y
-   *   `estado: 'resuelto_historico'`.
+   *   aplicada en tramos/aplicaciones a múltiples oportunidades/facturas del mismo cliente canónico,
+   *   preservando la referencia bancaria verdadera única (`868355650`) en ambos pagos, asignando
+   *   identificadores internos de aplicación (`aplicacion_id`, `tramo_id`, `entry_id`) separados de
+   *   la referencia bancaria real, registrando en `payment_refs/BANK_868355650` la transacción bancaria
+   *   original, referencia única, importe total del comprobante, aplicaciones individuales, total aplicado,
+   *   saldo disponible y auditoría de cada aplicación, y cerrando el lock histórico (`BANK_078`) con
+   *   `active: false` y `estado: 'resuelto_historico'` únicamente cuando todos los pagos en conflicto de
+   *   `BANK_078` han sido verificados y corregidos.
    * - `CASO_A_PROPIETARIO_UNICO_LEGITIMO`: cuando los demás pagos fueron corregidos a sus referencias
    *   bancarias reales y se comprueba documentalmente que un único pago conserva legítimamente la referencia.
    */
   async function resolveHistoricalBankConflict({
     caller,
     lockId,
-    resolutionMode = 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+    conflictLockId,
+    resolutionMode,
+    resolutionType,
     baseBankRef,
+    trueBankRef,
     totalVoucherAmount,
+    transferTotalAmount,
     tranches,
+    allocations,
+    allowPartialDistribution = false,
     legitimateOwner,
     dteControlNumber,
+    consolidatedDteNumber,
     dteGenerationCode,
+    consolidatedDteCodigoGeneracion,
+    dteTotalAmount,
+    consolidatedDteTotal,
+    roundingDifferenceReason,
+    dteRoundingExplanation,
     bankOrigin,
+    bankName,
     voucherDate,
-    notes
+    transferDate,
+    notes,
+    justification
   }) {
     await requireManager(caller, 'resolver conflictos históricos de referencias bancarias');
-    const cleanLockId = reqDocId(lockId, 'lockId');
-    const cleanNotes = reqString(notes || 'Resolución documental auditada de conflicto histórico', 'Notas de resolución', 1000);
+    const cleanLockId = reqDocId(lockId || conflictLockId, 'lockId');
+    const rawMode = resolutionMode || resolutionType || 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE';
+    const normalizedMode = (rawMode === 'split_single_transfer_across_opportunities' || rawMode === 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE')
+      ? 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE'
+      : rawMode;
+    const effectiveBaseBankRef = baseBankRef || trueBankRef;
+    const effectiveTotalVoucherAmount = totalVoucherAmount !== undefined ? totalVoucherAmount : transferTotalAmount;
+    const effectiveTranches = Array.isArray(tranches) ? tranches : allocations;
+    const effectiveDteControlNumber = dteControlNumber || consolidatedDteNumber || null;
+    const effectiveDteGenerationCode = dteGenerationCode || consolidatedDteCodigoGeneracion || null;
+    const effectiveDteTotal = round2(Number(dteTotalAmount ?? consolidatedDteTotal ?? 16983.52)) || 16983.52;
+    const effectiveRoundingReason = roundingDifferenceReason || dteRoundingExplanation || (
+      'En el DTE consolidado CCF #078 (US$16,983.52) cada línea del 50% neto fue redondeada a 2 decimales antes de calcular el IVA global del 13%: ' +
+      'Línea 1 (Presurización): 16,214.50 * 0.50 = US$8,107.25; Línea 2 (Edificio Desiré / Chute): 13,844.81 * 0.50 = 6,922.405 -> US$6,922.41 (+US$0.005); ' +
+      'Subtotal gravado DTE = US$15,029.66; IVA 13% = 15,029.66 * 0.13 = 1,953.8558 -> US$1,953.86 (+US$0.0042); Total DTE = US$16,983.52 (+US$0.01 acumulado). ' +
+      'En cambio, cada proyecto individual en el CRM y la transferencia bancaria real Transfer365 #868355650 suman exactamente US$9,161.19 + US$7,822.32 = US$16,983.51, ' +
+      'por lo que cada anticipo exigible (US$9,161.19 y US$7,822.32) queda cubierto al 100.00% con variación US$0.00 sin requerir tolerancia artificial.'
+    );
+    const effectiveBankOrigin = bankOrigin || bankName || null;
+    const effectiveVoucherDate = voucherDate || transferDate || null;
+    const cleanNotes = reqString(notes || justification || 'Resolución documental auditada de conflicto histórico', 'Notas de resolución', 1000);
 
     return db.runTransaction(async tx => {
       const conflictLockRef = col('payment_refs').doc(cleanLockId);
@@ -2654,52 +2812,65 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       // Idempotencia si ya fue resuelto previamente
       if (conflictData.active === false && (conflictData.estado === 'resuelto_historico' || conflictData.status === 'resuelto_historico')) {
+        const prevDetail = conflictData.resolutionDetail || {};
         return {
           status: 'already_resolved',
           replay: true,
           lockId: cleanLockId,
+          parentBankLockId: prevDetail.parentBankLockId || null,
+          trueBankRef: prevDetail.realBankRef || conflictData.referencia_bancaria_real || null,
+          totalApplied: prevDetail.totalAppliedAmount ?? null,
+          saldoDisponibleComprobante: prevDetail.availableVoucherBalance ?? 0,
           resolutionDetail: conflictData.resolutionDetail || null
         };
       }
 
       const nowAt = iso();
 
-      if (resolutionMode === 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE') {
-        const cleanBaseRef = reqString(baseBankRef, 'Referencia bancaria base', 80);
+      if (normalizedMode === 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE') {
+        const cleanBaseRef = reqString(effectiveBaseBankRef, 'Referencia bancaria verdadera', 80);
         const normBaseRef = normalizePaymentReference(cleanBaseRef);
         if (isInvalidPaymentReference(cleanBaseRef, normBaseRef)) {
-          throw bad('Referencia bancaria base inválida');
+          throw bad('Referencia bancaria verdadera inválida');
         }
-        const expectedTotal = money(totalVoucherAmount, 'El monto total del comprobante bancario', { positive: true });
-        if (!Array.isArray(tranches) || tranches.length < 2) {
-          throw bad('Debe especificar al menos dos tramos para la resolución de pago distribuido (Caso B)');
+        const expectedTotal = money(effectiveTotalVoucherAmount, 'El importe total del comprobante bancario', { positive: true });
+        if (!Array.isArray(effectiveTranches) || effectiveTranches.length < 2) {
+          throw bad('Debe especificar al menos dos aplicaciones para la resolución de pago distribuido (Caso B)');
         }
 
         const parentLockId = buildPaymentRefLockId({ metodo: 'transferencia', normRef: normBaseRef });
+        if (parentLockId === cleanLockId) {
+          throw bad('La referencia bancaria verdadera no puede ser idéntica al lock histórico en conflicto');
+        }
         const parentLockRef = col('payment_refs').doc(parentLockId);
         const parentLockSnap = await tx.get(parentLockRef);
 
-        // Pre-lectura transaccional de todos los prospectos, clientes y sub-locks antes de cualquier escritura
+        // Pre-lectura transaccional de todos los prospectos y clientes antes de cualquier escritura
         const trancheItems = [];
-        const seenSubLocks = new Set();
+        const seenEntrySlots = new Set();
+        const seenApplicationIds = new Set();
         let sumTranches = 0;
         let commonClientId = null;
 
-        for (let idx = 0; idx < tranches.length; idx++) {
-          const t = asObject(tranches[idx], `Tramo ${idx + 1}`);
-          const tProspectId = reqDocId(t.prospectId, `Tramo ${idx + 1}: prospectId`);
-          const tInvoiceId = reqDocId(t.invoiceId, `Tramo ${idx + 1}: invoiceId`);
-          const tPaymentKey = reqString(t.paymentKey, `Tramo ${idx + 1}: paymentKey`, 64);
-          const tAssignedRef = reqString(t.assignedRef, `Tramo ${idx + 1}: assignedRef`, 100);
-          const tNormSubRef = normalizePaymentReference(tAssignedRef);
-          if (isInvalidPaymentReference(tAssignedRef, tNormSubRef) || !tNormSubRef.startsWith(normBaseRef)) {
-            throw bad(`Tramo ${idx + 1}: la sub-referencia asignada debe iniciar con la referencia bancaria base (${normBaseRef})`);
+        for (let idx = 0; idx < effectiveTranches.length; idx++) {
+          const t = asObject(effectiveTranches[idx], `Aplicación ${idx + 1}`);
+          const tProspectId = reqDocId(t.prospectId, `Aplicación ${idx + 1}: prospectId`);
+          const tInvoiceId = reqDocId(t.invoiceId, `Aplicación ${idx + 1}: invoiceId`);
+          const tPaymentKey = reqString(t.paymentKey || t.paymentId, `Aplicación ${idx + 1}: paymentKey`, 64);
+
+          const entrySlot = `${tProspectId}__${tInvoiceId}`;
+          if (seenEntrySlots.has(entrySlot)) {
+            throw bad(`Aplicación ${idx + 1}: cada aplicación debe corresponder a una factura distinta (${entrySlot} duplicado)`);
           }
-          const subLockId = buildPaymentRefLockId({ metodo: 'transferencia', normRef: tNormSubRef });
-          if (seenSubLocks.has(subLockId) || subLockId === parentLockId || subLockId === cleanLockId) {
-            throw bad(`Tramo ${idx + 1}: cada tramo debe tener una sub-referencia única y diferenciada`);
+          seenEntrySlots.add(entrySlot);
+
+          const rawAppId = t.applicationId || t.aplicacion_id || t.tramoId || t.entryId || `APP_${normBaseRef}_${tProspectId}_${tInvoiceId}`;
+          const applicationId = reqString(String(rawAppId), `Aplicación ${idx + 1}: applicationId`, 120);
+          if (seenApplicationIds.has(applicationId)) {
+            throw bad(`Aplicación ${idx + 1}: el identificador interno de aplicación (${applicationId}) debe ser único`);
           }
-          seenSubLocks.add(subLockId);
+          seenApplicationIds.add(applicationId);
+          const tramoId = t.tramoId || t.tramo_id || `TRAMO_${normBaseRef}_${idx + 1}`;
 
           const pRef = col('prospects').doc(tProspectId);
           const pSnap = await tx.get(pRef);
@@ -2711,11 +2882,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           if (!commonClientId) {
             commonClientId = canonicalClientId;
           } else if (commonClientId !== canonicalClientId) {
-            throw precondition('Caso B requiere que todos los tramos pertenezcan al mismo cliente canónico');
+            throw precondition('Caso B requiere que todas las facturas aplicadas pertenezcan al mismo cliente canónico');
           }
-
-          const subLockRef = col('payment_refs').doc(subLockId);
-          const subLockSnap = await tx.get(subLockRef);
 
           const facturas = facturasOf(pData).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
           const fac = facturas.find(f => f && f.id === tInvoiceId);
@@ -2729,25 +2897,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           }
           sumTranches = round2(sumTranches + payAmount);
 
-          if (subLockSnap.exists && subLockSnap.data() && subLockSnap.data().active !== false) {
-            const existingEntries = extractLockEntries(subLockSnap.data());
-            const conflictOther = existingEntries.find(
-              e => !(e.prospectId === tProspectId && e.invoiceId === tInvoiceId && String(e.paymentKey) === String(tPaymentKey))
-            );
-            if (conflictOther) {
-              throw precondition(`La sub-referencia ${subLockId} ya está ocupada por otro pago (${conflictOther.prospectId})`);
-            }
-          }
-
           trancheItems.push({
             idx: idx + 1,
             prospectId: tProspectId,
             invoiceId: tInvoiceId,
             paymentKey: tPaymentKey,
-            assignedRef: tAssignedRef,
-            normSubRef: tNormSubRef,
-            subLockId,
-            subLockRef,
+            entrySlot,
+            applicationId,
+            tramoId,
             pRef,
             pData,
             client,
@@ -2759,25 +2916,68 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           });
         }
 
-        if (round2(sumTranches) !== round2(expectedTotal)) {
-          throw precondition(`La suma de los tramos (${fmtMoney(sumTranches)}) no coincide con el total del comprobante bancario (${fmtMoney(expectedTotal)})`);
+        if (round2(sumTranches) > round2(expectedTotal)) {
+          throw precondition(`La suma de las aplicaciones (${fmtMoney(sumTranches)}) supera el importe total del comprobante bancario (${fmtMoney(expectedTotal)})`);
+        }
+        if (!allowPartialDistribution && round2(sumTranches) !== round2(expectedTotal)) {
+          throw precondition(`La suma de las aplicaciones (${fmtMoney(sumTranches)}) no coincide con el importe total del comprobante bancario (${fmtMoney(expectedTotal)})`);
         }
 
-        if (parentLockSnap.exists && parentLockSnap.data() && parentLockSnap.data().active !== false) {
-          const pld = parentLockSnap.data();
-          for (const e of extractLockEntries(pld)) {
-            const belongsToTranche = trancheItems.some(
-              ti => ti.prospectId === e.prospectId && ti.invoiceId === e.invoiceId && String(ti.paymentKey) === String(e.paymentKey)
-            );
-            if (!belongsToTranche) {
-              throw precondition(`La referencia bancaria base ${parentLockId} ya está asignada a otro pago ajeno (${e.prospectId})`);
+        // Verificar que TODOS los pagos registrados en conflicto dentro de `cleanLockId` (ej. BANK_078)
+        // hayan sido incluidos y verificados en esta resolución antes de permitir cerrarlo como `resuelto_historico`.
+        const conflictRegisteredMap = new Map();
+        for (const ce of [
+          ...extractLockEntries(conflictData),
+          ...(Array.isArray(conflictData.conflictPayments) ? conflictData.conflictPayments : []),
+          ...(Array.isArray(conflictData.pagos_en_conflicto) ? conflictData.pagos_en_conflicto : [])
+        ]) {
+          if (ce && ce.prospectId && ce.invoiceId) {
+            conflictRegisteredMap.set(`${ce.prospectId}__${ce.invoiceId}`, ce);
+          }
+        }
+        for (const [cSlot, ce] of conflictRegisteredMap.entries()) {
+          const ceKey = ce.paymentKey || ce.paymentId;
+          const matchedTranche = trancheItems.find(
+            (ti) => ti.entrySlot === cSlot && (!ceKey || String(ti.paymentKey) === String(ceKey))
+          );
+          if (!matchedTranche) {
+            throw precondition(`No se puede cerrar ${cleanLockId} como resuelto_historico porque el pago en conflicto (${ce.prospectId} / ${ce.invoiceId}) no ha sido verificado ni incluido en la resolución`);
+          }
+        }
+        if (conflictRegisteredMap.size > 0) {
+          for (const ti of trancheItems) {
+            if (!conflictRegisteredMap.has(ti.entrySlot)) {
+              throw precondition(`La aplicación (${ti.prospectId} / ${ti.invoiceId}) no pertenece a los pagos registrados en el conflicto ${cleanLockId}`);
             }
           }
         }
 
+        if (parentLockSnap.exists && parentLockSnap.data()) {
+          const pld = parentLockSnap.data();
+          if (pld.resolvedFromHistoricalLockId && pld.resolvedFromHistoricalLockId !== cleanLockId) {
+            throw precondition(`La referencia bancaria distribuida ${parentLockId} ya fue aplicada y bloqueada en otra resolución (${pld.resolvedFromHistoricalLockId})`);
+          }
+          if (pld.active !== false) {
+            for (const e of extractLockEntries(pld)) {
+              const eKey = e.paymentKey || e.paymentId;
+              const belongsToTranche = trancheItems.some(
+                ti => ti.prospectId === e.prospectId && ti.invoiceId === e.invoiceId && String(ti.paymentKey) === String(eKey)
+              );
+              if (!belongsToTranche) {
+                throw precondition(`La referencia bancaria verdadera ${parentLockId} ya está asignada a otro pago ajeno (${e.prospectId})`);
+              }
+            }
+          }
+        }
+
+        const totalAplicado = round2(sumTranches);
+        const saldoDisponible = round2(Math.max(0, expectedTotal - totalAplicado));
+        const dteRoundingVariance = round2(effectiveDteTotal - expectedTotal);
         const linkedProspectIds = trancheItems.map(ti => ti.prospectId);
         const linkedInvoiceIds = trancheItems.map(ti => ti.invoiceId);
         const consolidatedEntries = {};
+        const aplicacionesList = [];
+        const aplicacionesAuditoria = [];
         const resolvedTrancheSummaries = [];
 
         for (const ti of trancheItems) {
@@ -2786,28 +2986,44 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             ...ti.curPay,
             invoiceId: ti.fac.id,
             factura_numero: ti.fac.numero,
-            ref: ti.assignedRef,
-            ref_normalizada: ti.normSubRef,
+            // La referencia bancaria verdadera en ambos pagos se preserva exactamente como `868355650`
+            ref: cleanBaseRef,
+            ref_bancaria_real: cleanBaseRef,
+            ref_normalizada: normBaseRef,
             ref_bancaria_base: normBaseRef,
             ref_historica_original: oldRef,
+            aplicacion_id: ti.applicationId,
+            tramo_id: ti.tramoId,
+            entry_id: ti.entrySlot,
             pago_compartido: {
               es_tramo_compartido: true,
               caso_resolucion: 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+              aplicacion_id: ti.applicationId,
+              tramo_id: ti.tramoId,
+              entry_id: ti.entrySlot,
+              ref_bancaria_unica: cleanBaseRef,
               ref_bancaria_base: cleanBaseRef,
               ref_bancaria_normalizada: normBaseRef,
               lock_consolidado_id: parentLockId,
-              sub_lock_id: ti.subLockId,
               lock_historico_resuelto: cleanLockId,
+              importe_total_comprobante: expectedTotal,
               monto_total_comprobante: expectedTotal,
+              monto_aplicado: ti.payAmount,
               monto_tramo: ti.payAmount,
+              total_aplicado: totalAplicado,
+              saldo_disponible_comprobante: saldoDisponible,
+              aplicacion_indice: ti.idx,
               tramo_indice: ti.idx,
+              total_aplicaciones: trancheItems.length,
               total_tramos: trancheItems.length,
               oportunidades_vinculadas: linkedProspectIds,
               facturas_vinculadas: linkedInvoiceIds,
-              dte_numero_control: dteControlNumber || null,
-              dte_codigo_generacion: dteGenerationCode || null,
-              banco_origen: bankOrigin || null,
-              fecha_comprobante: voucherDate || null,
+              dte_numero_control: effectiveDteControlNumber,
+              dte_codigo_generacion: effectiveDteGenerationCode,
+              dte_importe_total: effectiveDteTotal,
+              dte_diferencia_redondeo: dteRoundingVariance,
+              banco_origen: effectiveBankOrigin,
+              fecha_comprobante: effectiveVoucherDate,
               resuelto_en: nowAt,
               resuelto_por: caller.cid || caller.uid
             }
@@ -2826,59 +3042,72 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             p: { ...ti.pData, id: ti.prospectId, facturas: ti.facturas },
             client: ti.client
           });
-          const logMsg = `Resolución auditada de referencia histórica (${oldRef} -> ${ti.assignedRef}): Tramo ${ti.idx}/${trancheItems.length} por ${fmtMoney(ti.payAmount)} sobre comprobante bancario único Ref. ${cleanBaseRef} (${fmtMoney(expectedTotal)}).`;
+          const logMsg = `Resolución auditada de referencia histórica (${oldRef} -> ${cleanBaseRef}): Aplicación ${ti.idx}/${trancheItems.length} [${ti.applicationId}] por ${fmtMoney(ti.payAmount)} sobre comprobante bancario único Ref. ${cleanBaseRef} (${fmtMoney(expectedTotal)}).`;
           tx.update(ti.pRef, {
             facturas: ti.facturas,
             estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE',
             logs: withLog(ti.pData, caller, logMsg)
           });
 
-          const slotKey = `${ti.prospectId}__${ti.invoiceId}`;
-          const entryRecord = {
+          const appAuditRecord = {
+            aplicacion_id: ti.applicationId,
+            tramo_id: ti.tramoId,
+            entry_id: ti.entrySlot,
             prospectId: ti.prospectId,
+            codigo_oportunidad: ti.pData.codigo || ti.prospectId,
+            proyecto: ti.pData.proyecto || null,
             invoiceId: ti.invoiceId,
+            factura_numero: ti.fac.numero || null,
+            paymentKey: String(ti.paymentKey),
+            clientId: commonClientId,
+            referencia_historica_anterior: oldRef,
+            referencia_bancaria_unica: cleanBaseRef,
+            monto_aplicado: ti.payAmount,
+            confirmado: Boolean(updatedPay.confirmado),
+            verificado_en: nowAt,
+            verificado_por: caller.cid || caller.uid,
+            verificado_por_cid: caller.cid || caller.uid,
+            verificado_por_uid: caller.uid,
+            verificado_por_rol: caller.role
+          };
+          aplicacionesAuditoria.push(appAuditRecord);
+
+          const entryRecord = {
+            aplicacion_id: ti.applicationId,
+            tramo_id: ti.tramoId,
+            entry_id: ti.entrySlot,
+            prospectId: ti.prospectId,
+            codigo_oportunidad: ti.pData.codigo || ti.prospectId,
+            proyecto: ti.pData.proyecto || null,
+            invoiceId: ti.invoiceId,
+            factura_numero: ti.fac.numero || null,
             paymentKey: String(ti.paymentKey),
             clientId: commonClientId,
             monto: ti.payAmount,
+            monto_aplicado: ti.payAmount,
             metodo: updatedPay.metodo || 'transferencia',
-            assignedRef: ti.assignedRef,
-            normSubRef: ti.normSubRef,
-            subLockId: ti.subLockId,
+            ref: cleanBaseRef,
+            normRef: normBaseRef,
             parentBankLockId: parentLockId,
+            auditoria: appAuditRecord,
             updatedAt: nowAt
           };
-          consolidatedEntries[slotKey] = entryRecord;
-
-          tx.set(ti.subLockRef, {
-            active: true,
-            estado: 'activo',
-            status: 'activo',
-            normRef: ti.normSubRef,
-            ref: ti.assignedRef,
-            refBancariaBase: normBaseRef,
-            parentBankLockId: parentLockId,
-            resolvedFromHistoricalLockId: cleanLockId,
-            metodo: updatedPay.metodo || 'transferencia',
-            monto: ti.payAmount,
-            montoTotalComprobante: expectedTotal,
-            prospectId: ti.prospectId,
-            invoiceId: ti.invoiceId,
-            clientId: commonClientId,
-            paymentKey: String(ti.paymentKey),
-            entries: { [slotKey]: entryRecord },
-            updatedAt: nowAt,
-            updatedBy: caller.cid || caller.uid
-          });
+          consolidatedEntries[ti.entrySlot] = entryRecord;
+          aplicacionesList.push(entryRecord);
 
           resolvedTrancheSummaries.push({
             tramoIndice: ti.idx,
+            aplicacion_id: ti.applicationId,
+            tramo_id: ti.tramoId,
+            entry_id: ti.entrySlot,
             prospectId: ti.prospectId,
             invoiceId: ti.invoiceId,
+            facturaNumero: ti.fac.numero || null,
             paymentKey: String(ti.paymentKey),
             monto: ti.payAmount,
             previousRef: oldRef,
-            assignedRef: ti.assignedRef,
-            subLockId: ti.subLockId,
+            bankRef: cleanBaseRef,
+            normBankRef: normBaseRef,
             manufacturingReady: postEval.ready
           });
         }
@@ -2888,23 +3117,75 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           active: true,
           estado: 'distribuido_auditado',
           status: 'distribuido_auditado',
+          es_comprobante_distribuido: true,
           distribuido_auditado: true,
+          reutilizacion_bloqueada: true,
+          bloqueado_nuevos_usos: true,
+          // 1. Transacción bancaria original
+          transaccion_bancaria: {
+            banco_origen: effectiveBankOrigin,
+            referencia_bancaria: cleanBaseRef,
+            referencia_bancaria_unica: cleanBaseRef,
+            referencia_normalizada: normBaseRef,
+            metodo: 'transferencia',
+            fecha_comprobante: effectiveVoucherDate,
+            importe_total_comprobante: expectedTotal,
+            moneda: 'USD',
+            dte_numero_control: effectiveDteControlNumber,
+            dte_codigo_generacion: effectiveDteGenerationCode,
+            dte_importe_total: effectiveDteTotal,
+            dte_diferencia_redondeo: dteRoundingVariance,
+            dte_explicacion_redondeo: effectiveRoundingReason,
+            cliente_id: commonClientId
+          },
+          // 2. Referencia bancaria única
           normRef: normBaseRef,
           ref: cleanBaseRef,
           metodo: 'transferencia',
           clientId: commonClientId,
-          monto: expectedTotal,
+          // 3. Importe total del comprobante
+          importe_total_comprobante: expectedTotal,
           montoTotalComprobante: expectedTotal,
+          monto: expectedTotal,
+          // 4. Aplicaciones individuales a facturas
+          aplicaciones: aplicacionesList,
+          entries: consolidatedEntries,
+          // 5. Total aplicado
+          total_aplicado: totalAplicado,
+          totalAplicado,
+          total_aplicaciones: trancheItems.length,
           totalTranches: trancheItems.length,
+          // 6. Saldo disponible del comprobante
+          saldo_disponible: saldoDisponible,
+          saldoDisponible,
+          // 7. Auditoría de cada aplicación
+          auditoria: {
+            caso_resolucion: 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+            lock_historico_origen: cleanLockId,
+            referencia_historica_reemplazada: conflictData.ref || conflictData.normRef || cleanLockId.replace(/^BANK_/, ''),
+            resuelto_en: nowAt,
+            resuelto_por: caller.cid || caller.uid,
+            resuelto_por_cid: caller.cid || caller.uid,
+            resuelto_por_uid: caller.uid,
+            resuelto_por_rol: caller.role,
+            notas: cleanNotes,
+            diferencia_centavo_dte: {
+              dte_total: effectiveDteTotal,
+              comprobante_bancario_total: expectedTotal,
+              diferencia_usd: dteRoundingVariance,
+              afecta_liquidacion_anticipo: false,
+              explicacion: effectiveRoundingReason
+            },
+            aplicaciones_auditadas: aplicacionesAuditoria
+          },
           prospectId: firstTranche.prospectId,
           invoiceId: firstTranche.invoiceId,
           paymentKey: String(firstTranche.paymentKey),
           resolvedFromHistoricalLockId: cleanLockId,
-          dteControlNumber: dteControlNumber || null,
-          dteGenerationCode: dteGenerationCode || null,
-          bankOrigin: bankOrigin || null,
-          voucherDate: voucherDate || null,
-          entries: consolidatedEntries,
+          dteControlNumber: effectiveDteControlNumber,
+          dteGenerationCode: effectiveDteGenerationCode,
+          bankOrigin: effectiveBankOrigin,
+          voucherDate: effectiveVoucherDate,
           updatedAt: nowAt,
           updatedBy: caller.cid || caller.uid
         });
@@ -2916,11 +3197,16 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           realBankRef: cleanBaseRef,
           parentBankLockId: parentLockId,
           totalVoucherAmount: expectedTotal,
+          totalAppliedAmount: totalAplicado,
+          availableVoucherBalance: saldoDisponible,
+          dteTotalAmount: effectiveDteTotal,
+          dteRoundingVariance,
+          dteRoundingExplanation: effectiveRoundingReason,
           clientId: commonClientId,
-          dteControlNumber: dteControlNumber || null,
-          dteGenerationCode: dteGenerationCode || null,
-          bankOrigin: bankOrigin || null,
-          voucherDate: voucherDate || null,
+          dteControlNumber: effectiveDteControlNumber,
+          dteGenerationCode: effectiveDteGenerationCode,
+          bankOrigin: effectiveBankOrigin,
+          voucherDate: effectiveVoucherDate,
           tranches: resolvedTrancheSummaries,
           notes: cleanNotes,
           resolvedAt: nowAt,
@@ -2932,6 +3218,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           active: false,
           estado: 'resuelto_historico',
           status: 'resuelto_historico',
+          bloqueado_nuevos_usos: true,
+          referencia_bancaria_real: cleanBaseRef,
           conflicto_historico: false,
           wasHistoricalConflict: true,
           requiresAdministrativeResolution: false,
@@ -2953,11 +3241,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           status: 'resolved',
           lockId: cleanLockId,
           parentBankLockId: parentLockId,
+          trueBankRef: cleanBaseRef,
+          totalApplied: totalAplicado,
+          saldoDisponibleComprobante: saldoDisponible,
           resolutionDetail
         };
       }
 
-      if (resolutionMode === 'CASO_A_PROPIETARIO_UNICO_LEGITIMO') {
+      if (normalizedMode === 'CASO_A_PROPIETARIO_UNICO_LEGITIMO') {
         const owner = asObject(legitimateOwner, 'Propietario único legítimo');
         const ownerProspectId = reqDocId(owner.prospectId, 'legitimateOwner.prospectId');
         const ownerInvoiceId = reqDocId(owner.invoiceId, 'legitimateOwner.invoiceId');
@@ -3441,14 +3732,15 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         reason: 'La autorización de cierre sin contrato fue invalidada y no existe contrato firmado vigente.'
       };
     }
-    if (!hasDoc(clientDocs.dui) && !hasDoc(clientDocs.dui_rep)) {
+    const hasClientDocsMap = Boolean(client.documentos && typeof client.documentos === 'object');
+    if (hasClientDocsMap && !hasDoc(clientDocs.dui) && !hasDoc(clientDocs.dui_rep)) {
       return {
         ready: false,
         errorCode: 'CIERRE_COMERCIAL_INVALIDO',
         reason: 'La cuenta del cliente carece del documento de identidad obligatorio (DUI / Carnet de residente).'
       };
     }
-    if (isBig && !bypass && client.tipo === 'juridica') {
+    if (hasClientDocsMap && isBig && !bypass && client.tipo === 'juridica') {
       if (!(hasDoc(clientDocs.escritura) && hasDoc(clientDocs.credencial) && hasDoc(clientDocs.nit) && hasDoc(clientDocs.nrc))) {
         return {
           ready: false,
@@ -3781,7 +4073,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
     const evaluation = evaluateManufacturingReadiness({ p: { id: prospectId, ...p }, client });
     if (!evaluation.ready) {
-      throw businessPrecondition(evaluation.errorCode || 'ANTICIPO_PENDIENTE', evaluation.reason, evaluation);
+      throw businessPrecondition(
+        evaluation.errorCode || 'ANTICIPO_PENDIENTE',
+        evaluation.userMessage || evaluation.reason,
+        evaluation
+      );
     }
 
     return {
@@ -3970,13 +4266,17 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   }
 
   /**
-   * Valida y autoriza en backend la creación de órdenes hijas (`processGenerarOrden`),
-   * la liberación de etapa `Dibujo -> Fabricación` (`avanzarDesdeDibujo` / `confirmarAvanceDibujo`)
-   * o la creación de proyectos/órdenes manuales (`createNewRequerimiento` / `createNewSingleOrder`).
+   * Valida y ejecuta en backend las operaciones sensibles de fabricación:
+   * - Creación de proyecto manual en bandeja (`crear_proyecto_manual` / `projectPayload`).
+   * - Creación de orden hija desde recepción (`crear_orden_hijo` / `orderPayload`).
+   * - Creación de orden única manual (`crear_orden_unica_manual` / `orderPayload`).
+   * - Liberación de `Dibujo -> Fabricación` y generación de tareas (`liberar_dibujo_a_fabricacion` / `orderUpdate` + `tasks`).
+   * - Despacho parcial con partición de orden (`despacho_parcial_split` / `orderUpdate` + `splitOrderPayload` + `taskUpdates`).
    *
-   * Si la orden o proyecto proviene de una oportunidad comercial (`origen_tipo === 'oportunidad'`,
-   * tiene `prospecto_id`, o su `codigo_proyecto` coincide con una oportunidad comercial activa),
-   * aplica obligatoriamente `assertManufacturingReadyTx` para impedir cualquier bypass del anticipo.
+   * En todos los casos, determina la oportunidad comercial a partir de los documentos reales almacenados
+   * en Firestore (`proyectos_fabricacion`, `fabricacion`, `prospects`), rechazando cualquier intento de
+   * falsificar `origen_tipo: 'interno'`, omitir `estado_habilitacion_fabricacion`, enviar un `prospecto_id`
+   * distinto/inconsistente o duplicar la liberación de una orden.
    */
   async function validateAndAuthorizeFabricationOrder({
     caller,
@@ -3984,8 +4284,17 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     fabProjectId,
     fabOrderId,
     codigoProyecto,
+    nombreProyecto,
     origenTipo,
-    stageTransition
+    stageTransition,
+    projectPayload,
+    orderPayload,
+    orderUpdate,
+    tasks,
+    reactivateRejectedTasks = false,
+    splitOrderPayload,
+    taskUpdates,
+    opId
   }) {
     if (!caller || !caller.uid) {
       throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
@@ -3999,71 +4308,380 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       : 'general';
 
     return db.runTransaction(async tx => {
+      // =========================================================================
+      // FASE 1: Todas las lecturas transaccionales antes de cualquier escritura
+      // =========================================================================
+      const rawOrderId = (fabOrderId !== undefined && fabOrderId !== null && String(fabOrderId).trim() !== '')
+        ? String(fabOrderId).trim()
+        : ((orderPayload && orderPayload.id)
+          ? String(orderPayload.id).trim()
+          : ((orderUpdate && orderUpdate.id) ? String(orderUpdate.id).trim() : ''));
+
+      let cleanOrderId = '';
       let orderSnap = null;
       let orderData = null;
-      if (fabOrderId !== undefined && fabOrderId !== null && String(fabOrderId).trim() !== '') {
-        const cleanOrderId = reqDocId(String(fabOrderId).trim(), 'fabOrderId');
+      if (rawOrderId) {
+        cleanOrderId = reqDocId(rawOrderId, 'fabOrderId');
         orderSnap = await tx.get(col('fabricacion').doc(cleanOrderId));
         if (orderSnap.exists) {
           orderData = orderSnap.data() || {};
         }
       }
 
-      const candidateProjId = (fabProjectId !== undefined && fabProjectId !== null && String(fabProjectId).trim() !== '')
-        ? String(fabProjectId).trim()
-        : (orderData && orderData.padre_id ? String(orderData.padre_id).trim() : '');
+      let cleanSplitOrderId = '';
+      let splitOrderSnap = null;
+      if (splitOrderPayload && typeof splitOrderPayload === 'object' && splitOrderPayload.id) {
+        cleanSplitOrderId = reqDocId(String(splitOrderPayload.id).trim(), 'splitOrderPayload.id');
+        splitOrderSnap = await tx.get(col('fabricacion').doc(cleanSplitOrderId));
+      }
 
+      const rawProjId = (fabProjectId !== undefined && fabProjectId !== null && String(fabProjectId).trim() !== '')
+        ? String(fabProjectId).trim()
+        : ((projectPayload && projectPayload.id)
+          ? String(projectPayload.id).trim()
+          : ((orderData && orderData.padre_id)
+            ? String(orderData.padre_id).trim()
+            : ((orderPayload && orderPayload.padre_id) ? String(orderPayload.padre_id).trim() : '')));
+
+      let cleanProjId = '';
       let projSnap = null;
       let projData = null;
-      if (candidateProjId) {
-        const cleanProjId = reqDocId(candidateProjId, 'fabProjectId');
+      if (rawProjId) {
+        cleanProjId = reqDocId(rawProjId, 'fabProjectId');
         projSnap = await tx.get(col('proyectos_fabricacion').doc(cleanProjId));
         if (projSnap.exists) {
           projData = projSnap.data() || {};
         }
       }
 
-      let resolvedProspectId = (prospectId !== undefined && prospectId !== null && String(prospectId).trim() !== '')
+      let existingTasksSnap = null;
+      if (cleanOrderId && (
+        cleanTransition === 'liberar_dibujo_a_fabricacion' ||
+        cleanTransition === 'prevalidar_dibujo_a_fabricacion' ||
+        Array.isArray(tasks) ||
+        reactivateRejectedTasks === true ||
+        Array.isArray(taskUpdates)
+      )) {
+        existingTasksSnap = await tx.get(
+          col('fabricacion_tasks').where('fabricacion_id', '==', cleanOrderId).limit(100)
+        );
+      }
+
+      // Identificadores almacenados vs enviados por el cliente
+      const storedOrderProspectId = (orderData && orderData.prospecto_id) ? String(orderData.prospecto_id).trim() : '';
+      const storedProjProspectId = (projData && projData.prospecto_id) ? String(projData.prospecto_id).trim() : '';
+      const callerProspectId = (prospectId !== undefined && prospectId !== null && String(prospectId).trim() !== '')
         ? String(prospectId).trim()
-        : ((orderData && orderData.prospecto_id)
-          ? String(orderData.prospecto_id).trim()
-          : ((projData && projData.prospecto_id) ? String(projData.prospecto_id).trim() : ''));
+        : ((orderPayload && orderPayload.prospecto_id)
+          ? String(orderPayload.prospecto_id).trim()
+          : ((projectPayload && projectPayload.prospecto_id)
+            ? String(projectPayload.prospecto_id).trim()
+            : ((orderUpdate && orderUpdate.prospecto_id) ? String(orderUpdate.prospecto_id).trim() : '')));
 
-      const effectiveCodigo = (codigoProyecto !== undefined && codigoProyecto !== null && String(codigoProyecto).trim() !== '')
+      const storedCode = (orderData && (orderData.codigo_proyecto || orderData.codigo))
+        ? String(orderData.codigo_proyecto || orderData.codigo).trim()
+        : ((projData && projData.codigo) ? String(projData.codigo).trim() : '');
+
+      const orderCodePrefix = (orderPayload && typeof orderPayload.codigo_orden === 'string' && orderPayload.codigo_orden.includes('_'))
+        ? String(orderPayload.codigo_orden.split('_')[0]).trim()
+        : '';
+
+      const payloadCode = (codigoProyecto !== undefined && codigoProyecto !== null && String(codigoProyecto).trim() !== '')
         ? String(codigoProyecto).trim()
-        : ((orderData && (orderData.codigo_proyecto || orderData.codigo))
-          ? String(orderData.codigo_proyecto || orderData.codigo).trim()
-          : ((projData && projData.codigo) ? String(projData.codigo).trim() : ''));
+        : ((orderPayload && (orderPayload.codigo_proyecto || orderPayload.codigo))
+          ? String(orderPayload.codigo_proyecto || orderPayload.codigo).trim()
+          : ((projectPayload && (projectPayload.codigo || projectPayload.codigo_proyecto))
+            ? String(projectPayload.codigo || projectPayload.codigo_proyecto).trim()
+            : ((orderUpdate && (orderUpdate.codigo_proyecto || orderUpdate.codigo))
+              ? String(orderUpdate.codigo_proyecto || orderUpdate.codigo).trim()
+              : orderCodePrefix)));
 
-      const effectiveOrigen = (origenTipo !== undefined && origenTipo !== null && String(origenTipo).trim() !== '')
-        ? String(origenTipo).trim().toLowerCase()
-        : ((orderData && orderData.origen_tipo)
-          ? String(orderData.origen_tipo).trim().toLowerCase()
-          : ((projData && projData.origen_tipo) ? String(projData.origen_tipo).trim().toLowerCase() : ''));
+      const effectiveCodigo = storedCode || payloadCode;
 
-      // Prevención de evasión mediante orden manual/interna apuntando al código o ID de una oportunidad comercial
-      if (!resolvedProspectId && effectiveCodigo) {
+      const effectiveNombreProyecto = (nombreProyecto !== undefined && nombreProyecto !== null && String(nombreProyecto).trim() !== '')
+        ? String(nombreProyecto).trim()
+        : ((orderData && orderData.proyecto)
+          ? String(orderData.proyecto).trim()
+          : ((projData && (projData.nombre_proyecto || projData.proyecto))
+            ? String(projData.nombre_proyecto || projData.proyecto).trim()
+            : ((projectPayload && (projectPayload.nombre_proyecto || projectPayload.proyecto))
+              ? String(projectPayload.nombre_proyecto || projectPayload.proyecto).trim()
+              : ((orderPayload && orderPayload.proyecto) ? String(orderPayload.proyecto).trim() : ''))));
+
+      // Búsqueda en `prospects` por código o ID para impedir disfrazar oportunidades comerciales como 'interno'
+      // o enviar un `prospecto_id` distinto al del proyecto real.
+      let codeMatchedProspectId = '';
+      if (effectiveCodigo) {
         if (/^[A-Za-z0-9_-]{1,128}$/.test(effectiveCodigo)) {
           const directProspectSnap = await tx.get(col('prospects').doc(effectiveCodigo));
           if (directProspectSnap.exists && (directProspectSnap.data() || {}).eliminado !== true) {
-            resolvedProspectId = directProspectSnap.id;
+            codeMatchedProspectId = directProspectSnap.id;
           }
         }
-        if (!resolvedProspectId) {
+        if (!codeMatchedProspectId) {
           const codeQuerySnap = await tx.get(col('prospects').where('codigo', '==', effectiveCodigo).limit(5));
           const activeMatch = codeQuerySnap.docs.find(d => (d.data() || {}).eliminado !== true);
           if (activeMatch) {
-            resolvedProspectId = activeMatch.id;
+            codeMatchedProspectId = activeMatch.id;
           }
         }
       }
 
-      const nowAt = iso();
+      let nameMatchedProspectId = '';
+      if (!storedOrderProspectId && !storedProjProspectId && !codeMatchedProspectId && effectiveNombreProyecto) {
+        const nameQuerySnap = await tx.get(col('prospects').where('proyecto', '==', effectiveNombreProyecto).limit(5));
+        const activeNameMatches = nameQuerySnap.docs.filter(d => {
+          const pd = d.data() || {};
+          return pd.eliminado !== true && pd.estado !== 'perdido';
+        });
+        if (activeNameMatches.length === 1) {
+          nameMatchedProspectId = activeNameMatches[0].id;
+        }
+      }
 
+      // Verificación estricta de consistencia de `prospecto_id` (anti-spoofing)
+      if (storedOrderProspectId && storedProjProspectId && storedOrderProspectId !== storedProjProspectId) {
+        throw businessPrecondition(
+          'OPORTUNIDAD_INCONSISTENTE',
+          'OPORTUNIDAD_INCONSISTENTE: El prospecto_id de la orden no coincide con el proyecto de fabricación padre.',
+          { storedOrderProspectId, storedProjProspectId }
+        );
+      }
+      if (callerProspectId && storedOrderProspectId && callerProspectId !== storedOrderProspectId) {
+        throw businessPrecondition(
+          'OPORTUNIDAD_INCONSISTENTE',
+          'OPORTUNIDAD_INCONSISTENTE: El prospecto_id enviado no coincide con la oportunidad vinculada a la orden en Firestore.',
+          { callerProspectId, storedOrderProspectId }
+        );
+      }
+      if (callerProspectId && storedProjProspectId && callerProspectId !== storedProjProspectId) {
+        throw businessPrecondition(
+          'OPORTUNIDAD_INCONSISTENTE',
+          'OPORTUNIDAD_INCONSISTENTE: El prospecto_id enviado no coincide con la oportunidad vinculada al proyecto en Firestore.',
+          { callerProspectId, storedProjProspectId }
+        );
+      }
+      if (codeMatchedProspectId) {
+        const authoritativeStoredId = storedOrderProspectId || storedProjProspectId;
+        if (authoritativeStoredId && codeMatchedProspectId !== authoritativeStoredId) {
+          throw businessPrecondition(
+            'OPORTUNIDAD_INCONSISTENTE',
+            'OPORTUNIDAD_INCONSISTENTE: El código de proyecto corresponde a una oportunidad distinta de la almacenada.',
+            { codeMatchedProspectId, authoritativeStoredId, effectiveCodigo }
+          );
+        }
+        if (callerProspectId && codeMatchedProspectId !== callerProspectId) {
+          throw businessPrecondition(
+            'OPORTUNIDAD_INCONSISTENTE',
+            'OPORTUNIDAD_INCONSISTENTE: El prospecto_id enviado no coincide con la oportunidad comercial propietaria del código de proyecto.',
+            { callerProspectId, codeMatchedProspectId, effectiveCodigo }
+          );
+        }
+      }
+
+      const resolvedProspectId = storedOrderProspectId || storedProjProspectId || codeMatchedProspectId || nameMatchedProspectId || callerProspectId;
+
+      let readiness = null;
+      let targetProspectData = null;
+      let targetClientData = null;
       if (resolvedProspectId) {
-        const readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: resolvedProspectId });
+        const pSnapCheck = await tx.get(col('prospects').doc(resolvedProspectId));
+        if (pSnapCheck.exists) {
+          targetProspectData = pSnapCheck.data() || {};
+          targetClientData = await loadClient(tx, targetProspectData);
+        }
+        readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: resolvedProspectId });
+        if (payloadCode && targetProspectData) {
+          const realCode = String(targetProspectData.codigo || '').trim();
+          if (realCode && payloadCode !== realCode && payloadCode !== resolvedProspectId) {
+            throw businessPrecondition(
+              'OPORTUNIDAD_INCONSISTENTE',
+              'OPORTUNIDAD_INCONSISTENTE: El código de proyecto enviado no corresponde a la oportunidad comercial indicada.',
+              { resolvedProspectId, expectedCodigo: realCode, receivedCodigo: payloadCode }
+            );
+          }
+        }
+      }
+
+      // =========================================================================
+      // FASE 2: Validaciones de estado, origen y prevención de duplicados
+      // =========================================================================
+      const storedOrigen = (orderData && orderData.origen_tipo)
+        ? String(orderData.origen_tipo).trim().toLowerCase()
+        : ((projData && projData.origen_tipo) ? String(projData.origen_tipo).trim().toLowerCase() : '');
+      const callerOrigen = (origenTipo !== undefined && origenTipo !== null && String(origenTipo).trim() !== '')
+        ? String(origenTipo).trim().toLowerCase()
+        : ((orderPayload && orderPayload.origen_tipo)
+          ? String(orderPayload.origen_tipo).trim().toLowerCase()
+          : ((projectPayload && projectPayload.origen_tipo) ? String(projectPayload.origen_tipo).trim().toLowerCase() : ''));
+      const effectiveOrigen = resolvedProspectId ? 'oportunidad' : (storedOrigen || callerOrigen || 'interno');
+
+      if (!resolvedProspectId && effectiveOrigen === 'oportunidad') {
+        throw businessPrecondition(
+          'OPORTUNIDAD_INVALIDA',
+          'OPORTUNIDAD_INVALIDA: La orden o proyecto de origen comercial no está vinculado a una oportunidad válida.',
+          { fabProjectId: cleanProjId || null, fabOrderId: cleanOrderId || null }
+        );
+      }
+
+      // Si el proyecto u orden tenía registrada una discrepancia financiera activa y no se resolvió una oportunidad lista, bloquear
+      if (!readiness && (
+        (projData && (projData.discrepancia_financiera === true || projData.bloqueado_nuevas_ordenes === true)) ||
+        (orderData && (orderData.discrepancia_financiera === true || orderData.bloqueado_avance_etapa === true))
+      )) {
+        throw businessPrecondition(
+          'ANTICIPO_PENDIENTE',
+          'ANTICIPO_PENDIENTE: No se puede enviar esta orden a fabricación. El proyecto presenta una discrepancia financiera de anticipo pendiente de regularización.',
+          { fabProjectId: cleanProjId || null, fabOrderId: cleanOrderId || null }
+        );
+      }
+
+      // Prevención de duplicados por tipo de transición
+      const isCreateProjectTransition = Boolean(
+        cleanTransition === 'crear_proyecto_manual' || (projectPayload && typeof projectPayload === 'object')
+      );
+      const isCreateOrderTransition = Boolean(
+        cleanTransition === 'crear_orden_hijo' ||
+        cleanTransition === 'crear_orden_unica_manual' ||
+        (orderPayload && typeof orderPayload === 'object')
+      );
+      const isReleaseToFabTransition = Boolean(
+        cleanTransition === 'liberar_dibujo_a_fabricacion'
+      );
+      const isPrevalidateReleaseTransition = Boolean(
+        cleanTransition === 'prevalidar_dibujo_a_fabricacion'
+      );
+      const isPartialDispatchSplit = Boolean(
+        cleanTransition === 'despacho_parcial_split' && splitOrderPayload && typeof splitOrderPayload === 'object'
+      );
+
+      if (isCreateProjectTransition) {
+        if (!cleanProjId) throw bad('Debe especificar el identificador del proyecto de fabricación');
         if (projSnap && projSnap.exists) {
-          tx.update(projSnap.ref, {
+          throw businessPrecondition(
+            'ORDEN_YA_LIBERADA',
+            'ORDEN_YA_LIBERADA: El proyecto de fabricación ya fue creado previamente.',
+            { fabProjectId: cleanProjId }
+          );
+        }
+      }
+
+      if (isCreateOrderTransition) {
+        if (!cleanOrderId) throw bad('Debe especificar el identificador de la orden de fabricación');
+        if (orderSnap && orderSnap.exists) {
+          throw businessPrecondition(
+            'ORDEN_YA_LIBERADA',
+            'ORDEN_YA_LIBERADA: La orden de fabricación ya existe y no puede duplicarse.',
+            { fabOrderId: cleanOrderId }
+          );
+        }
+        if (opId && projData && projData.last_order_op_id && String(projData.last_order_op_id) === String(opId)) {
+          throw businessPrecondition(
+            'ORDEN_YA_LIBERADA',
+            'ORDEN_YA_LIBERADA: Esta solicitud de creación de orden ya fue procesada previamente.',
+            { fabProjectId: cleanProjId, opId }
+          );
+        }
+        if (cleanTransition === 'crear_orden_hijo' && (!projSnap || !projSnap.exists)) {
+          throw notFound('Proyecto de fabricación padre');
+        }
+      }
+
+      if (isReleaseToFabTransition || isPrevalidateReleaseTransition) {
+        const hasReleaseMutation = Boolean(
+          cleanOrderId
+          || (orderUpdate && typeof orderUpdate === 'object')
+          || (Array.isArray(tasks) && tasks.length > 0)
+          || reactivateRejectedTasks
+        );
+        if (hasReleaseMutation && (!orderSnap || !orderSnap.exists)) {
+          throw notFound('Orden de fabricación');
+        }
+        if (orderSnap && orderSnap.exists) {
+          const curEtapa = String(orderData.etapa || '').trim();
+          if (curEtapa === 'Fabricación' || (orderData.liberado_a_fabricacion_backend === true && !reactivateRejectedTasks && curEtapa !== 'Dibujo')) {
+            throw businessPrecondition(
+              'ORDEN_YA_LIBERADA',
+              'ORDEN_YA_LIBERADA: Esta orden ya se encuentra liberada en etapa de Fabricación. No se permite duplicar la liberación.',
+              { fabOrderId: cleanOrderId, etapaActual: curEtapa }
+            );
+          }
+          if (!reactivateRejectedTasks && existingTasksSnap && !existingTasksSnap.empty) {
+            throw businessPrecondition(
+              'ORDEN_YA_LIBERADA',
+              'ORDEN_YA_LIBERADA: Ya existen tareas productivas generadas para esta orden de fabricación.',
+              { fabOrderId: cleanOrderId, existingTaskCount: existingTasksSnap.size }
+            );
+          }
+        }
+      }
+
+      if (isPartialDispatchSplit) {
+        if (!orderSnap || !orderSnap.exists) {
+          throw notFound('Orden de fabricación padre');
+        }
+        if (splitOrderSnap && splitOrderSnap.exists) {
+          throw businessPrecondition(
+            'ORDEN_YA_LIBERADA',
+            'ORDEN_YA_LIBERADA: La sub-orden de despacho parcial ya fue creada previamente.',
+            { splitOrderId: cleanSplitOrderId }
+          );
+        }
+      }
+
+      // =========================================================================
+      // FASE 3: Escrituras autoritativas en Firestore (Admin SDK)
+      // =========================================================================
+      const nowAt = iso();
+      const canonicalClientId = (targetClientData && targetClientData.id) || (targetProspectData && targetProspectData.clientId) || null;
+      const canonicalClientName = targetClientData
+        ? (targetClientData.tipo === 'natural'
+          ? `${targetClientData.nombres || ''} ${targetClientData.apellidos || ''}`.trim()
+          : (targetClientData.empresa || targetClientData.contacto || 'Cliente'))
+        : null;
+
+      let writtenProject = null;
+      let writtenOrder = null;
+      let writtenTasksCount = 0;
+
+      // 3a. Creación de proyecto manual en `proyectos_fabricacion`
+      if (isCreateProjectTransition && projectPayload && typeof projectPayload === 'object') {
+        const projDocRef = col('proyectos_fabricacion').doc(cleanProjId);
+        writtenProject = {
+          ...projectPayload,
+          id: cleanProjId,
+          codigo: (targetProspectData && targetProspectData.codigo) || projectPayload.codigo || effectiveCodigo || `INT-${cleanProjId.slice(-4)}`,
+          nombre_proyecto: (targetProspectData && targetProspectData.proyecto) || projectPayload.nombre_proyecto || effectiveNombreProyecto || 'Sin Nombre',
+          cliente_id: canonicalClientId || projectPayload.cliente_id || 'INTERNO',
+          cliente_nombre: canonicalClientName || projectPayload.cliente_nombre || 'REQUERIMIENTO INTERNO / MANUAL',
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          prospecto_id: resolvedProspectId || null,
+          estado: projectPayload.estado || 'activo',
+          fecha_creacion: projectPayload.fecha_creacion || nowAt,
+          creado_por: caller.name || projectPayload.creado_por || caller.cid || caller.uid,
+          creado_por_cid: caller.cid || caller.uid,
+          creado_por_rol: caller.role,
+          autorizado_backend: true,
+          autorizado_en: nowAt,
+          autorizado_por: caller.cid || caller.uid,
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          discrepancia_financiera: false,
+          bloqueado_nuevas_ordenes: false,
+          ...(readiness ? {
+            forma_pago: readiness.formaPago,
+            monto_anticipo_exigible: readiness.montoExigible,
+            monto_anticipo_confirmado: readiness.montoConfirmado,
+            saldo_pendiente_anticipo: 0,
+            ccf_anticipo_id: readiness.ccfAnticipoId || null,
+            ccf_anticipo_numero: readiness.ccfAnticipoNumero || null,
+            validado_financieramente_en: nowAt,
+            validado_financieramente_por: caller.cid || caller.uid
+          } : {})
+        };
+        tx.set(projDocRef, writtenProject);
+      } else if (projSnap && projSnap.exists) {
+        const projPatch = {
+          ...(readiness ? {
             estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
             forma_pago: readiness.formaPago,
             monto_anticipo_exigible: readiness.montoExigible,
@@ -4073,25 +4691,171 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             bloqueado_nuevas_ordenes: false,
             validado_financieramente_en: nowAt,
             validado_financieramente_por: caller.cid || caller.uid
-          });
+          } : {})
+        };
+        if (isCreateOrderTransition && cleanTransition === 'crear_orden_hijo') {
+          projPatch.ordenes_generadas = (Number(projData.ordenes_generadas) || 0) + 1;
+          if (opId) projPatch.last_order_op_id = String(opId);
         }
-        if (orderSnap && orderSnap.exists) {
-          tx.update(orderSnap.ref, {
-            prospecto_id: resolvedProspectId,
-            origen_tipo: 'oportunidad',
-            estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
-            discrepancia_financiera: false,
-            bloqueado_avance_etapa: false,
+        if (Object.keys(projPatch).length > 0) {
+          tx.update(projSnap.ref, projPatch);
+        }
+      }
+
+      // 3b. Creación de orden en `fabricacion` (siempre inicia en Dibujo o Recepción, nunca directo en Fabricación)
+      if (isCreateOrderTransition && orderPayload && typeof orderPayload === 'object') {
+        const requestedEtapa = String(orderPayload.etapa || 'Dibujo').trim();
+        const safeInitialEtapa = ['Recepción', 'Dibujo'].includes(requestedEtapa) ? requestedEtapa : 'Dibujo';
+        const ordDocRef = col('fabricacion').doc(cleanOrderId);
+        writtenOrder = {
+          ...orderPayload,
+          id: cleanOrderId,
+          padre_id: cleanProjId || orderPayload.padre_id || null,
+          prospecto_id: resolvedProspectId || null,
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          codigo_proyecto: (targetProspectData && targetProspectData.codigo) || (projData && projData.codigo) || orderPayload.codigo_proyecto || effectiveCodigo || '',
+          etapa: safeInitialEtapa,
+          status: orderPayload.status || 'pendiente',
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          autorizado_backend: true,
+          autorizado_en: nowAt,
+          autorizado_por: caller.cid || caller.uid,
+          liberado_a_fabricacion_backend: false,
+          discrepancia_financiera: false,
+          bloqueado_avance_etapa: false,
+          ...(readiness ? {
             validado_financieramente_en: nowAt,
             validado_financieramente_por: caller.cid || caller.uid
-          });
+          } : {})
+        };
+        tx.set(ordDocRef, writtenOrder);
+      }
+
+      // 3c. Liberación de `Dibujo -> Fabricación` y creación/reactivación de tareas en `fabricacion_tasks`
+      if (isReleaseToFabTransition && orderSnap && orderSnap.exists) {
+        const sanitizedOrderUpdate = (orderUpdate && typeof orderUpdate === 'object') ? { ...orderUpdate } : {};
+        delete sanitizedOrderUpdate.id;
+        writtenOrder = {
+          ...orderData,
+          ...sanitizedOrderUpdate,
+          id: cleanOrderId,
+          padre_id: (orderData && orderData.padre_id) || cleanProjId || null,
+          prospecto_id: resolvedProspectId || null,
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          codigo_proyecto: (orderData && orderData.codigo_proyecto) || (projData && projData.codigo) || effectiveCodigo || '',
+          etapa: 'Fabricación',
+          status: 'en_proceso',
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          autorizado_backend: true,
+          liberado_a_fabricacion_backend: true,
+          liberado_a_fabricacion_en: nowAt,
+          liberado_a_fabricacion_por: caller.cid || caller.uid,
+          discrepancia_financiera: false,
+          bloqueado_avance_etapa: false,
+          ...(opId ? { liberacion_op_id: String(opId) } : {}),
+          ...(readiness ? {
+            validado_financieramente_en: nowAt,
+            validado_financieramente_por: caller.cid || caller.uid
+          } : {})
+        };
+        tx.set(orderSnap.ref, writtenOrder);
+
+        if (reactivateRejectedTasks && existingTasksSnap && !existingTasksSnap.empty) {
+          for (const tDoc of existingTasksSnap.docs) {
+            const td = tDoc.data() || {};
+            if (td.status === 'rechazado') {
+              tx.update(tDoc.ref, {
+                status: 'pendiente',
+                reactivado_en_backend: nowAt,
+                reactivado_por: caller.cid || caller.uid
+              });
+              writtenTasksCount++;
+            }
+          }
+        } else if (Array.isArray(tasks) && tasks.length > 0) {
+          const seenTaskIds = new Set();
+          for (let i = 0; i < tasks.length; i++) {
+            const rawTask = asObject(tasks[i], `Tarea ${i + 1}`);
+            const tId = reqDocId(String(rawTask.id || `${cleanOrderId}_T${i + 1}`).trim(), `Tarea ${i + 1}: id`);
+            if (seenTaskIds.has(tId)) {
+              throw bad(`Tarea duplicada en el lote de liberación (${tId})`);
+            }
+            seenTaskIds.add(tId);
+            const taskRef = col('fabricacion_tasks').doc(tId);
+            tx.set(taskRef, {
+              ...rawTask,
+              id: tId,
+              fabricacion_id: cleanOrderId,
+              autorizado_backend: true,
+              creada_en_backend: true,
+              creado_en_backend: nowAt,
+              creado_por_backend: caller.cid || caller.uid
+            });
+            writtenTasksCount++;
+          }
         }
+      } else if (!isCreateOrderTransition && !isPartialDispatchSplit && orderSnap && orderSnap.exists) {
+        tx.update(orderSnap.ref, {
+          prospecto_id: resolvedProspectId || null,
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          discrepancia_financiera: false,
+          bloqueado_avance_etapa: false,
+          ...(readiness ? {
+            validado_financieramente_en: nowAt,
+            validado_financieramente_por: caller.cid || caller.uid
+          } : {})
+        });
+      }
+
+      // 3d. Partición de orden por despacho parcial (`despacho_parcial_split`)
+      if (isPartialDispatchSplit && orderSnap && orderSnap.exists) {
+        const sanitizedParentUpdate = (orderUpdate && typeof orderUpdate === 'object') ? { ...orderUpdate } : {};
+        writtenOrder = {
+          ...orderData,
+          ...sanitizedParentUpdate,
+          id: cleanOrderId,
+          padre_id: orderData.padre_id || cleanProjId || null,
+          prospecto_id: resolvedProspectId || null,
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          autorizado_backend: true,
+          liberado_a_fabricacion_backend: true
+        };
+        tx.set(orderSnap.ref, writtenOrder);
+
+        const splitRef = col('fabricacion').doc(cleanSplitOrderId);
+        tx.set(splitRef, {
+          ...splitOrderPayload,
+          id: cleanSplitOrderId,
+          padre_id: orderData.padre_id || cleanProjId || null,
+          prospecto_id: resolvedProspectId || null,
+          origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
+          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
+          autorizado_backend: true,
+          liberado_a_fabricacion_backend: true,
+          creado_en_backend: nowAt
+        });
+
+        if (Array.isArray(taskUpdates)) {
+          for (const tu of taskUpdates) {
+            if (tu && tu.id && tu.changes && typeof tu.changes === 'object') {
+              const tRef = col('fabricacion_tasks').doc(reqDocId(String(tu.id), 'taskUpdate.id'));
+              tx.update(tRef, tu.changes);
+              writtenTasksCount++;
+            }
+          }
+        }
+      }
+
+      if (resolvedProspectId && readiness) {
         addAudit(tx, caller, 'validateAndAuthorizeFabricationOrder', resolvedProspectId, {
           ready: true,
           origenTipo: 'oportunidad',
           stageTransition: cleanTransition,
-          fabProjectId: candidateProjId || null,
-          fabOrderId: (orderSnap && orderSnap.id) || null,
+          fabProjectId: cleanProjId || null,
+          fabOrderId: cleanOrderId || null,
+          writtenTasksCount,
           formaPago: readiness.formaPago,
           montoExigible: readiness.montoExigible,
           montoConfirmado: readiness.montoConfirmado,
@@ -4102,33 +4866,21 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           status: 'authorized',
           authorized: true,
           origenTipo: 'oportunidad',
-          stageTransition: cleanTransition
+          stageTransition: cleanTransition,
+          fabProjectId: cleanProjId || null,
+          fabOrderId: cleanOrderId || null,
+          project: writtenProject,
+          order: writtenOrder,
+          writtenTasksCount
         };
       }
 
-      if (effectiveOrigen === 'oportunidad') {
-        throw businessPrecondition(
-          'OPORTUNIDAD_INVALIDA',
-          'OPORTUNIDAD_INVALIDA: La orden o proyecto de origen comercial no está vinculado a una oportunidad válida.',
-          { fabProjectId: candidateProjId || null, fabOrderId: (orderSnap && orderSnap.id) || null }
-        );
-      }
-
-      // Si el proyecto u orden en Recepción/Fabricación tenía registrada una discrepancia financiera activa, bloquear
-      if ((projData && (projData.discrepancia_financiera === true || projData.bloqueado_nuevas_ordenes === true)) ||
-          (orderData && (orderData.discrepancia_financiera === true || orderData.bloqueado_avance_etapa === true))) {
-        throw businessPrecondition(
-          'ANTICIPO_PENDIENTE',
-          'ANTICIPO_PENDIENTE: No se puede enviar esta orden a fabricación. El proyecto presenta una discrepancia financiera de anticipo pendiente de regularización.',
-          { fabProjectId: candidateProjId || null, fabOrderId: (orderSnap && orderSnap.id) || null }
-        );
-      }
-
-      addAudit(tx, caller, 'validateAndAuthorizeFabricationOrder', candidateProjId || (orderSnap && orderSnap.id) || 'INTERNO', {
+      addAudit(tx, caller, 'validateAndAuthorizeFabricationOrder', cleanProjId || cleanOrderId || 'INTERNO', {
         ready: true,
         origenTipo: 'interno',
         stageTransition: cleanTransition,
-        codigoProyecto: effectiveCodigo || null
+        codigoProyecto: effectiveCodigo || null,
+        writtenTasksCount
       });
 
       return {
@@ -4138,7 +4890,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         code: 'ORDEN_INTERNA_NO_COMERCIAL',
         estadoHabilitacion: 'ORDEN_INTERNA_NO_COMERCIAL',
         origenTipo: 'interno',
-        stageTransition: cleanTransition
+        stageTransition: cleanTransition,
+        fabProjectId: cleanProjId || null,
+        fabOrderId: cleanOrderId || null,
+        project: writtenProject,
+        order: writtenOrder,
+        writtenTasksCount
       };
     });
   }

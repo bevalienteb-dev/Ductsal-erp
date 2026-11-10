@@ -26,6 +26,9 @@ const BANK_078_RESOLUTION_SPEC = {
   clientName: 'CONSTRU-SERVICES, S.A. DE C.V.',
   dteControlNumber: 'DTE-03-M001P001-000000000000078',
   dteGenerationCode: '59140782-A419-4A58-A2AA-3FB64FFB3726',
+  dteTotalAmount: 16983.52,
+  dteRoundingVariance: 0.01,
+  dteRoundingExplanation: 'En el DTE consolidado CCF #078 (US$16,983.52) cada línea del 50% neto fue redondeada a 2 decimales antes de calcular el IVA global del 13%: Línea 1 (Presurización): 16,214.50 * 0.50 = US$8,107.25; Línea 2 (Edificio Desiré / Chute): 13,844.81 * 0.50 = 6,922.405 -> US$6,922.41 (+US$0.005); Subtotal gravado DTE = US$15,029.66; IVA 13% = 15,029.66 * 0.13 = 1,953.8558 -> US$1,953.86 (+US$0.0042); Total DTE = US$16,983.52 (+US$0.01 acumulado). En cambio, cada proyecto individual en el CRM y la transferencia bancaria real Transfer365 #868355650 suman exactamente US$9,161.19 + US$7,822.32 = US$16,983.51, cubriendo el 100.00% de ambos anticipos exigibles con variación US$0.00.',
   bankOrigin: 'BANCO AGRICOLA (ABONO TRANSFER365 PAGOS RECIBIDO)',
   voucherDate: '2026-09-01T17:07:00',
   notes: 'Resolución documental auditada Caso B: Transferencia única Transfer365 Banco Agrícola Ref. 868355650 por US$16,983.51 (01/09/2026 17:07:00) aplicada al CCF DTE-03-M001P001-000000000000078 (50% anticipo del contrato CONDOMINIO HABITACIONAL VERTICAL DESIRÉ: US$9,161.19 Presurización [202605023] + US$7,822.32 Chute para basura [EDIFICIO DESIRE]).',
@@ -37,7 +40,8 @@ const BANK_078_RESOLUTION_SPEC = {
       invoiceId: '1789408613812',
       paymentKey: '2026-09-14T19:13:28.456Z',
       expectedAmount: 9161.19,
-      assignedRef: '868355650-202605023'
+      applicationId: 'APP_868355650_1779123328318_1789408613812',
+      tramoId: 'TRAMO_868355650_1'
     },
     {
       prospectId: 'OPP-1777081077278-7',
@@ -46,7 +50,8 @@ const BANK_078_RESOLUTION_SPEC = {
       invoiceId: '1789408531939',
       paymentKey: '2026-09-14T19:11:44.724Z',
       expectedAmount: 7822.32,
-      assignedRef: '868355650-DESIRE'
+      applicationId: 'APP_868355650_OPP-1777081077278-7_1789408531939',
+      tramoId: 'TRAMO_868355650_2'
     }
   ]
 };
@@ -108,6 +113,8 @@ async function runResolution({ db, FieldValue, apply = false, caller = null } = 
     tranches: BANK_078_RESOLUTION_SPEC.tranches,
     dteControlNumber: BANK_078_RESOLUTION_SPEC.dteControlNumber,
     dteGenerationCode: BANK_078_RESOLUTION_SPEC.dteGenerationCode,
+    dteTotalAmount: BANK_078_RESOLUTION_SPEC.dteTotalAmount,
+    dteRoundingExplanation: BANK_078_RESOLUTION_SPEC.dteRoundingExplanation,
     bankOrigin: BANK_078_RESOLUTION_SPEC.bankOrigin,
     voucherDate: BANK_078_RESOLUTION_SPEC.voucherDate,
     notes: BANK_078_RESOLUTION_SPEC.notes

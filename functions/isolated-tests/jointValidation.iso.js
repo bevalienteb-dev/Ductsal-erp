@@ -126,12 +126,12 @@ const CATALOG = [
   { id: 'write.saveUserToDB: set a user profile', module: 'FAB', src: 'app.js:399, js/auth.js', col: 'users', kind: 'update', allow: [], run: (t) => fsApi.set('users_prod', ID.V2, profile(ID.V2, 'uid-v2', 'vendedor', true), t) },
   { id: 'write.saveSettings: set system/settings (whole document)', module: 'FAB', src: 'app.js:403, js/ui.js', col: 'system', kind: 'update', allow: ['mgr', 'jefe'], run: (t) => fsApi.set('system_prod', 'settings', { visitantes: ['a'], encargados: ['b'], colores_pintura: ['rojo'] }, t) },
   // ----- fabricacion -----
-  { id: 'write.send to fabricacion: create proyectos_fabricacion', module: 'FAB', src: 'js/fabricacion.js:122,158', col: 'proyectos_fabricacion', kind: 'create', allow: ['mgr', 'ges', 'jefe'], run: (t, p) => fsApi.set('proyectos_fabricacion_prod', uniq('FAB-PROJ'), { id: 'x', origen_tipo: 'oportunidad', prospecto_id: 'P1', creado_por: p }, t) },
+  { id: 'write.send to fabricacion: create proyectos_fabricacion', module: 'FAB', src: 'js/fabricacion.js:122,158', col: 'proyectos_fabricacion', kind: 'create', allow: [], run: (t, p) => fsApi.set('proyectos_fabricacion_prod', uniq('FAB-PROJ'), { id: 'x', origen_tipo: 'oportunidad', prospecto_id: 'P1', creado_por: p }, t) },
   { id: 'write.saveFabricacionToDB: set existing order', module: 'FAB', src: 'app.js:400', col: 'fabricacion', kind: 'update', allow: ['mgr', 'jefe', 'recep', 'dibu'], run: (t) => fsApi.set('fabricacion_prod', 'F1', { id: 'F1', proyecto: 'p', status: 'pendiente', nota: 'x' }, t) },
-  { id: 'write.create fabricacion order / split order batch.set', module: 'FAB', src: 'js/fabricacion.js:1191-1196', col: 'fabricacion', kind: 'create', allow: ['mgr', 'jefe', 'recep', 'dibu'], run: (t) => fsApi.set('fabricacion_prod', uniq('FAB'), { id: 'x', status: 'pendiente' }, t) },
+  { id: 'write.create fabricacion order / split order batch.set', module: 'FAB', src: 'js/fabricacion.js:1191-1196', col: 'fabricacion', kind: 'create', allow: [], run: (t) => fsApi.set('fabricacion_prod', uniq('FAB'), { id: 'x', status: 'pendiente' }, t) },
   { id: 'write.OPERATOR updates the parent order (status / progress)', module: 'TAB', src: 'operador.js:1997,2046,2595,2828,3185,3522,3914,5657', col: 'fabricacion', kind: 'update', allow: ['mgr', 'jefe', 'recep', 'dibu'], run: (t) => upd('fabricacion_prod', 'F1', { status: 'en_proceso' }, t) },
   { id: 'write.OPERATOR advances a task (batch.update)', module: 'TAB', src: 'operador.js:1951,2359,2558,2791,3145,3485,3575,3966,4422,5620,5712', col: 'fabricacion_tasks', kind: 'update', allow: mgrPlant, run: (t) => upd('fabricacion_tasks_prod', 'TK1', { status: 'en_proceso' }, t) },
-  { id: 'write.create fabricacion_tasks (order generation)', module: 'FAB', src: 'app.js:401, js/fabricacion.js:2412', col: 'fabricacion_tasks', kind: 'create', allow: ['mgr', 'jefe'], run: (t) => fsApi.set('fabricacion_tasks_prod', uniq('TK'), { id: 'x', fabricacion_id: 'F1', status: 'pendiente' }, t) },
+  { id: 'write.create fabricacion_tasks (order generation)', module: 'FAB', src: 'app.js:401, js/fabricacion.js:2412', col: 'fabricacion_tasks', kind: 'create', allow: [], run: (t) => fsApi.set('fabricacion_tasks_prod', uniq('TK'), { id: 'x', fabricacion_id: 'F1', status: 'pendiente' }, t) },
   { id: 'write.delete fabricacion_tasks', module: 'FAB', src: 'js/fabricacion.js', col: 'fabricacion_tasks', kind: 'delete', allow: ['mgr', 'jefe'], prepare: () => fsApi.seed('fabricacion_tasks_prod', 'TKDEL', { id: 'TKDEL', fabricacion_id: 'F1' }), run: (t) => fsApi.del('fabricacion_tasks_prod', 'TKDEL', t) },
   { id: 'write.OPERATOR welding spool (bobinas) update / create', module: 'TAB', src: 'operador.js:3822-3842', col: 'bobinas_soldadura', kind: 'update', allow: ['mgr', 'jefe', 'oper'], run: (t) => upd('bobinas_soldadura_prod', 'B1', { kg: 9 }, t) },
   { id: 'write.config/maquinas set', module: 'FAB', src: 'js/ui.js:808', col: 'config', kind: 'update', allow: ['mgr', 'jefe'], run: (t) => fsApi.set('config', 'maquinas', { lista: ['m1', 'm2'] }, t) },
@@ -330,12 +330,13 @@ describe('D. integrated scenario: client + opportunity + no-contract authorizati
     expect((await prospectDoc(pid)).facturas[0].pagos).toHaveLength(1);
   });
 
-  test('"send to fabricacion" is a direct write of proyectos_fabricacion: manager, gestor and jefe can; the vendedor who owns the sale cannot', async () => {
+  test('"send to fabricacion" direct client write of proyectos_fabricacion is DENIED for all roles (must go through backend)', async () => {
     const mk = () => uniq('FAB-PROJ');
     const body = (id, by) => ({ id, origen_tipo: 'oportunidad', prospecto_id: pid, proyecto: 'Instalación grande', codigo_proyecto: 'x', creado_por: by });
     const idV = mk(); const idG = mk();
     expect(ok(await fsApi.set('proyectos_fabricacion_prod', idV, body(idV, 'A'), S.A.token))).toBe(false);
-    expect(ok(await fsApi.set('proyectos_fabricacion_prod', idG, body(idG, 'G'), S.G.token))).toBe(true);
+    expect(ok(await fsApi.set('proyectos_fabricacion_prod', idG, body(idG, 'G'), S.G.token))).toBe(false);
+    await fsApi.seed('proyectos_fabricacion_prod', idG, body(idG, 'G'));
     S.projectId = idG;
   });
 
@@ -366,7 +367,7 @@ describe('D. integrated scenario: client + opportunity + no-contract authorizati
     const c = await fn('createProspectAdmin', { prospect: { clientId: 'CW', proyecto: 'Para borrar fisico', origen: 'Referido', tipo_proyecto: 'Nuevo', tipo_producto: 'Ductos' }, opId: opId() }, S.A.token);
     const id2 = c.json.result.prospect.id;
     const pf = uniq('FAB-PROJ');
-    expect(ok(await fsApi.set('proyectos_fabricacion_prod', pf, { id: pf, prospecto_id: id2 }, S.G.token))).toBe(true);
+    await fsApi.seed('proyectos_fabricacion_prod', pf, { id: pf, prospecto_id: id2 });
     expect(ok(await fsApi.del('prospects_prod', id2, S.M.token))).toBe(false); // physical deletion denied by rules
     expect((await fsApi.del('prospects_prod', id2, S.M.token)).status).toBe(403);
     expect(await prospectDoc(id2)).toBeDefined(); // prospect remains safe; must use deleteProspectAdmin
@@ -412,12 +413,10 @@ describe('E. code generation and simultaneous operations', () => {
     expect(Number(next.json.result.prospect.codigo.slice(6))).toBeGreaterThanOrEqual(Number(codeA.slice(6))); // the CRM counter is unaware and just carries on
   });
 
-  test('KNOWN GAP: fabricacion project ids are "FAB-PROJ-" + Date.now() written with set(): a second writer in the same millisecond silently replaces the first', async () => {
+  test('GAP CLOSED: direct client writes to proyectos_fabricacion_prod with set() are DENIED by hardened rules (must go through backend)', async () => {
     const id = `FAB-PROJ-${Date.now()}`;
-    expect(ok(await fsApi.set('proyectos_fabricacion_prod', id, { id, proyecto: 'Primero', creado_por: 'A' }, PERSONAS.jefe.tok))).toBe(true);
-    expect(ok(await fsApi.set('proyectos_fabricacion_prod', id, { id, proyecto: 'Segundo', creado_por: 'B' }, PERSONAS.jefe.tok))).toBe(true);
-    const d = (await adminDb.collection('proyectos_fabricacion_prod').doc(id).get()).data();
-    expect(d.proyecto).toBe('Segundo'); // no create-only precondition: the first project is lost without error
+    expect(ok(await fsApi.set('proyectos_fabricacion_prod', id, { id, proyecto: 'Primero', creado_por: 'A' }, PERSONAS.jefe.tok))).toBe(false);
+    expect(ok(await fsApi.set('proyectos_fabricacion_prod', id, { id, proyecto: 'Segundo', creado_por: 'B' }, PERSONAS.mgr.tok))).toBe(false);
   });
 
   test('operators: two tablets advancing the same task at once are both accepted (no transaction, last write wins); the code uses get() + update(), never runTransaction', async () => {
