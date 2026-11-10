@@ -1770,11 +1770,26 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   const RETENCION_1PCT_RATE = 0.01;
   const RETENCION_MIN_BASE_SIN_IVA = 100; // Umbral legal aplicable Art. 162: $100.00 sin IVA
 
+  const INVALID_PAYMENT_REF_MARKERS = new Set([
+    'UNDEFINED', 'NULL', 'NONE', 'NIL', 'NAN', 'FALSE', 'TRUE',
+    'NA', 'N/A', 'SN', 'S/N', 'SINREF', 'SINREFERENCIA',
+    'PENDIENTE', 'NINGUNA', 'NINGUNO', '0', '00', '000', '0000'
+  ]);
+
   function normalizePaymentReference(ref) {
     if (typeof ref !== 'string') return '';
     const raw = ref.normalize('NFKC').trim().toUpperCase();
     if (!raw) return '';
     return raw.replace(/[\s\-_./#]+/g, '');
+  }
+
+  function isInvalidPaymentReference(rawRef, normRef = normalizePaymentReference(rawRef)) {
+    if (!normRef) return true;
+    const trimmedUpper = typeof rawRef === 'string' ? rawRef.normalize('NFKC').trim().toUpperCase() : '';
+    if (INVALID_PAYMENT_REF_MARKERS.has(trimmedUpper) || INVALID_PAYMENT_REF_MARKERS.has(normRef)) {
+      return true;
+    }
+    return false;
   }
 
   function isActivePaymentRecord(pay) {
@@ -1930,6 +1945,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   function releasePaymentRefLock(tx, lockRef, lockSnap, { prospectId, invoiceId, paymentKey }) {
     if (!lockRef || !lockSnap || !lockSnap.exists) return;
     const ld = lockSnap.data() || {};
+    if (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true) {
+      return;
+    }
     if (ld.entries && typeof ld.entries === 'object') {
       const nextEntries = { ...ld.entries };
       const slotKey = `${prospectId}__${invoiceId}`;
@@ -1972,7 +1990,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     if (!PAYMENT_METHODS.includes(metodo)) throw bad('Forma de pago inválida');
     const refText = reqString(reference, 'La referencia', 100);
     const normRef = normalizePaymentReference(refText);
-    if (!normRef) throw bad('Debe ingresar un número de comprobante o referencia válido');
+    if (isInvalidPaymentReference(refText, normRef)) {
+      throw bad('Debe ingresar un número de comprobante o referencia válido');
+    }
     let customFecha = null;
     if (fecha !== undefined) {
       if (fecha === null || typeof fecha !== 'string' || !fecha.trim()) {
@@ -2069,6 +2089,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       if (lockSnap.exists) {
         const ld = lockSnap.data() || {};
+        if (
+          ld.active !== false &&
+          (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true)
+        ) {
+          throw precondition(DUP_REF_MSG);
+        }
         for (const entry of extractLockEntries(ld)) {
           const isSameEditedPayment = Boolean(
             editing &&

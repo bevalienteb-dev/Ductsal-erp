@@ -211,11 +211,68 @@ function reconcileHistoricalPaymentRefs({ prospectsDocs = [], paymentRefsDocs = 
     }
 
     if (collisionReason) {
+      const conflictEntries = {};
+      const conflictPayments = occurrences.map((occ, idx) => {
+        const entryKey = `${occ.prospectId}__${occ.invoiceId}__${occ.paymentKey || idx}`;
+        conflictEntries[entryKey] = {
+          prospectId: occ.prospectId,
+          prospectCodigo: occ.prospectCodigo || null,
+          invoiceId: occ.invoiceId,
+          invoiceNumero: occ.invoiceNumero || null,
+          paymentKey: occ.paymentKey,
+          paymentId: occ.paymentId || null,
+          clientId: occ.clientId || null,
+          opId: occ.opId || null,
+          monto: occ.monto,
+          metodo: occ.metodo,
+          fecha: occ.fecha || null
+        };
+        return {
+          prospectId: occ.prospectId,
+          prospectCodigo: occ.prospectCodigo || null,
+          clientId: occ.clientId || null,
+          invoiceId: occ.invoiceId,
+          invoiceNumero: occ.invoiceNumero || null,
+          paymentKey: occ.paymentKey,
+          paymentId: occ.paymentId || null,
+          fecha: occ.fecha || null,
+          metodo: occ.metodo,
+          monto: occ.monto,
+          rawRef: occ.rawRef,
+          normRef: occ.normRef
+        };
+      });
+      const alreadyReservedConflict = Boolean(
+        existingLock &&
+        existingLock.active !== false &&
+        (existingLock.estado === 'conflicto_historico' ||
+          existingLock.status === 'conflicto_historico' ||
+          existingLock.conflicto_historico === true)
+      );
       collisions.push({
         lockId,
         normRef: occurrences[0].normRef,
         metodo: occurrences[0].metodo,
         reason: collisionReason,
+        alreadyReservedConflict,
+        proposedConflictDoc: {
+          active: true,
+          estado: 'conflicto_historico',
+          status: 'conflicto_historico',
+          conflicto_historico: true,
+          reason: collisionReason,
+          normRef: occurrences[0].normRef,
+          ref: occurrences[0].rawRef,
+          metodo: occurrences[0].metodo,
+          prospectId: null,
+          invoiceId: null,
+          paymentKey: null,
+          clientId: null,
+          entries: conflictEntries,
+          conflictPayments,
+          requiresAdministrativeResolution: true,
+          backfilledFromHistorical: true
+        },
         occurrences
       });
       continue;
@@ -267,6 +324,8 @@ function reconcileHistoricalPaymentRefs({ prospectsDocs = [], paymentRefsDocs = 
   }
 
   const crossOpportunityReuseRisk = (readyToIndex.length > 0);
+  const alreadyReservedConflictsCount = collisions.filter(c => c.alreadyReservedConflict).length;
+  const pendingConflictReservationsCount = collisions.length - alreadyReservedConflictsCount;
 
   return {
     summary: {
@@ -283,10 +342,12 @@ function reconcileHistoricalPaymentRefs({ prospectsDocs = [], paymentRefsDocs = 
       alreadyIndexedCount: alreadyIndexed.length,
       missingIndexReadyCount: readyToIndex.length,
       collisionsCount: collisions.length,
+      alreadyReservedConflictsCount,
+      pendingConflictReservationsCount,
       paymentsMissingRefCount: paymentsMissingRef.length,
       paymentsAmbiguousRefCount: paymentsAmbiguousRef.length,
       crossOpportunityReuseRisk,
-      requiresIndexInitialization: readyToIndex.length > 0
+      requiresIndexInitialization: readyToIndex.length > 0 || pendingConflictReservationsCount > 0
     },
     alreadyIndexed,
     readyToIndex,
@@ -296,12 +357,30 @@ function reconcileHistoricalPaymentRefs({ prospectsDocs = [], paymentRefsDocs = 
   };
 }
 
+function buildPlanFingerprint(plan) {
+  if (!plan) return '';
+  const readyIds = (plan.readyToIndex || []).map(r => r.lockId).sort();
+  const collisionIds = (plan.collisions || []).map(c => `${c.lockId}:${c.occurrences.length}`).sort();
+  const ambigCount = (plan.paymentsMissingRef || []).length + (plan.paymentsAmbiguousRef || []).length;
+  return JSON.stringify({ readyIds, collisionIds, ambigCount });
+}
+
 /**
  * Idempotent execution of the backfill into `payment_refs${suffix}`.
  * Never modifies `prospects${suffix}`, invoices, or payments.
- * Excludes all collisions and ambiguous references by operating strictly on `plan.readyToIndex`.
+ * Recalculates the manifest before writing if `recalculateBeforeWrite !== false`.
+ * Creates clean index entries and explicit `conflicto_historico` reservations for collisions,
+ * while excluding ambiguous/placeholder references (such as "undefined") from any write.
  */
-async function executePaymentRefsBackfill({ db, plan, suffix = '_prod', confirmToken, now = () => new Date() }) {
+async function executePaymentRefsBackfill({
+  db,
+  plan,
+  suffix = '_prod',
+  confirmToken,
+  reserveCollisions = true,
+  recalculateBeforeWrite = true,
+  now = () => new Date()
+}) {
   if (confirmToken !== CONFIRM_TOKEN) {
     throw new Error(`Backfill execution aborted: valid confirmToken ('${CONFIRM_TOKEN}') is required.`);
   }
@@ -309,17 +388,54 @@ async function executePaymentRefsBackfill({ db, plan, suffix = '_prod', confirmT
     throw new Error('Backfill execution requires a valid reconciliation plan.');
   }
 
+  const prospectsColName = `prospects${suffix}`;
   const colName = `payment_refs${suffix}`;
+
+  let effectivePlan = plan;
+  let manifestRecalculated = false;
+  let stateChangedSinceInitialPlan = false;
+
+  if (recalculateBeforeWrite !== false && db && typeof db.collection === 'function') {
+    const [pSnap, rSnap] = await Promise.all([
+      db.collection(prospectsColName).get(),
+      db.collection(colName).get()
+    ]);
+    const freshPlan = reconcileHistoricalPaymentRefs({
+      prospectsDocs: pSnap.docs.map(d => ({ id: d.id, data: d.data() })),
+      paymentRefsDocs: rSnap.docs.map(d => ({ id: d.id, data: d.data() }))
+    });
+    manifestRecalculated = true;
+    stateChangedSinceInitialPlan = buildPlanFingerprint(plan) !== buildPlanFingerprint(freshPlan);
+    effectivePlan = freshPlan;
+  }
+
   const results = {
     created: [],
     alreadyExistedSkipped: [],
-    excludedCollisionsCount: Array.isArray(plan.collisions) ? plan.collisions.length : 0,
+    conflictReserved: [],
+    conflictAlreadyExistedSkipped: [],
+    manifestRecalculated,
+    stateChangedSinceInitialPlan,
+    excludedCollisionsCount: Array.isArray(effectivePlan.collisions) ? effectivePlan.collisions.length : 0,
     excludedAmbiguousCount:
-      (Array.isArray(plan.paymentsMissingRef) ? plan.paymentsMissingRef.length : 0) +
-      (Array.isArray(plan.paymentsAmbiguousRef) ? plan.paymentsAmbiguousRef.length : 0)
+      (Array.isArray(effectivePlan.paymentsMissingRef) ? effectivePlan.paymentsMissingRef.length : 0) +
+      (Array.isArray(effectivePlan.paymentsAmbiguousRef) ? effectivePlan.paymentsAmbiguousRef.length : 0)
   };
 
-  for (const item of plan.readyToIndex) {
+  const collisionLockIds = new Set((effectivePlan.collisions || []).map(c => c.lockId));
+  const candidateMap = new Map();
+  for (const item of (plan.readyToIndex || [])) {
+    if (item && item.lockId && !collisionLockIds.has(item.lockId)) {
+      candidateMap.set(item.lockId, item);
+    }
+  }
+  for (const item of (effectivePlan.readyToIndex || [])) {
+    if (item && item.lockId && !collisionLockIds.has(item.lockId)) {
+      candidateMap.set(item.lockId, item);
+    }
+  }
+
+  for (const item of candidateMap.values()) {
     const lockRef = db.collection(colName).doc(item.lockId);
     await db.runTransaction(async tx => {
       const snap = await tx.get(lockRef);
@@ -328,13 +444,44 @@ async function executePaymentRefsBackfill({ db, plan, suffix = '_prod', confirmT
         return;
       }
       const nowIso = now().toISOString();
-      tx.set(lockRef, {
+      const payload = {
         ...item.proposedDoc,
         updatedAt: nowIso,
         updatedBy: 'system_historical_backfill'
-      });
+      };
+      if (!snap.exists && typeof tx.create === 'function') {
+        tx.create(lockRef, payload);
+      } else {
+        tx.set(lockRef, payload);
+      }
       results.created.push(item.lockId);
     });
+  }
+
+  if (reserveCollisions !== false && Array.isArray(effectivePlan.collisions)) {
+    for (const collision of effectivePlan.collisions) {
+      if (!collision || !collision.lockId || !collision.proposedConflictDoc) continue;
+      const lockRef = db.collection(colName).doc(collision.lockId);
+      await db.runTransaction(async tx => {
+        const snap = await tx.get(lockRef);
+        if (snap.exists && (snap.data() || {}).active !== false) {
+          results.conflictAlreadyExistedSkipped.push(collision.lockId);
+          return;
+        }
+        const nowIso = now().toISOString();
+        const payload = {
+          ...collision.proposedConflictDoc,
+          updatedAt: nowIso,
+          updatedBy: 'system_historical_backfill'
+        };
+        if (!snap.exists && typeof tx.create === 'function') {
+          tx.create(lockRef, payload);
+        } else {
+          tx.set(lockRef, payload);
+        }
+        results.conflictReserved.push(collision.lockId);
+      });
+    }
   }
 
   return results;
