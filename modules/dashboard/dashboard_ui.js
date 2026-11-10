@@ -475,6 +475,10 @@
                         return `<span class="badge-mgr-reason badge-mgr-contract" style="display: block; font-size: 0.78rem; color: var(--brand-gold); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">📄 <span style="background: rgba(245, 158, 11, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(245, 158, 11, 0.4);">Sin Contrato</span> ${escapeHtml(m.descripcion)}</span>`;
                     } else if (m.tipo === 'limite_etapa') {
                         return `<span class="badge-mgr-reason badge-mgr-overdue" style="display: block; font-size: 0.78rem; color: #f87171; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">⏰ <span style="background: rgba(239, 68, 68, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(239, 68, 68, 0.4);">Límite Etapa</span> ${escapeHtml(m.descripcion)}</span>`;
+                    } else if (m.tipo === 'permanencia_pipeline') {
+                        return `<span class="badge-mgr-reason badge-mgr-age" style="display: block; font-size: 0.78rem; color: #93c5fd; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">🗓️ <span style="background: rgba(59, 130, 246, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(59, 130, 246, 0.4);">Antigüedad Pipeline</span> ${escapeHtml(m.descripcion)}</span>`;
+                    } else if (m.tipo === 'reversion') {
+                        return `<span class="badge-mgr-reason badge-mgr-reversion" style="display: block; font-size: 0.78rem; color: #fcd34d; font-weight: 600; line-height: 1.3; margin-bottom: 2px;">↩️ <span style="background: rgba(245, 158, 11, 0.2); padding: 1px 4px; border-radius: 3px; font-size: 0.72rem; margin-right: 3px; border: 1px solid rgba(245, 158, 11, 0.4);">Reversiones</span> ${escapeHtml(m.descripcion)}</span>`;
                     }
                     return `<span style="display: block; font-size: 0.78rem; color: var(--danger); font-weight: 600; line-height: 1.3; margin-bottom: 2px;">⚠️ ${escapeHtml(m.descripcion || m)}</span>`;
                 }).join('')
@@ -511,7 +515,7 @@
             actionButtonsHtml += `<button class="btn-table-action btn-table-edit" onclick="openDetail('${item.id}')" title="Ver detalle completo">👁️ Ver</button>`;
 
             rowsHtml += `
-                <tr class="cursor-pointer" onclick="openDetail('${item.id}')">
+                <tr class="cursor-pointer" data-prospect-id="${escapeHtml(item.id)}" onclick="openDetail('${item.id}')">
                     <td><strong style="color: var(--brand-gold);">${escapeHtml(item.codigo || item.id.slice(-4))}</strong></td>
                     <td>
                         <strong style="color: white; display: block;">${escapeHtml(item.proyecto)}</strong>

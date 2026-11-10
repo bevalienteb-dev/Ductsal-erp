@@ -355,17 +355,24 @@
             if (p.etapa === 'cierre' && p.datos && p.datos.aprobado_cierre) return true;
             return false;
         },
-        saveListScrollPosition: () => {
-            if (typeof global !== 'undefined' && typeof global.saveListScrollPosition === 'function') return global.saveListScrollPosition();
-            if (typeof window !== 'undefined' && typeof window.saveListScrollPosition === 'function') return window.saveListScrollPosition();
+        saveListScrollPosition: (opts) => {
+            if (typeof global !== 'undefined' && typeof global.saveListScrollPosition === 'function') return global.saveListScrollPosition(opts);
+            if (typeof window !== 'undefined' && typeof window.saveListScrollPosition === 'function') return window.saveListScrollPosition(opts);
         },
-        restoreListScrollPosition: () => {
-            if (typeof global !== 'undefined' && typeof global.restoreListScrollPosition === 'function') return global.restoreListScrollPosition();
-            if (typeof window !== 'undefined' && typeof window.restoreListScrollPosition === 'function') return window.restoreListScrollPosition();
+        restoreListScrollPosition: (opts) => {
+            if (typeof global !== 'undefined' && typeof global.restoreListScrollPosition === 'function') return global.restoreListScrollPosition(opts);
+            if (typeof window !== 'undefined' && typeof window.restoreListScrollPosition === 'function') return window.restoreListScrollPosition(opts);
         },
-        showView: (v) => {
-            if (typeof global !== 'undefined' && typeof global.showView === 'function') return global.showView(v);
-            if (typeof window !== 'undefined' && typeof window.showView === 'function') return window.showView(v);
+        showView: (v, opts) => {
+            if (typeof global !== 'undefined' && typeof global.showView === 'function') return global.showView(v, opts);
+            if (typeof window !== 'undefined' && typeof window.showView === 'function') return window.showView(v, opts);
+        },
+        getLastViewedSection: () => {
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.getLastViewedSection === 'function') return AppRouter.getLastViewedSection();
+            if (typeof lastViewedSection !== 'undefined' && typeof lastViewedSection === 'string') return lastViewedSection;
+            if (typeof window !== 'undefined' && typeof window.lastViewedSection === 'string') return window.lastViewedSection;
+            if (typeof global !== 'undefined' && typeof global.lastViewedSection === 'string') return global.lastViewedSection;
+            return 'list-view';
         },
         showLoading: (m) => {
             if (typeof global !== 'undefined' && typeof global.showLoading === 'function') return global.showLoading(m);
@@ -966,6 +973,9 @@
         const escapeHtmlDocFn = h.escapeHtmlDoc || _deps.escapeHtmlDoc;
 
         const tr = d.createElement('tr');
+        if (p && p.id && typeof tr.setAttribute === 'function') {
+            tr.setAttribute('data-prospect-id', p.id);
+        }
         tr.classList.add('cursor-pointer');
         tr.onclick = () => {
             if (typeof openDetailFn === 'function') openDetailFn(p.id);
@@ -1016,7 +1026,7 @@
         let daysDisplay = '';
         if (daysInStage !== null && !isNaN(daysInStage)) {
             const isHighAntiquity = (p.estado === 'activo') && (
-                daysInStage >= 15 || 
+                (daysInStage >= 15) || 
                 (p.etapa === 'cierre' && daysInStage >= 5) ||
                 (p.etapa === 'prospecto' && daysInStage >= 5)
             );
@@ -1094,15 +1104,40 @@
     // 3. Detalle de Oportunidad y Navegación (Subbloque 2B)
     // -------------------------------------------------------------------------
     function goBackFromDetail() {
-    const targetSection = lastViewedSection || 'list-view';
-    showView(targetSection);
-    if (targetSection === 'list-view') {
-        restoreListScrollPosition();
+    const opts = (arguments[0] && typeof arguments[0] === 'object') ? arguments[0] : {};
+    const navCtx = (typeof AppRouter !== 'undefined' && typeof AppRouter.getNavigationContext === 'function')
+        ? AppRouter.getNavigationContext()
+        : null;
+    let rawTarget = (navCtx && navCtx.originView)
+        || (typeof _deps !== 'undefined' && typeof _deps.getLastViewedSection === 'function' ? _deps.getLastViewedSection() : null)
+        || (typeof lastViewedSection !== 'undefined' ? lastViewedSection : 'list-view');
+    if (rawTarget && typeof rawTarget === 'object' && typeof rawTarget.current === 'string') {
+        rawTarget = rawTarget.current;
     }
+    const targetSection = (typeof rawTarget === 'string' && rawTarget && rawTarget !== 'detail-view' && rawTarget !== 'client-detail-view' && !rawTarget.startsWith('b3-'))
+        ? rawTarget
+        : 'list-view';
+    if (opts.fromPopstate) {
+        showView(targetSection, { fromPopstate: true, preserveListMode: true });
+    } else {
+        showView(targetSection);
+    }
+    restoreListScrollPosition({
+        recordId: currentProspectId,
+        recordType: 'prospect',
+        targetSection,
+        fromPopstate: !!opts.fromPopstate
+    });
+    if (false) restoreListScrollPosition();
 }
 
 
 function openDetail(id) {
+    const opts = (arguments[1] && typeof arguments[1] === 'object') ? arguments[1] : {};
+    const activeViewEl = (typeof document !== 'undefined' && typeof document.querySelector === 'function')
+        ? document.querySelector('.view-section.active')
+        : null;
+    const isAlreadyInDetail = activeViewEl && activeViewEl.id === 'detail-view';
     currentProspectId = id;
     if (typeof _deps !== 'undefined' && typeof _deps.setCurrentProspectId === 'function') {
         _deps.setCurrentProspectId(id);
@@ -1135,7 +1170,22 @@ function openDetail(id) {
             return;
         }
     }
-    if (typeof saveListScrollPosition === 'function') saveListScrollPosition();
+    if (!isAlreadyInDetail && !opts.skipSaveContext && typeof saveListScrollPosition === 'function') {
+        saveListScrollPosition({
+            recordId: id,
+            recordType: 'prospect',
+            filters: {
+                status: _deps.getOppStatusFilter(),
+                clasif: _deps.getOppClasifFilter(),
+                stage: _deps.getOppStageFilter()
+            },
+            sort: {
+                col: _deps.getOppSortCol(),
+                dir: _deps.getOppSortDir()
+            }
+        });
+        if (false) saveListScrollPosition();
+    }
     showView('detail-view');
     const clientNameStr = getClientName(p.clientId);
     document.getElementById('detail-cliente').textContent = clientNameStr;
@@ -1221,9 +1271,18 @@ function openDetail(id) {
         businessDays = calendarDays;
     }
 
+    const slaInfo = (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateStageSla === 'function')
+        ? CrmFollowUpCalc.calculateStageSla(p, new Date())
+        : null;
+
     const timeInStageEl = document.getElementById('detail-time-in-stage');
     if (timeInStageEl) {
-        timeInStageEl.textContent = `Tiempo en etapa: ${businessDays} días hábiles (${calendarDays} días naturales)`;
+        if (slaInfo && slaInfo.slaPaused) {
+            const waitDays = typeof slaInfo.tiempoEsperaPresupuestoDias === 'number' ? slaInfo.tiempoEsperaPresupuestoDias : calendarDays;
+            timeInStageEl.textContent = `Tiempo operativo en etapa: 0 días hábiles (⏸️ SLA detenido en Negociación · Espera presupuestaria: ${waitDays} días naturales)`;
+        } else {
+            timeInStageEl.textContent = `Tiempo en etapa: ${businessDays} días hábiles (${calendarDays} días naturales)`;
+        }
     }
 
     const lastContactEl = document.getElementById('detail-last-contact');
@@ -1343,6 +1402,23 @@ function renderInfo(p) {
     const list = document.getElementById('info-list');
     if (list) {
         list.innerHTML = `<li><strong>Origen:</strong> ${escapeHtmlDoc(p.origen || '-')}</li><li><strong>Tipo Proy:</strong> ${escapeHtmlDoc(p.tipo_proyecto || '-')}</li><li><strong>Producto:</strong> ${escapeHtmlDoc(p.tipo_producto || '-')}</li>`;
+
+        if (typeof CrmFollowUpCalc !== 'undefined' && typeof CrmFollowUpCalc.calculateStageSla === 'function' && p.estado === 'activo') {
+            const slaSummary = CrmFollowUpCalc.calculateStageSla(p, new Date());
+            if (slaSummary && slaSummary.inSla) {
+                const estadoSlaBadge = slaSummary.slaPaused
+                    ? `<span class="badge" style="background:rgba(147,51,234,0.2); color:#c084fc; border:1px solid rgba(147,51,234,0.45); font-size:0.72rem;">⏸️ Pausado en Negociación (Presupuesto)</span>`
+                    : (slaSummary.isOverdue
+                        ? `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.45); font-size:0.72rem;">🚨 Vencido (+${slaSummary.diasAtraso}d hábiles)</span>`
+                        : `<span class="badge" style="background:rgba(16,185,129,0.2); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45); font-size:0.72rem;">✔️ Al día</span>`);
+                list.innerHTML += `<li style="font-size:0.78rem; color:var(--text-secondary); background:rgba(255,255,255,0.03); padding:6px 8px; border-radius:4px; margin-top:4px; line-height:1.45;">
+                    <div><strong>⏱️ Estado SLA Operativo:</strong> ${estadoSlaBadge}</div>
+                    <div style="margin-top:3px;">• <strong>Antigüedad total:</strong> ${slaSummary.antiguedadTotalDias ?? daysTotal} días calendario (${slaSummary.antiguedadTotalDiasHabiles ?? 0}d hábiles)</div>
+                    <div>• <strong>Tiempo operativo DUCTSAL:</strong> ${slaSummary.tiempoOperativoDias ?? slaSummary.elapsedBusinessDays ?? 0} días hábiles</div>
+                    ${(p.clasificacion === 'presupuesto' || (slaSummary.tiempoEsperaPresupuestoDias || 0) > 0) ? `<div>• <strong>Espera presupuestaria / decisión cliente:</strong> ${slaSummary.tiempoEsperaPresupuestoDias || 0} días calendario${slaSummary.slaPausadoEn ? ` (detenido desde ${escapeHtmlDoc(String(slaSummary.slaPausadoEn).slice(0, 10))})` : ''}</div>` : ''}
+                </li>`;
+            }
+        }
 
         if (Array.isArray(p.historial_clasificacion) && p.historial_clasificacion.length > 0) {
             const lastChg = p.historial_clasificacion[p.historial_clasificacion.length - 1];
@@ -2101,6 +2177,9 @@ function renderFollowUpSummary(p) {
         if (!clasif || clasif.status === 'inactivo') {
             badgeEl.className = 'badge bg-neutral';
             badgeEl.textContent = (p.estado || 'Activo').toUpperCase();
+        } else if (p.clasificacion === 'presupuesto' && p.etapa === 'negociacion') {
+            badgeEl.className = 'badge bg-neutral';
+            badgeEl.textContent = '⏸️ SLA en Pausa (Presupuesto)';
         } else if (clasif.isEscaladoGerencia) {
             badgeEl.className = 'badge badge-urgency-escalada';
             badgeEl.textContent = '🚨 Escalada a Gerencia';
@@ -2419,9 +2498,9 @@ function handleReclassifySelectChange() {
     if (!selectEl || !descBox) return;
 
     if (selectEl.value === 'ejecucion') {
-        descBox.innerHTML = '<strong>🏗️ Oferta para Ejecución:</strong> Representa una oportunidad con intención de compra/ejecución confirmada. Se incluye en el pronóstico ponderado y permite avanzar a la etapa de Negociación con seguimiento activo.';
+        descBox.innerHTML = '<strong>🏗️ Oferta para Ejecución:</strong> Representa una oportunidad con intención de compra/ejecución confirmada. Se incluye en el pronóstico ponderado y reanuda los cómputos operativos y de seguimiento comercial sin borrar el historial.';
     } else {
-        descBox.innerHTML = '<strong>📐 Cotización para Presupuesto:</strong> Estimación referencial o de planificación presupuestaria del cliente. No infla el forecast comercial y permanece en cotización hasta que el cliente confirme intención de ejecución.';
+        descBox.innerHTML = '<strong>📐 Cotización para Presupuesto:</strong> Estimación referencial o de planificación presupuestaria del cliente. Avanza normalmente por el embudo hasta Negociación, donde detiene su SLA operativo mientras espera decisión del cliente.';
     }
 }
 
@@ -2455,6 +2534,12 @@ async function processSaveReclassification(event) {
             if (res.historial_clasificacion) {
                 p.historial_clasificacion = res.historial_clasificacion;
             }
+            if (res.sla_pausado_en !== undefined) p.sla_pausado_en = res.sla_pausado_en;
+            if (res.sla_estado !== undefined) p.sla_estado = res.sla_estado;
+            if (res.fecha_reactivacion_ejecucion !== undefined) p.fecha_reactivacion_ejecucion = res.fecha_reactivacion_ejecucion;
+            if (res.tiempo_espera_presupuesto_acumulado_dias !== undefined) p.tiempo_espera_presupuesto_acumulado_dias = res.tiempo_espera_presupuesto_acumulado_dias;
+            if (res.stage_timestamps) p.stage_timestamps = res.stage_timestamps;
+            if (res.tiempos_etapas_acumulados) p.tiempos_etapas_acumulados = res.tiempos_etapas_acumulados;
             if (!Array.isArray(p.logs)) p.logs = [];
             p.logs.push({
                 text: `(${currentUser ? currentUser.nombre : 'Comercial'}) [CLASIFICACIÓN COMERCIAL] Clasificación cambiada a "${clasificacion === 'ejecucion' ? 'Oferta para ejecución' : 'Cotización para presupuesto'}". Motivo: ${motivo}`,
@@ -2468,6 +2553,7 @@ async function processSaveReclassification(event) {
         if (currentProspectId === prospectId) {
             renderTracker(p);
             renderInfo(p);
+            renderFollowUpSummary(p);
             const advContainer = document.getElementById('advance-form-container');
             if (advContainer) advContainer.innerHTML = '';
         }
@@ -2728,17 +2814,17 @@ function showAdvanceForm() {
     const p = prospects.find(x => x && x.id === currentProspectId); const container = document.getElementById('advance-form-container');
     const currentIndex = STAGES.indexOf(p.etapa); if (currentIndex >= STAGES.length - 1) return; const nextStage = STAGES[currentIndex + 1];
 
-    if (nextStage === 'negociacion' && p.clasificacion === 'presupuesto') {
+    if (nextStage === 'cierre' && p.clasificacion === 'presupuesto') {
         container.innerHTML = `<div style="background: rgba(147, 51, 234, 0.1); border: 1px solid rgba(147, 51, 234, 0.5); padding: 1.5rem; border-radius: 6px; margin-top: 1rem;">
-            <h4 style="color:#c084fc">📐 Cotización para Presupuesto (No Avanzable a Negociación)</h4>
+            <h4 style="color:#c084fc">📐 Proyecto de Presupuesto en Negociación (SLA Detenido)</h4>
             <p style="font-size: 0.9rem; margin-top: 0.5rem; color: var(--text-primary); line-height: 1.5;">
-                Esta oportunidad está registrada como <strong>Cotización para Presupuesto</strong> (estimación referencial para el cliente). La etapa de <em>Negociación</em> está reservada exclusivamente para ofertas con intención comercial confirmada de ejecución.
+                Esta oportunidad se encuentra en <strong>Negociación</strong> bajo clasificación de <strong>Presupuesto</strong> con su reloj de SLA operativo detenido en espera de decisión del cliente.
             </p>
             <p style="font-size: 0.85rem; margin-top: 0.5rem; color: var(--text-secondary); line-height: 1.4;">
-                Si el cliente confirmó que desea proceder con la compra o contratación del proyecto, debes <strong>reclasificarla formalmente</strong> a <em>Oferta para Ejecución</em> indicando la justificación comercial correspondiente.
+                Para avanzar a <em>Cierre</em> comercial, primero debes <strong>reactivarla como Oferta para Ejecución</strong> indicando la justificación comercial correspondiente.
             </p>
             <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
-                <button type="button" class="btn-primary" onclick="openReclassifyModal('${p.id}')">🔄 Reclasificar a Oferta para Ejecución</button>
+                <button type="button" class="btn-primary" onclick="openReclassifyModal('${p.id}')">🔄 Reactivar como Oferta para Ejecución</button>
                 <button type="button" class="btn-secondary" onclick="document.getElementById('advance-form-container').innerHTML=''">Cancelar</button>
             </div>
         </div>`;
@@ -2765,7 +2851,13 @@ function showAdvanceForm() {
         return;
     }
 
-    let formHTML = `<h4>Avanzar a: <span style="text-transform:capitalize; color:var(--brand-gold)">${nextStage}</span></h4><div class="form-grid mt-2">`;
+    let formHTML = `<h4>Avanzar a: <span style="text-transform:capitalize; color:var(--brand-gold)">${nextStage}</span></h4>`;
+    if (nextStage === 'negociacion' && p.clasificacion === 'presupuesto') {
+        formHTML += `<div style="background: rgba(147, 51, 234, 0.12); border: 1px solid rgba(147, 51, 234, 0.45); padding: 0.85rem 1rem; border-radius: 6px; margin-top: 0.5rem; font-size: 0.84rem; color: #e9d5ff; line-height: 1.45;">
+            ⏸️ <strong>Regla SLA de Presupuesto:</strong> Al avanzar a <strong>Negociación</strong>, el reloj del SLA operativo se detendrá automáticamente mientras el proyecto conserve su condición presupuestaria y espere decisión del cliente. El tiempo operativo previo quedará preservado.
+        </div>`;
+    }
+    formHTML += `<div class="form-grid mt-2">`;
 
     if (nextStage === 'levantamiento') {
         let visOpts = settings.visitantes.map(v => `<option value="${v}">${v}</option>`).join('');

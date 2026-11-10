@@ -455,10 +455,17 @@ describe('Fase 2.1 & 2.2: Cadencia Configurable y Registro Automático de Oferta
   // FASE 2.3: CLASIFICACIÓN COMERCIAL (PRESUPUESTO VS EJECUCIÓN)
   // =========================================================================
 
-  test('2.3.1: Oportunidad con clasificación "presupuesto" no puede avanzar a Negociación', async () => {
+  test('2.3.1: Oportunidad con clasificación "presupuesto" avanza hasta Negociación (pausando SLA) y no avanza a Cierre sin reclasificarse', async () => {
     const { fdb, wf, caller } = makeEnv();
     const vendor = caller('vendedor', 'V-101', 'Alejandra Ayala');
 
+    fdb.seed('clients_prod/C1', {
+      id: 'C1',
+      tipo: 'natural',
+      nombres: 'Cliente',
+      apellidos: 'Prueba',
+      documentos: { dui: '01234567-8' }
+    });
     fdb.seed('prospects_prod/P-PRESUP-1', {
       id: 'P-PRESUP-1',
       estado: 'activo',
@@ -478,11 +485,24 @@ describe('Fase 2.1 & 2.2: Cadencia Configurable y Registro Automático de Oferta
       }
     });
 
-    await expect(wf.advanceStage({
+    const resNeg = await wf.advanceStage({
       caller: vendor,
       prospectId: 'P-PRESUP-1',
       nextStage: 'negociacion',
       data: { costo_venta: 3000, precio_cotizado: 5000, probabilidad: 'baja' }
+    });
+    expect(resNeg.status).toBe('advanced');
+    expect(resNeg.etapa).toBe('negociacion');
+
+    const stored = await fdb.data('prospects_prod/P-PRESUP-1');
+    expect(stored.sla_estado).toBe('pausado_presupuesto');
+    expect(stored.sla_pausado_en).toBeDefined();
+
+    await expect(wf.advanceStage({
+      caller: vendor,
+      prospectId: 'P-PRESUP-1',
+      nextStage: 'cierre',
+      data: {}
     })).rejects.toThrow('Esta oportunidad está clasificada como "Cotización para presupuesto"');
   });
 

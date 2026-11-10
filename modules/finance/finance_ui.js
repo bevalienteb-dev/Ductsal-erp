@@ -436,6 +436,9 @@
             const p = mp.original;
             const tr = doc.createElement('tr');
             tr.classList.add('cursor-pointer');
+            if (p && p.id && typeof tr.setAttribute === 'function') {
+                tr.setAttribute('data-prospect-id', p.id);
+            }
             tr.onclick = () => _deps.openDetail(p.id);
 
             const exportBadge = mp.isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';

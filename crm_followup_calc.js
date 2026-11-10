@@ -325,9 +325,20 @@
                 etapa: null,
                 etapaLabel: '',
                 isOverdue: false,
+                slaPaused: false,
+                slaPausadoEn: null,
+                estadoSla: 'inactivo',
+                slaStatus: 'inactivo',
                 elapsedBusinessDays: 0,
                 limitBusinessDays: null,
                 diasAtraso: 0,
+                antiguedadTotalDias: 0,
+                antiguedadTotalDiasHabiles: 0,
+                tiempoOperativoAcumuladoDias: 0,
+                tiempoOperativoEtapaDias: 0,
+                tiempoOperativoDias: 0,
+                tiempoEsperaPresupuestoDias: 0,
+                tiempoEsperaPresupuestoDiasHabiles: 0,
                 stageStart: null,
                 fechaInicio: null,
                 fechaLimite: null,
@@ -356,31 +367,53 @@
                 : null)
             || (etapa === 'prospecto' ? (ts.prospecto || prospect.fecha_creacion) : null);
 
+        const cal = getWorkCalendar();
+
+        const calcBusinessDays = (startVal, endVal) => {
+            if (!startVal || !endVal) return 0;
+            if (cal && typeof cal.getWorkTimeBetween === 'function') {
+                return Math.max(0, cal.getWorkTimeBetween(startVal, endVal, { excludeSaturday: true }));
+            }
+            const sDate = parseDate(startVal);
+            const eDate = parseDate(endVal);
+            let days = 0;
+            if (sDate && eDate && eDate > sDate) {
+                const cur = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
+                const target = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
+                while (cur < target) {
+                    cur.setDate(cur.getDate() + 1);
+                    const dow = cur.getDay();
+                    if (dow !== 0 && dow !== 6) {
+                        days++;
+                    }
+                }
+            }
+            return days;
+        };
+
+        const calcCalendarDays = (startVal, endVal) => {
+            if (!startVal || !endVal) return 0;
+            const sDate = parseDate(startVal);
+            const eDate = parseDate(endVal);
+            if (!sDate || !eDate || eDate <= sDate) return 0;
+            return Math.max(0, Math.floor((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)));
+        };
+
+        // Regla Bloque 2: Los proyectos clasificados como Presupuesto detienen su SLA operativo al llegar a Negociación
+        const isPresupuesto = prospect.clasificacion === 'presupuesto';
+        const slaPaused = Boolean(isPresupuesto && etapa === 'negociacion');
+        const pauseStartRaw = slaPaused ? (prospect.sla_pausado_en || stageStart || prospect.fecha_creacion || null) : null;
+        const slaPausadoEn = pauseStartRaw
+            ? (typeof pauseStartRaw === 'string' ? pauseStartRaw : (pauseStartRaw instanceof Date ? pauseStartRaw.toISOString() : String(pauseStartRaw)))
+            : null;
+
         let elapsedBusinessDays = 0;
         let fechaLimite = null;
         let diasAtraso = 0;
         let isOverdue = false;
 
-        const cal = getWorkCalendar();
-
-        if (stageStart && limitBusinessDays !== null && limitBusinessDays !== undefined) {
-            if (cal && typeof cal.getWorkTimeBetween === 'function') {
-                elapsedBusinessDays = cal.getWorkTimeBetween(stageStart, now, { excludeSaturday: true });
-            } else {
-                const sDate = parseDate(stageStart);
-                const eDate = parseDate(now);
-                if (sDate && eDate && eDate > sDate) {
-                    let cur = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
-                    const target = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
-                    while (cur < target) {
-                        cur.setDate(cur.getDate() + 1);
-                        const dow = cur.getDay();
-                        if (dow !== 0 && dow !== 6) {
-                            elapsedBusinessDays++;
-                        }
-                    }
-                }
-            }
+        if (!slaPaused && stageStart && limitBusinessDays !== null && limitBusinessDays !== undefined) {
+            elapsedBusinessDays = calcBusinessDays(stageStart, now);
 
             if (cal && typeof cal.addWorkDays === 'function') {
                 const limitDate = cal.addWorkDays(stageStart, limitBusinessDays, { excludeSaturday: true });
@@ -392,6 +425,42 @@
                 diasAtraso = elapsedBusinessDays - limitBusinessDays;
             }
         }
+
+        // Separación conceptual obligatoria (Bloque 2):
+        // 1. Antigüedad total de la oportunidad
+        const antiguedadTotalDias = prospect.fecha_creacion ? calcCalendarDays(prospect.fecha_creacion, now) : 0;
+        const antiguedadTotalDiasHabiles = prospect.fecha_creacion ? calcBusinessDays(prospect.fecha_creacion, now) : 0;
+
+        // 2. Tiempo operativo imputable a DUCTSAL (acumulado en etapas previas + etapa operativa activa)
+        let tiempoOperativoAcumuladoDias = 0;
+        const accObj = (prospect.tiempos_etapas_acumulados && typeof prospect.tiempos_etapas_acumulados === 'object')
+            ? prospect.tiempos_etapas_acumulados
+            : null;
+        if (accObj) {
+            Object.keys(accObj).forEach(stKey => {
+                const v = Number(accObj[stKey]);
+                if (!isNaN(v) && v > 0) tiempoOperativoAcumuladoDias += v;
+            });
+        } else if (Array.isArray(prospect.stage_transitions)) {
+            prospect.stage_transitions.forEach(tr => {
+                if (tr && typeof tr.duracion_dias === 'number' && tr.duracion_dias > 0) {
+                    tiempoOperativoAcumuladoDias += tr.duracion_dias;
+                }
+            });
+        }
+        tiempoOperativoAcumuladoDias = Math.round(tiempoOperativoAcumuladoDias * 2) / 2;
+        const tiempoOperativoEtapaDias = slaPaused ? 0 : elapsedBusinessDays;
+        const tiempoOperativoDias = Math.round((tiempoOperativoAcumuladoDias + tiempoOperativoEtapaDias) * 2) / 2;
+
+        // 3. Tiempo de espera presupuestaria o de decisión del cliente
+        const prevWaitDias = Number(prospect.tiempo_espera_presupuesto_acumulado_dias) || 0;
+        const currentWaitDias = slaPaused && pauseStartRaw ? calcCalendarDays(pauseStartRaw, now) : 0;
+        const currentWaitDiasHabiles = slaPaused && pauseStartRaw ? calcBusinessDays(pauseStartRaw, now) : 0;
+        const tiempoEsperaPresupuestoDias = prevWaitDias + currentWaitDias;
+        const tiempoEsperaPresupuestoDiasHabiles = currentWaitDiasHabiles;
+
+        // 4. Estado actual del SLA
+        const estadoSla = slaPaused ? 'pausado_presupuesto' : (isOverdue ? 'vencido' : 'al_dia');
 
         // Si la etapa es Cierre, analizar lista de documentación requerida y pendiente
         let pendingDocumentation = null;
@@ -432,9 +501,20 @@
             etapa,
             etapaLabel,
             isOverdue,
+            slaPaused,
+            slaPausadoEn,
+            estadoSla,
+            slaStatus: estadoSla,
             elapsedBusinessDays,
             limitBusinessDays,
             diasAtraso,
+            antiguedadTotalDias,
+            antiguedadTotalDiasHabiles,
+            tiempoOperativoAcumuladoDias,
+            tiempoOperativoEtapaDias,
+            tiempoOperativoDias,
+            tiempoEsperaPresupuestoDias,
+            tiempoEsperaPresupuestoDiasHabiles,
             stageStart: stageStart ? (typeof stageStart === 'string' ? stageStart : stageStart.toISOString()) : null,
             fechaInicio: stageStart ? (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart)) : null,
             fechaLimite,
@@ -965,74 +1045,44 @@
                 counts.solicitud_sin_contrato++;
             }
 
+            // Fuente única de verdad SLA y seguimiento para criterios C y E (Bloque 3)
+            const slaInfo = calculateStageSla(p, now);
+            const followUpInfo = classifyFollowUp(p, now);
+
             // Criterio C: Límite de permanencia en etapa superado (días hábiles salvadoreños)
             // Oportunidades presupuestarias quedan exentas de alertas gerenciales en este panel
-            if (p.estado === 'activo' && p.clasificacion !== 'presupuesto') {
-                const etapa = p.etapa || 'prospecto';
-                const limitDias = STAGE_LIMITS_BUSINESS_DAYS[etapa];
-                if (limitDias !== null && limitDias !== undefined) {
-                    const ts = (p.stage_timestamps && typeof p.stage_timestamps === 'object') ? p.stage_timestamps : {};
-                    const stageStart = (etapa === 'cierre' ? (p.fecha_inicio_cierre || ts.cierre) : ts[etapa])
-                        || (etapa === 'prospecto' ? (ts.prospecto || p.fecha_creacion) : null);
-                    if (stageStart) {
-                            const cal = getWorkCalendar();
-                            let elapsedBusinessDays = 0;
-                            if (cal && typeof cal.getWorkTimeBetween === 'function') {
-                                elapsedBusinessDays = cal.getWorkTimeBetween(stageStart, now, { excludeSaturday: true });
-                            } else {
-                                const sDate = parseDate(stageStart);
-                                const eDate = parseDate(now);
-                                if (sDate && eDate && eDate > sDate) {
-                                    let cur = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
-                                    const target = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate());
-                                    while (cur < target) {
-                                        cur.setDate(cur.getDate() + 1);
-                                        const dow = cur.getDay();
-                                        if (dow !== 0 && dow !== 6) {
-                                            elapsedBusinessDays++;
-                                        }
-                                    }
-                                }
-                            }
+            if (p.estado === 'activo' && p.clasificacion !== 'presupuesto' && !slaInfo.slaPaused && slaInfo.isOverdue) {
+                const etapa = slaInfo.etapa || p.etapa || 'prospecto';
+                const etapaLabel = slaInfo.etapaLabel || etapa;
+                const elapsedBusinessDays = slaInfo.elapsedBusinessDays;
+                const limitDias = slaInfo.limitBusinessDays;
+                const diasAtraso = slaInfo.diasAtraso;
+                const desc = (etapa === 'cierre')
+                    ? `Plazo de cierre documental vencido (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`
+                    : `Límite de etapa superado en ${etapaLabel} (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`;
 
-                            if (elapsedBusinessDays > limitDias) {
-                                const STAGE_NAMES = {
-                                    prospecto: 'Prospecto',
-                                    levantamiento: 'Levantamiento',
-                                    cotizacion: 'Cotización',
-                                    negociacion: 'Negociación',
-                                    cierre: 'Cierre'
-                                };
-                                const etapaLabel = STAGE_NAMES[etapa] || etapa;
-                                const diasAtraso = elapsedBusinessDays - limitDias;
-                                const desc = (etapa === 'cierre')
-                                    ? `Plazo de cierre documental vencido (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`
-                                    : `Límite de etapa superado en ${etapaLabel} (${elapsedBusinessDays} días hábiles vs máx. ${limitDias}; ${diasAtraso} días de atraso)`;
-
-                                motivos.push({
-                                    tipo: 'limite_etapa',
-                                    subtipo: 'limite_etapa',
-                                    descripcion: desc,
-                                    limite: `Máximo ${limitDias} días hábiles`,
-                                    esperado: `<= ${limitDias} días hábiles`,
-                                    observado: `${elapsedBusinessDays} días hábiles`,
-                                    fecha: (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart)) || null,
-                                    etapa,
-                                    etapaLabel,
-                                    diasHabiles: elapsedBusinessDays,
-                                    limiteDias: limitDias,
-                                    diasAtraso
-                                });
-                                isPending = true;
-                                if (alertState !== 'pendiente') alertState = 'pendiente';
-                                if (!fechaDeteccion) fechaDeteccion = (typeof stageStart === 'string' ? stageStart.slice(0, 10) : getCommercialYMD(stageStart));
-                                if (!limiteIncumplido) limiteIncumplido = `Límite de etapa superado en ${etapaLabel} (máx. ${limitDias} días hábiles)`;
-                                if (!valorEsperado) valorEsperado = `<= ${limitDias} días hábiles`;
-                                if (!valorObservado) valorObservado = `${elapsedBusinessDays} días hábiles`;
-                            }
-                        }
-                    }
-                }
+                motivos.push({
+                    tipo: 'limite_etapa',
+                    subtipo: 'limite_etapa',
+                    descripcion: desc,
+                    limite: `Máximo ${limitDias} días hábiles`,
+                    esperado: `<= ${limitDias} días hábiles`,
+                    observado: `${elapsedBusinessDays} días hábiles`,
+                    fecha: slaInfo.fechaInicio || null,
+                    etapa,
+                    etapaLabel,
+                    diasHabiles: elapsedBusinessDays,
+                    limiteDias: limitDias,
+                    diasAtraso
+                });
+                isPending = true;
+                if (alertState !== 'pendiente') alertState = 'pendiente';
+                if (!fechaDeteccion) fechaDeteccion = slaInfo.fechaInicio;
+                if (!limiteIncumplido) limiteIncumplido = `Límite de etapa superado en ${etapaLabel} (máx. ${limitDias} días hábiles)`;
+                if (!valorEsperado) valorEsperado = `<= ${limitDias} días hábiles`;
+                if (!valorObservado) valorObservado = `${elapsedBusinessDays} días hábiles`;
+                counts.limite_etapa = (counts.limite_etapa || 0) + 1;
+            }
 
             // Criterio D (Fase 4D): Dos o más reversiones en la misma oportunidad (alerta no bloqueante)
             if (p.estado === 'activo') {
@@ -1059,19 +1109,34 @@
                 }
             }
 
-            // Criterio E (Fase 4D): Permanencia prolongada activa en pipeline (> 45 días hábiles sin cierre)
-            if (p.estado === 'activo' && p.fecha_creacion && p.clasificacion !== 'presupuesto') {
-                const cal = getWorkCalendar();
-                let pipelineBusinessDays = 0;
-                if (cal && typeof cal.getWorkTimeBetween === 'function') {
-                    pipelineBusinessDays = cal.getWorkTimeBetween(p.fecha_creacion, now, { excludeSaturday: true });
-                }
-                if (pipelineBusinessDays > 45) {
+            // Criterio E (Fase 4D + Bloque 3): Permanencia prolongada activa en pipeline (> 45 días hábiles sin cierre)
+            // Unificación de fuente de verdad: si la oportunidad está operativamente al día en su etapa o cadencia de seguimiento
+            // (ej. caso 0-17 en Negociación con próxima acción vigente y sin vencimiento), NO se clasifica como vencida/estancada.
+            // La espera presupuestaria acumulada no computa como tiempo operativo ni como incumplimiento del vendedor.
+            if (p.estado === 'activo' && p.fecha_creacion && p.clasificacion !== 'presupuesto' && !slaInfo.slaPaused) {
+                const waitHabiles = Number(slaInfo.tiempoEsperaPresupuestoDiasHabiles)
+                    || Math.floor(((Number(p.tiempo_espera_presupuesto_acumulado_dias) || 0) * 5) / 7);
+                const pipelineBusinessDays = Math.max(0, slaInfo.antiguedadTotalDiasHabiles - waitHabiles);
+                const isUpToDateInNegociacion = (p.etapa === 'negociacion')
+                    && !followUpInfo.isEscaladoGerencia
+                    && (followUpInfo.status === 'al_dia' || followUpInfo.status === 'hoy' || followUpInfo.status === 'proxima');
+                const isUpToDateInOperationalStage = (p.etapa !== 'negociacion')
+                    && Boolean(slaInfo.stageStart)
+                    && !slaInfo.isOverdue
+                    && !followUpInfo.isEscaladoGerencia
+                    && followUpInfo.status !== 'vencida'
+                    && followUpInfo.status !== 'pendiente_decision'
+                    && (slaInfo.tiempoOperativoDias <= 45);
+                const isOperativelyUpToDate = isUpToDateInNegociacion || isUpToDateInOperationalStage;
+
+                if (pipelineBusinessDays > 45 && !isOperativelyUpToDate) {
                     motivos.push({
                         tipo: 'permanencia_pipeline',
                         subtipo: 'estancamiento_pipeline',
-                        descripcion: `Oportunidad estancada en pipeline (${pipelineBusinessDays} días hábiles sin cierre)`,
-                        limite: 'Máximo 45 días hábiles en pipeline',
+                        categoria: 'antiguedad_pipeline',
+                        esIncumplimientoOperativo: false,
+                        descripcion: `Antigüedad prolongada en pipeline sin cierre (${pipelineBusinessDays} días hábiles acumulados)`,
+                        limite: 'Referencia gerencial 45 días hábiles en pipeline',
                         esperado: '<= 45 días hábiles',
                         observado: `${pipelineBusinessDays} días hábiles`,
                         fecha: (typeof p.fecha_creacion === 'string' ? p.fecha_creacion.slice(0, 10) : getCommercialYMD(p.fecha_creacion)) || null,
