@@ -531,7 +531,7 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
   // ---------- caller ----------
   // The role comes from the CRM profile, never from the request. A profile must be linked to this Auth account,
   // active and have a CRM role. A manager additionally needs the verified `manager` claim (same rule as assertManager).
-  async function resolveCaller(context) {
+  async function resolveCaller(context, options = {}) {
     if (!context || !context.auth || !context.auth.uid) throw new ServiceError('unauthenticated', 'Authentication required');
     const uid = context.auth.uid;
     const token = context.auth.token || {};
@@ -543,8 +543,9 @@ function createClientsService({ db, FieldValue, suffix, verifyManager = async ()
       const q = await col('users').where('authUid', '==', uid).limit(2).get();
       if (q.size === 1) profile = { ...q.docs[0].data(), docId: q.docs[0].id };
     }
+    const allowedRoles = Array.isArray(options && options.allowedRoles) ? options.allowedRoles : CRM_ROLES;
     const deny = () => new ServiceError('permission-denied', 'Se requiere un usuario activo del CRM vinculado a esta sesión');
-    if (!profile || profile.authUid !== uid || profile.activo !== true || !CRM_ROLES.includes(profile.role)) throw deny();
+    if (!profile || profile.authUid !== uid || profile.activo !== true || !allowedRoles.includes(profile.role)) throw deny();
     if (profile.role === 'manager' && token.manager !== true) throw deny();
     return { uid, cid: profile.docId, role: profile.role, name: profile.nombre || '' };
   }

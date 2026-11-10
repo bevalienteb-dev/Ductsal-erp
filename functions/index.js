@@ -2029,7 +2029,7 @@ exports.plantLogin = functions.https.onCall(async (data, context) => {
 // Logic in prospectWorkflowService.js; it shares the identity / access / audit kit of the commercial service.
 // The browser sends only the user's input: never the document, never who acts, never computed amounts.
 // ======================================================================================================
-const { createProspectWorkflowService } = require('./prospectWorkflowService');
+const { createProspectWorkflowService, MANUFACTURING_ROLES } = require('./prospectWorkflowService');
 const workflowServiceCache = {};
 function workflowServiceFor(suffix) {
   if (!workflowServiceCache[suffix]) {
@@ -2043,6 +2043,18 @@ function workflowServiceFor(suffix) {
 }
 const runWorkflowOp = (data, context, op) => runCommercialOp(data, context,
   (service, caller, d) => op(workflowServiceFor(resolveDbSuffix(d.dbSuffix)), caller, d));
+
+async function runManufacturingWorkflowOp(data, context, op) {
+  try {
+    assertEmulatorIsolated();
+    data = data || {};
+    const suffix = resolveDbSuffix(data.dbSuffix);
+    const caller = await clientsServiceFor(suffix).resolveCaller(context, { allowedRoles: MANUFACTURING_ROLES });
+    return await op(workflowServiceFor(suffix), caller, data);
+  } catch (e) {
+    throw toHttpsError(e);
+  }
+}
 
 /** { prospectId, nextStage, data, dbSuffix? } -> { status: 'advanced' | 'unchanged', etapa, estado } */
 exports.advanceProspectStageAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
@@ -2104,9 +2116,42 @@ exports.deleteProspectAdmin = functions.https.onCall((data, context) => runWorkf
 exports.reactivateLostProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.reactivateProspect({ caller, prospectId: d.prospectId, motivo: d.motivo })));
 
-/** { prospectId, dbSuffix? } -> { status: 'authorized', ready: true, code: 'ANTICIPO_CONFIRMADO', montoExigible, montoConfirmado, ... } (manager / gestor / jefe_produccion) */
-exports.validateManufacturingReadinessAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+/** { prospectId, dbSuffix? } -> { status: 'ready_for_manufacturing', ready: true, code: 'ANTICIPO_CONFIRMADO', montoExigible, montoConfirmado, ... } */
+exports.validateManufacturingReadinessAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
   (wf, caller, d) => wf.validateManufacturingReadiness({ caller, prospectId: d.prospectId })));
+
+/** { prospectId, opId?, dbSuffix? } -> { status: 'sent' | 'already_sent', projectId, project, readiness } */
+exports.sendProspectToFabricationAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
+  (wf, caller, d) => wf.sendProspectToFabrication({ caller, prospectId: d.prospectId, opId: d.opId })));
+
+/** { prospectId?, fabProjectId?, fabOrderId?, codigoProyecto?, origenTipo?, stageTransition?, dbSuffix? } -> { status: 'authorized' | 'authorized_internal', ready: true, ... } */
+exports.validateAndAuthorizeFabricationOrderAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
+  (wf, caller, d) => wf.validateAndAuthorizeFabricationOrder({
+    caller,
+    prospectId: d.prospectId,
+    fabProjectId: d.fabProjectId,
+    fabOrderId: d.fabOrderId,
+    codigoProyecto: d.codigoProyecto,
+    origenTipo: d.origenTipo,
+    stageTransition: d.stageTransition
+  })));
+
+/** { lockId, resolutionMode?, baseBankRef?, totalVoucherAmount?, tranches?, legitimateOwner?, dteControlNumber?, dteGenerationCode?, bankOrigin?, voucherDate?, notes?, dbSuffix? } -> { status: 'resolved' | 'already_resolved', ... } (manager only) */
+exports.resolveHistoricalBankConflictAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.resolveHistoricalBankConflict({
+    caller,
+    lockId: d.lockId,
+    resolutionMode: d.resolutionMode,
+    baseBankRef: d.baseBankRef,
+    totalVoucherAmount: d.totalVoucherAmount,
+    tranches: d.tranches,
+    legitimateOwner: d.legitimateOwner,
+    dteControlNumber: d.dteControlNumber,
+    dteGenerationCode: d.dteGenerationCode,
+    bankOrigin: d.bankOrigin,
+    voucherDate: d.voucherDate,
+    notes: d.notes
+  })));
 
 // ======================================================================================================
 // SEC-05: Secure Document Download (Universal Downloads & Large File Streaming)

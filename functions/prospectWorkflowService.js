@@ -1945,16 +1945,126 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   function releasePaymentRefLock(tx, lockRef, lockSnap, { prospectId, invoiceId, paymentKey }) {
     if (!lockRef || !lockSnap || !lockSnap.exists) return;
     const ld = lockSnap.data() || {};
-    if (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true) {
+    const wasConflict = Boolean(
+      ld.estado === 'conflicto_historico' ||
+      ld.status === 'conflicto_historico' ||
+      ld.conflicto_historico === true ||
+      ld.wasHistoricalConflict === true
+    );
+    const isDistributedLock = Boolean(
+      ld.estado === 'distribuido_auditado' ||
+      ld.status === 'distribuido_auditado' ||
+      ld.distribuido_auditado === true
+    );
+
+    const matchesReleaseTarget = (entry) => (
+      Boolean(entry && entry.prospectId === prospectId && entry.invoiceId === invoiceId) &&
+      (!paymentKey || !entry.paymentKey || String(entry.paymentKey) === String(paymentKey))
+    );
+
+    const nextEntries = (ld.entries && typeof ld.entries === 'object') ? { ...ld.entries } : {};
+    for (const k of Object.keys(nextEntries)) {
+      if (matchesReleaseTarget(nextEntries[k])) {
+        delete nextEntries[k];
+      }
+    }
+    const slotKey = `${prospectId}__${invoiceId}`;
+    if (nextEntries[slotKey] && (!paymentKey || !nextEntries[slotKey].paymentKey || String(nextEntries[slotKey].paymentKey) === String(paymentKey))) {
+      delete nextEntries[slotKey];
+    }
+
+    const nextConflictPayments = Array.isArray(ld.conflictPayments)
+      ? ld.conflictPayments.filter((cp) => !matchesReleaseTarget(cp))
+      : [];
+
+    if (Object.keys(nextEntries).length === 0 && nextConflictPayments.length > 0) {
+      for (const cp of nextConflictPayments) {
+        if (cp && cp.prospectId && cp.invoiceId) {
+          nextEntries[`${cp.prospectId}__${cp.invoiceId}`] = cp;
+        }
+      }
+    }
+
+    const remKeys = Object.keys(nextEntries);
+    const nowAt = iso();
+
+    if (wasConflict) {
+      if (remKeys.length > 0) {
+        const first = nextEntries[remKeys[0]];
+        // Prevención de liberación prematura:
+        // Mientras subsista al menos un pago asociado al conflicto histórico, el lock permanece
+        // activo y en estado `conflicto_historico`, impidiendo que `BANK_078` (u otra referencia en colisión)
+        // se libere o reactive para nuevos usos antes de resolver todos los pagos involucrados.
+        tx.set(lockRef, {
+          ...ld,
+          active: true,
+          estado: 'conflicto_historico',
+          status: 'conflicto_historico',
+          conflicto_historico: true,
+          wasHistoricalConflict: true,
+          requiresAdministrativeResolution: true,
+          remainingConflictCount: remKeys.length,
+          prospectId: first.prospectId,
+          invoiceId: first.invoiceId,
+          paymentKey: first.paymentKey,
+          clientId: first.clientId || ld.clientId || null,
+          monto: first.monto,
+          entries: nextEntries,
+          conflictPayments: nextConflictPayments,
+          updatedAt: nowAt
+        });
+        return;
+      }
+
+      // Cuando ya no queda ningún pago en conflicto, el lock se cierra de forma auditada
+      // con `active: false` y `estado: 'resuelto_historico'` en lugar de borrarse físicamente.
+      tx.set(lockRef, {
+        ...ld,
+        active: false,
+        estado: 'resuelto_historico',
+        status: 'resuelto_historico',
+        conflicto_historico: false,
+        wasHistoricalConflict: true,
+        requiresAdministrativeResolution: false,
+        remainingConflictCount: 0,
+        prospectId: null,
+        invoiceId: null,
+        paymentKey: null,
+        entries: {},
+        conflictPayments: [],
+        resolvedAt: nowAt,
+        updatedAt: nowAt,
+        resolutionDetail: {
+          ...(ld.resolutionDetail && typeof ld.resolutionDetail === 'object' ? ld.resolutionDetail : {}),
+          resolvedVia: 'all_conflicting_payments_remediated',
+          lastReleasedProspectId: prospectId,
+          lastReleasedInvoiceId: invoiceId,
+          lastReleasedPaymentKey: paymentKey ? String(paymentKey) : null,
+          resolvedAt: nowAt
+        }
+      });
       return;
     }
-    if (ld.entries && typeof ld.entries === 'object') {
-      const nextEntries = { ...ld.entries };
-      const slotKey = `${prospectId}__${invoiceId}`;
-      if (nextEntries[slotKey] && (!paymentKey || String(nextEntries[slotKey].paymentKey) === String(paymentKey))) {
-        delete nextEntries[slotKey];
+
+    if (isDistributedLock) {
+      if (remKeys.length === 0) {
+        tx.delete(lockRef);
+      } else {
+        const first = nextEntries[remKeys[0]];
+        tx.set(lockRef, {
+          ...ld,
+          active: true,
+          prospectId: first.prospectId,
+          invoiceId: first.invoiceId,
+          paymentKey: first.paymentKey,
+           entries: nextEntries,
+          updatedAt: nowAt
+        });
       }
-      const remKeys = Object.keys(nextEntries);
+      return;
+    }
+
+    if (ld.entries && typeof ld.entries === 'object') {
       if (remKeys.length === 0) {
         tx.delete(lockRef);
       } else {
@@ -2031,6 +2141,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           oldLockRef = col('payment_refs').doc(oldLockId);
           oldLockSnap = await tx.get(oldLockRef);
         }
+      }
+
+      let fabProjQuerySnap = null;
+      let fabOrdersQuerySnap = null;
+      if (p.enviado_a_fabricacion === true || p.fabricacion_proyecto_id || p.discrepancia_financiera_fabricacion === true) {
+        fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', prospectId).limit(5));
+        fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', prospectId).limit(10));
       }
 
       // 2. Idempotencia por opId en creación (acotada a la oportunidad y al índice payment_refs, sin lecturas globales)
@@ -2208,7 +2325,111 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         text = `Pago recibido: ${fmtMoney(amount)} vía ${metodo} a cuenta de Factura ${fac.numero}`;
       }
 
-      tx.update(pRef, { facturas, logs: withLog(p, caller, text) });
+      const postEval = evaluateManufacturingReadiness({ p: { ...p, id: prospectId, facturas }, client });
+      const hadFabricationRelease = Boolean(
+        p.enviado_a_fabricacion === true ||
+        p.fabricacion_proyecto_id ||
+        p.discrepancia_financiera_fabricacion === true ||
+        (fabProjQuerySnap && !fabProjQuerySnap.empty) ||
+        (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty)
+      );
+
+      let nextLogs = withLog(p, caller, text);
+      const prospectPatch = {
+        facturas,
+        estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE'
+      };
+
+      if (hadFabricationRelease) {
+        if (postEval.ready) {
+          prospectPatch.discrepancia_financiera_fabricacion = false;
+          prospectPatch.bloqueado_nuevas_ordenes_fabricacion = false;
+          if (p.discrepancia_financiera_fabricacion === true) {
+            prospectPatch.discrepancia_financiera_resuelta_en = nowAt;
+            nextLogs = withLog(
+              { ...p, logs: nextLogs },
+              caller,
+              `Discrepancia financiera de fabricación subsanada: Anticipo obligatorio 100% cubierto (${fmtMoney(postEval.montoConfirmado)} / ${fmtMoney(postEval.montoExigible)}). Se rehabilita la liberación de órdenes.`
+            );
+          }
+          if (fabProjQuerySnap && !fabProjQuerySnap.empty) {
+            for (const projDoc of fabProjQuerySnap.docs) {
+              tx.update(projDoc.ref, {
+                estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+                discrepancia_financiera: false,
+                bloqueado_nuevas_ordenes: false,
+                monto_anticipo_exigible: postEval.montoExigible || 0,
+                monto_anticipo_confirmado: postEval.montoConfirmado || 0,
+                saldo_pendiente_anticipo: 0,
+                validado_financieramente_en: nowAt,
+                validado_financieramente_por: caller.cid || caller.uid
+              });
+            }
+          }
+          if (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty) {
+            for (const ordDoc of fabOrdersQuerySnap.docs) {
+              tx.update(ordDoc.ref, {
+                estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+                discrepancia_financiera: false,
+                bloqueado_avance_etapa: false,
+                validado_financieramente_en: nowAt
+              });
+            }
+          }
+        } else {
+          const discrepancyDetail = {
+            activa: true,
+            codigo: postEval.errorCode || 'ANTICIPO_PENDIENTE',
+            motivo: `El anticipo obligatorio presenta un saldo pendiente de ${fmtMoney(postEval.saldoPendiente)} tras editar el abono en factura ${fac.numero}. Las órdenes en curso NO se cancelan automáticamente; quedan bloqueadas nuevas liberaciones hasta regularizar el anticipo.`,
+            montoExigible: postEval.montoExigible || 0,
+            montoConfirmado: postEval.montoConfirmado || 0,
+            saldoPendiente: postEval.saldoPendiente || 0,
+            formaPago: postEval.formaPago || p.forma_pago || null,
+            disparadoPorOperacion: 'editPayment',
+            invoiceId: fac.id,
+            facturaNumero: fac.numero,
+            registradoEn: nowAt,
+            registradoPor: caller.cid || caller.uid
+          };
+          prospectPatch.discrepancia_financiera_fabricacion = true;
+          prospectPatch.bloqueado_nuevas_ordenes_fabricacion = true;
+          prospectPatch.discrepancia_financiera_detalle = discrepancyDetail;
+          nextLogs = withLog(
+            { ...p, logs: nextLogs },
+            caller,
+            `ALERTA FINANCIERA DE FABRICACIÓN: ${discrepancyDetail.motivo}`
+          );
+          if (fabProjQuerySnap && !fabProjQuerySnap.empty) {
+            for (const projDoc of fabProjQuerySnap.docs) {
+              tx.update(projDoc.ref, {
+                estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+                discrepancia_financiera: true,
+                discrepancia_financiera_detalle: discrepancyDetail,
+                bloqueado_nuevas_ordenes: true,
+                monto_anticipo_exigible: postEval.montoExigible || 0,
+                monto_anticipo_confirmado: postEval.montoConfirmado || 0,
+                saldo_pendiente_anticipo: postEval.saldoPendiente || 0,
+                actualizado_discrepancia_en: nowAt
+              });
+            }
+          }
+          if (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty) {
+            for (const ordDoc of fabOrdersQuerySnap.docs) {
+              const ordData = ordDoc.data() || {};
+              tx.update(ordDoc.ref, {
+                estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+                discrepancia_financiera: true,
+                discrepancia_financiera_detalle: discrepancyDetail,
+                bloqueado_avance_etapa: ordData.etapa === 'Dibujo'
+              });
+            }
+          }
+          addAudit(tx, caller, 'manufacturingFinancialDiscrepancy', prospectId, discrepancyDetail);
+        }
+      }
+
+      prospectPatch.logs = nextLogs;
+      tx.update(pRef, prospectPatch);
       upsertPaymentRefLock(tx, lockRef, lockSnap, {
         normRef,
         refText,
@@ -2272,10 +2493,105 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           lockSnapToRelease = lSnap;
         }
       }
+      let parentLockRefToRelease = null;
+      let parentLockSnapToRelease = null;
+      const baseRef = normalizePaymentReference(pay.ref_bancaria_base || '');
+      if (baseRef && baseRef !== normRef) {
+        const pLockId = buildPaymentRefLockId({ metodo: pay.metodo, normRef: baseRef });
+        const pCandRef = col('payment_refs').doc(pLockId);
+        const pSnap = await tx.get(pCandRef);
+        if (pSnap.exists) {
+          parentLockRefToRelease = pCandRef;
+          parentLockSnapToRelease = pSnap;
+        }
+      }
+
+      const fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', prospectId).limit(5));
+      const fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', prospectId).limit(10));
+      const hadFabricationRelease = Boolean(
+        p.enviado_a_fabricacion === true ||
+        p.fabricacion_proyecto_id ||
+        !fabProjQuerySnap.empty ||
+        !fabOrdersQuerySnap.empty
+      );
+
       fac.pagos.splice(at, 1);
-      tx.update(ref, { facturas, logs: withLog(p, caller, `Abono eliminado de factura ${fac.numero}: ${fmtMoney(pay.monto)}`) });
+      const nowAt = iso();
+      const postEval = evaluateManufacturingReadiness({ p: { ...p, id: prospectId, facturas }, client });
+
+      let nextLogs = withLog(p, caller, `Abono eliminado de factura ${fac.numero}: ${fmtMoney(pay.monto)}`);
+      const prospectPatch = {
+        facturas,
+        estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE'
+      };
+
+      let discrepancyRecorded = false;
+      let discrepancyDetail = null;
+      if (hadFabricationRelease && !postEval.ready) {
+        discrepancyRecorded = true;
+        discrepancyDetail = {
+          activa: true,
+          codigo: postEval.errorCode || 'ANTICIPO_PENDIENTE',
+          motivo: `El anticipo obligatorio quedó con saldo pendiente de ${fmtMoney(postEval.saldoPendiente)} tras eliminar el abono de ${fmtMoney(pay.monto)} en factura ${fac.numero}. Las órdenes ya en curso NO se cancelan automáticamente; quedan bloqueadas nuevas liberaciones de órdenes asociadas hasta regularizar.`,
+          montoExigible: postEval.montoExigible || 0,
+          montoConfirmado: postEval.montoConfirmado || 0,
+          saldoPendiente: postEval.saldoPendiente || 0,
+          formaPago: postEval.formaPago || p.forma_pago || null,
+          disparadoPorOperacion: 'deletePayment',
+          invoiceId: fac.id,
+          facturaNumero: fac.numero,
+          paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey),
+          montoEliminado: pay.monto,
+          registradoEn: nowAt,
+          registradoPor: caller.cid || caller.uid,
+          registradoPorNombre: caller.name || ''
+        };
+        prospectPatch.discrepancia_financiera_fabricacion = true;
+        prospectPatch.bloqueado_nuevas_ordenes_fabricacion = true;
+        prospectPatch.discrepancia_financiera_detalle = discrepancyDetail;
+        nextLogs = withLog(
+          { ...p, logs: nextLogs },
+          caller,
+          `ALERTA FINANCIERA DE FABRICACIÓN: ${discrepancyDetail.motivo}`
+        );
+
+        for (const projDoc of fabProjQuerySnap.docs) {
+          tx.update(projDoc.ref, {
+            estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+            discrepancia_financiera: true,
+            discrepancia_financiera_detalle: discrepancyDetail,
+            bloqueado_nuevas_ordenes: true,
+            monto_anticipo_exigible: postEval.montoExigible || 0,
+            monto_anticipo_confirmado: postEval.montoConfirmado || 0,
+            saldo_pendiente_anticipo: postEval.saldoPendiente || 0,
+            actualizado_discrepancia_en: nowAt
+          });
+        }
+        // Importante: NO cancelar ni eliminar órdenes ya en curso en `fabricacion` ni `fabricacion_tasks`.
+        // Solo se registra la discrepancia y se bloquea el avance de órdenes aún en etapa 'Dibujo'.
+        for (const ordDoc of fabOrdersQuerySnap.docs) {
+          const ordData = ordDoc.data() || {};
+          tx.update(ordDoc.ref, {
+            estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+            discrepancia_financiera: true,
+            discrepancia_financiera_detalle: discrepancyDetail,
+            bloqueado_avance_etapa: ordData.etapa === 'Dibujo'
+          });
+        }
+        addAudit(tx, caller, 'manufacturingFinancialDiscrepancy', prospectId, discrepancyDetail);
+      }
+
+      prospectPatch.logs = nextLogs;
+      tx.update(ref, prospectPatch);
       if (lockRefToRelease && lockSnapToRelease) {
         releasePaymentRefLock(tx, lockRefToRelease, lockSnapToRelease, {
+          prospectId,
+          invoiceId: fac.id,
+          paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey)
+        });
+      }
+      if (parentLockRefToRelease && parentLockSnapToRelease) {
+        releasePaymentRefLock(tx, parentLockRefToRelease, parentLockSnapToRelease, {
           prospectId,
           invoiceId: fac.id,
           paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey)
@@ -2287,10 +2603,417 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         numero: fac.numero,
         monto: pay.monto,
         metodo: pay.metodo,
-        ref: pay.ref || null
+        ref: pay.ref || null,
+        discrepancyRecorded
       });
       addDeletionNotice(tx, caller, p, client, 'Abono', `${fmtMoney(pay.monto)} de la factura ${fac.numero}`);
-      return { status: 'deleted' };
+      return {
+        status: 'deleted',
+        discrepancyRecorded,
+        discrepancyDetail,
+        estadoHabilitacionFabricacion: prospectPatch.estado_habilitacion_fabricacion
+      };
+    });
+  }
+
+  /**
+   * Resolución administrativa auditada de colisiones históricas en `payment_refs` (ej. `BANK_078`).
+   * Soporta:
+   * - `CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE`: una única transferencia bancaria documentada
+   *   aplicada en tramos a múltiples oportunidades/facturas del mismo cliente y contrato, asignando
+   *   sub-referencias verificables por tramo (`<refBase>-<sufijo>`), bloqueando la referencia bancaria
+   *   base (`BANK_<refBase>`) en estado `distribuido_auditado` para impedir su reutilización por terceros
+   *   o en pagos adicionales, y cerrando el lock histórico (`BANK_078`) con `active: false` y
+   *   `estado: 'resuelto_historico'`.
+   * - `CASO_A_PROPIETARIO_UNICO_LEGITIMO`: cuando los demás pagos fueron corregidos a sus referencias
+   *   bancarias reales y se comprueba documentalmente que un único pago conserva legítimamente la referencia.
+   */
+  async function resolveHistoricalBankConflict({
+    caller,
+    lockId,
+    resolutionMode = 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+    baseBankRef,
+    totalVoucherAmount,
+    tranches,
+    legitimateOwner,
+    dteControlNumber,
+    dteGenerationCode,
+    bankOrigin,
+    voucherDate,
+    notes
+  }) {
+    await requireManager(caller, 'resolver conflictos históricos de referencias bancarias');
+    const cleanLockId = reqDocId(lockId, 'lockId');
+    const cleanNotes = reqString(notes || 'Resolución documental auditada de conflicto histórico', 'Notas de resolución', 1000);
+
+    return db.runTransaction(async tx => {
+      const conflictLockRef = col('payment_refs').doc(cleanLockId);
+      const conflictSnap = await tx.get(conflictLockRef);
+      if (!conflictSnap.exists) throw notFound('Referencia en conflicto');
+      const conflictData = conflictSnap.data() || {};
+
+      // Idempotencia si ya fue resuelto previamente
+      if (conflictData.active === false && (conflictData.estado === 'resuelto_historico' || conflictData.status === 'resuelto_historico')) {
+        return {
+          status: 'already_resolved',
+          replay: true,
+          lockId: cleanLockId,
+          resolutionDetail: conflictData.resolutionDetail || null
+        };
+      }
+
+      const nowAt = iso();
+
+      if (resolutionMode === 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE') {
+        const cleanBaseRef = reqString(baseBankRef, 'Referencia bancaria base', 80);
+        const normBaseRef = normalizePaymentReference(cleanBaseRef);
+        if (isInvalidPaymentReference(cleanBaseRef, normBaseRef)) {
+          throw bad('Referencia bancaria base inválida');
+        }
+        const expectedTotal = money(totalVoucherAmount, 'El monto total del comprobante bancario', { positive: true });
+        if (!Array.isArray(tranches) || tranches.length < 2) {
+          throw bad('Debe especificar al menos dos tramos para la resolución de pago distribuido (Caso B)');
+        }
+
+        const parentLockId = buildPaymentRefLockId({ metodo: 'transferencia', normRef: normBaseRef });
+        const parentLockRef = col('payment_refs').doc(parentLockId);
+        const parentLockSnap = await tx.get(parentLockRef);
+
+        // Pre-lectura transaccional de todos los prospectos, clientes y sub-locks antes de cualquier escritura
+        const trancheItems = [];
+        const seenSubLocks = new Set();
+        let sumTranches = 0;
+        let commonClientId = null;
+
+        for (let idx = 0; idx < tranches.length; idx++) {
+          const t = asObject(tranches[idx], `Tramo ${idx + 1}`);
+          const tProspectId = reqDocId(t.prospectId, `Tramo ${idx + 1}: prospectId`);
+          const tInvoiceId = reqDocId(t.invoiceId, `Tramo ${idx + 1}: invoiceId`);
+          const tPaymentKey = reqString(t.paymentKey, `Tramo ${idx + 1}: paymentKey`, 64);
+          const tAssignedRef = reqString(t.assignedRef, `Tramo ${idx + 1}: assignedRef`, 100);
+          const tNormSubRef = normalizePaymentReference(tAssignedRef);
+          if (isInvalidPaymentReference(tAssignedRef, tNormSubRef) || !tNormSubRef.startsWith(normBaseRef)) {
+            throw bad(`Tramo ${idx + 1}: la sub-referencia asignada debe iniciar con la referencia bancaria base (${normBaseRef})`);
+          }
+          const subLockId = buildPaymentRefLockId({ metodo: 'transferencia', normRef: tNormSubRef });
+          if (seenSubLocks.has(subLockId) || subLockId === parentLockId || subLockId === cleanLockId) {
+            throw bad(`Tramo ${idx + 1}: cada tramo debe tener una sub-referencia única y diferenciada`);
+          }
+          seenSubLocks.add(subLockId);
+
+          const pRef = col('prospects').doc(tProspectId);
+          const pSnap = await tx.get(pRef);
+          if (!pSnap.exists) throw notFound(`Oportunidad ${tProspectId}`);
+          const pData = pSnap.data() || {};
+          const client = await loadClient(tx, pData);
+          if (!client) throw notFound(`Cliente de oportunidad ${tProspectId}`);
+          const canonicalClientId = client.id || pData.clientId;
+          if (!commonClientId) {
+            commonClientId = canonicalClientId;
+          } else if (commonClientId !== canonicalClientId) {
+            throw precondition('Caso B requiere que todos los tramos pertenezcan al mismo cliente canónico');
+          }
+
+          const subLockRef = col('payment_refs').doc(subLockId);
+          const subLockSnap = await tx.get(subLockRef);
+
+          const facturas = facturasOf(pData).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
+          const fac = facturas.find(f => f && f.id === tInvoiceId);
+          if (!fac) throw notFound(`Factura ${tInvoiceId} en oportunidad ${tProspectId}`);
+          const payIdx = fac.pagos.findIndex(x => payKeyMatches(x, tPaymentKey));
+          if (payIdx === -1) throw notFound(`Pago ${tPaymentKey} en factura ${tInvoiceId}`);
+          const curPay = fac.pagos[payIdx];
+          const payAmount = round2(Number(curPay.monto));
+          if (t.expectedAmount !== undefined && round2(Number(t.expectedAmount)) !== payAmount) {
+            throw precondition(`El importe del pago en ${tProspectId} (${fmtMoney(payAmount)}) no coincide con el monto esperado (${fmtMoney(t.expectedAmount)})`);
+          }
+          sumTranches = round2(sumTranches + payAmount);
+
+          if (subLockSnap.exists && subLockSnap.data() && subLockSnap.data().active !== false) {
+            const existingEntries = extractLockEntries(subLockSnap.data());
+            const conflictOther = existingEntries.find(
+              e => !(e.prospectId === tProspectId && e.invoiceId === tInvoiceId && String(e.paymentKey) === String(tPaymentKey))
+            );
+            if (conflictOther) {
+              throw precondition(`La sub-referencia ${subLockId} ya está ocupada por otro pago (${conflictOther.prospectId})`);
+            }
+          }
+
+          trancheItems.push({
+            idx: idx + 1,
+            prospectId: tProspectId,
+            invoiceId: tInvoiceId,
+            paymentKey: tPaymentKey,
+            assignedRef: tAssignedRef,
+            normSubRef: tNormSubRef,
+            subLockId,
+            subLockRef,
+            pRef,
+            pData,
+            client,
+            facturas,
+            fac,
+            payIdx,
+            curPay,
+            payAmount
+          });
+        }
+
+        if (round2(sumTranches) !== round2(expectedTotal)) {
+          throw precondition(`La suma de los tramos (${fmtMoney(sumTranches)}) no coincide con el total del comprobante bancario (${fmtMoney(expectedTotal)})`);
+        }
+
+        if (parentLockSnap.exists && parentLockSnap.data() && parentLockSnap.data().active !== false) {
+          const pld = parentLockSnap.data();
+          for (const e of extractLockEntries(pld)) {
+            const belongsToTranche = trancheItems.some(
+              ti => ti.prospectId === e.prospectId && ti.invoiceId === e.invoiceId && String(ti.paymentKey) === String(e.paymentKey)
+            );
+            if (!belongsToTranche) {
+              throw precondition(`La referencia bancaria base ${parentLockId} ya está asignada a otro pago ajeno (${e.prospectId})`);
+            }
+          }
+        }
+
+        const linkedProspectIds = trancheItems.map(ti => ti.prospectId);
+        const linkedInvoiceIds = trancheItems.map(ti => ti.invoiceId);
+        const consolidatedEntries = {};
+        const resolvedTrancheSummaries = [];
+
+        for (const ti of trancheItems) {
+          const oldRef = ti.curPay.ref || '078';
+          const updatedPay = {
+            ...ti.curPay,
+            invoiceId: ti.fac.id,
+            factura_numero: ti.fac.numero,
+            ref: ti.assignedRef,
+            ref_normalizada: ti.normSubRef,
+            ref_bancaria_base: normBaseRef,
+            ref_historica_original: oldRef,
+            pago_compartido: {
+              es_tramo_compartido: true,
+              caso_resolucion: 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+              ref_bancaria_base: cleanBaseRef,
+              ref_bancaria_normalizada: normBaseRef,
+              lock_consolidado_id: parentLockId,
+              sub_lock_id: ti.subLockId,
+              lock_historico_resuelto: cleanLockId,
+              monto_total_comprobante: expectedTotal,
+              monto_tramo: ti.payAmount,
+              tramo_indice: ti.idx,
+              total_tramos: trancheItems.length,
+              oportunidades_vinculadas: linkedProspectIds,
+              facturas_vinculadas: linkedInvoiceIds,
+              dte_numero_control: dteControlNumber || null,
+              dte_codigo_generacion: dteGenerationCode || null,
+              banco_origen: bankOrigin || null,
+              fecha_comprobante: voucherDate || null,
+              resuelto_en: nowAt,
+              resuelto_por: caller.cid || caller.uid
+            }
+          };
+          if (hasValidPaymentDoc(updatedPay.doc_comprobante)) {
+            updatedPay.confirmado = true;
+            updatedPay.estado = 'confirmado';
+            updatedPay.confirmado_por = caller.cid || caller.uid;
+            updatedPay.confirmado_por_uid = caller.uid;
+            updatedPay.confirmado_por_rol = caller.role;
+            updatedPay.confirmado_en = nowAt;
+          }
+          ti.fac.pagos[ti.payIdx] = updatedPay;
+
+          const postEval = evaluateManufacturingReadiness({
+            p: { ...ti.pData, id: ti.prospectId, facturas: ti.facturas },
+            client: ti.client
+          });
+          const logMsg = `Resolución auditada de referencia histórica (${oldRef} -> ${ti.assignedRef}): Tramo ${ti.idx}/${trancheItems.length} por ${fmtMoney(ti.payAmount)} sobre comprobante bancario único Ref. ${cleanBaseRef} (${fmtMoney(expectedTotal)}).`;
+          tx.update(ti.pRef, {
+            facturas: ti.facturas,
+            estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE',
+            logs: withLog(ti.pData, caller, logMsg)
+          });
+
+          const slotKey = `${ti.prospectId}__${ti.invoiceId}`;
+          const entryRecord = {
+            prospectId: ti.prospectId,
+            invoiceId: ti.invoiceId,
+            paymentKey: String(ti.paymentKey),
+            clientId: commonClientId,
+            monto: ti.payAmount,
+            metodo: updatedPay.metodo || 'transferencia',
+            assignedRef: ti.assignedRef,
+            normSubRef: ti.normSubRef,
+            subLockId: ti.subLockId,
+            parentBankLockId: parentLockId,
+            updatedAt: nowAt
+          };
+          consolidatedEntries[slotKey] = entryRecord;
+
+          tx.set(ti.subLockRef, {
+            active: true,
+            estado: 'activo',
+            status: 'activo',
+            normRef: ti.normSubRef,
+            ref: ti.assignedRef,
+            refBancariaBase: normBaseRef,
+            parentBankLockId: parentLockId,
+            resolvedFromHistoricalLockId: cleanLockId,
+            metodo: updatedPay.metodo || 'transferencia',
+            monto: ti.payAmount,
+            montoTotalComprobante: expectedTotal,
+            prospectId: ti.prospectId,
+            invoiceId: ti.invoiceId,
+            clientId: commonClientId,
+            paymentKey: String(ti.paymentKey),
+            entries: { [slotKey]: entryRecord },
+            updatedAt: nowAt,
+            updatedBy: caller.cid || caller.uid
+          });
+
+          resolvedTrancheSummaries.push({
+            tramoIndice: ti.idx,
+            prospectId: ti.prospectId,
+            invoiceId: ti.invoiceId,
+            paymentKey: String(ti.paymentKey),
+            monto: ti.payAmount,
+            previousRef: oldRef,
+            assignedRef: ti.assignedRef,
+            subLockId: ti.subLockId,
+            manufacturingReady: postEval.ready
+          });
+        }
+
+        const firstTranche = trancheItems[0];
+        tx.set(parentLockRef, {
+          active: true,
+          estado: 'distribuido_auditado',
+          status: 'distribuido_auditado',
+          distribuido_auditado: true,
+          normRef: normBaseRef,
+          ref: cleanBaseRef,
+          metodo: 'transferencia',
+          clientId: commonClientId,
+          monto: expectedTotal,
+          montoTotalComprobante: expectedTotal,
+          totalTranches: trancheItems.length,
+          prospectId: firstTranche.prospectId,
+          invoiceId: firstTranche.invoiceId,
+          paymentKey: String(firstTranche.paymentKey),
+          resolvedFromHistoricalLockId: cleanLockId,
+          dteControlNumber: dteControlNumber || null,
+          dteGenerationCode: dteGenerationCode || null,
+          bankOrigin: bankOrigin || null,
+          voucherDate: voucherDate || null,
+          entries: consolidatedEntries,
+          updatedAt: nowAt,
+          updatedBy: caller.cid || caller.uid
+        });
+
+        const resolutionDetail = {
+          caseType: 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
+          previousLockId: cleanLockId,
+          previousRef: conflictData.ref || conflictData.normRef || cleanLockId.replace(/^BANK_/, ''),
+          realBankRef: cleanBaseRef,
+          parentBankLockId: parentLockId,
+          totalVoucherAmount: expectedTotal,
+          clientId: commonClientId,
+          dteControlNumber: dteControlNumber || null,
+          dteGenerationCode: dteGenerationCode || null,
+          bankOrigin: bankOrigin || null,
+          voucherDate: voucherDate || null,
+          tranches: resolvedTrancheSummaries,
+          notes: cleanNotes,
+          resolvedAt: nowAt,
+          resolvedBy: caller.cid || caller.uid
+        };
+
+        tx.set(conflictLockRef, {
+          ...conflictData,
+          active: false,
+          estado: 'resuelto_historico',
+          status: 'resuelto_historico',
+          conflicto_historico: false,
+          wasHistoricalConflict: true,
+          requiresAdministrativeResolution: false,
+          remainingConflictCount: 0,
+          prospectId: null,
+          invoiceId: null,
+          paymentKey: null,
+          entries: {},
+          conflictPayments: [],
+          resolvedAt: nowAt,
+          resolvedBy: caller.cid || caller.uid,
+          updatedAt: nowAt,
+          resolutionDetail
+        });
+
+        addAudit(tx, caller, 'resolveHistoricalBankConflict', cleanLockId, resolutionDetail);
+
+        return {
+          status: 'resolved',
+          lockId: cleanLockId,
+          parentBankLockId: parentLockId,
+          resolutionDetail
+        };
+      }
+
+      if (resolutionMode === 'CASO_A_PROPIETARIO_UNICO_LEGITIMO') {
+        const owner = asObject(legitimateOwner, 'Propietario único legítimo');
+        const ownerProspectId = reqDocId(owner.prospectId, 'legitimateOwner.prospectId');
+        const ownerInvoiceId = reqDocId(owner.invoiceId, 'legitimateOwner.invoiceId');
+        const ownerPaymentKey = reqString(owner.paymentKey, 'legitimateOwner.paymentKey', 64);
+
+        const entries = extractLockEntries(conflictData);
+        const otherRemaining = entries.filter(
+          e => !(e.prospectId === ownerProspectId && e.invoiceId === ownerInvoiceId && String(e.paymentKey) === String(ownerPaymentKey))
+        );
+        if (otherRemaining.length > 0) {
+          throw precondition(`No se puede activar ${cleanLockId} como propietario único mientras subsistan otros pagos asociados (${otherRemaining.length} restante(s))`);
+        }
+        const ownerEntry = entries.find(
+          e => e.prospectId === ownerProspectId && e.invoiceId === ownerInvoiceId && String(e.paymentKey) === String(ownerPaymentKey)
+        );
+        if (!ownerEntry) {
+          throw precondition(`El pago indicado (${ownerProspectId} / ${ownerInvoiceId}) no figura en ${cleanLockId}`);
+        }
+        const slotKey = `${ownerProspectId}__${ownerInvoiceId}`;
+        const resolutionDetail = {
+          caseType: 'CASO_A_PROPIETARIO_UNICO_LEGITIMO',
+          legitimateProspectId: ownerProspectId,
+          legitimateInvoiceId: ownerInvoiceId,
+          legitimatePaymentKey: ownerPaymentKey,
+          notes: cleanNotes,
+          resolvedAt: nowAt,
+          resolvedBy: caller.cid || caller.uid
+        };
+        tx.set(conflictLockRef, {
+          ...conflictData,
+          active: true,
+          estado: 'activo',
+          status: 'activo',
+          conflicto_historico: false,
+          wasHistoricalConflict: true,
+          requiresAdministrativeResolution: false,
+          remainingConflictCount: 0,
+          prospectId: ownerProspectId,
+          invoiceId: ownerInvoiceId,
+          paymentKey: ownerPaymentKey,
+          entries: { [slotKey]: ownerEntry },
+          conflictPayments: [],
+          resolvedAt: nowAt,
+          resolvedBy: caller.cid || caller.uid,
+          updatedAt: nowAt,
+          resolutionDetail
+        });
+        addAudit(tx, caller, 'resolveHistoricalBankConflict', cleanLockId, resolutionDetail);
+        return {
+          status: 'resolved_single_owner',
+          lockId: cleanLockId,
+          resolutionDetail
+        };
+      }
+
+      throw bad(`Modo de resolución no soportado: ${resolutionMode}`);
     });
   }
 
@@ -2524,7 +3247,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // =====================================================================================================
   // Mandatory Financial Validation Gate Before Manufacturing
   // =====================================================================================================
-  const MANUFACTURING_ROLES = ['manager', 'gestor', 'jefe_produccion'];
+  const MANUFACTURING_ROLES = ['manager', 'gestor', 'jefe_produccion', 'recepcion', 'dibujo', 'dibujante'];
+  const SEND_TO_FABRICATION_ROLES = ['manager', 'gestor', 'jefe_produccion', 'recepcion'];
   const INVALID_FINANCIAL_STATUSES = [
     'anulado', 'anulada', 'revertido', 'revertida', 'cancelado', 'cancelada',
     'rechazado', 'rechazada', 'eliminado', 'eliminada', 'borrador',
@@ -2957,9 +3681,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       } else if (montoRetencionExcedente > 0) {
         extraReason = ` Se descartó retención 1% improcedente o en exceso por ${fmtMoney(montoRetencionExcedente)}.`;
       }
+      const fmtUsd = Number(saldoPendiente || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const userMessage = `No se puede enviar esta orden a fabricación. El anticipo obligatorio aún tiene un saldo pendiente de US$${fmtUsd}.`;
       return {
         ready: false,
         errorCode: 'ANTICIPO_PENDIENTE',
+        code: 'ANTICIPO_PENDIENTE',
+        estadoHabilitacion: 'ANTICIPO_PENDIENTE',
+        userMessage,
         prospectId: p.id || null,
         accountId: client.id || p.clientId || null,
         formaPago,
@@ -2967,9 +3696,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         subtotalContractual,
         totalContractual,
         montoExigible,
+        anticipoExigible: montoExigible,
         montoFacturado: montoFacturadoAnticipo,
         montoFacturadoTotal,
         montoConfirmado,
+        anticipoReconocido: montoConfirmado,
         montoEfectivoConfirmado,
         montoRetencionConfirmada,
         montoRetencionExcedente,
@@ -2981,13 +3712,15 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         ccfAnticipoStatus,
         ccfAnticipoNumero,
         anticipoPagoStatus,
-        reason: `ANTICIPO_PENDIENTE: No se puede enviar ni liberar el proyecto a fabricación. Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado del anticipo: ${fmtMoney(montoConfirmado)} (Efectivo: ${fmtMoney(montoEfectivoConfirmado)}, Retención 1%: ${fmtMoney(montoRetencionConfirmada)}) | Saldo pendiente: ${fmtMoney(saldoPendiente)}.${extraReason}`
+        discrepanciaFinanciera: Boolean(p.discrepancia_financiera_fabricacion),
+        reason: `ANTICIPO_PENDIENTE: ${userMessage} Modalidad: ${formaPago}. Monto de anticipo exigible: ${fmtMoney(montoExigible)} | Monto confirmado del anticipo: ${fmtMoney(montoConfirmado)} (Efectivo: ${fmtMoney(montoEfectivoConfirmado)}, Retención 1%: ${fmtMoney(montoRetencionConfirmada)}) | Saldo pendiente: ${fmtMoney(saldoPendiente)}.${extraReason}`
       };
     }
 
     return {
       ready: true,
       code: 'ANTICIPO_CONFIRMADO',
+      estadoHabilitacion: 'ANTICIPO_CONFIRMADO',
       prospectId: p.id || null,
       accountId: client.id || p.clientId || null,
       formaPago,
@@ -2995,9 +3728,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       subtotalContractual,
       totalContractual,
       montoExigible,
+      anticipoExigible: montoExigible,
       montoFacturado: montoFacturadoAnticipo,
       montoFacturadoTotal,
       montoConfirmado,
+      anticipoReconocido: montoConfirmado,
       montoEfectivoConfirmado,
       montoRetencionConfirmada,
       montoRetencionExcedente,
@@ -3008,19 +3743,14 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       ccfAnticipoId,
       ccfAnticipoStatus,
       ccfAnticipoNumero,
-      anticipoPagoStatus: 'pagado'
+      anticipoPagoStatus: 'pagado',
+      discrepanciaFinanciera: false
     };
   }
 
   /**
    * Reusable transactional gate to be invoked inside any Firestore transaction
    * that transitions, sends, or releases an opportunity/project to manufacturing.
-   *
-   * NOTA DE INTEGRACIÓN OPERATIVA (PENDIENTE EN REPOSITORIO `fabricacion-dev`):
-   * El flujo operativo externo de creación/liberación de órdenes de fabricación en el
-   * repositorio `fabricacion-dev` debe invocar obligatoriamente `validateManufacturingReadinessAdmin`
-   * (o `assertManufacturingReadyTx` cuando comparta transacción Firestore sobre `prospects_prod`)
-   * antes de permitir el inicio de fabricación.
    */
   async function assertManufacturingReadyTx(tx, { caller, prospectId }) {
     if (!caller || !caller.uid) {
@@ -3087,6 +3817,332 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
+  /**
+   * Envía transaccionalmente una oportunidad comercial ganada a la bandeja de Recepción de Fabricación
+   * (`proyectos_fabricacion`), únicamente cuando `assertManufacturingReadyTx` confirma que el anticipo
+   * obligatorio (`50/50`, `70/30` o `100% anticipado`) está liquidado al 100%.
+   */
+  async function sendProspectToFabrication({ caller, prospectId, opId }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!SEND_TO_FABRICATION_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para enviar proyectos a fabricación');
+    }
+    const cleanProspectId = reqDocId(prospectId, 'prospectId');
+    if (opId !== undefined && opId !== null && opId !== '') {
+      reqOpId(opId);
+    }
+
+    return db.runTransaction(async tx => {
+      // 1. Lecturas previas y compuerta financiera obligatoria
+      const readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: cleanProspectId });
+      const pRef = col('prospects').doc(cleanProspectId);
+      const pSnap = await tx.get(pRef);
+      const p = pSnap.data() || {};
+      const client = await loadClient(tx, p);
+
+      const existingQuerySnap = await tx.get(
+        col('proyectos_fabricacion').where('prospecto_id', '==', cleanProspectId).limit(2)
+      );
+      const deterministicId = `FAB-PROJ-${cleanProspectId}`;
+      const detRef = col('proyectos_fabricacion').doc(deterministicId);
+      const detSnap = await tx.get(detRef);
+
+      const nowAt = iso();
+      const canonicalClientId = (client && client.id) || p.clientId;
+      const canonicalClientName = client
+        ? (client.tipo === 'natural'
+          ? `${client.nombres || ''} ${client.apellidos || ''}`.trim()
+          : (client.empresa || client.contacto || 'Cliente'))
+        : 'Cliente Desconocido';
+
+      const datos = (p.datos && typeof p.datos === 'object') ? p.datos : {};
+      const existingDoc = !existingQuerySnap.empty
+        ? existingQuerySnap.docs[0]
+        : (detSnap.exists ? detSnap : null);
+
+      if (existingDoc && existingDoc.exists) {
+        const existingId = existingDoc.id;
+        const existingData = existingDoc.data() || {};
+        const updatedProj = {
+          ...existingData,
+          cliente_id: canonicalClientId,
+          cliente_nombre: canonicalClientName,
+          estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+          forma_pago: readiness.formaPago,
+          monto_anticipo_exigible: readiness.montoExigible,
+          monto_anticipo_confirmado: readiness.montoConfirmado,
+          saldo_pendiente_anticipo: 0,
+          ccf_anticipo_id: readiness.ccfAnticipoId || null,
+          ccf_anticipo_numero: readiness.ccfAnticipoNumero || null,
+          validado_financieramente_en: nowAt,
+          validado_financieramente_por: caller.cid || caller.uid,
+          discrepancia_financiera: false,
+          bloqueado_nuevas_ordenes: false
+        };
+        tx.set(existingDoc.ref, updatedProj, { merge: true });
+        tx.update(pRef, {
+          enviado_a_fabricacion: true,
+          fabricacion_proyecto_id: existingId,
+          estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+          discrepancia_financiera_fabricacion: false,
+          bloqueado_nuevas_ordenes_fabricacion: false
+        });
+        addAudit(tx, caller, 'sendProspectToFabrication', cleanProspectId, {
+          status: 'already_sent',
+          projectId: existingId,
+          formaPago: readiness.formaPago,
+          montoExigible: readiness.montoExigible,
+          montoConfirmado: readiness.montoConfirmado
+        });
+        return {
+          status: 'already_sent',
+          replay: true,
+          projectId: existingId,
+          project: updatedProj,
+          readiness
+        };
+      }
+
+      const newProj = {
+        id: deterministicId,
+        codigo: p.codigo || `PROY-${String(cleanProspectId).slice(-4)}`,
+        nombre_proyecto: p.proyecto || 'Sin Nombre',
+        cliente_id: canonicalClientId,
+        cliente_nombre: canonicalClientName,
+        tipo_material: p.tipo_producto || 'Lámina Galvanizada',
+        fecha_entrega: datos.fecha_entrega || p.fecha_entrega || '',
+        doc_diseno: datos.doc_oferta || p.doc_oferta || null,
+        origen_tipo: 'oportunidad',
+        prospecto_id: cleanProspectId,
+        estado: 'activo',
+        fecha_creacion: nowAt,
+        creado_por: caller.name || caller.cid || caller.uid,
+        creado_por_cid: caller.cid || caller.uid,
+        creado_por_rol: caller.role,
+        opId: opId || null,
+        estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+        forma_pago: readiness.formaPago,
+        monto_anticipo_exigible: readiness.montoExigible,
+        monto_anticipo_confirmado: readiness.montoConfirmado,
+        saldo_pendiente_anticipo: 0,
+        ccf_anticipo_id: readiness.ccfAnticipoId || null,
+        ccf_anticipo_numero: readiness.ccfAnticipoNumero || null,
+        validado_financieramente_en: nowAt,
+        validado_financieramente_por: caller.cid || caller.uid,
+        discrepancia_financiera: false,
+        bloqueado_nuevas_ordenes: false
+      };
+
+      tx.set(detRef, newProj);
+      tx.update(pRef, {
+        enviado_a_fabricacion: true,
+        fecha_envio_fabricacion: nowAt,
+        fabricacion_proyecto_id: deterministicId,
+        estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+        discrepancia_financiera_fabricacion: false,
+        bloqueado_nuevas_ordenes_fabricacion: false,
+        logs: withLog(
+          p,
+          caller,
+          `Proyecto enviado a Bandeja de Recepción de Fabricación (${deterministicId}). Anticipo obligatorio 100% confirmado: ${fmtMoney(readiness.montoConfirmado)} / ${fmtMoney(readiness.montoExigible)} [${readiness.formaPago}].`
+        )
+      });
+
+      addAudit(tx, caller, 'sendProspectToFabrication', cleanProspectId, {
+        status: 'sent',
+        projectId: deterministicId,
+        formaPago: readiness.formaPago,
+        montoExigible: readiness.montoExigible,
+        montoConfirmado: readiness.montoConfirmado,
+        ccfAnticipoId: readiness.ccfAnticipoId || null
+      });
+
+      return {
+        status: 'sent',
+        replay: false,
+        projectId: deterministicId,
+        project: newProj,
+        readiness
+      };
+    });
+  }
+
+  /**
+   * Valida y autoriza en backend la creación de órdenes hijas (`processGenerarOrden`),
+   * la liberación de etapa `Dibujo -> Fabricación` (`avanzarDesdeDibujo` / `confirmarAvanceDibujo`)
+   * o la creación de proyectos/órdenes manuales (`createNewRequerimiento` / `createNewSingleOrder`).
+   *
+   * Si la orden o proyecto proviene de una oportunidad comercial (`origen_tipo === 'oportunidad'`,
+   * tiene `prospecto_id`, o su `codigo_proyecto` coincide con una oportunidad comercial activa),
+   * aplica obligatoriamente `assertManufacturingReadyTx` para impedir cualquier bypass del anticipo.
+   */
+  async function validateAndAuthorizeFabricationOrder({
+    caller,
+    prospectId,
+    fabProjectId,
+    fabOrderId,
+    codigoProyecto,
+    origenTipo,
+    stageTransition
+  }) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!MANUFACTURING_ROLES.includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'No tienes permiso para validar o liberar proyectos a fabricación');
+    }
+
+    const cleanTransition = typeof stageTransition === 'string' && stageTransition.trim()
+      ? stageTransition.trim().slice(0, 80)
+      : 'general';
+
+    return db.runTransaction(async tx => {
+      let orderSnap = null;
+      let orderData = null;
+      if (fabOrderId !== undefined && fabOrderId !== null && String(fabOrderId).trim() !== '') {
+        const cleanOrderId = reqDocId(String(fabOrderId).trim(), 'fabOrderId');
+        orderSnap = await tx.get(col('fabricacion').doc(cleanOrderId));
+        if (orderSnap.exists) {
+          orderData = orderSnap.data() || {};
+        }
+      }
+
+      const candidateProjId = (fabProjectId !== undefined && fabProjectId !== null && String(fabProjectId).trim() !== '')
+        ? String(fabProjectId).trim()
+        : (orderData && orderData.padre_id ? String(orderData.padre_id).trim() : '');
+
+      let projSnap = null;
+      let projData = null;
+      if (candidateProjId) {
+        const cleanProjId = reqDocId(candidateProjId, 'fabProjectId');
+        projSnap = await tx.get(col('proyectos_fabricacion').doc(cleanProjId));
+        if (projSnap.exists) {
+          projData = projSnap.data() || {};
+        }
+      }
+
+      let resolvedProspectId = (prospectId !== undefined && prospectId !== null && String(prospectId).trim() !== '')
+        ? String(prospectId).trim()
+        : ((orderData && orderData.prospecto_id)
+          ? String(orderData.prospecto_id).trim()
+          : ((projData && projData.prospecto_id) ? String(projData.prospecto_id).trim() : ''));
+
+      const effectiveCodigo = (codigoProyecto !== undefined && codigoProyecto !== null && String(codigoProyecto).trim() !== '')
+        ? String(codigoProyecto).trim()
+        : ((orderData && (orderData.codigo_proyecto || orderData.codigo))
+          ? String(orderData.codigo_proyecto || orderData.codigo).trim()
+          : ((projData && projData.codigo) ? String(projData.codigo).trim() : ''));
+
+      const effectiveOrigen = (origenTipo !== undefined && origenTipo !== null && String(origenTipo).trim() !== '')
+        ? String(origenTipo).trim().toLowerCase()
+        : ((orderData && orderData.origen_tipo)
+          ? String(orderData.origen_tipo).trim().toLowerCase()
+          : ((projData && projData.origen_tipo) ? String(projData.origen_tipo).trim().toLowerCase() : ''));
+
+      // Prevención de evasión mediante orden manual/interna apuntando al código o ID de una oportunidad comercial
+      if (!resolvedProspectId && effectiveCodigo) {
+        if (/^[A-Za-z0-9_-]{1,128}$/.test(effectiveCodigo)) {
+          const directProspectSnap = await tx.get(col('prospects').doc(effectiveCodigo));
+          if (directProspectSnap.exists && (directProspectSnap.data() || {}).eliminado !== true) {
+            resolvedProspectId = directProspectSnap.id;
+          }
+        }
+        if (!resolvedProspectId) {
+          const codeQuerySnap = await tx.get(col('prospects').where('codigo', '==', effectiveCodigo).limit(5));
+          const activeMatch = codeQuerySnap.docs.find(d => (d.data() || {}).eliminado !== true);
+          if (activeMatch) {
+            resolvedProspectId = activeMatch.id;
+          }
+        }
+      }
+
+      const nowAt = iso();
+
+      if (resolvedProspectId) {
+        const readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: resolvedProspectId });
+        if (projSnap && projSnap.exists) {
+          tx.update(projSnap.ref, {
+            estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+            forma_pago: readiness.formaPago,
+            monto_anticipo_exigible: readiness.montoExigible,
+            monto_anticipo_confirmado: readiness.montoConfirmado,
+            saldo_pendiente_anticipo: 0,
+            discrepancia_financiera: false,
+            bloqueado_nuevas_ordenes: false,
+            validado_financieramente_en: nowAt,
+            validado_financieramente_por: caller.cid || caller.uid
+          });
+        }
+        if (orderSnap && orderSnap.exists) {
+          tx.update(orderSnap.ref, {
+            prospecto_id: resolvedProspectId,
+            origen_tipo: 'oportunidad',
+            estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+            discrepancia_financiera: false,
+            bloqueado_avance_etapa: false,
+            validado_financieramente_en: nowAt,
+            validado_financieramente_por: caller.cid || caller.uid
+          });
+        }
+        addAudit(tx, caller, 'validateAndAuthorizeFabricationOrder', resolvedProspectId, {
+          ready: true,
+          origenTipo: 'oportunidad',
+          stageTransition: cleanTransition,
+          fabProjectId: candidateProjId || null,
+          fabOrderId: (orderSnap && orderSnap.id) || null,
+          formaPago: readiness.formaPago,
+          montoExigible: readiness.montoExigible,
+          montoConfirmado: readiness.montoConfirmado,
+          saldoPendiente: 0
+        });
+        return {
+          ...readiness,
+          status: 'authorized',
+          authorized: true,
+          origenTipo: 'oportunidad',
+          stageTransition: cleanTransition
+        };
+      }
+
+      if (effectiveOrigen === 'oportunidad') {
+        throw businessPrecondition(
+          'OPORTUNIDAD_INVALIDA',
+          'OPORTUNIDAD_INVALIDA: La orden o proyecto de origen comercial no está vinculado a una oportunidad válida.',
+          { fabProjectId: candidateProjId || null, fabOrderId: (orderSnap && orderSnap.id) || null }
+        );
+      }
+
+      // Si el proyecto u orden en Recepción/Fabricación tenía registrada una discrepancia financiera activa, bloquear
+      if ((projData && (projData.discrepancia_financiera === true || projData.bloqueado_nuevas_ordenes === true)) ||
+          (orderData && (orderData.discrepancia_financiera === true || orderData.bloqueado_avance_etapa === true))) {
+        throw businessPrecondition(
+          'ANTICIPO_PENDIENTE',
+          'ANTICIPO_PENDIENTE: No se puede enviar esta orden a fabricación. El proyecto presenta una discrepancia financiera de anticipo pendiente de regularización.',
+          { fabProjectId: candidateProjId || null, fabOrderId: (orderSnap && orderSnap.id) || null }
+        );
+      }
+
+      addAudit(tx, caller, 'validateAndAuthorizeFabricationOrder', candidateProjId || (orderSnap && orderSnap.id) || 'INTERNO', {
+        ready: true,
+        origenTipo: 'interno',
+        stageTransition: cleanTransition,
+        codigoProyecto: effectiveCodigo || null
+      });
+
+      return {
+        status: 'authorized_internal',
+        authorized: true,
+        ready: true,
+        code: 'ORDEN_INTERNA_NO_COMERCIAL',
+        estadoHabilitacion: 'ORDEN_INTERNA_NO_COMERCIAL',
+        origenTipo: 'interno',
+        stageTransition: cleanTransition
+      };
+    });
+  }
+
   return {
     advanceStage,
     revertStage,
@@ -3101,6 +4157,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     deleteInvoice,
     savePayment,
     deletePayment,
+    resolveHistoricalBankConflict,
     deleteProspect,
     reactivateProspect,
     resolveAdvanceInvoice,
@@ -3111,7 +4168,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     isClientGranContribuyenteLocal,
     evaluateManufacturingReadiness,
     assertManufacturingReadyTx,
-    validateManufacturingReadiness
+    validateManufacturingReadiness,
+    sendProspectToFabrication,
+    validateAndAuthorizeFabricationOrder
   };
 }
 
@@ -3124,5 +4183,6 @@ module.exports = {
   MOTIVOS_PERDIDA,
   FORMAS_PAGO,
   PAYMENT_METHODS,
-  ORDER_TYPES
+  ORDER_TYPES,
+  MANUFACTURING_ROLES: ['manager', 'gestor', 'jefe_produccion', 'recepcion', 'dibujo', 'dibujante']
 };

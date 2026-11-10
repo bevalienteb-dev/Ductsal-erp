@@ -204,9 +204,44 @@ service cloud.firestore {
     // ---------- fabricacion + tablets (DESIGN: role-level, to refine with the plant flows) ----------
     // Plant roles get NO access to clients / prospects: operador.html never reads them, and the fabricacion
     // views must carry the project names they need inside proyectos_fabricacion.
+    function fabOrderGateAllowed() {
+      return request.resource.data.get('estado_habilitacion_fabricacion', '') != 'ANTICIPO_PENDIENTE'
+        && request.resource.data.get('discrepancia_financiera', false) != true
+        && (resource == null || (
+          resource.data.get('discrepancia_financiera', false) != true
+          && resource.data.get('bloqueado_avance_etapa', false) != true
+        ))
+        && (
+          request.resource.data.get('prospecto_id', '') == ''
+          || !exists(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', '')))
+          || (
+            get(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', ''))).data.get('estado_habilitacion_fabricacion', '') != 'ANTICIPO_PENDIENTE'
+            && get(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', ''))).data.get('discrepancia_financiera_fabricacion', false) != true
+            && get(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', ''))).data.get('bloqueado_nuevas_ordenes_fabricacion', false) != true
+          )
+        );
+    }
+    function fabProjectGateAllowed() {
+      return request.resource.data.get('estado_habilitacion_fabricacion', '') != 'ANTICIPO_PENDIENTE'
+        && request.resource.data.get('discrepancia_financiera', false) != true
+        && request.resource.data.get('bloqueado_nuevas_ordenes', false) != true
+        && (resource == null || (
+          resource.data.get('discrepancia_financiera', false) != true
+          && resource.data.get('bloqueado_nuevas_ordenes', false) != true
+        ))
+        && (
+          request.resource.data.get('prospecto_id', '') == ''
+          || !exists(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', '')))
+          || (
+            get(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', ''))).data.get('discrepancia_financiera_fabricacion', false) != true
+            && get(/databases/$(database)/documents/prospects_prod/$(request.resource.data.get('prospecto_id', ''))).data.get('bloqueado_nuevas_ordenes_fabricacion', false) != true
+          )
+        );
+    }
     match /fabricacion_prod/{docId} {
       allow read: if isManager() || isGestor() || isPlant();
-      allow create, update: if isManager() || (isPlant() && role() in ['jefe_produccion', 'recepcion', 'dibujante']);
+      allow create, update: if (isManager() || (isPlant() && role() in ['jefe_produccion', 'recepcion', 'dibujante']))
+        && fabOrderGateAllowed();
       allow delete: if isManager() || isJefe();
     }
     match /fabricacion_tasks_prod/{docId} {
@@ -216,7 +251,8 @@ service cloud.firestore {
     }
     match /proyectos_fabricacion_prod/{docId} {
       allow read: if isManager() || isGestor() || isPlant();
-      allow create, update: if isManager() || isGestor() || isJefe();
+      allow create, update: if (isManager() || isGestor() || isJefe())
+        && fabProjectGateAllowed();
       allow delete: if isManager() || isJefe();
     }
     match /bobinas_soldadura_prod/{docId} {
