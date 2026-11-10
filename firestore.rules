@@ -201,22 +201,56 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // ---------- fabricacion + tablets (DESIGN: role-level, to refine with the plant flows) ----------
+    // ---------- fabricacion + tablets (DESIGN: role-level, hardened with backend authorization gates) ----------
     // Plant roles get NO access to clients / prospects: operador.html never reads them, and the fabricacion
     // views must carry the project names they need inside proyectos_fabricacion.
+    // All order creation, project creation/updates, task generation, and pre-fabrication -> Fabricación releases
+    // MUST go through Cloud Functions Admin SDK (sendProspectToFabricationAdmin / validateAndAuthorizeFabricationOrderAdmin).
+    function fabOrderProtectedFieldsUnchanged() {
+      return request.resource.data.get('prospecto_id', null) == resource.data.get('prospecto_id', null)
+        && request.resource.data.get('padre_id', null) == resource.data.get('padre_id', null)
+        && request.resource.data.get('origen_tipo', null) == resource.data.get('origen_tipo', null)
+        && request.resource.data.get('codigo_proyecto', null) == resource.data.get('codigo_proyecto', null)
+        && request.resource.data.get('estado_habilitacion_fabricacion', null) == resource.data.get('estado_habilitacion_fabricacion', null)
+        && request.resource.data.get('autorizado_backend', null) == resource.data.get('autorizado_backend', null)
+        && request.resource.data.get('liberado_a_fabricacion_backend', null) == resource.data.get('liberado_a_fabricacion_backend', null)
+        && request.resource.data.get('discrepancia_financiera', false) == resource.data.get('discrepancia_financiera', false)
+        && request.resource.data.get('bloqueado_avance_etapa', false) == resource.data.get('bloqueado_avance_etapa', false);
+    }
+    function fabOrderOperationalUpdateAllowed() {
+      return fabOrderProtectedFieldsUnchanged()
+        && resource.data.get('bloqueado_avance_etapa', false) != true
+        && (
+          (
+            resource.data.get('etapa', '') in ['', 'Recepción', 'Dibujo']
+            && (isManager() || (isPlant() && role() in ['jefe_produccion', 'recepcion', 'dibujante']))
+            && request.resource.data.get('etapa', '') in ['', 'Recepción', 'Dibujo']
+            && resource.data.get('discrepancia_financiera', false) != true
+            && resource.data.get('estado_habilitacion_fabricacion', '') != 'ANTICIPO_PENDIENTE'
+          )
+          || (
+            !(resource.data.get('etapa', '') in ['', 'Recepción', 'Dibujo'])
+            && (isManager() || isPlant())
+          )
+        );
+    }
     match /fabricacion_prod/{docId} {
       allow read: if isManager() || isGestor() || isPlant();
-      allow create, update: if isManager() || (isPlant() && role() in ['jefe_produccion', 'recepcion', 'dibujante']);
+      allow create: if false;
+      allow update: if fabOrderOperationalUpdateAllowed();
       allow delete: if isManager() || isJefe();
     }
     match /fabricacion_tasks_prod/{docId} {
       allow read: if isManager() || isGestor() || isPlant();
-      allow create, delete: if isManager() || isJefe();
-      allow update: if isManager() || isPlant();   // operators advance their tasks
+      allow create: if false;
+      allow update: if (isManager() || isPlant())
+        && request.resource.data.get('fabricacion_id', null) == resource.data.get('fabricacion_id', null)
+        && request.resource.data.get('creada_en_backend', null) == resource.data.get('creada_en_backend', null);
+      allow delete: if isManager() || isJefe();
     }
     match /proyectos_fabricacion_prod/{docId} {
       allow read: if isManager() || isGestor() || isPlant();
-      allow create, update: if isManager() || isGestor() || isJefe();
+      allow create, update: if false;
       allow delete: if isManager() || isJefe();
     }
     match /bobinas_soldadura_prod/{docId} {

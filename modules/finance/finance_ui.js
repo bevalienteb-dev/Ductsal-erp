@@ -627,6 +627,13 @@
                 const obligHtml = Array.isArray(fm.obligacionesSeguimiento) && fm.obligacionesSeguimiento.length > 0
                     ? `<div style="margin-top:8px; font-size:0.8rem; color:#fde68a;"><strong>Seguimiento financiero pendiente:</strong> ${fm.obligacionesSeguimiento.map(ob => _deps.escapeHtmlDoc(ob)).join(' • ')}</div>`
                     : '';
+                const estadoHabilitacionCode = fm.habilitadoFabricacion ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE';
+                const pendingUsdMsg = !fm.habilitadoFabricacion
+                    ? `<div style="margin-top:6px; font-size:0.8rem; color:#fca5a5;"><strong>${estadoHabilitacionCode}:</strong> No se puede enviar esta orden a fabricación. El anticipo obligatorio aún tiene un saldo pendiente de US$${Number(fm.saldoPendienteAnticipo || 0).toFixed(2)}.</div>`
+                    : '';
+                const discrepancyHtml = p.discrepancia_financiera_fabricacion === true
+                    ? `<div style="margin-top:6px; padding:6px 8px; border-radius:4px; background:rgba(239,68,68,0.18); border:1px solid rgba(239,68,68,0.45); color:#fecaca; font-size:0.79rem;"><strong>🚨 Discrepancia financiera post-liberación:</strong> Se eliminó o revirtió un abono de anticipo tras enviar a fabricación. Las órdenes en curso no se cancelan automáticamente, pero quedan bloqueadas nuevas liberaciones hasta cubrir el saldo pendiente.</div>`
+                    : '';
                 milestonesBanner.style.cssText = `background:rgba(15,23,42,0.75); border:1px solid ${fm.habilitadoFabricacion ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.45)'}; border-radius:6px; padding:10px 12px; margin-bottom:14px; font-size:0.84rem;`;
                 milestonesBanner.innerHTML = `
                     <div style="font-weight:700; color:var(--brand-gold); margin-bottom:6px;">📌 Control de Anticipo y Fabricación (${_deps.escapeHtmlDoc(fm.formaPago || '-')})</div>
@@ -635,6 +642,14 @@
                         <div><span style="color:var(--text-secondary);">Cobro Anticipo:</span> ${antBadge}</div>
                         <div><span style="color:var(--text-secondary);">Fabricación:</span> ${fabBadge}</div>
                     </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:0.8rem; color:var(--text-secondary);">
+                        <span><strong>Anticipo exigible:</strong> ${_deps.formatCurrency(fm.montoExigible)}</span>
+                        <span><strong>Anticipo reconocido:</strong> ${_deps.formatCurrency(fm.montoConfirmado)}</span>
+                        <span><strong>Saldo pendiente:</strong> ${_deps.formatCurrency(fm.saldoPendienteAnticipo)}</span>
+                        <span><strong>Estado de habilitación:</strong> <code>${estadoHabilitacionCode}</code></span>
+                    </div>
+                    ${pendingUsdMsg}
+                    ${discrepancyHtml}
                     ${obligHtml}
                 `;
             }

@@ -252,6 +252,49 @@
         return call(fb, 'validateManufacturingReadinessAdmin', { prospectId, dbSuffix });
     }
 
+    function sendProspectToFabrication(fb, { prospectId, dbSuffix }) {
+        const key = ['sendProspectToFabrication', dbSuffix, prospectId].join('|');
+        return callIdempotent(key, opId => fb.functions().httpsCallable('sendProspectToFabricationAdmin')({ prospectId, opId, dbSuffix }));
+    }
+
+    function validateAndAuthorizeFabricationOrder(fb, {
+        prospectId,
+        fabProjectId,
+        fabOrderId,
+        codigoProyecto,
+        nombreProyecto,
+        origenTipo,
+        stageTransition,
+        projectPayload,
+        orderPayload,
+        orderUpdate,
+        tasks,
+        reactivateRejectedTasks,
+        splitOrderPayload,
+        taskUpdates,
+        opId,
+        dbSuffix
+    }) {
+        return call(fb, 'validateAndAuthorizeFabricationOrderAdmin', {
+            prospectId,
+            fabProjectId,
+            fabOrderId,
+            codigoProyecto,
+            nombreProyecto,
+            origenTipo,
+            stageTransition,
+            projectPayload,
+            orderPayload,
+            orderUpdate,
+            tasks,
+            reactivateRejectedTasks: reactivateRejectedTasks === true,
+            splitOrderPayload,
+            taskUpdates,
+            opId,
+            dbSuffix
+        });
+    }
+
     // ---------- wording ----------
     function serverMessage(err) {
         const m = err && typeof err.message === 'string' ? err.message.trim() : '';
@@ -304,6 +347,8 @@
         deleteProspect,
         reactivateProspect,
         validateManufacturingReadiness,
+        sendProspectToFabrication,
+        validateAndAuthorizeFabricationOrder,
         newOpId,
         generateCryptoOpId: newOpId,
         errorMessage,

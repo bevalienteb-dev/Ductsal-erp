@@ -55,7 +55,10 @@ function namesFor(suffix) {
     ops: `prospectOps${suffix}`,
     counters: `prospectCounters${suffix}`,
     payment_refs: `payment_refs${suffix}`,
-    opportunityContacts: `opportunity_contacts${suffix}`
+    opportunityContacts: `opportunity_contacts${suffix}`,
+    proyectos_fabricacion: `proyectos_fabricacion${suffix}`,
+    fabricacion: `fabricacion${suffix}`,
+    fabricacion_tasks: `fabricacion_tasks${suffix}`
   };
 }
 

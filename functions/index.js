@@ -2029,7 +2029,7 @@ exports.plantLogin = functions.https.onCall(async (data, context) => {
 // Logic in prospectWorkflowService.js; it shares the identity / access / audit kit of the commercial service.
 // The browser sends only the user's input: never the document, never who acts, never computed amounts.
 // ======================================================================================================
-const { createProspectWorkflowService } = require('./prospectWorkflowService');
+const { createProspectWorkflowService, MANUFACTURING_ROLES } = require('./prospectWorkflowService');
 const workflowServiceCache = {};
 function workflowServiceFor(suffix) {
   if (!workflowServiceCache[suffix]) {
@@ -2043,6 +2043,18 @@ function workflowServiceFor(suffix) {
 }
 const runWorkflowOp = (data, context, op) => runCommercialOp(data, context,
   (service, caller, d) => op(workflowServiceFor(resolveDbSuffix(d.dbSuffix)), caller, d));
+
+async function runManufacturingWorkflowOp(data, context, op) {
+  try {
+    assertEmulatorIsolated();
+    data = data || {};
+    const suffix = resolveDbSuffix(data.dbSuffix);
+    const caller = await clientsServiceFor(suffix).resolveCaller(context, { allowedRoles: MANUFACTURING_ROLES });
+    return await op(workflowServiceFor(suffix), caller, data);
+  } catch (e) {
+    throw toHttpsError(e);
+  }
+}
 
 /** { prospectId, nextStage, data, dbSuffix? } -> { status: 'advanced' | 'unchanged', etapa, estado } */
 exports.advanceProspectStageAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
@@ -2088,13 +2100,13 @@ exports.saveInvoiceAdmin = functions.https.onCall((data, context) => runWorkflow
 exports.deleteInvoiceAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.deleteInvoice({ caller, prospectId: d.prospectId, invoiceId: d.invoiceId })));
 
-/** { prospectId, invoiceId, paymentKey?, monto, metodo, ref, doc_comprobante?, opId, dbSuffix? } -> { status: 'created' | 'updated' | 'unchanged' } */
+/** { prospectId, invoiceId, paymentKey?, paymentId?, fecha?, monto, metodo, ref, doc_comprobante?, opId, dbSuffix? } -> { status: 'created' | 'updated' | 'unchanged' } */
 exports.savePaymentAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
-  (wf, caller, d) => wf.savePayment({ caller, prospectId: d.prospectId, invoiceId: d.invoiceId, paymentKey: d.paymentKey, monto: d.monto, metodo: d.metodo, ref: d.ref, doc_comprobante: d.doc_comprobante, opId: d.opId })));
+  (wf, caller, d) => wf.savePayment({ caller, prospectId: d.prospectId, invoiceId: d.invoiceId, paymentKey: d.paymentKey, paymentId: d.paymentId, fecha: d.fecha, monto: d.monto, metodo: d.metodo, ref: d.ref, doc_comprobante: d.doc_comprobante, opId: d.opId })));
 
-/** { prospectId, invoiceId, paymentKey, dbSuffix? } -> { status: 'deleted' | 'absent' } */
+/** { prospectId, invoiceId, paymentKey?, paymentId?, dbSuffix? } -> { status: 'deleted' | 'absent' } */
 exports.deletePaymentAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
-  (wf, caller, d) => wf.deletePayment({ caller, prospectId: d.prospectId, invoiceId: d.invoiceId, paymentKey: d.paymentKey })));
+  (wf, caller, d) => wf.deletePayment({ caller, prospectId: d.prospectId, invoiceId: d.invoiceId, paymentKey: d.paymentKey, paymentId: d.paymentId })));
 
 /** { prospectId, motivo, dbSuffix? } -> { status: 'deleted' | 'unchanged' | 'absent' } (manager only, live check; LOGICAL deletion, the motive is required) */
 exports.deleteProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
@@ -2104,9 +2116,66 @@ exports.deleteProspectAdmin = functions.https.onCall((data, context) => runWorkf
 exports.reactivateLostProspectAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
   (wf, caller, d) => wf.reactivateProspect({ caller, prospectId: d.prospectId, motivo: d.motivo })));
 
-/** { prospectId, dbSuffix? } -> { status: 'authorized', ready: true, code: 'ANTICIPO_CONFIRMADO', montoExigible, montoConfirmado, ... } (manager / gestor / jefe_produccion) */
-exports.validateManufacturingReadinessAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+/** { prospectId, dbSuffix? } -> { status: 'ready_for_manufacturing', ready: true, code: 'ANTICIPO_CONFIRMADO', montoExigible, montoConfirmado, ... } */
+exports.validateManufacturingReadinessAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
   (wf, caller, d) => wf.validateManufacturingReadiness({ caller, prospectId: d.prospectId })));
+
+/** { prospectId, opId?, dbSuffix? } -> { status: 'sent' | 'already_sent', projectId, project, readiness } */
+exports.sendProspectToFabricationAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
+  (wf, caller, d) => wf.sendProspectToFabrication({ caller, prospectId: d.prospectId, opId: d.opId })));
+
+/** { prospectId?, fabProjectId?, fabOrderId?, codigoProyecto?, nombreProyecto?, origenTipo?, stageTransition?, projectPayload?, orderPayload?, orderUpdate?, tasks?, reactivateRejectedTasks?, splitOrderPayload?, taskUpdates?, opId?, dbSuffix? } -> { status: 'authorized' | 'authorized_internal', ready: true, ... } */
+exports.validateAndAuthorizeFabricationOrderAdmin = functions.https.onCall((data, context) => runManufacturingWorkflowOp(data, context,
+  (wf, caller, d) => wf.validateAndAuthorizeFabricationOrder({
+    caller,
+    prospectId: d.prospectId,
+    fabProjectId: d.fabProjectId,
+    fabOrderId: d.fabOrderId,
+    codigoProyecto: d.codigoProyecto,
+    nombreProyecto: d.nombreProyecto,
+    origenTipo: d.origenTipo,
+    stageTransition: d.stageTransition,
+    projectPayload: d.projectPayload,
+    orderPayload: d.orderPayload,
+    orderUpdate: d.orderUpdate,
+    tasks: d.tasks,
+    reactivateRejectedTasks: d.reactivateRejectedTasks === true,
+    splitOrderPayload: d.splitOrderPayload,
+    taskUpdates: d.taskUpdates,
+    opId: d.opId
+  })));
+
+/** { lockId?, conflictLockId?, resolutionMode?, resolutionType?, baseBankRef?, trueBankRef?, totalVoucherAmount?, transferTotalAmount?, tranches?, allocations?, allowPartialDistribution?, legitimateOwner?, dteControlNumber?, consolidatedDteNumber?, dteGenerationCode?, consolidatedDteCodigoGeneracion?, dteTotalAmount?, consolidatedDteTotal?, roundingDifferenceReason?, dteRoundingExplanation?, bankOrigin?, bankName?, voucherDate?, transferDate?, notes?, justification?, dbSuffix? } -> { status: 'resolved' | 'already_resolved', ... } (manager only) */
+exports.resolveHistoricalBankConflictAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.resolveHistoricalBankConflict({
+    caller,
+    lockId: d.lockId,
+    conflictLockId: d.conflictLockId,
+    resolutionMode: d.resolutionMode,
+    resolutionType: d.resolutionType,
+    baseBankRef: d.baseBankRef,
+    trueBankRef: d.trueBankRef,
+    totalVoucherAmount: d.totalVoucherAmount,
+    transferTotalAmount: d.transferTotalAmount,
+    tranches: d.tranches,
+    allocations: d.allocations,
+    allowPartialDistribution: d.allowPartialDistribution === true,
+    legitimateOwner: d.legitimateOwner,
+    dteControlNumber: d.dteControlNumber,
+    consolidatedDteNumber: d.consolidatedDteNumber,
+    dteGenerationCode: d.dteGenerationCode,
+    consolidatedDteCodigoGeneracion: d.consolidatedDteCodigoGeneracion,
+    dteTotalAmount: d.dteTotalAmount,
+    consolidatedDteTotal: d.consolidatedDteTotal,
+    roundingDifferenceReason: d.roundingDifferenceReason,
+    dteRoundingExplanation: d.dteRoundingExplanation,
+    bankOrigin: d.bankOrigin,
+    bankName: d.bankName,
+    voucherDate: d.voucherDate,
+    transferDate: d.transferDate,
+    notes: d.notes,
+    justification: d.justification
+  })));
 
 // ======================================================================================================
 // SEC-05: Secure Document Download (Universal Downloads & Large File Streaming)
