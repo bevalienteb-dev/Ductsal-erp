@@ -237,6 +237,49 @@
         return call(fb, 'deletePaymentAdmin', { prospectId, invoiceId, paymentKey, dbSuffix });
     }
 
+    // B5.2 — Multi-invoice bank deposits & distributions
+    function registerBankDeposit(fb, { clientId, ref, metodo, monto, fechaComprobante, banco_origen, doc_comprobante, observaciones, allocations, opId, dbSuffix }) {
+        const payload = { clientId, ref, metodo, monto, fechaComprobante, banco_origen, doc_comprobante, observaciones, allocations, dbSuffix };
+        if (opId) return call(fb, 'registerBankDepositAdmin', Object.assign({ opId }, payload));
+        const allocSig = Array.isArray(allocations) ? allocations.map(a => `${a.prospectId}:${a.invoiceId}:${a.monto}`).join(',') : '';
+        const key = ['registerBankDeposit', dbSuffix, clientId, metodo, ref, monto, allocSig].join('|');
+        return callIdempotent(key, genOpId => fb.functions().httpsCallable('registerBankDepositAdmin')(Object.assign({ opId: genOpId }, payload)));
+    }
+
+    function distributeBankDeposit(fb, { abonoId, bankRef, ref, clientId, allocations, observaciones, opId, dbSuffix }) {
+        const payload = { abonoId, bankRef, ref, clientId, allocations, observaciones, dbSuffix };
+        if (opId) return call(fb, 'distributeBankDepositAdmin', Object.assign({ opId }, payload));
+        const allocSig = Array.isArray(allocations) ? allocations.map(a => `${a.prospectId}:${a.invoiceId}:${a.monto}`).join(',') : '';
+        const key = ['distributeBankDeposit', dbSuffix, abonoId || bankRef || ref, allocSig].join('|');
+        return callIdempotent(key, genOpId => fb.functions().httpsCallable('distributeBankDepositAdmin')(Object.assign({ opId: genOpId }, payload)));
+    }
+
+    function voidBankDepositApplication(fb, { abonoId, bankRef, ref, aplicacionId, prospectId, invoiceId, paymentKey, motivo, reallocateTo, opId, dbSuffix }) {
+        const payload = { abonoId, bankRef, ref, aplicacionId, prospectId, invoiceId, paymentKey, motivo, reallocateTo, dbSuffix };
+        if (opId) return call(fb, 'voidBankDepositApplicationAdmin', Object.assign({ opId }, payload));
+        const key = ['voidBankDepositApplication', dbSuffix, abonoId || bankRef || ref, aplicacionId || `${prospectId}:${invoiceId}:${paymentKey}`].join('|');
+        return callIdempotent(key, genOpId => fb.functions().httpsCallable('voidBankDepositApplicationAdmin')(Object.assign({ opId: genOpId }, payload)));
+    }
+
+    function voidBankDeposit(fb, { abonoId, bankRef, ref, motivo, voidActiveApplications, opId, dbSuffix }) {
+        const payload = { abonoId, bankRef, ref, motivo, voidActiveApplications, dbSuffix };
+        if (opId) return call(fb, 'voidBankDepositAdmin', Object.assign({ opId }, payload));
+        const key = ['voidBankDeposit', dbSuffix, abonoId || bankRef || ref].join('|');
+        return callIdempotent(key, genOpId => fb.functions().httpsCallable('voidBankDepositAdmin')(Object.assign({ opId: genOpId }, payload)));
+    }
+
+    function listClientBankDeposits(fb, { clientId, estado, search, includeHistoricalSinglePayments, dbSuffix } = {}) {
+        return call(fb, 'listClientBankDepositsAdmin', { clientId, estado, search, includeHistoricalSinglePayments, dbSuffix });
+    }
+
+    function recalculateClientFinancials(fb, { clientId, dryRun, reason, opId, dbSuffix }) {
+        return call(fb, 'recalculateClientFinancialsAdmin', { clientId, dryRun: dryRun === true, reason, opId, dbSuffix });
+    }
+
+    function getAccountBIMetrics(fb, { clientId, period, dateFrom, dateTo, month, vendedorId, gestorId, encargado, clasificacion, estado, dbSuffix } = {}) {
+        return call(fb, 'getAccountBIMetricsAdmin', { clientId, period, dateFrom, dateTo, month, vendedorId, gestorId, encargado, clasificacion, estado, dbSuffix });
+    }
+
     // Logical deletion: the opportunity is marked (who / when / why), not removed. The reason is required.
     function deleteProspect(fb, { prospectId, motivo, dbSuffix }) {
         return call(fb, 'deleteProspectAdmin', { prospectId, motivo, dbSuffix });
@@ -344,6 +387,13 @@
         deleteInvoice,
         savePayment,
         deletePayment,
+        registerBankDeposit,
+        distributeBankDeposit,
+        voidBankDepositApplication,
+        voidBankDeposit,
+        listClientBankDeposits,
+        recalculateClientFinancials,
+        getAccountBIMetrics,
         deleteProspect,
         reactivateProspect,
         validateManufacturingReadiness,
