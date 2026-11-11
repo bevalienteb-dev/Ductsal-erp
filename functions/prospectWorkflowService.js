@@ -2451,7 +2451,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           metodo,
           ref: refText,
           ref_normalizada: normRef,
-          fecha: customFecha || cur.fecha || nowAt
+          fecha: customFecha || cur.fecha || nowAt,
+          fecha_comprobante_bancario: customFecha || cur.fecha_comprobante_bancario || cur.fecha || null,
+          fecha_registro_crm: cur.fecha_registro_crm || cur.confirmado_en || cur.fecha || nowAt
         };
         if (doc) payment.doc_comprobante = doc;
         if (hasValidPaymentDoc(effectiveDoc)) {
@@ -2475,6 +2477,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           ref_normalizada: normRef,
           doc_comprobante: doc,
           fecha: customFecha || nowAt,
+          fecha_comprobante_bancario: customFecha || nowAt,
+          fecha_registro_crm: nowAt,
           opId,
           confirmado: true,
           estado: 'confirmado',
@@ -2940,6 +2944,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           if (t.expectedAmount !== undefined && round2(Number(t.expectedAmount)) !== payAmount) {
             throw precondition(`El importe del pago en ${tProspectId} (${fmtMoney(payAmount)}) no coincide con el monto esperado (${fmtMoney(t.expectedAmount)})`);
           }
+          const expectedFormaPago = (typeof t.expectedFormaPago === 'string' && Object.prototype.hasOwnProperty.call(FORMAS_PAGO, t.expectedFormaPago.trim()))
+            ? t.expectedFormaPago.trim()
+            : null;
           sumTranches = round2(sumTranches + payAmount);
 
           trancheItems.push({
@@ -2950,6 +2957,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             entrySlot,
             applicationId,
             tramoId,
+            expectedFormaPago,
             pRef,
             pData,
             client,
@@ -3027,6 +3035,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
         for (const ti of trancheItems) {
           const oldRef = ti.curPay.ref || '078';
+          const fechaRegistroCrm = ti.curPay.fecha_registro_crm || ti.curPay.fecha || null;
           const updatedPay = {
             ...ti.curPay,
             invoiceId: ti.fac.id,
@@ -3040,6 +3049,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             aplicacion_id: ti.applicationId,
             tramo_id: ti.tramoId,
             entry_id: ti.entrySlot,
+            // La fecha de registro del pago en el CRM (`fecha` / `fecha_registro_crm`) se preserva intacta
+            // y se distingue explícitamente de la fecha real del comprobante bancario (`fecha_comprobante_bancario`).
+            fecha: ti.curPay.fecha,
+            fecha_registro_crm: fechaRegistroCrm,
+            fecha_comprobante_bancario: effectiveVoucherDate || ti.curPay.fecha_comprobante_bancario || null,
             pago_compartido: {
               es_tramo_compartido: true,
               caso_resolucion: 'CASO_B_PAGO_UNICO_DISTRIBUIDO_MISMO_CLIENTE',
@@ -3069,6 +3083,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
               dte_diferencia_redondeo: dteRoundingVariance,
               banco_origen: effectiveBankOrigin,
               fecha_comprobante: effectiveVoucherDate,
+              fecha_comprobante_bancario: effectiveVoucherDate,
+              fecha_registro_crm: fechaRegistroCrm,
               resuelto_en: nowAt,
               resuelto_por: caller.cid || caller.uid
             }
@@ -3081,18 +3097,43 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             updatedPay.confirmado_por_rol = caller.role;
             updatedPay.confirmado_en = nowAt;
           }
+          ti.fac.monto = round2(Number(ti.fac.monto));
+          if (ti.fac.es_anticipo === undefined && ti.facturas.length === 1) {
+            ti.fac.es_anticipo = true;
+            ti.fac.tipo_factura = ti.fac.tipo_factura || 'anticipo';
+          }
           ti.fac.pagos[ti.payIdx] = updatedPay;
 
+          const effectiveFormaPago = ti.expectedFormaPago || ti.pData.forma_pago || (ti.pData.datos && ti.pData.datos.forma_pago) || null;
+          const nextDatos = (ti.pData.datos && typeof ti.pData.datos === 'object') ? { ...ti.pData.datos } : {};
+          if (ti.expectedFormaPago) {
+            nextDatos.forma_pago = ti.expectedFormaPago;
+          }
+          const evalProspect = {
+            ...ti.pData,
+            id: ti.prospectId,
+            forma_pago: effectiveFormaPago,
+            datos: nextDatos,
+            facturas: ti.facturas
+          };
           const postEval = evaluateManufacturingReadiness({
-            p: { ...ti.pData, id: ti.prospectId, facturas: ti.facturas },
+            p: evalProspect,
             client: ti.client
           });
           const logMsg = `Resolución auditada de referencia histórica (${oldRef} -> ${cleanBaseRef}): Aplicación ${ti.idx}/${trancheItems.length} [${ti.applicationId}] por ${fmtMoney(ti.payAmount)} sobre comprobante bancario único Ref. ${cleanBaseRef} (${fmtMoney(expectedTotal)}).`;
-          tx.update(ti.pRef, {
+          const prospectUpdatePatch = {
             facturas: ti.facturas,
             estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE',
             logs: withLog(ti.pData, caller, logMsg)
-          });
+          };
+          if (ti.expectedFormaPago) {
+            prospectUpdatePatch.forma_pago = ti.expectedFormaPago;
+            prospectUpdatePatch.datos = nextDatos;
+            if (postEval.montoExigible) {
+              prospectUpdatePatch.monto_anticipo_exigible = postEval.montoExigible;
+            }
+          }
+          tx.update(ti.pRef, prospectUpdatePatch);
 
           const appAuditRecord = {
             aplicacion_id: ti.applicationId,
@@ -3104,6 +3145,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             invoiceId: ti.invoiceId,
             factura_numero: ti.fac.numero || null,
             paymentKey: String(ti.paymentKey),
+            fecha_registro_crm: fechaRegistroCrm,
+            fecha_comprobante_bancario: effectiveVoucherDate,
             clientId: commonClientId,
             referencia_historica_anterior: oldRef,
             referencia_bancaria_unica: cleanBaseRef,
@@ -3127,6 +3170,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
             invoiceId: ti.invoiceId,
             factura_numero: ti.fac.numero || null,
             paymentKey: String(ti.paymentKey),
+            fecha_registro_crm: fechaRegistroCrm,
+            fecha_comprobante_bancario: effectiveVoucherDate,
             clientId: commonClientId,
             monto: ti.payAmount,
             monto_aplicado: ti.payAmount,

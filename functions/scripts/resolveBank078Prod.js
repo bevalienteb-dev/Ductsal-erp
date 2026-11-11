@@ -39,6 +39,9 @@ const BANK_078_RESOLUTION_SPEC = {
       proyecto: 'PRESURIZACION',
       invoiceId: '1789408613812',
       paymentKey: '2026-09-14T19:13:28.456Z',
+      fechaRegistroCrm: '2026-09-14T19:13:28.456Z',
+      contractSubtotalSinIva: 16214.50,
+      expectedFormaPago: '50/50',
       expectedAmount: 9161.19,
       applicationId: 'APP_868355650_1779123328318_1789408613812',
       tramoId: 'TRAMO_868355650_1'
@@ -49,6 +52,9 @@ const BANK_078_RESOLUTION_SPEC = {
       proyecto: 'EDIFICIO DESIRE',
       invoiceId: '1789408531939',
       paymentKey: '2026-09-14T19:11:44.724Z',
+      fechaRegistroCrm: '2026-09-14T19:11:44.724Z',
+      contractSubtotalSinIva: 13844.81,
+      expectedFormaPago: '50/50',
       expectedAmount: 7822.32,
       applicationId: 'APP_868355650_OPP-1777081077278-7_1789408531939',
       tramoId: 'TRAMO_868355650_2'
@@ -65,23 +71,55 @@ async function runResolution({ db, FieldValue, apply = false, caller = null } = 
     active: true
   };
 
+  const canonicalLockId = `BANK_${BANK_078_RESOLUTION_SPEC.baseBankRef}`;
   const lockRef = db.collection('payment_refs_prod').doc(BANK_078_RESOLUTION_SPEC.lockId);
-  const baseLockRef = db.collection('payment_refs_prod').doc(`BANK_${BANK_078_RESOLUTION_SPEC.baseBankRef}`);
-  const [lockSnap, baseLockSnap, p1Snap, p2Snap] = await Promise.all([
+  const baseLockRef = db.collection('payment_refs_prod').doc(canonicalLockId);
+  const rawUnprefixedRef = db.collection('payment_refs_prod').doc(BANK_078_RESOLUTION_SPEC.baseBankRef);
+  const [lockSnap, baseLockSnap, rawUnprefixedSnap, p1Snap, p2Snap] = await Promise.all([
     lockRef.get(),
     baseLockRef.get(),
+    rawUnprefixedRef.get(),
     db.collection('prospects_prod').doc(BANK_078_RESOLUTION_SPEC.tranches[0].prospectId).get(),
     db.collection('prospects_prod').doc(BANK_078_RESOLUTION_SPEC.tranches[1].prospectId).get()
   ]);
 
+  const summarizeProspect = (snap, tranche) => {
+    if (!snap || !snap.exists) return null;
+    const d = snap.data() || {};
+    const fac = Array.isArray(d.facturas) ? d.facturas.find(f => f && f.id === tranche.invoiceId) : null;
+    const pay = fac && Array.isArray(fac.pagos)
+      ? fac.pagos.find(pg => pg && (pg.id === tranche.paymentKey || pg.fecha === tranche.paymentKey))
+      : null;
+    return {
+      prospectId: snap.id,
+      codigo: d.codigo || null,
+      proyecto: d.proyecto || null,
+      precioCotizadoSinIva: d.precio_cotizado ?? null,
+      formaPagoActual: d.forma_pago || null,
+      formaPagoEsperada: tranche.expectedFormaPago || '50/50',
+      facturaId: fac ? fac.id : null,
+      facturaNumero: fac ? fac.numero : null,
+      facturaMontoActual: fac ? fac.monto : null,
+      pagoMontoActual: pay ? pay.monto : null,
+      pagoRefActual: pay ? pay.ref : null,
+      fechaRegistroCrm: pay ? (pay.fecha_registro_crm || pay.fecha || null) : null,
+      fechaComprobanteBancario: BANK_078_RESOLUTION_SPEC.voucherDate
+    };
+  };
+
   const currentStatus = {
     mode: apply ? 'APPLY' : 'DRY_RUN_READ_ONLY',
+    canonicalLockPath: `payment_refs_prod/${canonicalLockId}`,
+    conflictLockPath: `payment_refs_prod/${BANK_078_RESOLUTION_SPEC.lockId}`,
     bank078Exists: lockSnap.exists,
     bank078Data: lockSnap.exists ? lockSnap.data() : null,
     bank868355650Exists: baseLockSnap.exists,
     bank868355650Data: baseLockSnap.exists ? baseLockSnap.data() : null,
+    rawUnprefixed868355650Exists: rawUnprefixedSnap.exists,
     prospect1Exists: p1Snap.exists,
     prospect2Exists: p2Snap.exists,
+    prospect1Summary: summarizeProspect(p1Snap, BANK_078_RESOLUTION_SPEC.tranches[0]),
+    prospect2Summary: summarizeProspect(p2Snap, BANK_078_RESOLUTION_SPEC.tranches[1]),
     spec: BANK_078_RESOLUTION_SPEC
   };
 

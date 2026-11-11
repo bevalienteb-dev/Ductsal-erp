@@ -95,9 +95,7 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
         {
           id: '1789408613812',
           numero: '078',
-          monto: 9161.19,
-          es_anticipo: true,
-          tipo_factura: 'anticipo',
+          monto: 9161.1925,
           doc_factura: fileObj('CCF 50% ANTICIPO.pdf', 'facturas'),
           pagos: [
             {
@@ -121,9 +119,8 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
       etapa: 'cierre',
       postcierre_habilitado: true,
       precio_cotizado: 13844.81, // + IVA = 15644.64 -> 50% = 7822.32
-      forma_pago: '50/50',
+      forma_pago: '100% anticipado',
       datos: {
-        forma_pago: '50/50',
         doc_firmado: fileObj('CONTRATO_FIRMADO_DESIRE.pdf', 'proyectos')
       },
       facturas: [
@@ -131,8 +128,6 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
           id: '1789408531939',
           numero: '078',
           monto: 7822.32,
-          es_anticipo: true,
-          tipo_factura: 'anticipo',
           doc_factura: fileObj('CCF 50% ANTICIPO.pdf', 'facturas'),
           pagos: [
             {
@@ -346,6 +341,9 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
       expect(p1.ref).toBe('868355650');
       expect(p1.ref_normalizada).toBe('868355650');
       expect(p1.ref_historica_original).toBe('078');
+      expect(p1.fecha).toBe('2026-09-14T19:13:28.456Z');
+      expect(p1.fecha_registro_crm).toBe('2026-09-14T19:13:28.456Z');
+      expect(p1.fecha_comprobante_bancario).toBe('2026-09-01T17:07:00');
       expect(p1.aplicacion_id).toBe('APP_868355650_1779123328318_1789408613812');
       expect(p1.tramo_id).toBe('TRAMO_868355650_1');
       expect(p1.entry_id).toBe('1779123328318__1789408613812');
@@ -356,13 +354,21 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
         importe_total_comprobante: 16983.51,
         monto_aplicado: 9161.19,
         total_aplicado: 16983.51,
-        saldo_disponible_comprobante: 0
+        saldo_disponible_comprobante: 0,
+        fecha_comprobante: '2026-09-01T17:07:00',
+        fecha_comprobante_bancario: '2026-09-01T17:07:00',
+        fecha_registro_crm: '2026-09-14T19:13:28.456Z'
       }));
 
+      expect(opp2.forma_pago).toBe('50/50');
+      expect(opp2.monto_anticipo_exigible).toBe(7822.32);
       expect(p2.monto).toBe(7822.32);
       expect(p2.ref).toBe('868355650');
       expect(p2.ref_normalizada).toBe('868355650');
       expect(p2.ref_historica_original).toBe('078');
+      expect(p2.fecha).toBe('2026-09-14T19:11:44.724Z');
+      expect(p2.fecha_registro_crm).toBe('2026-09-14T19:11:44.724Z');
+      expect(p2.fecha_comprobante_bancario).toBe('2026-09-01T17:07:00');
       expect(p2.aplicacion_id).toBe('APP_868355650_OPP-1777081077278-7_1789408531939');
       expect(p2.tramo_id).toBe('TRAMO_868355650_2');
       expect(p2.entry_id).toBe('OPP-1777081077278-7__1789408531939');
@@ -373,7 +379,10 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
         importe_total_comprobante: 16983.51,
         monto_aplicado: 7822.32,
         total_aplicado: 16983.51,
-        saldo_disponible_comprobante: 0
+        saldo_disponible_comprobante: 0,
+        fecha_comprobante: '2026-09-01T17:07:00',
+        fecha_comprobante_bancario: '2026-09-01T17:07:00',
+        fecha_registro_crm: '2026-09-14T19:11:44.724Z'
       }));
 
       // 5. Verificar que ambas oportunidades siguen con 100% de su anticipo confirmado y habilitadas para fabricación
@@ -384,14 +393,16 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
       expect(ready2.ready).toBe(true);
       expect(ready2.estadoHabilitacion).toBe('ANTICIPO_CONFIRMADO');
 
-      // 6. Verificar estado de BANK_078 y las 7 secciones de BANK_868355650 en payment_refs_prod (sin sub-locks ficticios)
+      // 6. Verificar estado de BANK_078 y las 7 secciones de BANK_868355650 en payment_refs_prod (sin sub-locks ficticios ni reserva sin prefijo BANK_)
       const bank078 = (await fdb.collection('payment_refs_prod').doc('BANK_078').get()).data();
       expect(bank078.active).toBe(false);
       expect(bank078.estado).toBe('resuelto_historico');
       expect(bank078.conflicto_historico).toBe(false);
 
+      const unprefixed868 = await fdb.collection('payment_refs_prod').doc('868355650').get();
       const fakeSub1 = await fdb.collection('payment_refs_prod').doc('BANK_868355650202605023').get();
       const fakeSub2 = await fdb.collection('payment_refs_prod').doc('BANK_868355650DESIRE').get();
+      expect(unprefixed868.exists).toBe(false);
       expect(fakeSub1.exists).toBe(false);
       expect(fakeSub2.exists).toBe(false);
 
