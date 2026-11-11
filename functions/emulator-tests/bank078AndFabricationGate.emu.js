@@ -1060,4 +1060,99 @@ describe('Sección C — Pruebas focalizadas obligatorias en emulador (Firestore
     expect(internalCreateRes.result.status).toBe('authorized_internal');
     expect(internalCreateRes.result.estadoHabilitacion).toBe('ORDEN_INTERNA_NO_COMERCIAL');
   });
+
+  test('Caso 12: Compatibilidad con órdenes históricas en emulador (Bloque 4): continuidad con excepcion_legado_verificada sin liberado_a_fabricacion_backend: true, bloqueo de órdenes no autorizadas y protección contra manipulación desde navegador', async () => {
+    const legacyStartedId = `FAB_HIST_STARTED_${TAG}`;
+    const unverifiedStartedId = `FAB_UNVERIFIED_STARTED_${TAG}`;
+    const legacyDibujoId = `FAB_HIST_DIBUJO_${TAG}`;
+
+    // 1. Sembrar orden histórica ya en Fabricación con excepción de legado establecida por migración backend
+    //    y liberado_a_fabricacion_backend: false
+    await H.setDoc(`fabricacion${DB_SUFFIX}`, legacyStartedId, {
+      id: legacyStartedId,
+      padre_id: null,
+      prospecto_id: null,
+      origen_tipo: 'interno',
+      codigo_proyecto: '202512101',
+      codigo_orden: '202512101_1201',
+      proyecto: 'Instituto Retos',
+      etapa: 'Fabricación',
+      status: 'en_proceso',
+      liberado_a_fabricacion_backend: false,
+      excepcion_legado_verificada: true,
+      origen_excepcion_legado: 'MIGRACION_HISTORICA_PRE_COMPUERTA',
+      fecha_excepcion_legado: '2026-11-10T00:00:00.000Z',
+      autorizado_excepcion_legado_por: 'ADMIN_MIGRATION_HISTORICAL_FAB',
+      estado_habilitacion_fabricacion: 'ORDEN_INTERNA_NO_COMERCIAL',
+      discrepancia_financiera: false,
+      bloqueado_avance_etapa: false
+    });
+
+    // 1a. Actualización operativa legítima en planta sobre orden histórica iniciada -> PERMITIDA (200)
+    const legacyOpUpdate = await clientPatchDoc(
+      `fabricacion${DB_SUFFIX}`,
+      legacyStartedId,
+      { laminas_manuales: 5, etapa: 'Quality Control' },
+      tokens.operario
+    );
+    expect(legacyOpUpdate.status).toBe(200);
+
+    // 1b. Intento del navegador de alterar excepcion_legado_verificada o liberado_a_fabricacion_backend -> RECHAZADO (403)
+    const tamperLegacyFlag = await clientPatchDoc(
+      `fabricacion${DB_SUFFIX}`,
+      legacyStartedId,
+      { origen_excepcion_legado: 'FALSIFICADO_POR_CLIENTE' },
+      tokens.manager
+    );
+    expect(tamperLegacyFlag.status).toBe(403);
+
+    // 2. Orden en etapa Fabricación que carece TANTO de liberado_a_fabricacion_backend: true COMO de excepcion_legado_verificada: true -> RECHAZADA (403)
+    await H.setDoc(`fabricacion${DB_SUFFIX}`, unverifiedStartedId, {
+      id: unverifiedStartedId,
+      padre_id: null,
+      prospecto_id: null,
+      origen_tipo: 'oportunidad',
+      codigo_proyecto: '202611606',
+      proyecto: 'ORDEN NO AUTORIZADA EN FABRICACION',
+      etapa: 'Fabricación',
+      status: 'en_proceso',
+      liberado_a_fabricacion_backend: false,
+      discrepancia_financiera: false,
+      bloqueado_avance_etapa: false
+    });
+
+    const unverifiedOpUpdate = await clientPatchDoc(
+      `fabricacion${DB_SUFFIX}`,
+      unverifiedStartedId,
+      { laminas_manuales: 2 },
+      tokens.operario
+    );
+    expect(unverifiedOpUpdate.status).toBe(403);
+
+    // 3. Orden en Dibujo intentando autoconcederse excepcion_legado_verificada: true desde el navegador -> RECHAZADA (403)
+    await H.setDoc(`fabricacion${DB_SUFFIX}`, legacyDibujoId, {
+      id: legacyDibujoId,
+      padre_id: null,
+      prospecto_id: `OPP_UNPAID_${TAG}`,
+      origen_tipo: 'oportunidad',
+      codigo_proyecto: '202611606',
+      proyecto: 'PROYECTO COMERCIAL SIN ANTICIPO',
+      etapa: 'Dibujo',
+      status: 'pendiente',
+      liberado_a_fabricacion_backend: false,
+      discrepancia_financiera: false,
+      bloqueado_avance_etapa: false
+    });
+
+    const selfGrantLegacy = await clientPatchDoc(
+      `fabricacion${DB_SUFFIX}`,
+      legacyDibujoId,
+      {
+        excepcion_legado_verificada: true,
+        origen_excepcion_legado: 'AUTO_ASIGNADO_BROWSER'
+      },
+      tokens.manager
+    );
+    expect(selfGrantLegacy.status).toBe(403);
+  });
 });

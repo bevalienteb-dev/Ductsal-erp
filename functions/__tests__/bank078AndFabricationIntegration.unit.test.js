@@ -1050,5 +1050,365 @@ describe('Tarea A y Tarea B — Resolución BANK_078 e Integración Real con Fab
         })
       });
     });
+
+    test('B8. Compatibilidad con órdenes históricas (Bloque 4): migración auditada dry-run/apply/rollback, continuidad en ejecución sin asignar liberado_a_fabricacion_backend: true, y bloqueo de uso de legado para nuevas órdenes sin anticipo', async () => {
+      const { runHistoricalFabricationMigration } = require('../scripts/migrateHistoricalFabricationOrders');
+      const { fdb, wf, caller } = makeEnv();
+      const jefeProd = caller('jefe_produccion', 'JEFE-PROD-1', 'Jefe Planta');
+
+      await fdb.seed('clients_prod/CLI-FAB-01', baseClient);
+      await seedClosedOpportunity(fdb, { id: 'OPP-HIST-UNPAID', codigo: '202605017', formaPago: '50/50', pagos: [] });
+
+      // Sembrar datos históricos pre-compuerta:
+      // 1) Proyecto comercial histórico en bandeja
+      await fdb.seed('proyectos_fabricacion_prod/PROJ-HIST-1', {
+        id: 'PROJ-HIST-1',
+        codigo: '202605017',
+        nombre_proyecto: 'Proyecto 202605017',
+        origen_tipo: 'oportunidad',
+        prospecto_id: 'OPP-HIST-UNPAID',
+        estado: 'activo'
+      });
+      // 2) Orden histórica comercial ya iniciada en Fabricación (sin autorizado_backend ni liberado_a_fabricacion_backend)
+      await fdb.seed('fabricacion_prod/FAB-HIST-EXEC-1', {
+        id: 'FAB-HIST-EXEC-1',
+        padre_id: 'PROJ-HIST-1',
+        prospecto_id: 'OPP-HIST-UNPAID',
+        origen_tipo: 'oportunidad',
+        codigo_proyecto: '202605017',
+        codigo_orden: '202605017_0501',
+        proyecto: 'Proyecto 202605017',
+        etapa: 'Fabricación',
+        status: 'en_proceso'
+      });
+      // 3) Orden histórica comercial aún en Dibujo (pre-fabricación)
+      await fdb.seed('fabricacion_prod/FAB-HIST-DIB-1', {
+        id: 'FAB-HIST-DIB-1',
+        padre_id: 'PROJ-HIST-1',
+        prospecto_id: 'OPP-HIST-UNPAID',
+        origen_tipo: 'oportunidad',
+        codigo_proyecto: '202605017',
+        codigo_orden: '202605017_0502',
+        proyecto: 'Proyecto 202605017',
+        etapa: 'Dibujo',
+        status: 'pendiente'
+      });
+      // 4) Orden histórica interna en Fabricación
+      await fdb.seed('fabricacion_prod/FAB-HIST-INT-1', {
+        id: 'FAB-HIST-INT-1',
+        padre_id: null,
+        prospecto_id: null,
+        origen_tipo: 'interno',
+        codigo_proyecto: '202512101',
+        codigo_orden: '202512101_1201',
+        proyecto: 'Instituto Retos',
+        etapa: 'Fabricación',
+        status: 'en_proceso'
+      });
+      // 5) Tarea histórica asociada a FAB-HIST-EXEC-1
+      await fdb.seed('fabricacion_tasks_prod/TASK-HIST-1', {
+        id: 'TASK-HIST-1',
+        fabricacion_id: 'FAB-HIST-EXEC-1',
+        station: 'ADL (Piezas Rectas)',
+        status: 'en_proceso'
+      });
+
+      // Paso 1: Ejecutar migración en modo dry-run (solo lectura)
+      const dryRunRes = await runHistoricalFabricationMigration({
+        db: fdb,
+        dbSuffix: '_prod',
+        apply: false
+      });
+      expect(dryRunRes.status).toBe('dry_run_ready');
+      expect(dryRunRes.summary.missingLiberadoBackend).toBe(3);
+      expect(dryRunRes.summary.plannedOrderUpdatesCount).toBe(3);
+      expect(dryRunRes.summary.plannedTaskUpdatesCount).toBe(1);
+      // Confirmar que dry-run no mutó documentos
+      expect((await fdb.collection('fabricacion_prod').doc('FAB-HIST-EXEC-1').get()).data().excepcion_legado_verificada).toBeUndefined();
+
+      // Paso 2: Aplicar migración auditada
+      const applyRes = await runHistoricalFabricationMigration({
+        db: fdb,
+        dbSuffix: '_prod',
+        apply: true,
+        confirmMigration: true
+      });
+      expect(applyRes.status).toBe('migrated');
+      expect(applyRes.migratedOrdersCount).toBe(3);
+
+      const histExecAfter = (await fdb.collection('fabricacion_prod').doc('FAB-HIST-EXEC-1').get()).data();
+      expect(histExecAfter.excepcion_legado_verificada).toBe(true);
+      expect(histExecAfter.origen_excepcion_legado).toBe('MIGRACION_HISTORICA_PRE_COMPUERTA');
+      // Regla crítica Bloque 4.1: NUNCA asignar liberado_a_fabricacion_backend: true a órdenes históricas
+      expect(histExecAfter.liberado_a_fabricacion_backend).toBe(false);
+      expect(histExecAfter.estado_habilitacion_fabricacion).toBe('EXCEPCION_HISTORIA_PREEXISTENTE');
+
+      // Paso 3: Orden histórica ya iniciada en Fabricación puede ejecutar despacho parcial (continuidad operativa)
+      // sin recibir liberado_a_fabricacion_backend: true y conservando su origen histórico
+      const splitRes = await wf.validateAndAuthorizeFabricationOrder({
+        caller: jefeProd,
+        prospectId: 'OPP-HIST-UNPAID',
+        fabProjectId: 'PROJ-HIST-1',
+        fabOrderId: 'FAB-HIST-EXEC-1',
+        codigoProyecto: '202605017',
+        origenTipo: 'oportunidad',
+        stageTransition: 'despacho_parcial_split',
+        orderUpdate: {
+          codigo_orden: '202605017_0501-B',
+          etapa: 'Despacho'
+        },
+        splitOrderPayload: {
+          id: 'FAB-HIST-EXEC-1-SPLIT',
+          codigo_orden: '202605017_0501-A',
+          proyecto: 'Proyecto 202605017',
+          etapa: 'Fabricación'
+        },
+        taskUpdates: [
+          { id: 'TASK-HIST-1', changes: { fabricacion_id: 'FAB-HIST-EXEC-1-SPLIT', codigo_orden: '202605017_0501-A' } }
+        ]
+      });
+      expect(splitRes.status).toBe('authorized_legacy_continuity');
+      expect(splitRes.ready).toBe(true);
+
+      const parentSplitDoc = (await fdb.collection('fabricacion_prod').doc('FAB-HIST-EXEC-1').get()).data();
+      const childSplitDoc = (await fdb.collection('fabricacion_prod').doc('FAB-HIST-EXEC-1-SPLIT').get()).data();
+      expect(parentSplitDoc.liberado_a_fabricacion_backend).toBe(false);
+      expect(parentSplitDoc.excepcion_legado_verificada).toBe(true);
+      expect(childSplitDoc.liberado_a_fabricacion_backend).toBe(false);
+      expect(childSplitDoc.excepcion_legado_verificada).toBe(true);
+      expect(childSplitDoc.origen_excepcion_legado).toBe('MIGRACION_HISTORICA_PRE_COMPUERTA');
+
+      // Paso 4: Impedir utilizar la excepción de legado para liberar una orden en Dibujo sin anticipo o crear una nueva orden comercial sin anticipo
+      await expect(wf.validateAndAuthorizeFabricationOrder({
+        caller: jefeProd,
+        prospectId: 'OPP-HIST-UNPAID',
+        fabProjectId: 'PROJ-HIST-1',
+        fabOrderId: 'FAB-HIST-DIB-1',
+        codigoProyecto: '202605017',
+        origenTipo: 'oportunidad',
+        stageTransition: 'liberar_dibujo_a_fabricacion',
+        orderUpdate: { etapa: 'Fabricación', excepcion_legado_verificada: true }
+      })).rejects.toMatchObject({
+        code: 'failed-precondition',
+        details: expect.objectContaining({ errorCode: 'ANTICIPO_PENDIENTE' })
+      });
+
+      await expect(wf.validateAndAuthorizeFabricationOrder({
+        caller: jefeProd,
+        prospectId: 'OPP-HIST-UNPAID',
+        fabProjectId: 'PROJ-HIST-1',
+        fabOrderId: 'FAB-HIST-NEW-ABUSE',
+        codigoProyecto: '202605017',
+        origenTipo: 'oportunidad',
+        stageTransition: 'crear_orden_hijo',
+        orderPayload: {
+          id: 'FAB-HIST-NEW-ABUSE',
+          padre_id: 'PROJ-HIST-1',
+          etapa: 'Dibujo',
+          excepcion_legado_verificada: true,
+          origen_excepcion_legado: 'FAKE_CLIENT_FLAG'
+        }
+      })).rejects.toMatchObject({
+        code: 'failed-precondition',
+        details: expect.objectContaining({ errorCode: 'ANTICIPO_PENDIENTE' })
+      });
+
+      // Paso 5: Probar procedimiento de rollback completo sobre las órdenes originales migradas
+      const rollbackRes = await runHistoricalFabricationMigration({
+        db: fdb,
+        dbSuffix: '_prod',
+        rollback: true,
+        rollbackManifest: applyRes.rollbackManifest
+      });
+      expect(rollbackRes.status).toBe('rolled_back');
+      const dibAfterRollback = (await fdb.collection('fabricacion_prod').doc('FAB-HIST-DIB-1').get()).data();
+      expect(dibAfterRollback.excepcion_legado_verificada).toBeUndefined();
+      expect(dibAfterRollback.origen_excepcion_legado).toBeUndefined();
+    });
+
+    test('B9. Flujo integrado completo (Bloque 5): Presupuesto en Negociación (SLA pausado) -> Reclasificación a Ejecución (SLA reanudado) -> Cierre sin CCF -> Anticipo con retención 1% -> Liberación a Fabricación', async () => {
+      const followupCalc = require('../crm_followup_calc');
+      const { fdb, service, wf, caller } = makeEnv();
+      const vendedor = caller('vendedor', 'VEND-INT-1', 'Vendedor Integrado');
+      const gestor = caller('gestor', 'GESTOR-1', 'Gestor Financiero');
+      const jefeProd = caller('jefe_produccion', 'JEFE-PROD-1', 'Jefe Planta');
+
+      await fdb.seed('clients_prod/CLI-INT-GRAN', {
+        ...baseClient,
+        id: 'CLI-INT-GRAN',
+        tipo: 'juridica',
+        empresa: 'CONSTRUCTORA INTEGRAL S.A. DE C.V.',
+        nit: '0614-010190-101-1',
+        nrc: '12345-6',
+        giro: 'Construcción',
+        direccion: 'San Salvador',
+        contacto: 'Ing. Roberto Gómez',
+        telefono: '2222-3333',
+        email: 'roberto@integral.com.sv',
+        correo: 'roberto@integral.com.sv',
+        correo_fact: 'facturacion@integral.com.sv',
+        correo_facturacion: 'facturacion@integral.com.sv',
+        is_gran_contribuyente: true,
+        categoria_contribuyente: 'gran_contribuyente',
+        es_exportacion: false,
+        documentos: {
+          dui: fileObj('dui_rep.pdf', 'clientes'),
+          nit: fileObj('nit.pdf', 'clientes'),
+          nrc: fileObj('nrc.pdf', 'clientes')
+        }
+      });
+
+      // 1. Oportunidad clasificada como Presupuesto en etapa Cotización
+      await fdb.seed('prospects_prod/OPP-E2E-1', {
+        id: 'OPP-E2E-1',
+        codigo: '202611555',
+        proyecto: 'SISTEMA HVAC TORRE INTEGRAL',
+        clientId: 'CLI-INT-GRAN',
+        vendedorId: 'VEND-INT-1',
+        createdBy: 'VEND-INT-1',
+        estado: 'activo',
+        etapa: 'cotizacion',
+        clasificacion: 'presupuesto',
+        tipo_proyecto: 'Fabricación',
+        precio_cotizado: 10000,
+        costo_venta: 6500,
+        margen_esperado: 35,
+        fecha_creacion: '2026-09-01T10:00:00.000Z',
+        stage_timestamps: {
+          prospecto: '2026-09-01T10:00:00.000Z',
+          levantamiento: '2026-09-02T10:00:00.000Z',
+          cotizacion: '2026-09-03T10:00:00.000Z'
+        },
+        tiempos_etapas_acumulados: {
+          prospecto: 1,
+          levantamiento: 1
+        },
+        datos: {
+          doc_diseno: [fileObj('diseno.pdf', 'proyectos')],
+          doc_costos: [fileObj('costos.xlsx', 'proyectos')],
+          doc_oferta: [fileObj('oferta.pdf', 'proyectos')],
+          codigo_oferta: 'OF-202611555',
+          encargado: 'Ing. Diseño'
+        },
+        propuestas: [{ fecha: '2026-09-03T10:00:00.000Z', nota: 'Propuesta inicial enviada' }],
+        seguimientos: [{ fecha: '2026-09-03', nota: 'Envío de oferta' }],
+        logs: []
+      });
+
+      // 2. Avanzar a Negociación -> el SLA operativo debe pausarse por ser Presupuesto
+      const advNeg = await wf.advanceStage({
+        caller: vendedor,
+        prospectId: 'OPP-E2E-1',
+        nextStage: 'negociacion',
+        data: {
+          costo_venta: 6500,
+          precio_cotizado: 10000,
+          probabilidad: 'alta'
+        }
+      });
+      expect(advNeg.status).toBe('advanced');
+
+      const pInNegBudget = (await fdb.collection('prospects_prod').doc('OPP-E2E-1').get()).data();
+      expect(pInNegBudget.etapa).toBe('negociacion');
+      expect(pInNegBudget.sla_estado).toBe('pausado_presupuesto');
+      expect(pInNegBudget.sla_pausado_en).toBeTruthy();
+
+      const slaPaused = followupCalc.calculateStageSla(pInNegBudget, new Date(Date.now() + 90 * 86400000));
+      expect(slaPaused.slaPaused).toBe(true);
+      expect(slaPaused.elapsedBusinessDays).toBe(0);
+      expect(slaPaused.isOverdue).toBe(false);
+
+      // 3. Reclasificar de Presupuesto a Ejecución mientras está en Negociación -> reanuda SLA desde el cambio
+      const reclassRes = await service.reclassifyProspect({
+        caller: vendedor,
+        prospectId: 'OPP-E2E-1',
+        clasificacion: 'ejecucion',
+        motivo: 'Cliente aprobó presupuesto y solicitó ejecución inmediata',
+        opId: 'OP-RECLASS-E2E-1'
+      });
+      expect(reclassRes.status).toBe('reclassified');
+      expect(reclassRes.clasificacion).toBe('ejecucion');
+      expect(reclassRes.sla_estado).toBe('activo');
+
+      const pInNegExec = (await fdb.collection('prospects_prod').doc('OPP-E2E-1').get()).data();
+      expect(pInNegExec.sla_pausado_en).toBeNull();
+      expect(pInNegExec.fecha_reactivacion_ejecucion).toBeTruthy();
+
+      // 4. Avanzar a Cierre y finalizar como Ganado SIN requerir CCF
+      await wf.advanceStage({
+        caller: vendedor,
+        prospectId: 'OPP-E2E-1',
+        nextStage: 'cierre',
+        data: {
+          forma_pago: '50/50',
+          doc_firmado: fileObj('contrato_firmado.pdf', 'proyectos')
+        }
+      });
+      const finRes = await wf.finalizeProspect({
+        caller: vendedor,
+        prospectId: 'OPP-E2E-1',
+        data: {
+          forma_pago: '50/50'
+        },
+        opId: 'OP-FIN-E2E-1'
+      });
+      expect(finRes.status).toBe('finalized');
+
+      // 5. Intentar enviar a fabricación sin CCF ni anticipo -> bloqueado
+      await expect(wf.sendProspectToFabrication({
+        caller: jefeProd,
+        prospectId: 'OPP-E2E-1'
+      })).rejects.toMatchObject({
+        code: 'failed-precondition',
+        details: expect.objectContaining({ errorCode: 'ANTICIPO_PENDIENTE' })
+      });
+
+      // 6. Emitir CCF de anticipo ($5,650.00 con IVA; base sin IVA = $5,000.00; retención 1% = $50.00; transferencia = $5,600.00)
+      const invRes = await wf.saveInvoice({
+        caller: gestor,
+        prospectId: 'OPP-E2E-1',
+        opId: 'OP-INV-E2E-1',
+        numero: 'CCF-E2E-555',
+        monto: 5650,
+        es_anticipo: true,
+        doc_factura: fileObj('ccf_555.pdf')
+      });
+      const invId = invRes.invoice.id;
+
+      // Pago parcial (solo transferencia $5,600.00, falta retención $50.00) -> sigue bloqueado para fabricar
+      await wf.savePayment({
+        caller: gestor,
+        prospectId: 'OPP-E2E-1',
+        invoiceId: invId,
+        opId: 'OP-PAY-E2E-CASH',
+        monto: 5600,
+        metodo: 'transferencia',
+        ref: 'TRX-E2E-555',
+        doc_comprobante: fileObj('trx_555.pdf')
+      });
+      await expect(wf.sendProspectToFabrication({
+        caller: jefeProd,
+        prospectId: 'OPP-E2E-1'
+      })).rejects.toThrow(/saldo pendiente de US\$50\.00/);
+
+      // Registrar retención 1% ($50.00) -> 100% anticipo confirmado ($5,650.00) -> habilita envío y liberación a Fabricación
+      await wf.savePayment({
+        caller: gestor,
+        prospectId: 'OPP-E2E-1',
+        invoiceId: invId,
+        opId: 'OP-PAY-E2E-RET',
+        monto: 50,
+        metodo: 'retencion_1pct',
+        ref: 'RET-E2E-555',
+        doc_comprobante: fileObj('ret_555.pdf')
+      });
+
+      const sendFabRes = await wf.sendProspectToFabrication({
+        caller: jefeProd,
+        prospectId: 'OPP-E2E-1'
+      });
+      expect(sendFabRes.status).toBe('sent');
+      expect(sendFabRes.readiness.estadoHabilitacion).toBe('ANTICIPO_CONFIRMADO');
+    });
   });
 });

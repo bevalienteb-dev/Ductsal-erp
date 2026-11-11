@@ -4472,8 +4472,22 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         }
       }
 
+      const isVerifiedLegacyOrder = Boolean(
+        orderData &&
+        orderData.excepcion_legado_verificada === true &&
+        typeof orderData.origen_excepcion_legado === 'string' &&
+        orderData.origen_excepcion_legado.trim().length > 0
+      );
+      const isVerifiedLegacyInternalOrder = Boolean(
+        isVerifiedLegacyOrder &&
+        String(orderData.origen_tipo || '').trim().toLowerCase() === 'interno' &&
+        !storedOrderProspectId &&
+        !storedProjProspectId &&
+        !codeMatchedProspectId
+      );
+
       let nameMatchedProspectId = '';
-      if (!storedOrderProspectId && !storedProjProspectId && !codeMatchedProspectId && effectiveNombreProyecto) {
+      if (!isVerifiedLegacyInternalOrder && !storedOrderProspectId && !storedProjProspectId && !codeMatchedProspectId && effectiveNombreProyecto) {
         const nameQuerySnap = await tx.get(col('prospects').where('proyecto', '==', effectiveNombreProyecto).limit(5));
         const activeNameMatches = nameQuerySnap.docs.filter(d => {
           const pd = d.data() || {};
@@ -4526,7 +4540,43 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       const resolvedProspectId = storedOrderProspectId || storedProjProspectId || codeMatchedProspectId || nameMatchedProspectId || callerProspectId;
 
+      // Prevención de duplicados y clasificación de transición
+      const isCreateProjectTransition = Boolean(
+        cleanTransition === 'crear_proyecto_manual' || (projectPayload && typeof projectPayload === 'object')
+      );
+      const isCreateOrderTransition = Boolean(
+        cleanTransition === 'crear_orden_hijo' ||
+        cleanTransition === 'crear_orden_unica_manual' ||
+        (orderPayload && typeof orderPayload === 'object')
+      );
+      const isReleaseToFabTransition = Boolean(
+        cleanTransition === 'liberar_dibujo_a_fabricacion'
+      );
+      const isPrevalidateReleaseTransition = Boolean(
+        cleanTransition === 'prevalidar_dibujo_a_fabricacion'
+      );
+      const isPartialDispatchSplit = Boolean(
+        cleanTransition === 'despacho_parcial_split' && splitOrderPayload && typeof splitOrderPayload === 'object'
+      );
+
+      // Continuidad operativa para órdenes ya iniciadas en planta (`Fabricación`, `Quality Control`, `Control de Calidad`, `Despacho`, `Entregado`)
+      // que cuentan con liberación backend previa o excepción de legado verificada, únicamente para partición operativa de despacho parcial (`despacho_parcial_split`).
+      // NUNCA aplica a creación de proyectos/órdenes nuevas ni a liberación `Dibujo -> Fabricación`.
+      const isInExecutionContinuityOp = Boolean(
+        isPartialDispatchSplit &&
+        !isCreateProjectTransition &&
+        !isCreateOrderTransition &&
+        !isReleaseToFabTransition &&
+        !isPrevalidateReleaseTransition &&
+        orderSnap &&
+        orderSnap.exists &&
+        ['Fabricación', 'Quality Control', 'Control de Calidad', 'Despacho', 'Entregado'].includes(String(orderData.etapa || '').trim()) &&
+        (orderData.liberado_a_fabricacion_backend === true || isVerifiedLegacyOrder) &&
+        orderData.bloqueado_avance_etapa !== true
+      );
+
       let readiness = null;
+      let inExecutionEval = null;
       let targetProspectData = null;
       let targetClientData = null;
       if (resolvedProspectId) {
@@ -4535,7 +4585,19 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           targetProspectData = pSnapCheck.data() || {};
           targetClientData = await loadClient(tx, targetProspectData);
         }
-        readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: resolvedProspectId });
+        if (isInExecutionContinuityOp) {
+          if (targetProspectData) {
+            inExecutionEval = evaluateManufacturingReadiness({
+              p: { ...targetProspectData, id: resolvedProspectId },
+              client: targetClientData
+            });
+            if (inExecutionEval.ready) {
+              readiness = inExecutionEval;
+            }
+          }
+        } else {
+          readiness = await assertManufacturingReadyTx(tx, { caller, prospectId: resolvedProspectId });
+        }
         if (payloadCode && targetProspectData) {
           const realCode = String(targetProspectData.codigo || '').trim();
           if (realCode && payloadCode !== realCode && payloadCode !== resolvedProspectId) {
@@ -4570,7 +4632,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       // Si el proyecto u orden tenía registrada una discrepancia financiera activa y no se resolvió una oportunidad lista, bloquear
-      if (!readiness && (
+      // (salvo operaciones de continuidad en órdenes ya en ejecución que no tienen bloqueado_avance_etapa).
+      if (!readiness && !isInExecutionContinuityOp && (
         (projData && (projData.discrepancia_financiera === true || projData.bloqueado_nuevas_ordenes === true)) ||
         (orderData && (orderData.discrepancia_financiera === true || orderData.bloqueado_avance_etapa === true))
       )) {
@@ -4580,25 +4643,6 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           { fabProjectId: cleanProjId || null, fabOrderId: cleanOrderId || null }
         );
       }
-
-      // Prevención de duplicados por tipo de transición
-      const isCreateProjectTransition = Boolean(
-        cleanTransition === 'crear_proyecto_manual' || (projectPayload && typeof projectPayload === 'object')
-      );
-      const isCreateOrderTransition = Boolean(
-        cleanTransition === 'crear_orden_hijo' ||
-        cleanTransition === 'crear_orden_unica_manual' ||
-        (orderPayload && typeof orderPayload === 'object')
-      );
-      const isReleaseToFabTransition = Boolean(
-        cleanTransition === 'liberar_dibujo_a_fabricacion'
-      );
-      const isPrevalidateReleaseTransition = Boolean(
-        cleanTransition === 'prevalidar_dibujo_a_fabricacion'
-      );
-      const isPartialDispatchSplit = Boolean(
-        cleanTransition === 'despacho_parcial_split' && splitOrderPayload && typeof splitOrderPayload === 'object'
-      );
 
       if (isCreateProjectTransition) {
         if (!cleanProjId) throw bad('Debe especificar el identificador del proyecto de fabricación');
@@ -4689,21 +4733,46 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       let writtenOrder = null;
       let writtenTasksCount = 0;
 
+      const stripFabProtectedPayloadFields = (rawObj) => {
+        if (!rawObj || typeof rawObj !== 'object') return {};
+        const clean = { ...rawObj };
+        delete clean.autorizado_backend;
+        delete clean.autorizado_en;
+        delete clean.autorizado_por;
+        delete clean.liberado_a_fabricacion_backend;
+        delete clean.liberado_a_fabricacion_en;
+        delete clean.liberado_a_fabricacion_por;
+        delete clean.estado_habilitacion_fabricacion;
+        delete clean.discrepancia_financiera;
+        delete clean.discrepancia_financiera_detalle;
+        delete clean.bloqueado_avance_etapa;
+        delete clean.bloqueado_nuevas_ordenes;
+        delete clean.excepcion_legado_verificada;
+        delete clean.origen_excepcion_legado;
+        delete clean.fecha_excepcion_legado;
+        delete clean.autorizado_excepcion_legado_por;
+        delete clean.creada_en_backend;
+        delete clean.creado_en_backend;
+        delete clean.creado_por_backend;
+        return clean;
+      };
+
       // 3a. Creación de proyecto manual en `proyectos_fabricacion`
       if (isCreateProjectTransition && projectPayload && typeof projectPayload === 'object') {
+        const cleanProjectPayload = stripFabProtectedPayloadFields(projectPayload);
         const projDocRef = col('proyectos_fabricacion').doc(cleanProjId);
         writtenProject = {
-          ...projectPayload,
+          ...cleanProjectPayload,
           id: cleanProjId,
-          codigo: (targetProspectData && targetProspectData.codigo) || projectPayload.codigo || effectiveCodigo || `INT-${cleanProjId.slice(-4)}`,
-          nombre_proyecto: (targetProspectData && targetProspectData.proyecto) || projectPayload.nombre_proyecto || effectiveNombreProyecto || 'Sin Nombre',
-          cliente_id: canonicalClientId || projectPayload.cliente_id || 'INTERNO',
-          cliente_nombre: canonicalClientName || projectPayload.cliente_nombre || 'REQUERIMIENTO INTERNO / MANUAL',
+          codigo: (targetProspectData && targetProspectData.codigo) || cleanProjectPayload.codigo || effectiveCodigo || `INT-${cleanProjId.slice(-4)}`,
+          nombre_proyecto: (targetProspectData && targetProspectData.proyecto) || cleanProjectPayload.nombre_proyecto || effectiveNombreProyecto || 'Sin Nombre',
+          cliente_id: canonicalClientId || cleanProjectPayload.cliente_id || 'INTERNO',
+          cliente_nombre: canonicalClientName || cleanProjectPayload.cliente_nombre || 'REQUERIMIENTO INTERNO / MANUAL',
           origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
           prospecto_id: resolvedProspectId || null,
-          estado: projectPayload.estado || 'activo',
-          fecha_creacion: projectPayload.fecha_creacion || nowAt,
-          creado_por: caller.name || projectPayload.creado_por || caller.cid || caller.uid,
+          estado: cleanProjectPayload.estado || 'activo',
+          fecha_creacion: cleanProjectPayload.fecha_creacion || nowAt,
+          creado_por: caller.name || cleanProjectPayload.creado_por || caller.cid || caller.uid,
           creado_por_cid: caller.cid || caller.uid,
           creado_por_rol: caller.role,
           autorizado_backend: true,
@@ -4749,18 +4818,19 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       // 3b. Creación de orden en `fabricacion` (siempre inicia en Dibujo o Recepción, nunca directo en Fabricación)
       if (isCreateOrderTransition && orderPayload && typeof orderPayload === 'object') {
-        const requestedEtapa = String(orderPayload.etapa || 'Dibujo').trim();
+        const cleanOrderPayload = stripFabProtectedPayloadFields(orderPayload);
+        const requestedEtapa = String(cleanOrderPayload.etapa || 'Dibujo').trim();
         const safeInitialEtapa = ['Recepción', 'Dibujo'].includes(requestedEtapa) ? requestedEtapa : 'Dibujo';
         const ordDocRef = col('fabricacion').doc(cleanOrderId);
         writtenOrder = {
-          ...orderPayload,
+          ...cleanOrderPayload,
           id: cleanOrderId,
-          padre_id: cleanProjId || orderPayload.padre_id || null,
+          padre_id: cleanProjId || cleanOrderPayload.padre_id || null,
           prospecto_id: resolvedProspectId || null,
           origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
-          codigo_proyecto: (targetProspectData && targetProspectData.codigo) || (projData && projData.codigo) || orderPayload.codigo_proyecto || effectiveCodigo || '',
+          codigo_proyecto: (targetProspectData && targetProspectData.codigo) || (projData && projData.codigo) || cleanOrderPayload.codigo_proyecto || effectiveCodigo || '',
           etapa: safeInitialEtapa,
-          status: orderPayload.status || 'pendiente',
+          status: cleanOrderPayload.status || 'pendiente',
           estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
           autorizado_backend: true,
           autorizado_en: nowAt,
@@ -4778,7 +4848,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       // 3c. Liberación de `Dibujo -> Fabricación` y creación/reactivación de tareas en `fabricacion_tasks`
       if (isReleaseToFabTransition && orderSnap && orderSnap.exists) {
-        const sanitizedOrderUpdate = (orderUpdate && typeof orderUpdate === 'object') ? { ...orderUpdate } : {};
+        const sanitizedOrderUpdate = stripFabProtectedPayloadFields(orderUpdate);
         delete sanitizedOrderUpdate.id;
         writtenOrder = {
           ...orderData,
@@ -4820,7 +4890,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         } else if (Array.isArray(tasks) && tasks.length > 0) {
           const seenTaskIds = new Set();
           for (let i = 0; i < tasks.length; i++) {
-            const rawTask = asObject(tasks[i], `Tarea ${i + 1}`);
+            const rawTask = stripFabProtectedPayloadFields(asObject(tasks[i], `Tarea ${i + 1}`));
             const tId = reqDocId(String(rawTask.id || `${cleanOrderId}_T${i + 1}`).trim(), `Tarea ${i + 1}: id`);
             if (seenTaskIds.has(tId)) {
               throw bad(`Tarea duplicada en el lote de liberación (${tId})`);
@@ -4855,7 +4925,44 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
 
       // 3d. Partición de orden por despacho parcial (`despacho_parcial_split`)
       if (isPartialDispatchSplit && orderSnap && orderSnap.exists) {
-        const sanitizedParentUpdate = (orderUpdate && typeof orderUpdate === 'object') ? { ...orderUpdate } : {};
+        const sanitizedParentUpdate = stripFabProtectedPayloadFields(orderUpdate);
+        const sanitizedSplitPayload = stripFabProtectedPayloadFields(splitOrderPayload);
+        const preserveLegacyOnly = Boolean(isVerifiedLegacyOrder && orderData.liberado_a_fabricacion_backend !== true);
+        const effectiveSplitStatus = readiness
+          ? 'ANTICIPO_CONFIRMADO'
+          : (preserveLegacyOnly
+            ? (orderData.estado_habilitacion_fabricacion || 'EXCEPCION_HISTORIA_PREEXISTENTE')
+            : (resolvedProspectId
+              ? (orderData.estado_habilitacion_fabricacion || 'ANTICIPO_PENDIENTE')
+              : 'ORDEN_INTERNA_NO_COMERCIAL'));
+        const effectiveDiscrepancy = readiness ? false : Boolean(orderData.discrepancia_financiera);
+
+        const sharedAuthMeta = preserveLegacyOnly
+          ? {
+            estado_habilitacion_fabricacion: effectiveSplitStatus,
+            autorizado_backend: Boolean(orderData.autorizado_backend),
+            liberado_a_fabricacion_backend: false,
+            excepcion_legado_verificada: true,
+            origen_excepcion_legado: orderData.origen_excepcion_legado,
+            fecha_excepcion_legado: orderData.fecha_excepcion_legado || null,
+            autorizado_excepcion_legado_por: orderData.autorizado_excepcion_legado_por || null,
+            discrepancia_financiera: effectiveDiscrepancy,
+            bloqueado_avance_etapa: false
+          }
+          : {
+            estado_habilitacion_fabricacion: effectiveSplitStatus,
+            autorizado_backend: true,
+            liberado_a_fabricacion_backend: true,
+            discrepancia_financiera: effectiveDiscrepancy,
+            bloqueado_avance_etapa: false,
+            ...(isVerifiedLegacyOrder ? {
+              excepcion_legado_verificada: true,
+              origen_excepcion_legado: orderData.origen_excepcion_legado,
+              fecha_excepcion_legado: orderData.fecha_excepcion_legado || null,
+              autorizado_excepcion_legado_por: orderData.autorizado_excepcion_legado_por || null
+            } : {})
+          };
+
         writtenOrder = {
           ...orderData,
           ...sanitizedParentUpdate,
@@ -4863,30 +4970,27 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           padre_id: orderData.padre_id || cleanProjId || null,
           prospecto_id: resolvedProspectId || null,
           origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
-          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
-          autorizado_backend: true,
-          liberado_a_fabricacion_backend: true
+          ...sharedAuthMeta
         };
         tx.set(orderSnap.ref, writtenOrder);
 
         const splitRef = col('fabricacion').doc(cleanSplitOrderId);
         tx.set(splitRef, {
-          ...splitOrderPayload,
+          ...sanitizedSplitPayload,
           id: cleanSplitOrderId,
           padre_id: orderData.padre_id || cleanProjId || null,
           prospecto_id: resolvedProspectId || null,
           origen_tipo: resolvedProspectId ? 'oportunidad' : 'interno',
-          estado_habilitacion_fabricacion: resolvedProspectId ? 'ANTICIPO_CONFIRMADO' : 'ORDEN_INTERNA_NO_COMERCIAL',
-          autorizado_backend: true,
-          liberado_a_fabricacion_backend: true,
+          ...sharedAuthMeta,
           creado_en_backend: nowAt
         });
 
         if (Array.isArray(taskUpdates)) {
           for (const tu of taskUpdates) {
             if (tu && tu.id && tu.changes && typeof tu.changes === 'object') {
+              const safeTaskChanges = stripFabProtectedPayloadFields(tu.changes);
               const tRef = col('fabricacion_tasks').doc(reqDocId(String(tu.id), 'taskUpdate.id'));
-              tx.update(tRef, tu.changes);
+              tx.update(tRef, safeTaskChanges);
               writtenTasksCount++;
             }
           }
@@ -4911,6 +5015,39 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           status: 'authorized',
           authorized: true,
           origenTipo: 'oportunidad',
+          stageTransition: cleanTransition,
+          fabProjectId: cleanProjId || null,
+          fabOrderId: cleanOrderId || null,
+          project: writtenProject,
+          order: writtenOrder,
+          writtenTasksCount
+        };
+      }
+
+      if (isInExecutionContinuityOp && (isVerifiedLegacyOrder || resolvedProspectId)) {
+        const continuityCode = isVerifiedLegacyOrder && (!orderData || orderData.liberado_a_fabricacion_backend !== true)
+          ? 'EXCEPCION_HISTORIA_PREEXISTENTE'
+          : 'CONTINUIDAD_ORDEN_EN_EJECUCION';
+        addAudit(tx, caller, 'validateAndAuthorizeFabricationOrderContinuity', resolvedProspectId || cleanOrderId || 'HISTORICO', {
+          ready: true,
+          continuityCode,
+          excepcionLegadoVerificada: isVerifiedLegacyOrder,
+          origenExcepcionLegado: (orderData && orderData.origen_excepcion_legado) || null,
+          discrepanciaFinancieraActiva: Boolean(orderData && orderData.discrepancia_financiera),
+          stageTransition: cleanTransition,
+          fabProjectId: cleanProjId || null,
+          fabOrderId: cleanOrderId || null,
+          writtenTasksCount
+        });
+        return {
+          status: isVerifiedLegacyOrder ? 'authorized_legacy_continuity' : 'authorized_in_execution_continuity',
+          authorized: true,
+          ready: true,
+          code: continuityCode,
+          estadoHabilitacion: continuityCode,
+          excepcionLegadoVerificada: isVerifiedLegacyOrder,
+          origenExcepcionLegado: (orderData && orderData.origen_excepcion_legado) || null,
+          origenTipo: resolvedProspectId ? 'oportunidad' : 'interno',
           stageTransition: cleanTransition,
           fabProjectId: cleanProjId || null,
           fabOrderId: cleanOrderId || null,

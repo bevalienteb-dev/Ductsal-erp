@@ -215,7 +215,11 @@ service cloud.firestore {
         && request.resource.data.get('autorizado_backend', null) == resource.data.get('autorizado_backend', null)
         && request.resource.data.get('liberado_a_fabricacion_backend', null) == resource.data.get('liberado_a_fabricacion_backend', null)
         && request.resource.data.get('discrepancia_financiera', false) == resource.data.get('discrepancia_financiera', false)
-        && request.resource.data.get('bloqueado_avance_etapa', false) == resource.data.get('bloqueado_avance_etapa', false);
+        && request.resource.data.get('bloqueado_avance_etapa', false) == resource.data.get('bloqueado_avance_etapa', false)
+        && request.resource.data.get('excepcion_legado_verificada', null) == resource.data.get('excepcion_legado_verificada', null)
+        && request.resource.data.get('origen_excepcion_legado', null) == resource.data.get('origen_excepcion_legado', null)
+        && request.resource.data.get('fecha_excepcion_legado', null) == resource.data.get('fecha_excepcion_legado', null)
+        && request.resource.data.get('autorizado_excepcion_legado_por', null) == resource.data.get('autorizado_excepcion_legado_por', null);
     }
     function fabOrderOperationalUpdateAllowed() {
       return fabOrderProtectedFieldsUnchanged()
@@ -231,6 +235,15 @@ service cloud.firestore {
           || (
             !(resource.data.get('etapa', '') in ['', 'Recepción', 'Dibujo'])
             && (isManager() || isPlant())
+            && !(request.resource.data.get('etapa', '') in ['', 'Recepción', 'Dibujo'])
+            && (
+              resource.data.get('liberado_a_fabricacion_backend', false) == true
+              || (
+                resource.data.get('excepcion_legado_verificada', false) == true
+                && resource.data.get('origen_excepcion_legado', null) is string
+                && resource.data.get('origen_excepcion_legado', '').size() > 0
+              )
+            )
           )
         );
     }
@@ -245,7 +258,9 @@ service cloud.firestore {
       allow create: if false;
       allow update: if (isManager() || isPlant())
         && request.resource.data.get('fabricacion_id', null) == resource.data.get('fabricacion_id', null)
-        && request.resource.data.get('creada_en_backend', null) == resource.data.get('creada_en_backend', null);
+        && request.resource.data.get('creada_en_backend', null) == resource.data.get('creada_en_backend', null)
+        && request.resource.data.get('excepcion_legado_verificada', null) == resource.data.get('excepcion_legado_verificada', null)
+        && request.resource.data.get('origen_excepcion_legado', null) == resource.data.get('origen_excepcion_legado', null);
       allow delete: if isManager() || isJefe();
     }
     match /proyectos_fabricacion_prod/{docId} {
