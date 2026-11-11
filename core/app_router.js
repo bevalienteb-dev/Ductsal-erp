@@ -20,10 +20,11 @@
         root.AppRouter = api;
         if (typeof window !== 'undefined') {
             window.AppRouter = api;
-            // Exponer showView, saveListScrollPosition, restoreListScrollPosition en window para compatibilidad
+            // Exponer showView, saveListScrollPosition, restoreListScrollPosition, scrollDetailViewToTop en window para compatibilidad
             window.showView = function (viewId, options) { return api.showView(viewId, options); };
             window.saveListScrollPosition = function (opts) { return api.saveListScrollPosition(opts); };
             window.restoreListScrollPosition = function (opts) { return api.restoreListScrollPosition(opts); };
+            window.scrollDetailViewToTop = function (viewId, opts) { return api.scrollDetailViewToTop(viewId, opts); };
         }
     }
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this), function () {
@@ -37,6 +38,8 @@
     let _navigationContext = null;
     let _popstateBoundWin = null;
     let _isHandlingPopstate = false;
+    let _pendingRestoreTimeoutId = null;
+    let _pendingDetailResetTimeoutId = null;
 
     function _getAppState() {
         if (typeof _deps !== 'undefined' && typeof _deps.getAppState === 'function') {
@@ -216,11 +219,13 @@
         syncMobileHeader,
         saveListScrollPosition,
         restoreListScrollPosition,
+        scrollDetailViewToTop,
         canUserAccessView,
         resetRouterState,
         getCurrentView: () => _normalizeViewId(_deps.getCurrentView()) || 'list-view',
         getLastViewedSection: () => _normalizeViewId(_deps.getLastViewedSection()) || 'list-view',
         getLastListScrollY: () => _lastListScrollY,
+        getLastMainContentScrollTop: () => _lastMainContentScrollTop,
         getNavigationContext: () => _navigationContext ? { ..._navigationContext } : null
     };
 
@@ -508,16 +513,29 @@
         return found;
     }
 
+    function _clearPendingScrollTimers() {
+        if (_pendingRestoreTimeoutId !== null) {
+            clearTimeout(_pendingRestoreTimeoutId);
+            _pendingRestoreTimeoutId = null;
+        }
+        if (_pendingDetailResetTimeoutId !== null) {
+            clearTimeout(_pendingDetailResetTimeoutId);
+            _pendingDetailResetTimeoutId = null;
+        }
+    }
+
     function saveListScrollPosition(opts = {}) {
         const win = getWin();
         const doc = getDoc();
         if (win) {
-            _lastListScrollY = win.scrollY || win.pageYOffset || (doc && doc.documentElement && doc.documentElement.scrollTop) || 0;
+            _lastListScrollY = win.scrollY || win.pageYOffset || (doc && doc.scrollingElement && doc.scrollingElement.scrollTop) || (doc && doc.documentElement && doc.documentElement.scrollTop) || (doc && doc.body && doc.body.scrollTop) || 0;
         } else {
             _lastListScrollY = 0;
         }
 
-        const mainEl = (doc && typeof doc.querySelector === 'function') ? doc.querySelector('.main-content') : null;
+        const mainEl = (doc && typeof doc.querySelector === 'function')
+            ? (doc.querySelector('.main-content') || (typeof doc.getElementById === 'function' ? doc.getElementById('main-content-container') : null))
+            : null;
         _lastMainContentScrollTop = (mainEl && typeof mainEl.scrollTop === 'number') ? mainEl.scrollTop : 0;
 
         const activeDomView = _getActiveDomViewId(doc);
@@ -560,6 +578,99 @@
         return _lastListScrollY;
     }
 
+    function _applyDetailScrollTop(targetViewId) {
+        const win = getWin();
+        const doc = getDoc();
+        const currentView = _normalizeViewId(_deps.getCurrentView());
+        if (targetViewId && currentView && currentView !== targetViewId && !_isSubViewId(currentView)) {
+            return;
+        }
+        if (win && typeof win.scrollTo === 'function') {
+            try {
+                win.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            } catch (_) {
+                win.scrollTo(0, 0);
+            }
+        }
+        if (doc) {
+            if (doc.scrollingElement) {
+                doc.scrollingElement.scrollTop = 0;
+                if (typeof doc.scrollingElement.scrollLeft === 'number') doc.scrollingElement.scrollLeft = 0;
+            }
+            if (doc.documentElement) {
+                doc.documentElement.scrollTop = 0;
+                if (typeof doc.documentElement.scrollLeft === 'number') doc.documentElement.scrollLeft = 0;
+            }
+            if (doc.body) {
+                doc.body.scrollTop = 0;
+                if (typeof doc.body.scrollLeft === 'number') doc.body.scrollLeft = 0;
+            }
+            if (typeof doc.querySelector === 'function') {
+                const mainEl = doc.querySelector('.main-content');
+                if (mainEl) {
+                    mainEl.scrollTop = 0;
+                    if (typeof mainEl.scrollLeft === 'number') mainEl.scrollLeft = 0;
+                }
+                const appEl = doc.querySelector('.app-container');
+                if (appEl && typeof appEl.scrollTop === 'number') {
+                    appEl.scrollTop = 0;
+                }
+            }
+            if (typeof doc.getElementById === 'function') {
+                const viewEl = targetViewId ? doc.getElementById(targetViewId) : null;
+                if (viewEl && typeof viewEl.scrollTop === 'number') {
+                    viewEl.scrollTop = 0;
+                }
+                if (!targetViewId || targetViewId === 'detail-view') {
+                    const detailEl = doc.getElementById('detail-view');
+                    if (detailEl && typeof detailEl.scrollTop === 'number') detailEl.scrollTop = 0;
+                    const logsEl = doc.getElementById('logs-container');
+                    if (logsEl && typeof logsEl.scrollTop === 'number') logsEl.scrollTop = 0;
+                }
+                if (!targetViewId || targetViewId === 'client-detail-view') {
+                    const cliViewEl = doc.getElementById('client-detail-view');
+                    if (cliViewEl && typeof cliViewEl.scrollTop === 'number') cliViewEl.scrollTop = 0;
+                    const cliContentEl = doc.getElementById('clientDetailContent') || doc.getElementById('client-detail-content');
+                    if (cliContentEl && typeof cliContentEl.scrollTop === 'number') cliContentEl.scrollTop = 0;
+                    const cliFormEl = doc.getElementById('clientForm');
+                    if (cliFormEl && typeof cliFormEl.scrollTop === 'number') cliFormEl.scrollTop = 0;
+                }
+            }
+        }
+    }
+
+    /**
+     * Reinicia hacia el borde superior (scrollTop = 0) todos los contenedores de scroll
+     * del expediente activo (detail-view o client-detail-view) tras su activación y renderizado,
+     * SIN modificar ni sobrescribir _lastListScrollY, _lastMainContentScrollTop ni _navigationContext.
+     */
+    function scrollDetailViewToTop(rawViewId) {
+        const viewId = _normalizeViewId(rawViewId) || _normalizeViewId(_deps.getCurrentView()) || 'detail-view';
+        if (_pendingRestoreTimeoutId !== null) {
+            clearTimeout(_pendingRestoreTimeoutId);
+            _pendingRestoreTimeoutId = null;
+        }
+        if (_pendingDetailResetTimeoutId !== null) {
+            clearTimeout(_pendingDetailResetTimeoutId);
+            _pendingDetailResetTimeoutId = null;
+        }
+        _applyDetailScrollTop(viewId);
+        const win = getWin();
+        const scheduleReset = () => {
+            const cur = _normalizeViewId(_deps.getCurrentView());
+            if (cur === viewId) {
+                _applyDetailScrollTop(viewId);
+            }
+        };
+        if (win && typeof win.requestAnimationFrame === 'function') {
+            win.requestAnimationFrame(scheduleReset);
+        }
+        _pendingDetailResetTimeoutId = setTimeout(() => {
+            _pendingDetailResetTimeoutId = null;
+            scheduleReset();
+        }, 0);
+    }
+
     function _applyScrollAndRowVisibility(targetY, targetMainTop, recordId, recordType) {
         const win = getWin();
         const doc = getDoc();
@@ -568,6 +679,14 @@
                 win.scrollTo({ top: targetY, behavior: 'instant' });
             } catch (_) {
                 win.scrollTo(0, targetY);
+            }
+        }
+        if (doc) {
+            if (doc.scrollingElement && typeof targetY === 'number') {
+                doc.scrollingElement.scrollTop = targetY;
+            }
+            if (doc.documentElement && typeof targetY === 'number') {
+                doc.documentElement.scrollTop = targetY;
             }
         }
         if (doc && typeof doc.querySelector === 'function') {
@@ -608,13 +727,22 @@
         const recordId = (opts && opts.recordId) || ctx.recordId || null;
         const recordType = (opts && opts.recordType) || ctx.recordType || null;
 
+        _clearPendingScrollTimers();
+
         if (win && typeof win.scrollTo === 'function') {
             _applyScrollAndRowVisibility(targetY, targetMainTop, recordId, recordType);
-            const scheduleRestore = () => _applyScrollAndRowVisibility(targetY, targetMainTop, recordId, recordType);
+            const scheduleRestore = () => {
+                const cur = _normalizeViewId(_deps.getCurrentView());
+                if (cur && _isSubViewId(cur)) return;
+                _applyScrollAndRowVisibility(targetY, targetMainTop, recordId, recordType);
+            };
             if (typeof win.requestAnimationFrame === 'function') {
                 win.requestAnimationFrame(scheduleRestore);
             }
-            setTimeout(scheduleRestore, 15);
+            _pendingRestoreTimeoutId = setTimeout(() => {
+                _pendingRestoreTimeoutId = null;
+                scheduleRestore();
+            }, 15);
         }
         return _lastListScrollY;
     }
@@ -623,6 +751,7 @@
     // 8. Reseteo del Router (para Logout o cambio de sesión)
     // -------------------------------------------------------------------------
     function resetRouterState() {
+        _clearPendingScrollTimers();
         _lastListScrollY = 0;
         _lastMainContentScrollTop = 0;
         _navigationContext = null;

@@ -358,10 +358,33 @@
         saveListScrollPosition: (opts) => {
             if (typeof global !== 'undefined' && typeof global.saveListScrollPosition === 'function') return global.saveListScrollPosition(opts);
             if (typeof window !== 'undefined' && typeof window.saveListScrollPosition === 'function') return window.saveListScrollPosition(opts);
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.saveListScrollPosition === 'function') return AppRouter.saveListScrollPosition(opts);
         },
         restoreListScrollPosition: (opts) => {
             if (typeof global !== 'undefined' && typeof global.restoreListScrollPosition === 'function') return global.restoreListScrollPosition(opts);
             if (typeof window !== 'undefined' && typeof window.restoreListScrollPosition === 'function') return window.restoreListScrollPosition(opts);
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.restoreListScrollPosition === 'function') return AppRouter.restoreListScrollPosition(opts);
+        },
+        scrollDetailViewToTop: (viewId, opts) => {
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.scrollDetailViewToTop === 'function') return AppRouter.scrollDetailViewToTop(viewId || 'detail-view', opts);
+            if (typeof global !== 'undefined' && typeof global.scrollDetailViewToTop === 'function') return global.scrollDetailViewToTop(viewId || 'detail-view', opts);
+            if (typeof window !== 'undefined' && typeof window.scrollDetailViewToTop === 'function') return window.scrollDetailViewToTop(viewId || 'detail-view', opts);
+            const win = typeof window !== 'undefined' ? window : null;
+            const doc = typeof document !== 'undefined' ? document : null;
+            if (win && typeof win.scrollTo === 'function') {
+                try { win.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch (_) { win.scrollTo(0, 0); }
+            }
+            if (doc) {
+                if (doc.scrollingElement) doc.scrollingElement.scrollTop = 0;
+                if (doc.documentElement) doc.documentElement.scrollTop = 0;
+                if (doc.body) doc.body.scrollTop = 0;
+                const mainEl = typeof doc.querySelector === 'function' ? doc.querySelector('.main-content') : null;
+                if (mainEl) mainEl.scrollTop = 0;
+                const detailEl = typeof doc.getElementById === 'function' ? doc.getElementById(viewId || 'detail-view') : null;
+                if (detailEl) detailEl.scrollTop = 0;
+                const logsEl = typeof doc.getElementById === 'function' ? doc.getElementById('logs-container') : null;
+                if (logsEl) logsEl.scrollTop = 0;
+            }
         },
         showView: (v, opts) => {
             if (typeof global !== 'undefined' && typeof global.showView === 'function') return global.showView(v, opts);
@@ -573,6 +596,7 @@
     const retryDataListeners = (...args) => _deps.retryDataListeners(...args);
     const saveListScrollPosition = (...args) => _deps.saveListScrollPosition(...args);
     const restoreListScrollPosition = (...args) => _deps.restoreListScrollPosition(...args);
+    const scrollDetailViewToTop = (...args) => _deps.scrollDetailViewToTop(...args);
     const showView = (...args) => _deps.showView(...args);
     const showLoading = (...args) => _deps.showLoading(...args);
     const hideLoading = (...args) => _deps.hideLoading(...args);
@@ -1137,7 +1161,8 @@ function openDetail(id) {
     const activeViewEl = (typeof document !== 'undefined' && typeof document.querySelector === 'function')
         ? document.querySelector('.view-section.active')
         : null;
-    const isAlreadyInDetail = activeViewEl && activeViewEl.id === 'detail-view';
+    const isAlreadyInDetail = Boolean(activeViewEl && activeViewEl.id === 'detail-view');
+    const previousProspectId = currentProspectId;
     currentProspectId = id;
     if (typeof _deps !== 'undefined' && typeof _deps.setCurrentProspectId === 'function') {
         _deps.setCurrentProspectId(id);
@@ -1301,6 +1326,9 @@ function openDetail(id) {
     renderOpportunityParticipants(p);
     renderTracker(p); renderInfo(p); renderLogs(p);
     renderFollowUpSummary(p);
+    if ((!isAlreadyInDetail || previousProspectId !== id || opts.resetScroll === true) && !opts.preserveDetailScroll) {
+        scrollDetailViewToTop('detail-view');
+    }
 }
 
 

@@ -168,6 +168,28 @@
             if (typeof AppRouter !== 'undefined' && typeof AppRouter.restoreListScrollPosition === 'function') return AppRouter.restoreListScrollPosition(opts);
             return 0;
         },
+        scrollDetailViewToTop: (viewId, opts) => {
+            const targetId = viewId || 'client-detail-view';
+            if (typeof AppRouter !== 'undefined' && typeof AppRouter.scrollDetailViewToTop === 'function') return AppRouter.scrollDetailViewToTop(targetId, opts);
+            if (typeof scrollDetailViewToTop === 'function') return scrollDetailViewToTop(targetId, opts);
+            if (typeof window !== 'undefined' && typeof window.scrollDetailViewToTop === 'function') return window.scrollDetailViewToTop(targetId, opts);
+            const win = typeof window !== 'undefined' ? window : null;
+            const doc = typeof document !== 'undefined' ? document : null;
+            if (win && typeof win.scrollTo === 'function') {
+                try { win.scrollTo({ top: 0, left: 0, behavior: 'instant' }); } catch (_) { win.scrollTo(0, 0); }
+            }
+            if (doc) {
+                if (doc.scrollingElement) doc.scrollingElement.scrollTop = 0;
+                if (doc.documentElement) doc.documentElement.scrollTop = 0;
+                if (doc.body) doc.body.scrollTop = 0;
+                const mainEl = typeof doc.querySelector === 'function' ? doc.querySelector('.main-content') : null;
+                if (mainEl) mainEl.scrollTop = 0;
+                const cliViewEl = typeof doc.getElementById === 'function' ? doc.getElementById(targetId) : null;
+                if (cliViewEl) cliViewEl.scrollTop = 0;
+                const cliContentEl = typeof doc.getElementById === 'function' ? (doc.getElementById('clientDetailContent') || doc.getElementById('client-detail-content')) : null;
+                if (cliContentEl) cliContentEl.scrollTop = 0;
+            }
+        },
         showLoading: (msg) => {
             if (typeof showLoading === 'function') return showLoading(msg);
             if (typeof window !== 'undefined' && typeof window.showLoading === 'function') return window.showLoading(msg);
@@ -501,6 +523,13 @@
         // Determinar origen de navegación y preservar contexto de tabla (filtros, búsqueda, orden, scroll, fila)
         const newProspectEl = document.getElementById('newProspectModal');
         const detailViewEl = document.getElementById('detail-view');
+        const clientDetailViewEl = document.getElementById('client-detail-view');
+        const isAlreadyInClientDetail = Boolean(
+            clientDetailViewEl &&
+            clientDetailViewEl.classList &&
+            typeof clientDetailViewEl.classList.contains === 'function' &&
+            clientDetailViewEl.classList.contains('active')
+        );
         const searchInput = document.getElementById('cli-search');
         const currentSearchVal = (searchInput && typeof searchInput.value === 'string') ? searchInput.value : '';
 
@@ -511,6 +540,10 @@
         if (options && options.originView) {
             originView = options.originView;
             originProspectId = options.prospectId || null;
+        } else if (isAlreadyInClientDetail && _clientViewOrigin && _clientViewOrigin.view) {
+            originView = _clientViewOrigin.view;
+            originProspectId = _clientViewOrigin.prospectId || null;
+            fromNewProspect = Boolean(_clientViewOrigin.fromNewProspect);
         } else if (newProspectEl && newProspectEl.style && newProspectEl.style.display === 'block') {
             originView = 'list-view';
             fromNewProspect = true;
@@ -524,15 +557,21 @@
         _clientViewOrigin = {
             view: originView,
             prospectId: originProspectId,
-            clientId: clientId || null,
+            clientId: clientId || (_clientViewOrigin && _clientViewOrigin.clientId) || null,
             fromNewProspect,
-            searchVal: currentSearchVal,
-            sortCol: cliSortCol,
-            sortDir: cliSortDir,
+            searchVal: isAlreadyInClientDetail && _clientViewOrigin && typeof _clientViewOrigin.searchVal === 'string'
+                ? _clientViewOrigin.searchVal
+                : currentSearchVal,
+            sortCol: isAlreadyInClientDetail && _clientViewOrigin && typeof _clientViewOrigin.sortCol === 'string'
+                ? _clientViewOrigin.sortCol
+                : cliSortCol,
+            sortDir: isAlreadyInClientDetail && _clientViewOrigin && typeof _clientViewOrigin.sortDir === 'string'
+                ? _clientViewOrigin.sortDir
+                : cliSortDir,
             page: 1
         };
 
-        if (originView !== 'detail-view' && typeof _deps.saveListScrollPosition === 'function') {
+        if (!isAlreadyInClientDetail && originView !== 'detail-view' && typeof _deps.saveListScrollPosition === 'function') {
             _deps.saveListScrollPosition({
                 originView,
                 recordId: clientId || null,
@@ -734,6 +773,10 @@
         const contentEl = document.getElementById('clientDetailContent');
         if (contentEl && contentEl.style) contentEl.style.display = 'block';
         _navigateView('client-detail-view');
+
+        if (!(options && options.preserveDetailScroll) && typeof _deps.scrollDetailViewToTop === 'function') {
+            _deps.scrollDetailViewToTop('client-detail-view');
+        }
     }
 
     function closeClientDetailView(options = {}) {

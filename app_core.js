@@ -971,7 +971,8 @@ if (typeof _initClientsFn === 'function') {
         closeModal: (id) => (typeof closeModal === 'function' ? closeModal(id) : null),
         renderClosingDocumentationPanel: (prospectId) => (typeof renderClosingDocumentationPanel === 'function' ? renderClosingDocumentationPanel(prospectId) : null),
         saveListScrollPosition: (opts) => (typeof saveListScrollPosition === 'function' ? saveListScrollPosition(opts) : null),
-        restoreListScrollPosition: (opts) => (typeof restoreListScrollPosition === 'function' ? restoreListScrollPosition(opts) : null)
+        restoreListScrollPosition: (opts) => (typeof restoreListScrollPosition === 'function' ? restoreListScrollPosition(opts) : null),
+        scrollDetailViewToTop: (viewId, opts) => (typeof scrollDetailViewToTop === 'function' ? scrollDetailViewToTop(viewId, opts) : null)
     });
 }
 
@@ -1083,6 +1084,7 @@ if (typeof _initOpportunitiesUIFn === 'function') {
         hasEnteredPostclosing: (p) => (typeof hasEnteredPostclosing === 'function' ? hasEnteredPostclosing(p) : !!(p && (p.postcierre_habilitado === true || (p.etapa === 'cierre' && p.estado === 'ganado')))),
         saveListScrollPosition: (opts) => (typeof saveListScrollPosition === 'function' ? saveListScrollPosition(opts) : null),
         restoreListScrollPosition: (opts) => (typeof restoreListScrollPosition === 'function' ? restoreListScrollPosition(opts) : null),
+        scrollDetailViewToTop: (viewId, opts) => (typeof scrollDetailViewToTop === 'function' ? scrollDetailViewToTop(viewId, opts) : null),
         getLastViewedSection: () => (typeof AppRouter !== 'undefined' && typeof AppRouter.getLastViewedSection === 'function' ? AppRouter.getLastViewedSection() : (typeof lastViewedSection === 'string' && lastViewedSection ? lastViewedSection : 'list-view')),
         showView: (v, opts) => (typeof showView === 'function' ? showView(v, opts) : null),
         renderClientContactCard: (p) => (typeof renderClientContactCard === 'function' ? renderClientContactCard(p) : null),
@@ -2445,6 +2447,20 @@ function restoreListScrollPosition() {
         }, 10);
     }
     return lastListScrollY;
+}
+
+function scrollDetailViewToTop(viewId, opts) {
+    if (typeof AppRouter !== 'undefined' && typeof AppRouter.scrollDetailViewToTop === 'function') {
+        return AppRouter.scrollDetailViewToTop(viewId, opts);
+    }
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        try {
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        } catch (e) {
+            window.scrollTo(0, 0);
+        }
+    }
+    return 0;
 }
 
 function goBackFromDetail() {
@@ -4556,6 +4572,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports.AppRouter = typeof AppRouter !== 'undefined' ? AppRouter : undefined;
     module.exports.saveListScrollPosition = typeof saveListScrollPosition !== 'undefined' ? saveListScrollPosition : undefined;
     module.exports.restoreListScrollPosition = typeof restoreListScrollPosition !== 'undefined' ? restoreListScrollPosition : undefined;
+    module.exports.scrollDetailViewToTop = typeof scrollDetailViewToTop !== 'undefined' ? scrollDetailViewToTop : undefined;
 }
 
 if (typeof window !== 'undefined') {
@@ -4608,6 +4625,7 @@ if (typeof window !== 'undefined') {
     window.showView = typeof showView !== 'undefined' ? showView : undefined;
     window.saveListScrollPosition = typeof saveListScrollPosition !== 'undefined' ? saveListScrollPosition : undefined;
     window.restoreListScrollPosition = typeof restoreListScrollPosition !== 'undefined' ? restoreListScrollPosition : undefined;
+    window.scrollDetailViewToTop = typeof scrollDetailViewToTop !== 'undefined' ? scrollDetailViewToTop : undefined;
 }
 
 function showLoseForm() {

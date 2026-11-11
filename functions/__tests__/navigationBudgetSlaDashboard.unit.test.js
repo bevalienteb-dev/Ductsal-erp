@@ -131,7 +131,7 @@ function makeMockDom() {
     'stage-title-text', 'stage-workflow-box', 'stage-tracker', 'btn-advance', 'btn-revert', 'btn-new-proposal', 'btn-lose',
     'detail-time-in-stage', 'detail-last-contact', 'detail-badges', 'info-list', 'docs-list', 'docs-count-badge',
     'logs-container', 'detail-followup-badge', 'detail-followup-summary',
-    'clients-table-body', 'cli-search', 'client-detail-content',
+    'clients-table-body', 'cli-search', 'client-detail-content', 'clientDetailContent', 'clientForm',
     'dash-stagnant-table-body', 'dash-active-times-body', 'dash-stagnant-empty-box', 'dash-stagnant-table-wrapper', 'dash-stagnant-counter-badge',
     'dash-wip-stage-prospecto', 'dash-wip-stage-levantamiento', 'dash-wip-stage-cotizacion', 'dash-wip-stage-negociacion', 'dash-wip-stage-cierre',
     'metric-alertas-count', 'metric-alertas-sub'
@@ -139,8 +139,10 @@ function makeMockDom() {
 
   elements['stage-title-text'].parentElement = makeEl('stage-title-parent');
   const mainContent = makeEl('main-content-container');
+  const appContainer = makeEl('app-container-root');
 
   const doc = {
+    scrollingElement: { scrollTop: 0 },
     documentElement: { scrollTop: 0 },
     body: { scrollTop: 0, classList: { add: () => {}, remove: () => {} } },
     getElementById: (id) => elements[id] || null,
@@ -148,6 +150,7 @@ function makeMockDom() {
     querySelector: (sel) => {
       if (sel === '.view-section.active') return viewSections.find(v => v.classList.contains('active')) || null;
       if (sel === '.main-content') return mainContent;
+      if (sel === '.app-container') return appContainer;
       const m = sel.match(/\[(data-(?:prospect|client)-id="[^"]+")\]/);
       if (m && rowsByAttr[m[1]]) return rowsByAttr[m[1]];
       return null;
@@ -273,6 +276,7 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       getOppSortDir: () => OpportunitiesController.getOppSortDir(),
       saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
       restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts),
       showView: (v, opts) => AppRouter.showView(v, opts),
       getLastViewedSection: () => AppRouter.getLastViewedSection()
     });
@@ -295,9 +299,10 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
     expect(elements['detail-view'].classList.contains('active')).toBe(true);
     expect(AppRouter.getLastViewedSection()).toBe('list-view');
 
-    // Simular que la vista de detalle alteró el scroll a 0
-    global.window.scrollY = 0;
-    mainContent.scrollTop = 0;
+    // Verificar que al abrir el expediente el scroll se restablece automáticamente a 0 sin perder la posición guardada (420)
+    expect(global.window.scrollY).toBe(0);
+    expect(mainContent.scrollTop).toBe(0);
+    expect(AppRouter.getLastListScrollY()).toBe(420);
 
     // 3. Presionar botón Volver
     OpportunitiesUI.goBackFromDetail();
@@ -363,7 +368,8 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       showView: (v, opts) => AppRouter.showView(v, opts),
       getLastViewedSection: () => AppRouter.getLastViewedSection(),
       saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
-      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts)
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts)
     });
 
     AppRouter.initAppRouter({
@@ -389,8 +395,10 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
     expect(elements['client-detail-view'].classList.contains('active')).toBe(true);
     expect(AppRouter.getLastViewedSection()).toBe('clients-view');
 
-    global.window.scrollY = 0;
-    mainContent.scrollTop = 0;
+    // Verificar que al abrir el expediente de cliente el scroll se restablece automáticamente a 0
+    expect(global.window.scrollY).toBe(0);
+    expect(mainContent.scrollTop).toBe(0);
+    expect(AppRouter.getLastListScrollY()).toBe(310);
 
     // 3. Simular navegación con botón Atrás del navegador (popstate) o botón Volver
     expect(typeof popstateHandler).toBe('function');
@@ -483,6 +491,7 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       getOppSortDir: () => OpportunitiesController.getOppSortDir(),
       saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
       restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts),
       showView: (v, opts) => AppRouter.showView(v, opts),
       getLastViewedSection: () => AppRouter.getLastViewedSection()
     });
@@ -495,7 +504,8 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       showView: (v, opts) => AppRouter.showView(v, opts),
       getLastViewedSection: () => AppRouter.getLastViewedSection(),
       saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
-      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts)
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts)
     });
 
     // A) Abrir oportunidad desde el Dashboard y regresar al Dashboard (no a list-view)
@@ -507,8 +517,9 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
     expect(elements['detail-view'].classList.contains('active')).toBe(true);
     expect(AppRouter.getLastViewedSection()).toBe('dashboard-view');
 
-    global.window.scrollY = 0;
-    mainContent.scrollTop = 0;
+    expect(global.window.scrollY).toBe(0);
+    expect(mainContent.scrollTop).toBe(0);
+    expect(AppRouter.getLastListScrollY()).toBe(580);
 
     // Presionar Volver desde una oportunidad abierta en el dashboard
     OpportunitiesUI.goBackFromDetail();
@@ -532,8 +543,8 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
 
     OpportunitiesUI.openDetail('OPP-DASH-2');
     expect(elements['detail-view'].classList.contains('active')).toBe(true);
-    global.window.scrollY = 0;
-    mainContent.scrollTop = 0;
+    expect(global.window.scrollY).toBe(0);
+    expect(mainContent.scrollTop).toBe(0);
 
     popstateHandler({ state: { crmView: 'list-view', listMode: 'pipeline' } });
     jest.runAllTimers();
@@ -551,6 +562,8 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       mainContent.scrollTop = scrollOpp;
       OpportunitiesUI.openDetail('OPP-DASH-2');
       expect(elements['detail-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
       OpportunitiesUI.goBackFromDetail();
       jest.runAllTimers();
       expect(elements['list-view'].classList.contains('active')).toBe(true);
@@ -566,6 +579,8 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
       mainContent.scrollTop = scrollCli;
       ClientsUI.openClientDetailView('CLI-2');
       expect(elements['client-detail-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
       ClientsUI.closeClientDetailView();
       jest.runAllTimers();
       expect(elements['clients-view'].classList.contains('active')).toBe(true);
@@ -574,6 +589,253 @@ describe('BLOQUE 1 — Botón Volver, preservación de contexto y navegación', 
     }
 
     jest.useRealTimers();
+  });
+
+  test('1.5: Hotfix posición de scroll al abrir expedientes (8 escenarios obligatorios: parte superior, parte inferior, Volver, Clientes, Dashboard, popstate, ciclos repetidos y contenedores internos)', () => {
+    jest.useFakeTimers();
+    const { doc, elements, mainContent } = makeMockDom();
+    global.document = doc;
+
+    let winScrollY = 0;
+    let popstateHandler = null;
+    const consoleErrors = [];
+    const origConsoleError = console.error;
+    console.error = (...args) => { consoleErrors.push(args); };
+
+    global.window = {
+      scrollY: 0,
+      pageYOffset: 0,
+      innerHeight: 800,
+      requestAnimationFrame: (fn) => setTimeout(fn, 0),
+      scrollTo: (arg1, arg2) => {
+        winScrollY = typeof arg1 === 'object' ? Number(arg1.top || 0) : Number(arg2 || 0);
+        global.window.scrollY = winScrollY;
+        global.window.pageYOffset = winScrollY;
+      },
+      history: {
+        state: null,
+        pushState: (st) => { global.window.history.state = st; },
+        replaceState: (st) => { global.window.history.state = st; }
+      },
+      addEventListener: (evt, fn) => {
+        if (evt === 'popstate') popstateHandler = fn;
+      }
+    };
+
+    const sampleProspects = [
+      { id: 'OPP-TOP', codigo: '202605201', proyecto: 'Torre Superior', clientId: 'CLI-A', vendedorId: 'USR-V1', etapa: 'cotizacion', clasificacion: 'ejecucion', estado: 'activo', precio_cotizado: 18000, fecha_creacion: '2026-05-01T10:00:00.000Z' },
+      { id: 'OPP-BOTTOM', codigo: '202605299', proyecto: 'Complejo Sur Final', clientId: 'CLI-B', vendedorId: 'USR-V1', etapa: 'negociacion', clasificacion: 'presupuesto', estado: 'activo', precio_cotizado: 92000, fecha_creacion: '2026-05-03T10:00:00.000Z' }
+    ];
+    const sampleClients = [
+      { id: 'CLI-A', tipo: 'juridica', empresa: 'Constructora Cumbre SA', contacto: 'Ing. Carlos', nit: '0614-111190-101-1', telefono: '2211-0000', correo: 'cumbre@test.com', documentos: { dui: '111' } },
+      { id: 'CLI-B', tipo: 'juridica', empresa: 'Desarrollos del Valle SA', contacto: 'Arq. Elena', nit: '0614-222290-102-2', telefono: '2222-9999', correo: 'valle@test.com', documentos: { dui: '222' } }
+    ];
+
+    let listMode = 'pipeline';
+    const renderDashboardStub = () => {
+      elements['dash-stagnant-table-body'].innerHTML = `<tr data-prospect-id="OPP-BOTTOM"><td>202605299</td></tr>`;
+    };
+
+    AppRouter.initAppRouter({
+      getDocument: () => doc,
+      getWindow: () => global.window,
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getAppState: () => AppState,
+      getCurrentListMode: () => listMode,
+      setCurrentListMode: (m) => { listMode = m; },
+      switchListMode: (m) => { listMode = m; OpportunitiesUI.renderList({ doc }); },
+      renderDashboard: renderDashboardStub,
+      renderList: () => OpportunitiesUI.renderList({ doc }),
+      renderClientsTable: () => ClientsUI.renderClientsTable(),
+      goBackFromDetail: (opts) => OpportunitiesUI.goBackFromDetail(opts),
+      closeClientDetailView: (opts) => ClientsUI.closeClientDetailView(opts)
+    });
+
+    OpportunitiesController.initOpportunitiesController({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getProspects: () => sampleProspects,
+      renderList: () => OpportunitiesUI.renderList({ doc })
+    });
+
+    OpportunitiesUI.initOpportunitiesUI({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getProspects: () => sampleProspects,
+      getClients: () => sampleClients,
+      getOppStatusFilter: () => OpportunitiesController.getOppStatusFilter(),
+      getOppClasifFilter: () => OpportunitiesController.getOppClasifFilter(),
+      getOppStageFilter: () => OpportunitiesController.getOppStageFilter(),
+      getOppSortCol: () => OpportunitiesController.getOppSortCol(),
+      getOppSortDir: () => OpportunitiesController.getOppSortDir(),
+      saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts),
+      showView: (v, opts) => AppRouter.showView(v, opts),
+      getLastViewedSection: () => AppRouter.getLastViewedSection()
+    });
+
+    ClientsUI.initClientsModule({
+      getCurrentUser: () => ({ id: 'USR-MGR', role: 'manager' }),
+      getClients: () => sampleClients,
+      getVisibleClients: () => sampleClients,
+      getProspects: () => sampleProspects,
+      showView: (v, opts) => AppRouter.showView(v, opts),
+      getLastViewedSection: () => AppRouter.getLastViewedSection(),
+      saveListScrollPosition: (opts) => AppRouter.saveListScrollPosition(opts),
+      restoreListScrollPosition: (opts) => AppRouter.restoreListScrollPosition(opts),
+      scrollDetailViewToTop: (viewId, opts) => AppRouter.scrollDetailViewToTop(viewId, opts)
+    });
+
+    try {
+      // Escenario 1: Abrir oportunidad en la parte superior de la lista → expediente inicia arriba (scrollTop = 0)
+      AppRouter.showView('list-view');
+      OpportunitiesUI.renderList({ doc });
+      global.window.scrollY = 0;
+      mainContent.scrollTop = 0;
+      OpportunitiesUI.openDetail('OPP-TOP');
+      jest.runAllTimers();
+      expect(elements['detail-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      expect(elements['detail-view'].scrollTop).toBe(0);
+      OpportunitiesUI.goBackFromDetail();
+      jest.runAllTimers();
+
+      // Escenario 2: Abrir oportunidad al final de una lista larga → expediente inicia arriba (NO hereda scroll de tabla)
+      global.window.scrollY = 1280;
+      doc.scrollingElement.scrollTop = 1280;
+      doc.documentElement.scrollTop = 1280;
+      doc.body.scrollTop = 1280;
+      mainContent.scrollTop = 1280;
+      elements['detail-view'].scrollTop = 450;
+      elements['logs-container'].scrollTop = 210;
+
+      OpportunitiesUI.openDetail('OPP-BOTTOM');
+      expect(elements['detail-view'].classList.contains('active')).toBe(true);
+      // Debe iniciar inmediatamente en 0 en todos los contenedores posibles
+      expect(global.window.scrollY).toBe(0);
+      expect(doc.scrollingElement.scrollTop).toBe(0);
+      expect(doc.documentElement.scrollTop).toBe(0);
+      expect(doc.body.scrollTop).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      expect(elements['detail-view'].scrollTop).toBe(0);
+      expect(elements['logs-container'].scrollTop).toBe(0);
+      // Y debe conservar intacta la posición de la lista de origen (1280)
+      expect(AppRouter.getLastListScrollY()).toBe(1280);
+      expect(AppRouter.getLastMainContentScrollTop()).toBe(1280);
+
+      // Incluso si el usuario se desplaza dentro del expediente y se re-renderiza el mismo expediente (ej. tras guardar bitácora),
+      // no se sobrescribe la posición guardada de la lista de origen (1280)
+      global.window.scrollY = 340;
+      mainContent.scrollTop = 340;
+      OpportunitiesUI.openDetail('OPP-BOTTOM');
+      expect(AppRouter.getLastListScrollY()).toBe(1280);
+
+      // Escenario 3: Presionar Volver → regresa exactamente al punto anterior de la lista (1280)
+      OpportunitiesUI.goBackFromDetail();
+      jest.runAllTimers();
+      expect(elements['list-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(1280);
+      expect(mainContent.scrollTop).toBe(1280);
+      const oppBottomRow = doc.querySelector('[data-prospect-id="OPP-BOTTOM"]');
+      expect(oppBottomRow).not.toBeNull();
+      expect(oppBottomRow.classList.contains('row-context-restored')).toBe(true);
+
+      // Escenario 4: Repetir con Clientes al final de la lista → expediente de cliente inicia arriba y Volver restaura scroll
+      AppRouter.showView('clients-view');
+      ClientsUI.renderClientsTable();
+      global.window.scrollY = 940;
+      doc.scrollingElement.scrollTop = 940;
+      doc.documentElement.scrollTop = 940;
+      mainContent.scrollTop = 940;
+      elements['client-detail-view'].scrollTop = 380;
+      elements['clientDetailContent'].scrollTop = 290;
+      elements['clientForm'].scrollTop = 150;
+
+      ClientsUI.openClientDetailView('CLI-B');
+      expect(elements['client-detail-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(0);
+      expect(doc.scrollingElement.scrollTop).toBe(0);
+      expect(doc.documentElement.scrollTop).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      expect(elements['client-detail-view'].scrollTop).toBe(0);
+      expect(elements['clientDetailContent'].scrollTop).toBe(0);
+      expect(elements['clientForm'].scrollTop).toBe(0);
+      expect(AppRouter.getLastListScrollY()).toBe(940);
+
+      ClientsUI.closeClientDetailView();
+      jest.runAllTimers();
+      expect(elements['clients-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(940);
+      expect(mainContent.scrollTop).toBe(940);
+
+      // Escenario 5: Abrir expediente desde el Dashboard desplazado hacia abajo → expediente inicia arriba y Volver regresa al Dashboard en su posición
+      AppRouter.showView('dashboard-view');
+      global.window.scrollY = 670;
+      mainContent.scrollTop = 670;
+      OpportunitiesUI.openDetail('OPP-BOTTOM');
+      expect(elements['detail-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      expect(AppRouter.getLastListScrollY()).toBe(670);
+
+      OpportunitiesUI.goBackFromDetail();
+      jest.runAllTimers();
+      expect(elements['dashboard-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(670);
+      expect(mainContent.scrollTop).toBe(670);
+
+      // Escenario 6: Probar con botón Atrás del navegador (popstate) tanto en Oportunidades como en Clientes
+      AppRouter.showView('list-view');
+      global.window.scrollY = 815;
+      mainContent.scrollTop = 815;
+      OpportunitiesUI.openDetail('OPP-BOTTOM');
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      popstateHandler({ state: { crmView: 'list-view', listMode: 'pipeline' } });
+      jest.runAllTimers();
+      expect(elements['list-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(815);
+      expect(mainContent.scrollTop).toBe(815);
+
+      AppRouter.showView('clients-view');
+      global.window.scrollY = 530;
+      mainContent.scrollTop = 530;
+      ClientsUI.openClientDetailView('CLI-A');
+      expect(global.window.scrollY).toBe(0);
+      expect(mainContent.scrollTop).toBe(0);
+      popstateHandler({ state: { crmView: 'clients-view' } });
+      jest.runAllTimers();
+      expect(elements['clients-view'].classList.contains('active')).toBe(true);
+      expect(global.window.scrollY).toBe(530);
+      expect(mainContent.scrollTop).toBe(530);
+
+      // Escenario 7: Repetir varios ciclos seguidos sin saltos raros (incluyendo transición rápida antes de que expiren timers previos)
+      for (let i = 1; i <= 4; i++) {
+        const targetScroll = 300 + i * 110;
+        AppRouter.showView('list-view');
+        global.window.scrollY = targetScroll;
+        mainContent.scrollTop = targetScroll;
+
+        OpportunitiesUI.openDetail('OPP-BOTTOM');
+        // Verificar inmediatamente y también después de timers diferidos (rAF / setTimeout) que el expediente sigue en 0
+        expect(global.window.scrollY).toBe(0);
+        expect(mainContent.scrollTop).toBe(0);
+        jest.runAllTimers();
+        expect(global.window.scrollY).toBe(0);
+        expect(mainContent.scrollTop).toBe(0);
+
+        OpportunitiesUI.goBackFromDetail();
+        jest.runAllTimers();
+        expect(global.window.scrollY).toBe(targetScroll);
+        expect(mainContent.scrollTop).toBe(targetScroll);
+      }
+
+      // Escenario 8: Confirmar ausencia total de errores en consola
+      expect(consoleErrors).toHaveLength(0);
+    } finally {
+      console.error = origConsoleError;
+      jest.useRealTimers();
+    }
   });
 });
 
