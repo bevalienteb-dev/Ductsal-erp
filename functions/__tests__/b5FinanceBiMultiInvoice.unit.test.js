@@ -1244,5 +1244,73 @@ describe('FASE B5 — Coordinación Transaccional Financiera, Abonos Multi-Factu
       expect(okRes.status).toBe('reconciled');
       expect(okRes.financialVersion).toBe(3);
     });
+
+    test('Escenario 24: Reconciliación exacta del inventario de oportunidades en BI (Total = Activas + Ganadas + Perdidas + Eliminadas lógicamente)', async () => {
+      const { fdb, wf, caller } = makeEnv();
+      const mgr = caller('manager');
+      await seedClient(fdb, 'CUST-24', { is_gran_contribuyente: false });
+
+      await fdb.seed('prospects_prod/OPP-24-ACT', {
+        id: 'OPP-24-ACT',
+        clientId: 'CUST-24',
+        proyecto: 'ACTIVA',
+        estado: 'activo',
+        etapa: 'cotizacion',
+        precio_cotizado: 5000,
+        probabilidad: 50
+      });
+      await seedWonProspect(fdb, 'OPP-24-WON', 'CUST-24', {
+        precio_cotizado: 10000,
+        costo_venta: 6500,
+        facturas: []
+      });
+      await fdb.seed('prospects_prod/OPP-24-LOST', {
+        id: 'OPP-24-LOST',
+        clientId: 'CUST-24',
+        proyecto: 'PERDIDA',
+        estado: 'perdido',
+        etapa: 'negociacion',
+        precio_cotizado: 8000,
+        motivo_perdida: 'Precio'
+      });
+      await fdb.seed('prospects_prod/OPP-24-DEL-1', {
+        id: 'OPP-24-DEL-1',
+        clientId: 'CUST-24',
+        proyecto: 'ELIMINADA 1',
+        estado: 'activo',
+        etapa: 'prospecto',
+        eliminado: true,
+        motivo_eliminacion: 'No es oportunidad',
+        precio_cotizado: 0
+      });
+      await fdb.seed('prospects_prod/OPP-24-DEL-2', {
+        id: 'OPP-24-DEL-2',
+        clientId: 'CUST-24',
+        proyecto: 'ELIMINADA 2',
+        estado: 'perdido',
+        etapa: 'levantamiento',
+        clasificacion: 'presupuesto',
+        eliminado: true,
+        motivo_eliminacion: 'No es oportunidad',
+        precio_cotizado: 0
+      });
+
+      const bi = await wf.getAccountBIMetrics({
+        caller: mgr,
+        period: 'all'
+      });
+
+      expect(bi.inventarioOportunidades).toEqual({
+        totalDocumentos: 5,
+        elegiblesCount: 3,
+        activasCount: 1,
+        ganadasHistoricoCount: 1,
+        perdidasHistoricoCount: 1,
+        eliminadasLogicamenteCount: 2,
+        excluidasPorFiltrosEstructuralesCount: 0,
+        otrasNoReconocidasCount: 0,
+        ecuacionReconciliacionCuadra: true
+      });
+    });
   });
 });

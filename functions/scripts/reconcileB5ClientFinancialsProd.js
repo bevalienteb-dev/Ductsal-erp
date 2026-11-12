@@ -78,12 +78,19 @@ function parseArgs(argv) {
     } else if (a === '--rollback' && argv[i + 1]) {
       args.rollbackFile = argv[++i];
       args.dryRun = false;
+    } else if (a.startsWith('--rollback=')) {
+      args.rollbackFile = a.slice('--rollback='.length);
+      args.dryRun = false;
     } else if (a === '--confirm-b5-rollback') {
       args.confirmRollback = true;
     } else if (a === '--backup' && argv[i + 1]) {
       args.backupFile = argv[++i];
+    } else if (a.startsWith('--backup=')) {
+      args.backupFile = a.slice('--backup='.length);
     } else if (a === '--suffix' && argv[i + 1]) {
       args.suffix = argv[++i];
+    } else if (a.startsWith('--suffix=')) {
+      args.suffix = a.slice('--suffix='.length);
     }
   }
   return args;
@@ -347,10 +354,12 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch(err => {
-    console.error(err);
-    process.exit(1);
-  });
+  main()
+    .then(() => process.exit(0))
+    .catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
 }
 
 module.exports = { main, parseArgs, executeReconciliation, validateClientFinancialInvariants, runRollback, RESTORABLE_FIELDS };

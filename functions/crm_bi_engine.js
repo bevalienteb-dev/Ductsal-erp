@@ -573,7 +573,25 @@
             return true;
         };
 
-        const eligibleProspects = (Array.isArray(prospects) ? prospects : []).filter(matchesStructuralFilters);
+        const rawProspects = Array.isArray(prospects) ? prospects : [];
+        let eliminadasLogicamenteCount = 0;
+        let excluidasPorFiltrosEstructuralesCount = 0;
+        const eligibleProspects = [];
+        for (const p of rawProspects) {
+            if (!p || typeof p !== 'object') {
+                excluidasPorFiltrosEstructuralesCount += 1;
+                continue;
+            }
+            if (p.eliminado === true) {
+                eliminadasLogicamenteCount += 1;
+                continue;
+            }
+            if (matchesStructuralFilters(p)) {
+                eligibleProspects.push(p);
+            } else {
+                excluidasPorFiltrosEstructuralesCount += 1;
+            }
+        }
 
         // ---------------------------------------------------------------------
         // A. INDICADORES COMERCIALES (B5.5.1)
@@ -610,6 +628,7 @@
 
         let lostAllTimeCount = 0;
         let lostAllTimeSubtotalCents = 0;
+        let otrasNoReconocidasCount = 0;
 
         // Ciclo comercial (promedio de días entre creación y adjudicación para ganadas con fechas válidas)
         let cycleDaysSumPeriod = 0;
@@ -707,8 +726,30 @@
                     lostByReasonPeriod[reason].count += 1;
                     lostByReasonPeriod[reason].valor = round2(lostByReasonPeriod[reason].valor + fromCents(subtotalCents));
                 }
+            } else {
+                otrasNoReconocidasCount += 1;
             }
         }
+
+        const inventarioOportunidades = {
+            totalDocumentos: rawProspects.length,
+            elegiblesCount: eligibleProspects.length,
+            activasCount: activeCount,
+            ganadasHistoricoCount: wonAllTimeCount,
+            perdidasHistoricoCount: lostAllTimeCount,
+            eliminadasLogicamenteCount,
+            excluidasPorFiltrosEstructuralesCount,
+            otrasNoReconocidasCount,
+            ecuacionReconciliacionCuadra: (
+                rawProspects.length ===
+                activeCount +
+                wonAllTimeCount +
+                lostAllTimeCount +
+                eliminadasLogicamenteCount +
+                excluidasPorFiltrosEstructuralesCount +
+                otrasNoReconocidasCount
+            )
+        };
 
         const totalClosedPeriod = wonPeriodCount + lostPeriodCount;
         const winRatePeriodRatio = totalClosedPeriod > 0 ? (wonPeriodCount / totalClosedPeriod) : 0;
@@ -1246,7 +1287,9 @@
                 clasificacion: filterClasificacion,
                 estado: filterEstado
             },
+            inventarioOportunidades,
             comercial: {
+                inventarioOportunidades,
                 oportunidadesActivasCount: activeCount,
                 oportunidadesGanadasCount: wonPeriodCount,
                 oportunidadesPerdidasCount: lostPeriodCount,
