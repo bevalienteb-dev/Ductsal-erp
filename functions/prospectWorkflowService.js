@@ -283,6 +283,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     retencionesCents: 0,
     totalCobradoCents: 0,
     saldoPorCobrarCents: 0,
+    saldoAFavorCents: 0,
     saldoPorFacturarCents: 0,
     ventasAdjudicadasCents: 0,
     singleBankReceivedCents: 0,
@@ -297,10 +298,15 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     let facturadoCents = 0;
     let cobrosMonetariosCents = 0;
     let retencionesCents = 0;
+    let saldoPorCobrarCents = 0;
+    let saldoAFavorCents = 0;
     let singleBankReceivedCents = 0;
 
     for (const fac of activeInvoices) {
-      facturadoCents += toCents(fac.monto);
+      const facMontoCents = toCents(fac.monto);
+      facturadoCents += facMontoCents;
+      let facCobrosMonCents = 0;
+      let facRetencionesCents = 0;
       const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
       for (const pay of pagos) {
         if (!isActivePaymentRecord(pay)) continue;
@@ -308,8 +314,10 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         const metodo = String(pay.metodo || '').trim().toLowerCase();
         if (metodo === 'retencion_1pct') {
           retencionesCents += payCents;
+          facRetencionesCents += payCents;
         } else {
           cobrosMonetariosCents += payCents;
+          facCobrosMonCents += payCents;
           const isSharedDepositApp = Boolean(
             pay.es_abono_multifactura === true ||
             pay.es_aplicacion_compartida === true ||
@@ -321,10 +329,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           }
         }
       }
+      const facTotalCobradoCents = facCobrosMonCents + facRetencionesCents;
+      saldoPorCobrarCents += Math.max(0, facMontoCents - facTotalCobradoCents);
+      saldoAFavorCents += Math.max(0, facTotalCobradoCents - facMontoCents);
     }
 
     const totalCobradoCents = cobrosMonetariosCents + retencionesCents;
-    const saldoPorCobrarCents = Math.max(0, facturadoCents - totalCobradoCents);
     const isWonOrPost = Boolean(p.estado === 'ganado' || hasEnteredPostclosing(p) || facturadoCents > 0);
     const sub = subtotalOf(p);
     const ventasAdjudicadasCents = isWonOrPost ? toCents(isExport(client) ? sub : sub * IVA) : 0;
@@ -337,6 +347,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       retencionesCents,
       totalCobradoCents,
       saldoPorCobrarCents,
+      saldoAFavorCents,
       saldoPorFacturarCents,
       ventasAdjudicadasCents,
       singleBankReceivedCents,
@@ -355,6 +366,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
    * - `total_cobros_monetarios_aplicados`
    * - `total_retenciones_aplicadas`
    * - `saldo_abonos_pendientes_aplicar`
+   * - `saldo_a_favor`
+   * - `importe_pendiente_aplicar`
    * - `saldo_por_cobrar` / `saldo_por_cobrar_vivo`
    * - `saldo_por_facturar` / `saldo_por_facturar_vivo`
    * - `financialVersion` (monotónico OCC)
@@ -382,6 +395,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     let dineroRecibidoCents = client.total_dinero_recibido !== undefined
       ? toCents(client.total_dinero_recibido)
       : (cobrosMonCents + abonosPendientesCents);
+    let saldoPorCobrarCents = client.saldo_por_cobrar !== undefined
+      ? toCents(client.saldo_por_cobrar)
+      : Math.max(0, facturadoCents - (cobrosMonCents + retencionesCents));
+    let saldoAFavorCents = client.saldo_a_favor !== undefined
+      ? toCents(client.saldo_a_favor)
+      : Math.max(0, (cobrosMonCents + retencionesCents) - facturadoCents);
     let saldoPorFacturarCents = toCents(client.saldo_por_facturar ?? client.saldo_por_facturar_vivo);
     let ventasAdjudicadasCents = toCents(client.total_ventas_adjudicadas);
     let activeBilledCount = Number(client.activeBilledProspectsCount) || 0;
@@ -405,6 +424,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       cobrosMonCents += (after.cobrosMonetariosCents - (effectiveBefore.cobrosMonetariosCents || 0));
       retencionesCents += (after.retencionesCents - (effectiveBefore.retencionesCents || 0));
       dineroRecibidoCents += (after.singleBankReceivedCents - (effectiveBefore.singleBankReceivedCents || 0));
+      saldoPorCobrarCents += (after.saldoPorCobrarCents - (effectiveBefore.saldoPorCobrarCents || 0));
+      saldoAFavorCents += (after.saldoAFavorCents - (effectiveBefore.saldoAFavorCents || 0));
       saldoPorFacturarCents += (after.saldoPorFacturarCents - (effectiveBefore.saldoPorFacturarCents || 0));
       ventasAdjudicadasCents += (after.ventasAdjudicadasCents - (effectiveBefore.ventasAdjudicadasCents || 0));
       activeBilledCount += (after.isBilled - (effectiveBefore.isBilled || 0));
@@ -427,13 +448,15 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     cobrosMonCents = Math.max(0, cobrosMonCents);
     retencionesCents = Math.max(0, retencionesCents);
     abonosPendientesCents = Math.max(0, abonosPendientesCents);
+    saldoPorCobrarCents = Math.max(0, saldoPorCobrarCents);
+    saldoAFavorCents = Math.max(0, saldoAFavorCents);
     saldoPorFacturarCents = Math.max(0, saldoPorFacturarCents);
     ventasAdjudicadasCents = Math.max(0, ventasAdjudicadasCents);
     activeBilledCount = Math.max(0, activeBilledCount);
 
     const totalCobradoCents = cobrosMonCents + retencionesCents;
-    const saldoPorCobrarCents = Math.max(0, facturadoCents - totalCobradoCents);
     dineroRecibidoCents = Math.max(0, Math.max(dineroRecibidoCents, cobrosMonCents + abonosPendientesCents));
+    const importePendienteAplicarCents = abonosPendientesCents + saldoAFavorCents;
 
     const totalHistoricoFacturado = fromCents(facturadoCents);
     const totalHistoricoCobrado = fromCents(totalCobradoCents);
@@ -449,6 +472,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       total_cobros_monetarios_aplicados: fromCents(cobrosMonCents),
       total_retenciones_aplicadas: fromCents(retencionesCents),
       saldo_abonos_pendientes_aplicar: fromCents(abonosPendientesCents),
+      saldo_a_favor: fromCents(saldoAFavorCents),
+      importe_pendiente_aplicar: fromCents(importePendienteAplicarCents),
       saldo_por_cobrar: fromCents(saldoPorCobrarCents),
       saldo_por_cobrar_vivo: fromCents(saldoPorCobrarCents),
       saldo_facturado_pendiente_cobrar: fromCents(saldoPorCobrarCents),
@@ -7491,7 +7516,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     clientId,
     dryRun = false,
     reason,
-    opId
+    opId,
+    expectedFinancialVersion = null,
+    failFastOnOcc = false
   }) {
     authorize(caller, 'savePayment');
     const cleanClientId = reqDocId(clientId, 'clientId');
@@ -7508,6 +7535,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const canonicalId = resolved.canonicalId;
       const canonicalData = resolved.canonicalData || {};
       const preScanVersion = typeof canonicalData.financialVersion === 'number' ? canonicalData.financialVersion : 0;
+
+      if (expectedFinancialVersion !== null && expectedFinancialVersion !== undefined && preScanVersion !== expectedFinancialVersion) {
+        const occErr = precondition(`Modificación concurrente detectada en cliente ${canonicalId}: financialVersion esperado=${expectedFinancialVersion}, actual=${preScanVersion}`);
+        occErr.isOccMismatch = true;
+        occErr.isConcurrentAbort = true;
+        throw occErr;
+      }
 
       const clusterIds = new Set([canonicalId, cleanClientId]);
       const mergedSnap = await col('clients').where('fusionada_en', '==', canonicalId).get();
@@ -7556,6 +7590,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       let facturadoCents = 0;
       let cobrosMonetariosCents = 0;
       let retencionesCents = 0;
+      let saldoPorCobrarCents = 0;
+      let saldoAFavorCents = 0;
       let saldoPorFacturarCents = 0;
       let ventasAdjudicadasCents = 0;
       let activeBilledProspectsCount = 0;
@@ -7581,6 +7617,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         facturadoCents += stats.facturadoCents;
         cobrosMonetariosCents += stats.cobrosMonetariosCents;
         retencionesCents += stats.retencionesCents;
+        saldoPorCobrarCents += stats.saldoPorCobrarCents;
+        saldoAFavorCents += stats.saldoAFavorCents;
         saldoPorFacturarCents += stats.saldoPorFacturarCents;
         ventasAdjudicadasCents += stats.ventasAdjudicadasCents;
         activeBilledProspectsCount += stats.isBilled;
@@ -7602,8 +7640,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       }
 
       const totalCobradoCents = cobrosMonetariosCents + retencionesCents;
-      const saldoPorCobrarCents = Math.max(0, facturadoCents - totalCobradoCents);
       dineroRecibidoCents = Math.max(dineroRecibidoCents, cobrosMonetariosCents + abonosPendientesCents);
+      const importePendienteAplicarCents = abonosPendientesCents + saldoAFavorCents;
 
       const reconciled = {
         total_historico_facturado: fromCents(facturadoCents),
@@ -7614,6 +7652,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         total_cobros_monetarios_aplicados: fromCents(cobrosMonetariosCents),
         total_retenciones_aplicadas: fromCents(retencionesCents),
         saldo_abonos_pendientes_aplicar: fromCents(abonosPendientesCents),
+        saldo_a_favor: fromCents(saldoAFavorCents),
+        importe_pendiente_aplicar: fromCents(importePendienteAplicarCents),
         saldo_por_cobrar: fromCents(saldoPorCobrarCents),
         saldo_por_cobrar_vivo: fromCents(saldoPorCobrarCents),
         saldo_facturado_pendiente_cobrar: fromCents(saldoPorCobrarCents),
@@ -7631,6 +7671,8 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         total_cobros_monetarios_aplicados: round2(Number(canonicalData.total_cobros_monetarios_aplicados) || 0),
         total_retenciones_aplicadas: round2(Number(canonicalData.total_retenciones_aplicadas) || 0),
         saldo_abonos_pendientes_aplicar: round2(Number(canonicalData.saldo_abonos_pendientes_aplicar) || 0),
+        saldo_a_favor: round2(Number(canonicalData.saldo_a_favor) || 0),
+        importe_pendiente_aplicar: round2(Number(canonicalData.importe_pendiente_aplicar) || 0),
         saldo_por_cobrar: round2(Number(canonicalData.saldo_por_cobrar) || 0),
         saldo_por_facturar: round2(Number(canonicalData.saldo_por_facturar) || 0)
       };
@@ -7640,7 +7682,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         toCents(previous.total_historico_cobrado) !== totalCobradoCents ||
         previous.activeBilledProspectsCount !== activeBilledProspectsCount ||
         previous.es_cliente_historico !== reconciled.es_cliente_historico ||
-        toCents(previous.saldo_abonos_pendientes_aplicar) !== abonosPendientesCents
+        toCents(previous.saldo_abonos_pendientes_aplicar) !== abonosPendientesCents ||
+        toCents(previous.saldo_a_favor) !== saldoAFavorCents ||
+        toCents(previous.saldo_por_cobrar) !== saldoPorCobrarCents
       );
 
       if (dryRun) {
@@ -7718,6 +7762,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         return txRes;
       } catch (err) {
         if (err && err.isOccMismatch) {
+          if (failFastOnOcc || err.isConcurrentAbort) {
+            const abortErr = precondition(`Modificación concurrente detectada durante la reconciliación del cliente ${canonicalId}. La operación se detuvo automáticamente para no sobrescribir datos recientes.`);
+            abortErr.isOccMismatch = true;
+            abortErr.isConcurrentAbort = true;
+            throw abortErr;
+          }
           if (attempt < BACKOFF_MS.length) {
             await new Promise(resolve => setTimeout(resolve, BACKOFF_MS[attempt]));
             continue;

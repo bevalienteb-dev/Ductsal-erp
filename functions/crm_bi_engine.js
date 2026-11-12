@@ -57,7 +57,19 @@
         if (typeof ref !== 'string') return '';
         const raw = ref.normalize('NFKC').trim().toUpperCase();
         if (!raw) return '';
-        return raw.replace(/[\s\-_./#]+/g, '');
+        const cleaned = raw.replace(/[\s\-_./#]+/g, '');
+        if (
+            cleaned === 'UNDEFINED' ||
+            cleaned === 'NULL' ||
+            cleaned === 'NAN' ||
+            cleaned === 'NA' ||
+            cleaned === 'SN' ||
+            cleaned === 'HISTORICO' ||
+            cleaned === 'IMPORTACIONEXCEL'
+        ) {
+            return '';
+        }
+        return cleaned;
     }
 
     function isExportClient(client) {
@@ -751,6 +763,7 @@
         let stockCobrosMonetariosAplicadosCents = 0;
         let stockRetencionesAplicadasCents = 0;
         let stockCuentasPorCobrarVivasCents = 0;
+        let stockSaldosAFavorCents = 0;
         let stockSaldoPorFacturarCents = 0;
 
         // FLUJO DEL PERÍODO (filtrado por fecha propia de cada documento fiscal / movimiento):
@@ -788,6 +801,7 @@
                     cobrosMonetariosAplicadosCents: 0,
                     retencionesAplicadasCents: 0,
                     saldoPorCobrarCents: 0,
+                    saldoAFavorCents: 0,
                     saldoPorFacturarCents: 0,
                     abonosDisponiblesSinAsignarCents: 0,
                     dineroRecibidoCents: 0,
@@ -809,6 +823,8 @@
             let pFacturadoCents = 0;
             let pCobrosMonCents = 0;
             let pRetencionesCents = 0;
+            let pSaldoCxCCents = 0;
+            let pSaldoAFavorCents = 0;
             const pendingInvoicesDetail = [];
 
             for (const fac of activeInvoices) {
@@ -843,11 +859,13 @@
                             flowCobrosMonetariosAplicadosCents += payCents;
                         }
 
-                        // Registrar comprobante bancario (deduplicado por BANK_<normRef>)
+                        // Registrar comprobante bancario (deduplicado por cliente + referencia bancaria)
                         const normRef = normalizePaymentReference(
                             pay.referencia_bancaria_unica || pay.ref_bancaria_base || pay.ref_normalizada || pay.ref || ''
                         );
-                        const vKey = normRef ? `BANK_${normRef}` : `LEGACY_${p.id}_${fac.id}_${pay.id || pay.fecha || Math.random()}`;
+                        const vKey = normRef
+                            ? `BANK_${canonClientId || 'SIN_CLIENTE'}_${normRef}`
+                            : `LEGACY_${p.id}_${fac.id}_${pay.id || pay.fecha || Math.random()}`;
                         const explicitVoucherCents = toCents(pay.importe_total_comprobante);
 
                         const curAll = allTimeBankVouchers.get(vKey) || {
@@ -881,6 +899,9 @@
 
                 const facTotalCobradoCents = facCobrosMonCents + facRetencionesCents;
                 const facSaldoPendienteCents = Math.max(0, facMontoCents - facTotalCobradoCents);
+                const facSaldoAFavorCents = Math.max(0, facTotalCobradoCents - facMontoCents);
+                pSaldoCxCCents += facSaldoPendienteCents;
+                pSaldoAFavorCents += facSaldoAFavorCents;
 
                 if (facSaldoPendienteCents > 0) {
                     const aging = classifyInvoiceAging(fac, periodBounds.referenceYMD);
@@ -910,7 +931,6 @@
             }
 
             const pTotalCobradoCents = pCobrosMonCents + pRetencionesCents;
-            const pSaldoCxCCents = Math.max(0, pFacturadoCents - pTotalCobradoCents);
             const isWonOrPostclosing = p.estado === 'ganado' || p.postcierre_habilitado === true || pFacturadoCents > 0;
             const pSaldoPorFacturarCents = isWonOrPostclosing ? Math.max(0, totalContratadoCents - pFacturadoCents) : 0;
 
@@ -923,6 +943,7 @@
             stockCobrosMonetariosAplicadosCents += pCobrosMonCents;
             stockRetencionesAplicadasCents += pRetencionesCents;
             stockCuentasPorCobrarVivasCents += pSaldoCxCCents;
+            stockSaldosAFavorCents += pSaldoAFavorCents;
 
             if (isWonOrPostclosing || pFacturadoCents > 0 || pTotalCobradoCents > 0) {
                 const cp = ensureClientPortfolio(canonClientId);
@@ -937,6 +958,7 @@
                 cp.cobrosMonetariosAplicadosCents += pCobrosMonCents;
                 cp.retencionesAplicadasCents += pRetencionesCents;
                 cp.saldoPorCobrarCents += pSaldoCxCCents;
+                cp.saldoAFavorCents += pSaldoAFavorCents;
             }
 
             if (pSaldoCxCCents > 0) {
@@ -978,7 +1000,9 @@
             }
 
             const normRef = normalizePaymentReference(dep.normRef || dep.referencia_bancaria_unica || dep.ref || '');
-            const vKey = normRef ? `BANK_${normRef}` : (dep.id || `DEP_${Math.random()}`);
+            const vKey = normRef
+                ? `BANK_${depCanonClientId || 'SIN_CLIENTE'}_${normRef}`
+                : (dep.id || `DEP_${Math.random()}`);
             const voucherDate = dep.fecha_comprobante_bancario || dep.fecha || dep.fecha_registro_crm || dep.updatedAt;
 
             stockAbonosPendientesAplicarCents += st.availableCents;
@@ -1081,8 +1105,10 @@
                 retencionesAplicadas: fromCents(cp.retencionesAplicadasCents),
                 cobrosAplicadosTotal: fromCents(cp.cobrosMonetariosAplicadosCents + cp.retencionesAplicadasCents),
                 saldoPorCobrar: fromCents(cp.saldoPorCobrarCents),
+                saldoAFavor: fromCents(cp.saldoAFavorCents),
                 saldoPorFacturar: fromCents(cp.saldoPorFacturarCents),
                 abonosPendientesDeAplicar: fromCents(cp.abonosDisponiblesSinAsignarCents),
+                importePendienteDeAplicar: fromCents(cp.abonosDisponiblesSinAsignarCents + cp.saldoAFavorCents),
                 activeBilledProspectsCount: cp.activeBilledProspectsCount,
                 wonOpportunitiesCount: cp.wonOpportunitiesCount,
                 esClienteHistorico: Boolean(cp.facturacionVigenteCents > 0 || (cp.cobrosMonetariosAplicadosCents + cp.retencionesAplicadasCents) > 0)
@@ -1178,9 +1204,12 @@
             cuentasPorCobrarVivas: fromCents(stockCuentasPorCobrarVivasCents),
             saldoPorCobrar: fromCents(stockCuentasPorCobrarVivasCents),
             saldoFacturadoPendienteCobrar: fromCents(stockCuentasPorCobrarVivasCents),
+            saldosAFavor: fromCents(stockSaldosAFavorCents),
+            saldoAFavor: fromCents(stockSaldosAFavorCents),
             saldoPorFacturar: fromCents(stockSaldoPorFacturarCents),
             abonosPendientesDeAplicar: fromCents(stockAbonosPendientesAplicarCents),
-            saldoAbonosDisponibles: fromCents(stockAbonosPendientesAplicarCents)
+            saldoAbonosDisponibles: fromCents(stockAbonosPendientesAplicarCents),
+            importePendienteDeAplicar: fromCents(stockAbonosPendientesAplicarCents + stockSaldosAFavorCents)
         };
 
         const margenesSummary = {
@@ -1313,8 +1342,10 @@
                 pipelineActivoPonderado: fromCents(activeWeightedCents),
                 facturacionRegistradaVigente: fromCents(stockFacturacionVigenteCents),
                 cuentasPorCobrarActuales: fromCents(stockCuentasPorCobrarVivasCents),
+                saldosAFavorActuales: fromCents(stockSaldosAFavorCents),
                 saldoPorFacturarActual: fromCents(stockSaldoPorFacturarCents),
-                abonosNoAplicadosActuales: fromCents(stockAbonosPendientesAplicarCents)
+                abonosNoAplicadosActuales: fromCents(stockAbonosPendientesAplicarCents),
+                importePendienteAplicarActual: fromCents(stockAbonosPendientesAplicarCents + stockSaldosAFavorCents)
             },
             margenes: margenesSummary,
             margenPresupuestado: margenesSummary,

@@ -574,6 +574,62 @@ async function main() {
   // --------------------------------------------------------------------------------------------------
   // 9. COMPATIBILIDAD CON BANK_078 Y VALIDACIÓN FINANCIERA PREVIA A FABRICACIÓN
   // --------------------------------------------------------------------------------------------------
+  // 9A-0: Verificar que una oportunidad cuyo cliente tiene saldo bancario disponible NO aplicado ($1,000.00 en regConc)
+  // NO puede ser liberada a Fabricación si el pago no ha sido válidamente aplicado a su factura de anticipo.
+  const oppUnappliedFabId = `OPP_B5_UNAPPLIED_FAB_${TAG}`;
+  const inv401Id = `INV_B5_401_${TAG}`;
+  await H.setDoc(`prospects${DB_SUFFIX}`, oppUnappliedFabId, {
+    id: oppUnappliedFabId,
+    codigo: '202611904',
+    proyecto: 'PROYECTO SIN APLICACION DE ANTICIPO',
+    clientId,
+    vendedor: PERSONAS.vendedor.nombre,
+    vendedorId: PERSONAS.vendedor.cid,
+    encargado: PERSONAS.gestor1.nombre,
+    gestorId: PERSONAS.gestor1.cid,
+    etapa: 'cierre',
+    estado: 'ganado',
+    clasificacion: 'ejecucion',
+    postcierre_habilitado: true,
+    forma_pago: '50/50',
+    precio_cotizado: 800, // 904 IVA inc -> 50% anticipo = 452.00 (menor que los $1,000 disponibles en banco, pero NO aplicado)
+    costo_venta: 500,
+    fecha_creacion: '2026-11-01T10:00:00.000Z',
+    fecha_cierre: '2026-11-03T10:00:00.000Z',
+    datos: {
+      forma_pago: '50/50',
+      doc_firmado: [fileUrl('contrato_opp4.pdf')],
+      doc_oferta: [fileUrl('oferta_opp4.pdf')],
+      doc_costos: [fileUrl('costos_opp4.pdf')]
+    },
+    factura_anticipo_id: inv401Id,
+    facturas: [
+      { id: inv401Id, numero: 'CCF-401-ANT', monto: 452.00, fecha: '2026-11-04', es_anticipo: true, tipo_factura: 'anticipo', doc_factura: fileUrl('ccf_401.pdf'), pagos: [] }
+    ],
+    ordenes_cambio: []
+  });
+
+  const fabUnappliedReady = await H.callFunction('validateManufacturingReadinessAdmin', {
+    dbSuffix: DB_SUFFIX,
+    prospectId: oppUnappliedFabId
+  }, tokens.gestor1);
+  assert(
+    fabUnappliedReady.httpStatus !== 200 ||
+    (fabUnappliedReady.error && fabUnappliedReady.error.status) ||
+    (fabUnappliedReady.result && fabUnappliedReady.result.ready === false),
+    `Un saldo bancario no aplicado NO debe habilitar Fabricación: ${JSON.stringify(fabUnappliedReady)}`
+  );
+
+  const sendUnappliedFab = await H.callFunction('sendProspectToFabricationAdmin', {
+    dbSuffix: DB_SUFFIX,
+    prospectId: oppUnappliedFabId,
+    opId: `op_send_unapplied_fab_${TAG}`
+  }, tokens.gestor1);
+  assert(
+    sendUnappliedFab.httpStatus !== 200 || (sendUnappliedFab.error && sendUnappliedFab.error.status),
+    `sendProspectToFabricationAdmin debe rechazar envío cuando el saldo bancario no está aplicado a la factura: ${JSON.stringify(sendUnappliedFab)}`
+  );
+
   // 9A: Oportunidad 1 tiene anticipo 50% ($5,650.00) cubierto mediante el abono multifactura (Paso 2).
   // Verificar que validateManufacturingReadinessAdmin y sendProspectToFabricationAdmin lo reconocen como ANTICIPO_CONFIRMADO.
   const fabReadyRes = await H.callFunction('validateManufacturingReadinessAdmin', {
@@ -609,7 +665,7 @@ async function main() {
     opId: `op_recon_${TAG}`
   }, tokens.manager);
   assert(reconRes.httpStatus === 200 && reconRes.result && reconRes.result.status === 'reconciled', `Fallo recalculateClientFinancialsAdmin: ${JSON.stringify(reconRes)}`);
-  assert(reconRes.result.reconciled.total_historico_facturado === 23730.00, `Total facturado esperado 23730.00, obtenido ${reconRes.result.reconciled.total_historico_facturado}`);
+  assert(reconRes.result.reconciled.total_historico_facturado === 24182.00, `Total facturado esperado 24182.00 (23730 + 452), obtenido ${reconRes.result.reconciled.total_historico_facturado}`);
   assert(reconRes.result.reconciled.total_historico_cobrado === 17560.00, `Total cobrado esperado 17560.00 (13560 + 4000), obtenido ${reconRes.result.reconciled.total_historico_cobrado}`);
   assert(reconRes.result.reconciled.saldo_abonos_pendientes_aplicar === 1000.00, `Saldo abonos pendientes esperado 1000.00, obtenido ${reconRes.result.reconciled.saldo_abonos_pendientes_aplicar}`);
   assert(reconRes.result.reconciled.total_dinero_recibido === 18560.00, `Total dinero recibido esperado 18560.00 (13560 + 5000), obtenido ${reconRes.result.reconciled.total_dinero_recibido}`);
@@ -620,11 +676,11 @@ async function main() {
     period: 'all'
   }, tokens.manager);
   assert(biRes.httpStatus === 200 && biRes.result && biRes.result.status === 'ok', `Fallo getAccountBIMetricsAdmin: ${JSON.stringify(biRes)}`);
-  assert(biRes.result.financiero.facturacionRegistrada === 23730.00, `BI facturacionRegistrada esperado 23730.00, obtenido ${biRes.result.financiero.facturacionRegistrada}`);
+  assert(biRes.result.financiero.facturacionRegistrada === 24182.00, `BI facturacionRegistrada esperado 24182.00, obtenido ${biRes.result.financiero.facturacionRegistrada}`);
   assert(biRes.result.financiero.cobrosAplicados === 17560.00, `BI cobrosAplicados esperado 17560.00, obtenido ${biRes.result.financiero.cobrosAplicados}`);
   assert(biRes.result.financiero.abonosPendientesDeAplicar === 1000.00, `BI abonosPendientesDeAplicar esperado 1000.00, obtenido ${biRes.result.financiero.abonosPendientesDeAplicar}`);
   assert(biRes.result.financiero.dineroRecibido === 18560.00, `BI dineroRecibido esperado 18560.00, obtenido ${biRes.result.financiero.dineroRecibido}`);
-  console.log('[PASS 9] Integración con compuerta financiera de Fabricación, reconciliación transaccional OCC y motor BI verificada al 100%.');
+  console.log('[PASS 9] Integración con compuerta financiera de Fabricación (incluyendo bloqueo ante saldo no aplicado), reconciliación transaccional OCC y motor BI verificada al 100%.');
 
   await adminApp.delete();
   console.log('================================================================================');

@@ -1049,5 +1049,200 @@ describe('FASE B5 — Coordinación Transaccional Financiera, Abonos Multi-Factu
       expect(bi.margenPresupuestado.margenBrutoPresupuestadoMonto).toBe(7000); // 20000 - 13000
       expect(bi.margenPresupuestado.margenBrutoPresupuestadoPct).toBe(35);
     });
+
+    test('Escenario 21: Regresión SFORMA (sobrepago legítimo US$0.01 por redondeo de anticipo 50% conservado como saldo_a_favor sin compensar silenciosamente otras facturas)', async () => {
+      const { fdb, wf, caller } = makeEnv();
+      const mgr = caller('manager');
+      await seedClient(fdb, 'CUST-1777081076240-973', {
+        empresa: 'SFORMA',
+        nit: '0614-120423-108-1',
+        is_gran_contribuyente: false
+      });
+
+      await seedWonProspect(fdb, 'OPP-1777081076382-5', 'CUST-1777081076240-973', {
+        proyecto: 'SERIE 3 - SFORMA',
+        precio_cotizado: 38417.37, // 38417.37 * 1.13 = 43411.6281 -> US$43,411.63
+        costo_venta: 30013.57,
+        facturas: [
+          {
+            id: 'FAC-1777081076382-5',
+            numero: 'HISTORICO',
+            monto: 21705.81,
+            fecha: '2025-11-14T06:00:00.000Z',
+            doc_factura: fileObj('50_anticipo_sforma.pdf', 'facturas'),
+            pagos: [
+              {
+                metodo: 'Transferencia',
+                fecha: '2025-11-14T06:00:00.000Z',
+                monto: 21705.82,
+                referencia: 'Importación Excel',
+                ref: 'undefined',
+                doc_comprobante: fileObj('abono_50_anticipo.jpg', 'pagos')
+              }
+            ]
+          }
+        ]
+      });
+
+      const recalc = await wf.recalculateClientFinancials({
+        caller: mgr,
+        clientId: 'CUST-1777081076240-973',
+        reason: 'regresion_sforma_centavo'
+      });
+
+      expect(recalc.reconciled.total_historico_facturado).toBe(21705.81);
+      expect(recalc.reconciled.total_historico_cobrado).toBe(21705.82);
+      expect(recalc.reconciled.total_dinero_recibido).toBe(21705.82);
+      expect(recalc.reconciled.total_cobros_monetarios_aplicados).toBe(21705.82);
+      expect(recalc.reconciled.saldo_por_cobrar).toBe(0);
+      expect(recalc.reconciled.saldo_a_favor).toBe(0.01);
+      expect(recalc.reconciled.importe_pendiente_aplicar).toBe(0.01);
+      expect(recalc.reconciled.saldo_por_facturar).toBe(21705.82);
+      expect(recalc.reconciled.total_ventas_adjudicadas).toBe(43411.63);
+
+      // Si se emite una segunda factura pendiente de US$100.00, el centavo a favor en la primera factura NO debe reducir silenciosamente el saldo por cobrar de la segunda factura
+      await wf.saveInvoice({
+        caller: mgr,
+        opId: 'OP-SFORMA-INV2',
+        prospectId: 'OPP-1777081076382-5',
+        numero: '099',
+        monto: 100.00,
+        fecha: '2026-11-10',
+        doc_factura: fileObj('f99.pdf', 'facturas')
+      });
+
+      const clientAfterInv2 = await getDocData(fdb, 'clients_prod', 'CUST-1777081076240-973');
+      expect(clientAfterInv2.total_historico_facturado).toBe(21805.81);
+      expect(clientAfterInv2.saldo_por_cobrar).toBe(100.00);
+      expect(clientAfterInv2.saldo_a_favor).toBe(0.01);
+      expect(clientAfterInv2.importe_pendiente_aplicar).toBe(0.01);
+
+      const bi = await wf.getAccountBIMetrics({
+        caller: mgr,
+        clientId: 'CUST-1777081076240-973',
+        period: 'all'
+      });
+      expect(bi.financiero.saldoPorCobrar).toBe(100.00);
+      expect(bi.financiero.saldoAFavor).toBe(0.01);
+      expect(bi.financiero.importePendienteDeAplicar).toBe(0.01);
+    });
+
+    test('Escenario 22: Bloque 3 — Un saldo bancario NO aplicado no puede liberar Fabricación; varias transferencias aplicadas a una misma factura sí la liberan', async () => {
+      const { fdb, wf, caller } = makeEnv();
+      const mgr = caller('manager');
+      await seedClient(fdb, 'CUST-22', { is_gran_contribuyente: false });
+      await seedWonProspect(fdb, 'OPP-22', 'CUST-22', {
+        precio_cotizado: 10000, // 11300 IVA inc -> 50% anticipo requerido = 5650
+        forma_pago: '50/50',
+        facturas: [
+          {
+            id: 'F22-ANT',
+            numero: '2201',
+            monto: 5650,
+            es_anticipo: true,
+            tipo_factura: 'anticipo',
+            doc_factura: fileObj('f22.pdf', 'facturas'),
+            pagos: []
+          }
+        ]
+      });
+
+      // 1. Registrar depósito bancario por US$10,000.00 SIN aplicar a la factura F22-ANT
+      const depUnapplied = await wf.registerBankDeposit({
+        caller: mgr,
+        opId: 'OP-22-DEP-UNAPPLIED',
+        clientId: 'CUST-22',
+        deposit: {
+          referencia_bancaria: '9022001',
+          metodo: 'transferencia',
+          fecha_comprobante: '2026-11-10',
+          monto_recibido: 10000,
+          doc_comprobante: fileObj('v22_1.pdf', 'pagos'),
+          applications: []
+        }
+      });
+      expect(depUnapplied.saldoDisponible).toBe(10000);
+
+      // 2. Verificar que Fabricación RECHAZA tanto la validación como el envío aunque el cliente tenga $10,000 en saldo bancario no aplicado
+      await expect(wf.validateManufacturingReadiness({
+        caller: mgr,
+        prospectId: 'OPP-22'
+      })).rejects.toThrow(/anticipo obligatorio/i);
+
+      await expect(wf.sendProspectToFabrication({
+        caller: mgr,
+        opId: 'OP-22-SEND-FAIL',
+        prospectId: 'OPP-22'
+      })).rejects.toThrow(/Anticipo/i);
+
+      // 3. Aplicar DOS transferencias distintas (Varias transferencias para una misma factura: $3,000 + $2,650 = $5,650)
+      await wf.distributeBankDeposit({
+        caller: mgr,
+        opId: 'OP-22-DIST-A',
+        depositId: 'BANK_9022001',
+        applications: [{ prospectId: 'OPP-22', invoiceId: 'F22-ANT', monto_aplicado: 3000 }]
+      });
+
+      await wf.registerBankDeposit({
+        caller: mgr,
+        opId: 'OP-22-DEP-B',
+        clientId: 'CUST-22',
+        deposit: {
+          referencia_bancaria: '9022002',
+          metodo: 'transferencia',
+          fecha_comprobante: '2026-11-11',
+          monto_recibido: 2650,
+          doc_comprobante: fileObj('v22_2.pdf', 'pagos'),
+          applications: [{ prospectId: 'OPP-22', invoiceId: 'F22-ANT', monto_aplicado: 2650 }]
+        }
+      });
+
+      // 4. Ahora el anticipo de $5,650 está cubierto por 2 transferencias válidamente aplicadas y Fabricación autoriza el envío
+      const readinessAfter = await wf.validateManufacturingReadiness({
+        caller: mgr,
+        prospectId: 'OPP-22'
+      });
+      expect(readinessAfter.ready).toBe(true);
+      expect(readinessAfter.code).toBe('ANTICIPO_CONFIRMADO');
+
+      const sendOk = await wf.sendProspectToFabrication({
+        caller: mgr,
+        opId: 'OP-22-SEND-OK',
+        prospectId: 'OPP-22'
+      });
+      expect(sendOk.status).toBe('sent');
+    });
+
+    test('Escenario 23: Bloque 2.3 — Detección fail-fast de modificación concurrente (expectedFinancialVersion) en reconciliación', async () => {
+      const { fdb, wf, caller } = makeEnv();
+      const mgr = caller('manager');
+      await seedClient(fdb, 'CUST-23', { financialVersion: 2 });
+      await seedWonProspect(fdb, 'OPP-23', 'CUST-23', {
+        precio_cotizado: 5000,
+        facturas: [{ id: 'F23', numero: '2301', monto: 5650, doc_factura: fileObj('f23.pdf', 'facturas'), pagos: [] }]
+      });
+
+      // Si el escaneo previo vio financialVersion=1 pero el documento actual está en financialVersion=2, debe abortar inmediatamente
+      await expect(wf.recalculateClientFinancials({
+        caller: mgr,
+        clientId: 'CUST-23',
+        dryRun: false,
+        expectedFinancialVersion: 1,
+        failFastOnOcc: true,
+        reason: 'test_concurrent_abort'
+      })).rejects.toThrow(/Modificación concurrente detectada/i);
+
+      // Con expectedFinancialVersion=2 (coincidente), aplica y avanza a 3
+      const okRes = await wf.recalculateClientFinancials({
+        caller: mgr,
+        clientId: 'CUST-23',
+        dryRun: false,
+        expectedFinancialVersion: 2,
+        failFastOnOcc: true,
+        reason: 'test_concurrent_ok'
+      });
+      expect(okRes.status).toBe('reconciled');
+      expect(okRes.financialVersion).toBe(3);
+    });
   });
 });
