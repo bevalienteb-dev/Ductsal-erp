@@ -2178,6 +2178,120 @@ exports.resolveHistoricalBankConflictAdmin = functions.https.onCall((data, conte
   })));
 
 // ======================================================================================================
+// B5: Multi-Invoice Bank Deposits, Transactional Financial Reconciliation & Business Intelligence
+// ======================================================================================================
+/** { clientId, ref, metodo, monto, fechaComprobante, banco_origen?, doc_comprobante, observaciones?, allocations?, opId, dbSuffix? } -> { status: 'created' | 'unchanged', abonoId, deposit, aplicaciones, importeOriginal, totalAplicado, saldoDisponible, estadoAbono } */
+exports.registerBankDepositAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.registerBankDeposit({
+    caller,
+    clientId: d.clientId,
+    ref: d.ref,
+    referencia: d.referencia,
+    referencia_bancaria: d.referencia_bancaria,
+    metodo: d.metodo,
+    monto: d.monto,
+    importe_original_recibido: d.importe_original_recibido,
+    importeTotal: d.importeTotal,
+    fecha: d.fecha,
+    fechaComprobante: d.fechaComprobante,
+    fecha_comprobante_bancario: d.fecha_comprobante_bancario,
+    banco_origen: d.banco_origen,
+    banco: d.banco,
+    bankOrigin: d.bankOrigin,
+    doc_comprobante: d.doc_comprobante,
+    observaciones: d.observaciones,
+    notas: d.notas,
+    allocations: d.allocations,
+    distribuciones: d.distribuciones,
+    aplicaciones: d.aplicaciones,
+    opId: d.opId
+  })));
+
+/** { abonoId?, bankRef?, ref?, clientId?, allocations, observaciones?, opId, dbSuffix? } -> { status: 'distributed' | 'unchanged', abonoId, deposit, nuevasAplicaciones, importeOriginal, totalAplicado, saldoDisponible, estadoAbono } */
+exports.distributeBankDepositAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.distributeBankDeposit({
+    caller,
+    abonoId: d.abonoId,
+    bankRef: d.bankRef,
+    ref: d.ref,
+    referencia: d.referencia,
+    clientId: d.clientId,
+    allocations: d.allocations,
+    distribuciones: d.distribuciones,
+    aplicaciones: d.aplicaciones,
+    observaciones: d.observaciones,
+    notas: d.notas,
+    opId: d.opId
+  })));
+
+/** { abonoId?, bankRef?, ref?, aplicacionId?, prospectId?, invoiceId?, paymentKey?, motivo, reallocateTo?, opId?, dbSuffix? } -> { status: 'voided' | 'voided_and_reallocated' | 'unchanged', ... } */
+exports.voidBankDepositApplicationAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.voidBankDepositApplication({
+    caller,
+    abonoId: d.abonoId,
+    bankRef: d.bankRef,
+    ref: d.ref,
+    referencia: d.referencia,
+    aplicacionId: d.aplicacionId,
+    applicationId: d.applicationId,
+    prospectId: d.prospectId,
+    invoiceId: d.invoiceId,
+    paymentKey: d.paymentKey,
+    motivo: d.motivo,
+    reallocateTo: d.reallocateTo,
+    opId: d.opId
+  })));
+
+/** { abonoId?, bankRef?, ref?, motivo, voidActiveApplications?, opId?, dbSuffix? } -> { status: 'voided' | 'unchanged', abonoId, deposit } */
+exports.voidBankDepositAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.voidBankDeposit({
+    caller,
+    abonoId: d.abonoId,
+    bankRef: d.bankRef,
+    ref: d.ref,
+    referencia: d.referencia,
+    motivo: d.motivo,
+    voidActiveApplications: d.voidActiveApplications !== false,
+    opId: d.opId
+  })));
+
+/** { clientId?, estado?, search?, includeHistoricalSinglePayments?, dbSuffix? } -> { status: 'ok', totalCount, summary, deposits } */
+exports.listClientBankDepositsAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.listClientBankDeposits({
+    caller,
+    clientId: d.clientId,
+    estado: d.estado,
+    search: d.search,
+    includeHistoricalSinglePayments: d.includeHistoricalSinglePayments !== false
+  })));
+
+/** { clientId, dryRun?, reason?, opId?, dbSuffix? } -> { status: 'reconciled' | 'dry_run', canonicalClientId, discrepancyDetected, previous, reconciled, financialVersion } */
+exports.recalculateClientFinancialsAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.recalculateClientFinancials({
+    caller,
+    clientId: d.clientId,
+    dryRun: d.dryRun === true,
+    reason: d.reason,
+    opId: d.opId
+  })));
+
+/** { clientId?, period?, dateFrom?, dateTo?, month?, vendedorId?, gestorId?, encargado?, clasificacion?, estado?, dbSuffix? } -> { status: 'ok', commercial, financial, margins, antiguedadCxC, ... } */
+exports.getAccountBIMetricsAdmin = functions.https.onCall((data, context) => runWorkflowOp(data, context,
+  (wf, caller, d) => wf.getAccountBIMetrics({
+    caller,
+    clientId: d.clientId,
+    period: d.period,
+    dateFrom: d.dateFrom,
+    dateTo: d.dateTo,
+    month: d.month,
+    vendedorId: d.vendedorId,
+    gestorId: d.gestorId,
+    encargado: d.encargado,
+    clasificacion: d.clasificacion,
+    estado: d.estado
+  })));
+
+// ======================================================================================================
 // SEC-05: Secure Document Download (Universal Downloads & Large File Streaming)
 // ======================================================================================================
 const { createStorageService } = require('./storageService');

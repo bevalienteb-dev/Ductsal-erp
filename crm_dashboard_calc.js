@@ -34,6 +34,16 @@
         return null;
     }
 
+    function _getBiEngine() {
+        if (typeof CrmBiEngine !== 'undefined' && CrmBiEngine) return CrmBiEngine;
+        if (typeof window !== 'undefined' && window.CrmBiEngine) return window.CrmBiEngine;
+        if (typeof globalThis !== 'undefined' && globalThis.CrmBiEngine) return globalThis.CrmBiEngine;
+        if (typeof require === 'function') {
+            try { return require('./crm_bi_engine'); } catch (_) {}
+        }
+        return null;
+    }
+
     /**
      * Calcula el subtotal consolidado de una oportunidad incluyendo órdenes de cambio.
      * Respeta la lógica canónica de getProjectSubtotal existente en app_core.js.
@@ -407,24 +417,38 @@
     }
 
     /**
-     * Calcula métricas de Cuentas por Cobrar (CxC).
-     * Sanitiza valores numéricos, previene la propagación de NaN y contabiliza registros inválidos.
+     * Calcula métricas de Cuentas por Cobrar (CxC) y desglose financiero canónico B5.
+     * Sanitiza valores numéricos, previene la propagación de NaN, excluye facturas/pagos anulados
+     * y separa estrictamente cobros monetarios aplicados, retenciones aplicadas y dinero recibido en banco.
      */
-    function calculateCxCMetrics(prospectsList) {
-        let totalFacturado = 0;
-        let totalCobrado = 0;
+    function calculateCxCMetrics(prospectsList, options = {}) {
+        let totalFacturadoCents = 0;
+        let totalCobradoCents = 0;
+        let cobrosMonetariosAplicadosCents = 0;
+        let retencionesAplicadasCents = 0;
         let facturasCount = 0;
         let pagosCount = 0;
         let invalidFacturasCount = 0;
         let invalidPagosCount = 0;
 
+        const bankVouchersByRef = new Map();
+        const normRefFn = (r) => (typeof r === 'string' ? r.normalize('NFKC').trim().toUpperCase().replace(/[\s\-_./#]+/g, '') : '');
+        const isInvalidStatus = (st) => {
+            if (typeof st !== 'string') return false;
+            const s = st.trim().toLowerCase();
+            return ['anulado', 'anulada', 'revertido', 'revertida', 'eliminado', 'eliminada', 'rechazado', 'rechazada', 'voided', 'reversed', 'cancelado', 'cancelada'].includes(s);
+        };
+
         (prospectsList || []).forEach(p => {
             if (!p || p.eliminado === true || !Array.isArray(p.facturas)) return;
             p.facturas.forEach(f => {
                 if (!f) return;
+                if (f.anulada === true || f.anulado === true || f.eliminada === true || f.eliminado === true || isInvalidStatus(f.estado)) {
+                    return;
+                }
                 const monto = Number(f.monto);
                 if (f.monto !== null && typeof f.monto !== 'undefined' && !isNaN(monto) && isFinite(monto) && monto > 0) {
-                    totalFacturado += monto;
+                    totalFacturadoCents += Math.round(monto * 100);
                     facturasCount++;
                 } else if (f.monto !== 0) {
                     invalidFacturasCount++;
@@ -432,10 +456,37 @@
                 if (Array.isArray(f.pagos)) {
                     f.pagos.forEach(b => {
                         if (!b) return;
+                        if (
+                            b.anulado === true || b.anulada === true ||
+                            b.revertido === true || b.revertida === true ||
+                            b.eliminado === true || b.eliminada === true ||
+                            b.rechazado === true || b.rechazada === true ||
+                            b.voided === true || b.reversed === true ||
+                            b.confirmado === false || b.verificado === false ||
+                            isInvalidStatus(b.estado)
+                        ) {
+                            return;
+                        }
                         const pMonto = Number(b.monto);
                         if (b.monto !== null && typeof b.monto !== 'undefined' && !isNaN(pMonto) && isFinite(pMonto) && pMonto > 0) {
-                            totalCobrado += pMonto;
+                            const pCents = Math.round(pMonto * 100);
+                            totalCobradoCents += pCents;
                             pagosCount++;
+                            const metodo = String(b.metodo || '').trim().toLowerCase();
+                            if (metodo === 'retencion_1pct') {
+                                retencionesAplicadasCents += pCents;
+                            } else {
+                                cobrosMonetariosAplicadosCents += pCents;
+                                const nRef = normRefFn(b.referencia_bancaria_unica || b.ref_bancaria_base || b.ref_normalizada || b.ref || '');
+                                const vKey = nRef ? `BANK_${nRef}` : `LEGACY_${p.id}_${f.id}_${b.id || b.fecha || pagosCount}`;
+                                const explicitTotalCents = Math.round((Number(b.importe_total_comprobante) || 0) * 100);
+                                const prev = bankVouchersByRef.get(vKey) || { appliedSumCents: 0, explicitTotalCents: 0 };
+                                prev.appliedSumCents += pCents;
+                                if (explicitTotalCents > prev.explicitTotalCents) {
+                                    prev.explicitTotalCents = explicitTotalCents;
+                                }
+                                bankVouchersByRef.set(vKey, prev);
+                            }
                         } else if (b.monto !== 0) {
                             invalidPagosCount++;
                         }
@@ -444,14 +495,55 @@
             });
         });
 
-        const totalCxC = Math.max(0, totalFacturado - totalCobrado);
+        let abonosPendientesAplicarCents = 0;
+        const bankDeposits = options && Array.isArray(options.bankDeposits) ? options.bankDeposits : [];
+        const biEngine = _getBiEngine();
+        for (const dep of bankDeposits) {
+            if (!dep || typeof dep !== 'object') continue;
+            if (biEngine && typeof biEngine.evaluateBankDepositRecord === 'function') {
+                const st = biEngine.evaluateBankDepositRecord(dep);
+                if (!st.isActive) continue;
+                abonosPendientesAplicarCents += st.availableCents;
+                const nRef = normRefFn(dep.normRef || dep.referencia_bancaria_unica || dep.ref || '');
+                const vKey = nRef ? `BANK_${nRef}` : (dep.id || `DEP_${Math.random()}`);
+                const prev = bankVouchersByRef.get(vKey) || { appliedSumCents: 0, explicitTotalCents: 0 };
+                prev.explicitTotalCents = Math.max(prev.explicitTotalCents, st.originalCents);
+                bankVouchersByRef.set(vKey, prev);
+            }
+        }
+
+        let dineroRecibidoCents = 0;
+        for (const v of bankVouchersByRef.values()) {
+            const voucherCents = v.explicitTotalCents > 0
+                ? Math.max(v.explicitTotalCents, v.appliedSumCents)
+                : v.appliedSumCents;
+            dineroRecibidoCents += voucherCents;
+        }
+        if (dineroRecibidoCents < cobrosMonetariosAplicadosCents + abonosPendientesAplicarCents) {
+            dineroRecibidoCents = cobrosMonetariosAplicadosCents + abonosPendientesAplicarCents;
+        }
+
+        const totalFacturado = Math.round(totalFacturadoCents) / 100;
+        const totalCobrado = Math.round(totalCobradoCents) / 100;
+        const cobrosMonetariosAplicados = Math.round(cobrosMonetariosAplicadosCents) / 100;
+        const retencionesAplicadas = Math.round(retencionesAplicadasCents) / 100;
+        const dineroRecibido = Math.round(dineroRecibidoCents) / 100;
+        const abonosPendientesDeAplicar = Math.round(abonosPendientesAplicarCents) / 100;
+        const totalCxC = Math.max(0, Math.round(totalFacturadoCents - totalCobradoCents) / 100);
         const pctCobrado = totalFacturado > 0 ? Math.min(100, (totalCobrado / totalFacturado) * 100) : 0;
         const hasInvalidRecords = (invalidFacturasCount > 0 || invalidPagosCount > 0);
 
         return {
             totalFacturado,
+            facturacionRegistradaVigente: totalFacturado,
             totalCobrado,
+            cobrosAplicados: totalCobrado,
+            cobrosMonetariosAplicados,
+            retencionesAplicadas,
+            dineroRecibido,
+            abonosPendientesDeAplicar,
             totalCxC,
+            saldoPorCobrar: totalCxC,
             pctCobrado,
             facturasCount,
             pagosCount,
@@ -1335,6 +1427,22 @@
         };
     }
 
+    function computeBIMetrics(params = {}) {
+        const bi = _getBiEngine();
+        if (bi && typeof bi.computeBIMetrics === 'function') {
+            return bi.computeBIMetrics(params);
+        }
+        return null;
+    }
+
+    function classifyInvoiceAging(fac, referenceYMD) {
+        const bi = _getBiEngine();
+        if (bi && typeof bi.classifyInvoiceAging === 'function') {
+            return bi.classifyInvoiceAging(fac, referenceYMD);
+        }
+        return { bucket: 'sin_vencimiento_definido', hasValidDueDate: false, esMorosa: false };
+    }
+
     return {
         STAGES,
         DEFAULT_KPI_LIMITS,
@@ -1355,6 +1463,8 @@
         calculateChannelConversion,
         calculateMonthlyEvolution,
         calculateSellerPerformance,
-        calculatePipelineStageDistribution
+        calculatePipelineStageDistribution,
+        computeBIMetrics,
+        classifyInvoiceAging
     };
 });

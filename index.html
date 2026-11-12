@@ -316,7 +316,78 @@
                         <h1 id="projects-view-title">Proyectos y Control de Cobros</h1>
                         <p id="projects-view-desc">Gestión operativa y financiera de proyectos y liquidación de cobros.</p>
                     </div>
+                    <div id="proj-header-actions" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <button type="button" class="btn-secondary" id="btn-toggle-deposits-panel" onclick="toggleBankDepositsPanel()" style="font-weight: 600;">
+                            🏦 Consulta de Abonos Bancarios
+                        </button>
+                        <button type="button" class="btn-primary" id="btn-open-multi-deposit-modal" onclick="openBankDepositModal()" style="font-weight: 600;">
+                            + Registrar Abono Bancario / Multifactura
+                        </button>
+                    </div>
                 </header>
+
+                <!-- B5.3: Panel Operativo de Consulta y Gestión de Abonos Bancarios -->
+                <div id="bank-deposits-consultation-panel" class="glass-panel" style="display: none; margin-bottom: 1.25rem; padding: 1.15rem; border: 1px solid rgba(56, 189, 248, 0.35);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 0.9rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.75rem;">
+                        <div>
+                            <h3 style="margin: 0; color: var(--brand-gold); font-size: 1.05rem;">🏦 Control de Abonos Bancarios y Distribuciones Multifactura</h3>
+                            <span style="font-size: 0.78rem; color: var(--text-secondary);">Consulta de dinero bancario recibido, aplicaciones a facturas, saldos disponibles por aplicar y trazabilidad documental.</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button type="button" class="btn-secondary" onclick="refreshBankDepositsConsultation()" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">🔄 Actualizar</button>
+                            <button type="button" class="btn-icon-close" onclick="toggleBankDepositsPanel(false)" title="Cerrar consulta de abonos">&times;</button>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 0.9rem;">
+                        <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.65rem 0.85rem;">
+                            <div style="font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase;">Dinero Bancario Recibido</div>
+                            <div id="dep-sum-recibido" style="font-size: 1.1rem; font-weight: 700; color: #38bdf8; margin-top: 2px;">$0.00</div>
+                        </div>
+                        <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.65rem 0.85rem;">
+                            <div style="font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase;">Total Aplicado a Facturas</div>
+                            <div id="dep-sum-aplicado" style="font-size: 1.1rem; font-weight: 700; color: var(--success); margin-top: 2px;">$0.00</div>
+                        </div>
+                        <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 6px; padding: 0.65rem 0.85rem;">
+                            <div style="font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase;">Saldo Disponible por Aplicar</div>
+                            <div id="dep-sum-disponible" style="font-size: 1.1rem; font-weight: 700; color: var(--brand-gold); margin-top: 2px;">$0.00</div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 0.85rem;">
+                        <div class="filter-pills-group" id="dep-status-filter-pills">
+                            <button type="button" class="filter-pill active" data-dep-filter="todos" onclick="setBankDepositsFilter('todos')">Todos</button>
+                            <button type="button" class="filter-pill" data-dep-filter="con_saldo" onclick="setBankDepositsFilter('con_saldo')">💰 Con Saldo Disponible</button>
+                            <button type="button" class="filter-pill" data-dep-filter="parcialmente_aplicado" onclick="setBankDepositsFilter('parcialmente_aplicado')">🌓 Parcialmente Aplicados</button>
+                            <button type="button" class="filter-pill" data-dep-filter="totalmente_aplicado" onclick="setBankDepositsFilter('totalmente_aplicado')">✅ Totalmente Aplicados</button>
+                        </div>
+                        <div style="flex: 1; min-width: 240px; max-width: 380px;">
+                            <input type="text" id="dep-search-input" placeholder="🔍 Filtrar por referencia, cliente, factura o código..." class="form-control" style="width: 100%; padding: 0.55rem 0.75rem; background: rgba(0,0,0,0.25); border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text-primary);" onkeyup="renderBankDepositsTable()">
+                        </div>
+                    </div>
+
+                    <div class="table-container" style="max-height: 420px; overflow-y: auto;">
+                        <table id="bankDepositsTable">
+                            <thead>
+                                <tr>
+                                    <th>Fecha Comprobante</th>
+                                    <th>Cliente</th>
+                                    <th>Referencia / Método</th>
+                                    <th style="text-align: right;">Importe Recibido</th>
+                                    <th style="text-align: right;">Aplicado</th>
+                                    <th style="text-align: right;">Saldo Disponible</th>
+                                    <th>Estado</th>
+                                    <th>Facturas Vinculadas</th>
+                                    <th>Comprobante</th>
+                                    <th style="text-align: right;">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bank-deposits-table-body">
+                                <tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 1rem;">Cargando abonos bancarios...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
                 <div class="filter-pills-bar">
                     <div class="filter-pills-group" id="proj-filter-pills">
@@ -568,6 +639,12 @@
                         </div>
                         <div class="progress-bar-container" style="height: 6px;">
                             <div id="cxc-bar-cobrado" class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div id="cxc-b5-breakdown" style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 0.72rem; color: var(--text-secondary);">
+                            <span title="Cobros monetarios aplicados a facturas (sin retención)">💵 Monetario: <strong id="metric-cxc-monetario" style="color:#34d399;">$0</strong></span>
+                            <span title="Retenciones fiscales 1% aplicadas">🧾 Ret. 1%: <strong id="metric-cxc-retenciones" style="color:var(--brand-gold);">$0</strong></span>
+                            <span title="Saldo pendiente de facturar sobre ventas adjudicadas">📄 Por Facturar: <strong id="metric-cxc-por-facturar" style="color:#93c5fd;">$0</strong></span>
+                            <span id="metric-abonos-disponibles-wrap" style="display:none;" title="Saldo disponible en abonos bancarios pendientes de aplicar">🏦 Abonos Disp.: <strong id="metric-abonos-disponibles" style="color:#38bdf8;">$0</strong></span>
                         </div>
                     </div>
 
@@ -3394,6 +3471,121 @@
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 
+    <!-- B5.3: Modal de Registro y Distribución de Abono Bancario Multifactura -->
+    <div id="bank-deposit-modal" class="modal-overlay" style="display: none; z-index: 3200;">
+        <div class="modal-content glass-panel" style="max-width: 960px; width: 95%; max-height: 90vh; overflow-y: auto; padding: 1.4rem;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.85rem; margin-bottom: 1rem;">
+                <div>
+                    <h3 id="bdep-modal-title" style="margin: 0; color: var(--brand-gold); font-size: 1.15rem;">🏦 Registrar Abono Bancario y Distribuir entre Facturas</h3>
+                    <p id="bdep-modal-subtitle" style="margin: 4px 0 0 0; font-size: 0.82rem; color: var(--text-secondary);">
+                        Registre un único comprobante bancario (transferencia o cheque) y aplíquelo total o parcialmente a una o múltiples facturas del mismo cliente.
+                    </p>
+                </div>
+                <button type="button" class="btn-icon-close" onclick="closeBankDepositModal()" title="Cerrar">&times;</button>
+            </div>
+
+            <form id="bank-deposit-form" onsubmit="processBankDepositForm(event)">
+                <input type="hidden" id="bdep-mode" value="register">
+                <input type="hidden" id="bdep-existing-id" value="">
+
+                <div id="bdep-header-fields" class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label>Cliente Titular *</label>
+                        <select id="bdep-client-select" required onchange="handleBankDepositClientChange()">
+                            <option value="">Seleccione un cliente...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Referencia Bancaria / N° Cheque *</label>
+                        <input type="text" id="bdep-ref" placeholder="Ej. 868355650" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Forma de Pago *</label>
+                        <select id="bdep-metodo" required>
+                            <option value="transferencia">Transferencia Bancaria</option>
+                            <option value="cheque">Cheque</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Fecha Real del Comprobante *</label>
+                        <input type="date" id="bdep-fecha-comprobante" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Importe Recibido en Banco (USD) *</label>
+                        <input type="number" id="bdep-monto-recibido" step="0.01" min="0.01" placeholder="0.00" required oninput="recalculateBankDepositDistributionSummary()">
+                    </div>
+                    <div class="form-group">
+                        <label>Banco Origen (Opcional)</label>
+                        <input type="text" id="bdep-banco" placeholder="Ej. Banco Agrícola / BAC">
+                    </div>
+                    <div class="form-group" id="bdep-file-group">
+                        <label>Comprobante Bancario (PDF / Imagen) *</label>
+                        <input type="file" id="bdep-file">
+                    </div>
+                    <div class="form-group">
+                        <label>Observaciones (Opcional)</label>
+                        <input type="text" id="bdep-observaciones" placeholder="Notas del abono o distribución">
+                    </div>
+                </div>
+
+                <!-- Resumen en vivo del abono y su distribución -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; background: rgba(15, 23, 42, 0.78); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
+                    <div>
+                        <span style="font-size: 0.72rem; color: var(--text-secondary); display: block;">Importe Original del Abono</span>
+                        <strong id="bdep-live-original" style="font-size: 1.05rem; color: white;">$0.00</strong>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.72rem; color: var(--text-secondary); display: block;">Aplicado Previamente</span>
+                        <strong id="bdep-live-prev-applied" style="font-size: 1.05rem; color: #93c5fd;">$0.00</strong>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.72rem; color: var(--text-secondary); display: block;">Total a Aplicar Ahora</span>
+                        <strong id="bdep-live-now-applying" style="font-size: 1.05rem; color: var(--success);">$0.00</strong>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.72rem; color: var(--text-secondary); display: block;">Saldo Disponible Restante</span>
+                        <strong id="bdep-live-remaining" style="font-size: 1.05rem; color: var(--brand-gold);">$0.00</strong>
+                    </div>
+                </div>
+
+                <div id="bdep-validation-banner" style="display: none; margin-bottom: 0.85rem; padding: 0.6rem 0.85rem; border-radius: 6px; background: rgba(239, 68, 68, 0.18); border: 1px solid rgba(239, 68, 68, 0.45); color: #fca5a5; font-size: 0.82rem;"></div>
+
+                <!-- Tabla de distribución entre facturas pendientes del cliente -->
+                <div style="margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <strong style="font-size: 0.9rem; color: white;">📋 Distribución entre Facturas Pendientes del Cliente</strong>
+                        <span style="font-size: 0.76rem; color: var(--text-secondary);">Puede aplicar a 1 o varias facturas hoy, o dejar saldo disponible para aplicar después.</span>
+                    </div>
+                    <div class="table-container" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--panel-border); border-radius: 6px;">
+                        <table id="bdepInvoicesTable">
+                            <thead>
+                                <tr>
+                                    <th style="width: 42px; text-align: center;">Aplicar</th>
+                                    <th>N° Factura</th>
+                                    <th>Oportunidad / Proyecto</th>
+                                    <th>Fecha</th>
+                                    <th style="text-align: right;">Monto Original</th>
+                                    <th style="text-align: right;">Cobrado</th>
+                                    <th style="text-align: right;">Ret. 1%</th>
+                                    <th style="text-align: right;">Saldo Pendiente</th>
+                                    <th style="text-align: right; width: 170px;">Monto a Aplicar (USD)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bdep-invoices-tbody">
+                                <tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 1rem;">Seleccione un cliente para ver sus facturas con saldo pendiente.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 1rem; border-top: 1px solid var(--panel-border); padding-top: 0.9rem;">
+                    <button type="button" class="btn-secondary" onclick="closeBankDepositModal()">Cancelar</button>
+                    <button type="submit" id="bdep-submit-btn" class="btn-primary">💾 Guardar Abono y Distribución</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="crm_env.js?v=1"></script>
     <script src="crm_staging_config.js?v=1"></script>
     <script src="crm_outbox.js?v=1"></script>
@@ -3403,6 +3595,7 @@
     <script src="crm_opportunity_contacts.js?v=1"></script>
     <script src="crm_account_documents.js?v=1"></script>
     <script src="crm_commercial.js?v=3"></script>
+    <script src="crm_bi_engine.js?v=1"></script>
     <script src="crm_dashboard_calc.js?v=2"></script>
     <script src="crm_work_calendar.js?v=1"></script>
     <script src="crm_followup_calc.js?v=1"></script>

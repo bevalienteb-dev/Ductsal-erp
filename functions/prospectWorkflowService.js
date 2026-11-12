@@ -20,7 +20,7 @@
 // tested decision and not a hunt through the code. Manager-only items keep the live Auth check.
 
 const identity = require('./clientIdentity');
-const { ServiceError, stableHash, resolveCanonicalAccount } = require('./clientsService');
+const { ServiceError, stableHash, resolveCanonicalAccount, authorizeClientAccess } = require('./clientsService');
 const { validators } = require('./commercialService');
 const {
   applyDocumentVersionsTx,
@@ -45,6 +45,15 @@ try {
 } catch (e) {
   try {
     CrmWorkCalendar = require('../crm_work_calendar');
+  } catch (e2) {}
+}
+
+let CrmBiEngine = null;
+try {
+  CrmBiEngine = require('./crm_bi_engine');
+} catch (e) {
+  try {
+    CrmBiEngine = require('../crm_bi_engine');
   } catch (e2) {}
 }
 
@@ -213,27 +222,273 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     requireProspectAccess(caller, p); // also refuses logically deleted opportunities
     return { ref, p };
   }
+  const toCents = n => {
+    const num = typeof n === 'number' ? n : parseFloat(n);
+    if (!Number.isFinite(num)) return 0;
+    return Math.round(num * 100);
+  };
+  const fromCents = cents => {
+    const c = typeof cents === 'number' ? cents : parseInt(cents, 10);
+    if (!Number.isFinite(c)) return 0;
+    return Math.round(c) / 100;
+  };
+
   async function loadClient(tx, p) {
-    if (!p.clientId) return null;
+    if (!p || !p.clientId) return null;
     const s = await tx.get(col('clients').doc(p.clientId));
     if (!s.exists) return null;
     const data = s.data() || {};
     if (typeof data.fusionada_en === 'string' && data.fusionada_en.trim()) {
       const resolved = await resolveCanonicalAccount(col('clients'), p.clientId, { tx });
-      return resolved.canonicalData || {};
+      const cObj = { ...(resolved.canonicalData || {}) };
+      Object.defineProperty(cObj, '__canonicalRef', { value: col('clients').doc(resolved.canonicalId), enumerable: false });
+      Object.defineProperty(cObj, '__canonicalId', { value: resolved.canonicalId, enumerable: false });
+      return cObj;
     }
-    return data;
+    const cObj = { ...data };
+    Object.defineProperty(cObj, '__canonicalRef', { value: col('clients').doc(p.clientId), enumerable: false });
+    Object.defineProperty(cObj, '__canonicalId', { value: p.clientId, enumerable: false });
+    return cObj;
   }
+
+  async function loadCanonicalClientByIdTx(tx, rawClientId) {
+    const cleanId = reqDocId(rawClientId, 'clientId');
+    const resolved = await resolveCanonicalAccount(col('clients'), cleanId, { tx });
+    const cObj = { id: resolved.canonicalId, ...(resolved.canonicalData || {}) };
+    Object.defineProperty(cObj, '__canonicalRef', { value: col('clients').doc(resolved.canonicalId), enumerable: false });
+    Object.defineProperty(cObj, '__canonicalId', { value: resolved.canonicalId, enumerable: false });
+    return {
+      ...resolved,
+      clientRef: col('clients').doc(resolved.canonicalId),
+      client: cObj
+    };
+  }
+
   const subtotalOf = p => {
-    let base = Number(p.precio_cotizado) || 0;
-    for (const o of (Array.isArray(p.ordenes_cambio) ? p.ordenes_cambio : [])) {
-      base += (o.tipo === 'aumento' ? Number(o.precio) : -Math.abs(Number(o.precio)));
+    let baseCents = toCents(p && p.precio_cotizado);
+    for (const o of (Array.isArray(p && p.ordenes_cambio) ? p.ordenes_cambio : [])) {
+      if (!o || o.eliminado === true || o.anulado === true) continue;
+      const ocCents = Math.abs(toCents(o.precio));
+      baseCents += (o.tipo === 'aumento' ? ocCents : -ocCents);
     }
-    return base;
+    return fromCents(baseCents);
   };
   const isExport = c => !!c && truthyFlag(c.es_exportacion);
   const facturasOf = p => (Array.isArray(p.facturas) ? p.facturas : []);
-  const sumPagos = f => (Array.isArray(f.pagos) ? f.pagos : []).reduce((a, x) => a + (parseFloat(x.monto) || 0), 0);
+  const sumPagos = f => (Array.isArray(f.pagos) ? f.pagos : []).reduce((a, x) => (isActivePaymentRecord(x) ? a + (parseFloat(x.monto) || 0) : a), 0);
+
+  const ZERO_PROSPECT_FIN_STATS = Object.freeze({
+    facturadoCents: 0,
+    cobrosMonetariosCents: 0,
+    retencionesCents: 0,
+    totalCobradoCents: 0,
+    saldoPorCobrarCents: 0,
+    saldoAFavorCents: 0,
+    saldoPorFacturarCents: 0,
+    ventasAdjudicadasCents: 0,
+    singleBankReceivedCents: 0,
+    isBilled: 0
+  });
+
+  function computeProspectStatsForClient(p, client) {
+    if (!p || typeof p !== 'object' || p.eliminado === true) {
+      return { ...ZERO_PROSPECT_FIN_STATS };
+    }
+    const activeInvoices = facturasOf(p).filter(isActiveInvoice);
+    let facturadoCents = 0;
+    let cobrosMonetariosCents = 0;
+    let retencionesCents = 0;
+    let saldoPorCobrarCents = 0;
+    let saldoAFavorCents = 0;
+    let singleBankReceivedCents = 0;
+
+    for (const fac of activeInvoices) {
+      const facMontoCents = toCents(fac.monto);
+      facturadoCents += facMontoCents;
+      let facCobrosMonCents = 0;
+      let facRetencionesCents = 0;
+      const pagos = Array.isArray(fac.pagos) ? fac.pagos : [];
+      for (const pay of pagos) {
+        if (!isActivePaymentRecord(pay)) continue;
+        const payCents = toCents(pay.monto);
+        const metodo = String(pay.metodo || '').trim().toLowerCase();
+        if (metodo === 'retencion_1pct') {
+          retencionesCents += payCents;
+          facRetencionesCents += payCents;
+        } else {
+          cobrosMonetariosCents += payCents;
+          facCobrosMonCents += payCents;
+          const isSharedDepositApp = Boolean(
+            pay.es_abono_multifactura === true ||
+            pay.es_aplicacion_compartida === true ||
+            pay.abono_id ||
+            (pay.pago_compartido && pay.pago_compartido.es_tramo_compartido === true)
+          );
+          if (!isSharedDepositApp) {
+            singleBankReceivedCents += payCents;
+          }
+        }
+      }
+      const facTotalCobradoCents = facCobrosMonCents + facRetencionesCents;
+      saldoPorCobrarCents += Math.max(0, facMontoCents - facTotalCobradoCents);
+      saldoAFavorCents += Math.max(0, facTotalCobradoCents - facMontoCents);
+    }
+
+    const totalCobradoCents = cobrosMonetariosCents + retencionesCents;
+    const isWonOrPost = Boolean(p.estado === 'ganado' || hasEnteredPostclosing(p) || facturadoCents > 0);
+    const sub = subtotalOf(p);
+    const ventasAdjudicadasCents = isWonOrPost ? toCents(isExport(client) ? sub : sub * IVA) : 0;
+    const saldoPorFacturarCents = isWonOrPost ? Math.max(0, ventasAdjudicadasCents - facturadoCents) : 0;
+    const isBilled = facturadoCents > 0 ? 1 : 0;
+
+    return {
+      facturadoCents,
+      cobrosMonetariosCents,
+      retencionesCents,
+      totalCobradoCents,
+      saldoPorCobrarCents,
+      saldoAFavorCents,
+      saldoPorFacturarCents,
+      ventasAdjudicadasCents,
+      singleBankReceivedCents,
+      isBilled
+    };
+  }
+
+  /**
+   * B5.4 — Coordinación transaccional de los agregados financieros del cliente canónico (`clients_{suffix}/{canonicalId}`).
+   * Mantiene sincronizados:
+   * - `total_historico_facturado`
+   * - `total_historico_cobrado`
+   * - `activeBilledProspectsCount`
+   * - `es_cliente_historico = (total_historico_facturado > 0 || total_historico_cobrado > 0)`
+   * - `total_dinero_recibido`
+   * - `total_cobros_monetarios_aplicados`
+   * - `total_retenciones_aplicadas`
+   * - `saldo_abonos_pendientes_aplicar`
+   * - `saldo_a_favor`
+   * - `importe_pendiente_aplicar`
+   * - `saldo_por_cobrar` / `saldo_por_cobrar_vivo`
+   * - `saldo_por_facturar` / `saldo_por_facturar_vivo`
+   * - `financialVersion` (monotónico OCC)
+   * - `lastFinancialMutationAt`
+   */
+  function applyClientFinancialDeltaTx(tx, client, {
+    prospectsBefore = [],
+    prospectsAfter = [],
+    depositDeltaCents = null,
+    nowAt = iso()
+  } = {}) {
+    if (!client || !client.__canonicalRef) return null;
+
+    const prevMap = (client._finProspects && typeof client._finProspects === 'object')
+      ? { ...client._finProspects }
+      : {};
+    const wasReconciled = Boolean(typeof client.financialVersion === 'number' && client.financialVersion > 0 && client.lastReconciledAt);
+
+    let facturadoCents = toCents(client.total_historico_facturado);
+    let retencionesCents = toCents(client.total_retenciones_aplicadas);
+    let cobrosMonCents = client.total_cobros_monetarios_aplicados !== undefined
+      ? toCents(client.total_cobros_monetarios_aplicados)
+      : Math.max(0, toCents(client.total_historico_cobrado) - retencionesCents);
+    let abonosPendientesCents = toCents(client.saldo_abonos_pendientes_aplicar);
+    let dineroRecibidoCents = client.total_dinero_recibido !== undefined
+      ? toCents(client.total_dinero_recibido)
+      : (cobrosMonCents + abonosPendientesCents);
+    let saldoPorCobrarCents = client.saldo_por_cobrar !== undefined
+      ? toCents(client.saldo_por_cobrar)
+      : Math.max(0, facturadoCents - (cobrosMonCents + retencionesCents));
+    let saldoAFavorCents = client.saldo_a_favor !== undefined
+      ? toCents(client.saldo_a_favor)
+      : Math.max(0, (cobrosMonCents + retencionesCents) - facturadoCents);
+    let saldoPorFacturarCents = toCents(client.saldo_por_facturar ?? client.saldo_por_facturar_vivo);
+    let ventasAdjudicadasCents = toCents(client.total_ventas_adjudicadas);
+    let activeBilledCount = Number(client.activeBilledProspectsCount) || 0;
+
+    const count = Math.max(prospectsBefore.length, prospectsAfter.length);
+    for (let i = 0; i < count; i++) {
+      const pBef = prospectsBefore[i] || null;
+      const pAft = prospectsAfter[i] || null;
+      const pId = String((pAft && pAft.id) || (pBef && pBef.id) || '');
+      const rawBefore = computeProspectStatsForClient(pBef, client);
+      const after = computeProspectStatsForClient(pAft, client);
+
+      let effectiveBefore = ZERO_PROSPECT_FIN_STATS;
+      if (pId && prevMap[pId]) {
+        effectiveBefore = prevMap[pId];
+      } else if (wasReconciled) {
+        effectiveBefore = rawBefore;
+      }
+
+      facturadoCents += (after.facturadoCents - (effectiveBefore.facturadoCents || 0));
+      cobrosMonCents += (after.cobrosMonetariosCents - (effectiveBefore.cobrosMonetariosCents || 0));
+      retencionesCents += (after.retencionesCents - (effectiveBefore.retencionesCents || 0));
+      dineroRecibidoCents += (after.singleBankReceivedCents - (effectiveBefore.singleBankReceivedCents || 0));
+      saldoPorCobrarCents += (after.saldoPorCobrarCents - (effectiveBefore.saldoPorCobrarCents || 0));
+      saldoAFavorCents += (after.saldoAFavorCents - (effectiveBefore.saldoAFavorCents || 0));
+      saldoPorFacturarCents += (after.saldoPorFacturarCents - (effectiveBefore.saldoPorFacturarCents || 0));
+      ventasAdjudicadasCents += (after.ventasAdjudicadasCents - (effectiveBefore.ventasAdjudicadasCents || 0));
+      activeBilledCount += (after.isBilled - (effectiveBefore.isBilled || 0));
+
+      if (pId) {
+        if (pAft && pAft.eliminado !== true) {
+          prevMap[pId] = after;
+        } else {
+          delete prevMap[pId];
+        }
+      }
+    }
+
+    if (depositDeltaCents && typeof depositDeltaCents === 'object') {
+      dineroRecibidoCents += (Number(depositDeltaCents.dineroRecibidoDeltaCents) || 0);
+      abonosPendientesCents += (Number(depositDeltaCents.saldoDisponibleDeltaCents) || 0);
+    }
+
+    facturadoCents = Math.max(0, facturadoCents);
+    cobrosMonCents = Math.max(0, cobrosMonCents);
+    retencionesCents = Math.max(0, retencionesCents);
+    abonosPendientesCents = Math.max(0, abonosPendientesCents);
+    saldoPorCobrarCents = Math.max(0, saldoPorCobrarCents);
+    saldoAFavorCents = Math.max(0, saldoAFavorCents);
+    saldoPorFacturarCents = Math.max(0, saldoPorFacturarCents);
+    ventasAdjudicadasCents = Math.max(0, ventasAdjudicadasCents);
+    activeBilledCount = Math.max(0, activeBilledCount);
+
+    const totalCobradoCents = cobrosMonCents + retencionesCents;
+    dineroRecibidoCents = Math.max(0, Math.max(dineroRecibidoCents, cobrosMonCents + abonosPendientesCents));
+    const importePendienteAplicarCents = abonosPendientesCents + saldoAFavorCents;
+
+    const totalHistoricoFacturado = fromCents(facturadoCents);
+    const totalHistoricoCobrado = fromCents(totalCobradoCents);
+    const esClienteHistorico = Boolean(facturadoCents > 0 || totalCobradoCents > 0);
+    const nextVersion = (typeof client.financialVersion === 'number' ? client.financialVersion : 0) + 1;
+
+    const clientPatch = {
+      total_historico_facturado: totalHistoricoFacturado,
+      total_historico_cobrado: totalHistoricoCobrado,
+      activeBilledProspectsCount: activeBilledCount,
+      es_cliente_historico: esClienteHistorico,
+      total_dinero_recibido: fromCents(dineroRecibidoCents),
+      total_cobros_monetarios_aplicados: fromCents(cobrosMonCents),
+      total_retenciones_aplicadas: fromCents(retencionesCents),
+      saldo_abonos_pendientes_aplicar: fromCents(abonosPendientesCents),
+      saldo_a_favor: fromCents(saldoAFavorCents),
+      importe_pendiente_aplicar: fromCents(importePendienteAplicarCents),
+      saldo_por_cobrar: fromCents(saldoPorCobrarCents),
+      saldo_por_cobrar_vivo: fromCents(saldoPorCobrarCents),
+      saldo_facturado_pendiente_cobrar: fromCents(saldoPorCobrarCents),
+      saldo_por_facturar: fromCents(saldoPorFacturarCents),
+      saldo_por_facturar_vivo: fromCents(saldoPorFacturarCents),
+      total_ventas_adjudicadas: fromCents(ventasAdjudicadasCents),
+      financialVersion: nextVersion,
+      lastFinancialMutationAt: nowAt,
+      _finProspects: prevMap
+    };
+
+    tx.update(client.__canonicalRef, clientPatch);
+    Object.assign(client, clientPatch);
+    return clientPatch;
+  }
 
   function requirePostclosing(p) {
     if (!p || typeof p !== 'object') throw precondition('Oportunidad inválida');
@@ -1347,6 +1602,12 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         logs: withLog(p, caller, logMsg)
       });
 
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, ...patch, id: prospectId }],
+        nowAt: at
+      });
+
       addAudit(tx, caller, 'finalizeProspect', prospectId, {
         forma_pago: formaPago,
         factura_anticipo: facturaAnticipo || null,
@@ -1610,6 +1871,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
+      const client = await loadClient(tx, p);
       const orders = (Array.isArray(p.ordenes_cambio) ? p.ordenes_cambio : []).slice();
       const documentos = { ...(p.documentos && typeof p.documentos === 'object' ? p.documentos : {}) };
       let text; let order;
@@ -1637,6 +1899,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         text = `Orden de Cambio (${tipo.toUpperCase()}): ${description}. Monto: ${tipo === 'aumento' ? '+' : '-'}${fmtMoney(price)}.`;
       }
       tx.update(ref, { ordenes_cambio: orders, documentos, logs: withLog(p, caller, text) });
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, id: prospectId, ordenes_cambio: orders }],
+        nowAt: iso()
+      });
       addAudit(tx, caller, editing ? 'editChangeOrder' : 'createChangeOrder', prospectId, { orderId: order.id, tipo, precio: price, costo: cost });
       return { status: editing ? 'updated' : 'created', order };
     });
@@ -1653,7 +1920,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
       const i = orders.findIndex(o => o && o.id === orderId);
       if (i === -1) return { status: 'absent' };
       const o = orders[i];
-      tx.update(ref, { ordenes_cambio: orders.slice(0, i).concat(orders.slice(i + 1)), logs: withLog(p, caller, `Orden de Cambio eliminada: ${o.desc} (${fmtMoney(o.precio)})`) });
+      const nextOrders = orders.slice(0, i).concat(orders.slice(i + 1));
+      tx.update(ref, { ordenes_cambio: nextOrders, logs: withLog(p, caller, `Orden de Cambio eliminada: ${o.desc} (${fmtMoney(o.precio)})`) });
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, id: prospectId, ordenes_cambio: nextOrders }],
+        nowAt: iso()
+      });
       addAudit(tx, caller, 'deleteChangeOrder', prospectId, { orderId, desc: o.desc, precio: o.precio });
       addDeletionNotice(tx, caller, p, client, 'Orden de Cambio', `${o.desc} (${fmtMoney(o.precio)})`);
       return { status: 'deleted' };
@@ -1663,7 +1936,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
   // =====================================================================================================
   // Invoices
   // =====================================================================================================
-  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, es_anticipo, opId }) {
+  async function saveInvoice({ caller, prospectId, invoiceId, numero, monto, doc_factura, es_anticipo, fecha_vencimiento, vencimiento, fecha, opId }) {
     authorize(caller, 'saveInvoice');
     reqDocId(prospectId, 'prospectId');
     const editing = invoiceId !== undefined && invoiceId !== null && invoiceId !== '';
@@ -1672,6 +1945,9 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     const amount = money(monto, 'El monto', { positive: true });
     const doc = (doc_factura === undefined || doc_factura === null) ? null : fileRef(doc_factura, 'Copia de la factura');
     if (!editing && !doc) throw bad('Debe adjuntar la copia de la factura');
+    const rawDueDate = fecha_vencimiento ?? vencimiento;
+    const dueDateStr = (typeof rawDueDate === 'string' && rawDueDate.trim()) ? rawDueDate.trim() : null;
+    const customDateStr = (typeof fecha === 'string' && fecha.trim()) ? fecha.trim() : null;
     return db.runTransaction(async tx => {
       const { ref, p } = await loadProspect(tx, caller, prospectId);
       requirePostclosing(p);
@@ -1702,7 +1978,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           cur.tipo_factura === 'anticipo' ||
           (p.factura_anticipo_id && cur.id === p.factura_anticipo_id)
         );
-        if (cur.numero === number && cur.monto === amount && !doc) return { status: 'unchanged' };
+        if (cur.numero === number && cur.monto === amount && !doc && (!dueDateStr || cur.fecha_vencimiento === dueDateStr)) return { status: 'unchanged' };
         invoice = {
           ...cur,
           numero: number,
@@ -1710,6 +1986,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           es_anticipo: isAdvanceInvoice,
           tipo_factura: isAdvanceInvoice ? 'anticipo' : (cur.tipo_factura || 'ordinaria')
         };
+        if (dueDateStr) invoice.fecha_vencimiento = dueDateStr;
         if (doc) invoice.doc_factura = doc;
         facturas[idx] = invoice;
         text = `Factura editada: ${number} por ${fmtMoney(amount)}`;
@@ -1725,9 +2002,10 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           es_anticipo: isAdvanceInvoice,
           tipo_factura: isAdvanceInvoice ? 'anticipo' : 'ordinaria',
           pagos: [],
-          fecha: iso(),
+          fecha: customDateStr || iso(),
           opId
         };
+        if (dueDateStr) invoice.fecha_vencimiento = dueDateStr;
         facturas.push(invoice);
         text = `Factura/CCF emitida: ${number} por ${fmtMoney(amount)}`;
       }
@@ -1748,6 +2026,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         updatePatch.datos = datos;
       }
       tx.update(ref, updatePatch);
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, ...updatePatch, id: prospectId }],
+        nowAt: iso()
+      });
       addAudit(tx, caller, editing ? 'editInvoice' : 'createInvoice', prospectId, { invoiceId: invoice.id, numero: number, monto: amount, es_anticipo: isAdvanceInvoice });
       return {
         status: editing ? 'updated' : 'created',
@@ -1781,6 +2064,7 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
         throw precondition('Por políticas del sistema, la factura de anticipo (la primera) no puede ser eliminada. Puedes editarla si existe algún error');
       }
       const lockSnapshotsById = new Map();
+      let restoredDepositAvailableCents = 0;
       for (const pay of (Array.isArray(f.pagos) ? f.pagos : [])) {
         if (!pay || typeof pay !== 'object') continue;
         const nRef = normalizePaymentReference(pay.ref || '');
@@ -1794,11 +2078,32 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           lockSnapshotsById.set(lId, entry);
         }
         entry.keys.push(String(pay.id || pay.fecha || ''));
+        if (isActivePaymentRecord(pay) && entry.lSnap && entry.lSnap.exists) {
+          const ld = entry.lSnap.data() || {};
+          const isDist = Boolean(
+            ld.es_abono_multifactura === true ||
+            ld.es_comprobante_distribuido === true ||
+            ld.distribuido_auditado === true ||
+            ld.estado === 'distribuido_auditado'
+          );
+          if (isDist) {
+            restoredDepositAvailableCents += toCents(pay.monto);
+          }
+        }
       }
-      tx.update(ref, { facturas: facturas.slice(0, i).concat(facturas.slice(i + 1)), logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
+      const nextFacturas = facturas.slice(0, i).concat(facturas.slice(i + 1));
+      tx.update(ref, { facturas: nextFacturas, logs: withLog(p, caller, `Factura eliminada: ${f.numero} (${fmtMoney(f.monto)})`) });
       for (const { lRef, lSnap } of lockSnapshotsById.values()) {
         releasePaymentRefLock(tx, lRef, lSnap, { prospectId, invoiceId: f.id, paymentKey: null });
       }
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, id: prospectId, facturas: nextFacturas }],
+        depositDeltaCents: restoredDepositAvailableCents > 0
+          ? { dineroRecibidoDeltaCents: 0, saldoDisponibleDeltaCents: restoredDepositAvailableCents }
+          : null,
+        nowAt: iso()
+      });
       addAudit(tx, caller, 'deleteInvoice', prospectId, { invoiceId, numero: f.numero, monto: f.monto, payments: (f.pagos || []).length });
       addDeletionNotice(tx, caller, p, client, 'Factura', `${f.numero} (${fmtMoney(f.monto)})`);
       return { status: 'deleted' };
@@ -2618,6 +2923,22 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           paymentKey: editingCanonicalKey
         });
       }
+      const isEditingSharedDeposit = Boolean(
+        editing && cur && (
+          cur.es_abono_multifactura === true ||
+          cur.es_aplicacion_compartida === true ||
+          cur.abono_id ||
+          (cur.pago_compartido && cur.pago_compartido.es_tramo_compartido === true)
+        )
+      );
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, ...prospectPatch, id: prospectId }],
+        depositDeltaCents: isEditingSharedDeposit
+          ? { dineroRecibidoDeltaCents: 0, saldoDisponibleDeltaCents: toCents(cur.monto) - toCents(amount) }
+          : null,
+        nowAt
+      });
       addAudit(tx, caller, editing ? 'editPayment' : 'createPayment', prospectId, {
         invoiceId: fac.id,
         paymentKey: String(payment.id || payment.fecha),
@@ -2767,6 +3088,26 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey)
         });
       }
+      const lDataCheck = (lockSnapToRelease && lockSnapToRelease.exists) ? (lockSnapToRelease.data() || {}) : {};
+      const pLDataCheck = (parentLockSnapToRelease && parentLockSnapToRelease.exists) ? (parentLockSnapToRelease.data() || {}) : {};
+      const wasSharedDepositApp = Boolean(
+        pay.es_abono_multifactura === true ||
+        pay.es_aplicacion_compartida === true ||
+        pay.abono_id ||
+        (pay.pago_compartido && pay.pago_compartido.es_tramo_compartido === true) ||
+        lDataCheck.es_abono_multifactura === true ||
+        lDataCheck.es_comprobante_distribuido === true ||
+        pLDataCheck.es_abono_multifactura === true ||
+        pLDataCheck.es_comprobante_distribuido === true
+      );
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, ...prospectPatch, id: prospectId }],
+        depositDeltaCents: (wasSharedDepositApp && isActivePaymentRecord(pay))
+          ? { dineroRecibidoDeltaCents: 0, saldoDisponibleDeltaCents: toCents(pay.monto) }
+          : null,
+        nowAt
+      });
       addAudit(tx, caller, 'deletePayment', prospectId, {
         invoiceId,
         paymentKey: String(pay.id || pay.fecha || resolvedPaymentKey),
@@ -3474,6 +3815,11 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           closingVendors: FieldValue.arrayRemove(v)
         });
       }
+      applyClientFinancialDeltaTx(tx, client, {
+        prospectsBefore: [{ ...p, id: prospectId }],
+        prospectsAfter: [{ ...p, ...prospectPatch, id: prospectId }],
+        nowAt: iso()
+      });
       addAudit(tx, caller, 'deleteProspect', prospectId, { logical: true, motivo: reason, codigo: p.codigo || null, proyecto: p.proyecto || null, clientId: p.clientId || null, etapa: p.etapa || null, estado: p.estado || null });
       addDeletionNotice(tx, caller, p, client, 'Proyecto', `Proyecto completo (${p.codigo || p.id}) eliminado. Motivo: ${reason}`);
       return { status: 'deleted' };
@@ -3981,9 +4327,16 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
           seenPaymentOpIds.add(payOpId);
         }
         if (normRef) {
+          const isAuditedMultiApp = Boolean(
+            pay.es_abono_multifactura === true &&
+            typeof pay.aplicacion_id === 'string' &&
+            pay.aplicacion_id.trim().length > 0 &&
+            pay.pago_compartido &&
+            Number(pay.pago_compartido.importe_total_comprobante) > 0
+          );
           const refDedupeKey = metodo === 'retencion_1pct'
             ? `RET_${fac.id || facNumero}_${normRef}`
-            : `BANK_${normRef}`;
+            : (isAuditedMultiApp ? `BANK_${normRef}__APP_${pay.aplicacion_id.trim()}` : `BANK_${normRef}`);
           if (seenVoucherRefs.has(refDedupeKey)) {
             comprobantesDuplicadosDetectados.push({
               invoiceId: fac.id || null,
@@ -5127,6 +5480,2376 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     });
   }
 
+  // =====================================================================================================
+  // B5.2 — Abonos Bancarios Multifactura (1 Abono -> N Aplicaciones -> N Facturas)
+  // =====================================================================================================
+  function resolveDepositStatusLabel(importeOriginalCents, totalAplicadoCents, anulado = false) {
+    if (anulado) return 'anulado';
+    if (totalAplicadoCents <= 0) return 'recibido';
+    if (totalAplicadoCents >= importeOriginalCents) return 'totalmente_aplicado';
+    return 'parcialmente_aplicado';
+  }
+
+  function resolveBankDepositLockIdInput({ abonoId, depositId, bankRef, ref, referencia }) {
+    const rawId = typeof (abonoId || depositId) === 'string' ? String(abonoId || depositId).trim() : '';
+    if (rawId) {
+      if (rawId.startsWith('BANK_')) return reqDocId(rawId, 'abonoId');
+      const normFromId = normalizePaymentReference(rawId);
+      if (!normFromId || isInvalidPaymentReference(rawId, normFromId)) {
+        throw bad('Identificador de abono bancario inválido');
+      }
+      return buildPaymentRefLockId({ metodo: 'transferencia', normRef: normFromId });
+    }
+    const rawRef = reqString(bankRef || ref || referencia, 'La referencia bancaria del abono', 100);
+    const normRef = normalizePaymentReference(rawRef);
+    if (isInvalidPaymentReference(rawRef, normRef)) {
+      throw bad('Debe ingresar un número de comprobante o referencia válido');
+    }
+    return buildPaymentRefLockId({ metodo: 'transferencia', normRef });
+  }
+
+  function parseDepositAllocationsInput(rawAllocations) {
+    if (rawAllocations === undefined || rawAllocations === null) return { items: [], totalCents: 0 };
+    if (!Array.isArray(rawAllocations)) throw bad('La lista de aplicaciones a facturas es inválida');
+    if (rawAllocations.length > 50) throw bad('Se permiten como máximo 50 aplicaciones por operación');
+    const parsed = [];
+    const seenInvoiceSlots = new Set();
+    let totalCents = 0;
+    for (let i = 0; i < rawAllocations.length; i++) {
+      const item = asObject(rawAllocations[i], `Aplicación ${i + 1}`);
+      const prospectId = reqDocId(item.prospectId, `Aplicación ${i + 1}: prospectId`);
+      const invoiceId = reqDocId(item.invoiceId, `Aplicación ${i + 1}: invoiceId`);
+      const rawMonto = item.monto ?? item.monto_aplicado ?? item.amount;
+      const amount = money(rawMonto, `Aplicación ${i + 1}: monto`, { positive: true });
+      const amountCents = toCents(amount);
+      const slot = `${prospectId}__${invoiceId}`;
+      if (seenInvoiceSlots.has(slot)) {
+        throw bad(`Aplicación ${i + 1}: no puede incluir la misma factura dos veces en la misma distribución (${slot})`);
+      }
+      seenInvoiceSlots.add(slot);
+      const notes = optString(item.observaciones ?? item.notas ?? '', `Aplicación ${i + 1}: observaciones`, 300);
+      const customAppId = item.aplicacion_id || item.applicationId
+        ? reqString(String(item.aplicacion_id || item.applicationId), `Aplicación ${i + 1}: aplicacion_id`, 120)
+        : null;
+      parsed.push({
+        index: i + 1,
+        prospectId,
+        invoiceId,
+        slot,
+        amount,
+        amountCents,
+        notes,
+        customAppId
+      });
+      totalCents += amountCents;
+    }
+    return { items: parsed, totalCents };
+  }
+
+  function applyManufacturingReadinessUpdateOnProspectTx(tx, {
+    caller,
+    pRef,
+    p,
+    prospectId,
+    facturas,
+    client,
+    fabProjQuerySnap,
+    fabOrdersQuerySnap,
+    operationName,
+    invoiceId,
+    facturaNumero,
+    paymentKey,
+    montoAfectado,
+    logMessage,
+    nowAt
+  }) {
+    const postEval = evaluateManufacturingReadiness({ p: { ...p, id: prospectId, facturas }, client });
+    const hadFabricationRelease = Boolean(
+      p.enviado_a_fabricacion === true ||
+      p.fabricacion_proyecto_id ||
+      p.discrepancia_financiera_fabricacion === true ||
+      (fabProjQuerySnap && !fabProjQuerySnap.empty) ||
+      (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty)
+    );
+
+    let nextLogs = withLog(p, caller, logMessage);
+    const prospectPatch = {
+      facturas,
+      estado_habilitacion_fabricacion: postEval.ready ? 'ANTICIPO_CONFIRMADO' : 'ANTICIPO_PENDIENTE'
+    };
+
+    let discrepancyRecorded = false;
+    let discrepancyDetail = null;
+
+    if (hadFabricationRelease) {
+      if (postEval.ready) {
+        prospectPatch.discrepancia_financiera_fabricacion = false;
+        prospectPatch.bloqueado_nuevas_ordenes_fabricacion = false;
+        if (p.discrepancia_financiera_fabricacion === true) {
+          prospectPatch.discrepancia_financiera_resuelta_en = nowAt;
+          nextLogs = withLog(
+            { ...p, logs: nextLogs },
+            caller,
+            `Discrepancia financiera de fabricación subsanada: Anticipo obligatorio 100% cubierto (${fmtMoney(postEval.montoConfirmado)} / ${fmtMoney(postEval.montoExigible)}). Se rehabilita la liberación de órdenes.`
+          );
+        }
+        if (fabProjQuerySnap && !fabProjQuerySnap.empty) {
+          for (const projDoc of fabProjQuerySnap.docs) {
+            tx.update(projDoc.ref, {
+              estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+              discrepancia_financiera: false,
+              bloqueado_nuevas_ordenes: false,
+              monto_anticipo_exigible: postEval.montoExigible || 0,
+              monto_anticipo_confirmado: postEval.montoConfirmado || 0,
+              saldo_pendiente_anticipo: 0,
+              validado_financieramente_en: nowAt,
+              validado_financieramente_por: caller.cid || caller.uid
+            });
+          }
+        }
+        if (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty) {
+          for (const ordDoc of fabOrdersQuerySnap.docs) {
+            tx.update(ordDoc.ref, {
+              estado_habilitacion_fabricacion: 'ANTICIPO_CONFIRMADO',
+              discrepancia_financiera: false,
+              bloqueado_avance_etapa: false,
+              validado_financieramente_en: nowAt
+            });
+          }
+        }
+      } else {
+        discrepancyRecorded = true;
+        discrepancyDetail = {
+          activa: true,
+          codigo: postEval.errorCode || 'ANTICIPO_PENDIENTE',
+          motivo: `El anticipo obligatorio presenta un saldo pendiente de ${fmtMoney(postEval.saldoPendiente)} tras ${operationName} en factura ${facturaNumero || invoiceId || 'N/A'}. Las órdenes en curso NO se cancelan automáticamente; quedan bloqueadas nuevas liberaciones hasta regularizar el anticipo.`,
+          montoExigible: postEval.montoExigible || 0,
+          montoConfirmado: postEval.montoConfirmado || 0,
+          saldoPendiente: postEval.saldoPendiente || 0,
+          formaPago: postEval.formaPago || p.forma_pago || null,
+          disparadoPorOperacion: operationName,
+          invoiceId: invoiceId || null,
+          facturaNumero: facturaNumero || null,
+          paymentKey: paymentKey || null,
+          montoAfectado: montoAfectado || 0,
+          registradoEn: nowAt,
+          registradoPor: caller.cid || caller.uid,
+          registradoPorNombre: caller.name || ''
+        };
+        prospectPatch.discrepancia_financiera_fabricacion = true;
+        prospectPatch.bloqueado_nuevas_ordenes_fabricacion = true;
+        prospectPatch.discrepancia_financiera_detalle = discrepancyDetail;
+        nextLogs = withLog(
+          { ...p, logs: nextLogs },
+          caller,
+          `ALERTA FINANCIERA DE FABRICACIÓN: ${discrepancyDetail.motivo}`
+        );
+        if (fabProjQuerySnap && !fabProjQuerySnap.empty) {
+          for (const projDoc of fabProjQuerySnap.docs) {
+            tx.update(projDoc.ref, {
+              estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+              discrepancia_financiera: true,
+              discrepancia_financiera_detalle: discrepancyDetail,
+              bloqueado_nuevas_ordenes: true,
+              monto_anticipo_exigible: postEval.montoExigible || 0,
+              monto_anticipo_confirmado: postEval.montoConfirmado || 0,
+              saldo_pendiente_anticipo: postEval.saldoPendiente || 0,
+              actualizado_discrepancia_en: nowAt
+            });
+          }
+        }
+        if (fabOrdersQuerySnap && !fabOrdersQuerySnap.empty) {
+          for (const ordDoc of fabOrdersQuerySnap.docs) {
+            const ordData = ordDoc.data() || {};
+            const isPreFab = ['', 'Recepción', 'Dibujo'].includes(String(ordData.etapa || '').trim());
+            tx.update(ordDoc.ref, {
+              estado_habilitacion_fabricacion: 'ANTICIPO_PENDIENTE',
+              discrepancia_financiera: true,
+              discrepancia_financiera_detalle: discrepancyDetail,
+              bloqueado_avance_etapa: isPreFab,
+              cancelada_por_discrepancia: false
+            });
+          }
+        }
+        addAudit(tx, caller, 'manufacturingFinancialDiscrepancy', prospectId, discrepancyDetail);
+      }
+    }
+
+    prospectPatch.logs = nextLogs;
+    tx.update(pRef, prospectPatch);
+    return {
+      prospectPatch,
+      postEval,
+      discrepancyRecorded,
+      discrepancyDetail
+    };
+  }
+
+  /**
+   * B5.2 — Registra un único abono bancario para un cliente canónico y permite aplicarlo
+   * inmediatamente (total o parcialmente) a 0, 1 o N facturas activas del mismo cliente canónico.
+   */
+  async function registerBankDeposit({
+    caller,
+    clientId,
+    deposit,
+    ref,
+    referencia,
+    referencia_bancaria,
+    metodo,
+    monto,
+    monto_recibido,
+    importe_original_recibido,
+    importeTotal,
+    fecha,
+    fecha_comprobante,
+    fechaComprobante,
+    fecha_comprobante_bancario,
+    banco_origen,
+    banco,
+    bankOrigin,
+    doc_comprobante,
+    observaciones,
+    notas,
+    allocations,
+    applications,
+    distribuciones,
+    aplicaciones,
+    opId
+  }) {
+    authorize(caller, 'savePayment');
+    const depIn = (deposit && typeof deposit === 'object') ? deposit : {};
+    const cleanClientId = reqDocId(clientId ?? depIn.clientId, 'clientId');
+    reqOpId(opId ?? depIn.opId);
+    const effectiveOpId = opId ?? depIn.opId;
+
+    const effMetodo = metodo ?? depIn.metodo;
+    const cleanMetodo = typeof effMetodo === 'string' ? effMetodo.trim().toLowerCase() : '';
+    if (!PAYMENT_METHODS.includes(cleanMetodo)) throw bad('Forma de pago inválida');
+    if (cleanMetodo === 'retencion_1pct') {
+      throw bad('La retención fiscal del 1% no es un abono bancario distribuible; regístrela sobre la factura correspondiente');
+    }
+
+    const effRef = ref || referencia || referencia_bancaria || depIn.ref || depIn.referencia || depIn.referencia_bancaria;
+    const refText = reqString(effRef, 'La referencia bancaria', 100);
+    const normRef = normalizePaymentReference(refText);
+    if (isInvalidPaymentReference(refText, normRef)) {
+      throw bad('Debe ingresar un número de comprobante o referencia válido');
+    }
+
+    const depositAmount = money(
+      monto ?? monto_recibido ?? importe_original_recibido ?? importeTotal ?? depIn.monto ?? depIn.monto_recibido ?? depIn.importe_original_recibido ?? depIn.importeTotal,
+      'El importe recibido del abono',
+      { positive: true }
+    );
+    const depositCents = toCents(depositAmount);
+
+    const rawVoucherDate = fecha_comprobante_bancario ?? fecha_comprobante ?? fechaComprobante ?? fecha ?? depIn.fecha_comprobante_bancario ?? depIn.fecha_comprobante ?? depIn.fechaComprobante ?? depIn.fecha;
+    if (rawVoucherDate === undefined || rawVoucherDate === null || typeof rawVoucherDate !== 'string' || !rawVoucherDate.trim()) {
+      throw bad('La fecha real del comprobante bancario es obligatoria');
+    }
+    const voucherDate = rawVoucherDate.trim();
+    if (isNaN(Date.parse(voucherDate))) {
+      throw bad('La fecha del comprobante bancario es inválida');
+    }
+
+    const effDoc = doc_comprobante ?? depIn.doc_comprobante;
+    const doc = (effDoc === undefined || effDoc === null)
+      ? null
+      : fileRef(effDoc, 'Comprobante de pago');
+    if (!doc) throw bad('Debe adjuntar el comprobante de pago');
+
+    const cleanBankOrigin = optString(banco_origen ?? banco ?? bankOrigin ?? depIn.banco_origen ?? depIn.banco ?? depIn.bankOrigin ?? '', 'Banco origen', 100) || null;
+    const cleanNotes = optString(observaciones ?? notas ?? depIn.observaciones ?? depIn.notas ?? '', 'Observaciones', 500);
+
+    const rawAllocList = allocations ?? applications ?? distribuciones ?? aplicaciones ?? depIn.allocations ?? depIn.applications ?? depIn.distribuciones ?? depIn.aplicaciones ?? [];
+    const { items: allocItems, totalCents: totalAllocCents } = parseDepositAllocationsInput(rawAllocList);
+
+    if (totalAllocCents > depositCents) {
+      throw precondition(
+        `La suma de las aplicaciones (${fmtMoney(fromCents(totalAllocCents))}) supera el importe recibido del abono (${fmtMoney(depositAmount)})`
+      );
+    }
+
+    const lockId = buildPaymentRefLockId({ metodo: cleanMetodo, normRef });
+    opId = effectiveOpId;
+
+    return db.runTransaction(async tx => {
+      // 1. Todas las lecturas transaccionales antes de cualquier escritura
+      const { canonicalId: canonicalClientId, client: canonicalClient } = await loadCanonicalClientByIdTx(tx, cleanClientId);
+      authorizeClientAccess(caller, canonicalClient);
+
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+
+      if (lockSnap.exists) {
+        const ld = lockSnap.data() || {};
+        if (ld.opId && ld.opId === opId) {
+          const prevImporteCents = toCents(ld.importe_original_recibido ?? ld.importe_total_comprobante ?? ld.monto);
+          const prevApps = Array.isArray(ld.aplicaciones) ? ld.aplicaciones.filter(a => a && a.anulada !== true) : [];
+          const prevAppliedCents = prevApps.reduce((acc, a) => acc + toCents(a.monto_aplicado ?? a.monto), 0);
+          if (
+            ld.clientId !== canonicalClientId ||
+            prevImporteCents !== depositCents ||
+            ld.metodo !== cleanMetodo ||
+            prevAppliedCents !== totalAllocCents ||
+            prevApps.length !== allocItems.length
+          ) {
+            throw precondition('opId ya usado con otros datos (reutilizado con parámetros distintos)');
+          }
+          const replayEstado = ld.estado_abono || resolveDepositStatusLabel(prevImporteCents, prevAppliedCents);
+          return {
+            status: 'unchanged',
+            replay: true,
+            abonoId: lockId,
+            depositId: lockId,
+            lockId,
+            clientId: canonicalClientId,
+            deposit: ld,
+            aplicaciones: ld.aplicaciones || [],
+            applicationsCreated: ld.aplicaciones || [],
+            importeOriginal: fromCents(prevImporteCents),
+            montoRecibido: fromCents(prevImporteCents),
+            totalAplicado: fromCents(prevAppliedCents),
+            montoAplicadoTotal: fromCents(prevAppliedCents),
+            saldoDisponible: fromCents(Math.max(0, prevImporteCents - prevAppliedCents)),
+            estadoAbono: replayEstado
+          };
+        }
+        throw precondition('Este número de comprobante ya fue registrado en otro pago (ya se encuentra registrada). Verifique la referencia antes de continuar.');
+      }
+
+      // Agrupar aplicaciones por oportunidad para leer y actualizar cada oportunidad una sola vez
+      const uniqueProspectIds = Array.from(new Set(allocItems.map(item => item.prospectId)));
+      const prospectBundles = new Map();
+
+      for (const pId of uniqueProspectIds) {
+        const { ref: pRef, p } = await loadProspect(tx, caller, pId);
+        requirePostclosing(p);
+        const oppClient = await loadClient(tx, p);
+        if (!oppClient) throw notFound(`Cliente de la oportunidad ${pId}`);
+        const oppCanonicalClientId = oppClient.__canonicalId || oppClient.id || p.clientId;
+        if (oppCanonicalClientId !== canonicalClientId) {
+          throw precondition(
+            `No se puede aplicar un abono del cliente ${canonicalClientId} a una factura de otro cliente (${oppCanonicalClientId})`
+          );
+        }
+
+        // Verificar que la referencia no exista ya en memoria de las facturas de la oportunidad
+        for (const fCheck of facturasOf(p)) {
+          if (!isActiveInvoice(fCheck)) continue;
+          for (const payCheck of (Array.isArray(fCheck.pagos) ? fCheck.pagos : [])) {
+            if (!isActivePaymentRecord(payCheck)) continue;
+            if (normalizePaymentReference(payCheck.ref || '') === normRef && String(payCheck.metodo || '').toLowerCase() !== 'retencion_1pct') {
+              throw precondition('Este número de comprobante ya fue registrado en otro pago. Verifique la referencia antes de continuar.');
+            }
+          }
+        }
+
+        let fabProjQuerySnap = null;
+        let fabOrdersQuerySnap = null;
+        if (p.enviado_a_fabricacion === true || p.fabricacion_proyecto_id || p.discrepancia_financiera_fabricacion === true) {
+          fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', pId).limit(5));
+          fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', pId).limit(10));
+        }
+
+        const facturasClone = facturasOf(p).map(f => ({
+          ...f,
+          pagos: Array.isArray(f.pagos) ? f.pagos.slice() : []
+        }));
+
+        prospectBundles.set(pId, {
+          prospectId: pId,
+          pRef,
+          pBefore: { ...p, id: pId },
+          p,
+          oppClient,
+          facturas: facturasClone,
+          fabProjQuerySnap,
+          fabOrdersQuerySnap,
+          appliedItems: []
+        });
+      }
+
+      // 2. Validar cada factura destino y preparar los registros de aplicación
+      const nowAt = iso();
+      const baseTs = Date.now();
+      const totalAplicado = fromCents(totalAllocCents);
+      const saldoDisponibleCents = Math.max(0, depositCents - totalAllocCents);
+      const saldoDisponible = fromCents(saldoDisponibleCents);
+      const estadoAbono = resolveDepositStatusLabel(depositCents, totalAllocCents, false);
+
+      const aplicacionesList = [];
+      const entriesMap = {};
+      const linkedProspectIds = uniqueProspectIds.slice();
+      const linkedInvoiceIds = allocItems.map(a => a.invoiceId);
+
+      for (let idx = 0; idx < allocItems.length; idx++) {
+        const item = allocItems[idx];
+        const bundle = prospectBundles.get(item.prospectId);
+        const fac = bundle.facturas.find(f => f && f.id === item.invoiceId);
+        if (!fac) throw notFound(`Factura ${item.invoiceId}`);
+        if (!isActiveInvoice(fac)) {
+          throw precondition(`La factura ${fac.numero || item.invoiceId} no es válida o se encuentra anulada`);
+        }
+
+        const collectedCents = fac.pagos.reduce(
+          (acc, x) => (!isActivePaymentRecord(x) ? acc : acc + toCents(x.monto)),
+          0
+        );
+        const facMontoCents = toCents(fac.monto);
+        const pendingCents = Math.max(0, facMontoCents - collectedCents);
+
+        if (item.amountCents > pendingCents) {
+          throw precondition(
+            `El abono supera el saldo de esta factura (${fac.numero}). Saldo pendiente: ${fmtMoney(fromCents(pendingCents))}`
+          );
+        }
+
+        const takenIds = fac.pagos.map(x => x && x.id).filter(Boolean);
+        const payId = uniqueId(takenIds, baseTs + idx);
+        const applicationId = item.customAppId || `APP_${normRef}_${item.prospectId}_${item.invoiceId}_${payId}`;
+        const entryId = `${item.prospectId}__${item.invoiceId}__${applicationId}`;
+        const itemOpId = `${opId}__${idx + 1}`;
+
+        const paymentRecord = {
+          id: payId,
+          aplicacion_id: applicationId,
+          abono_id: lockId,
+          es_abono_multifactura: true,
+          es_aplicacion_compartida: allocItems.length > 1 || saldoDisponibleCents > 0,
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
+          monto: item.amount,
+          metodo: cleanMetodo,
+          ref: refText,
+          ref_bancaria_real: refText,
+          ref_normalizada: normRef,
+          ref_bancaria_base: normRef,
+          doc_comprobante: doc,
+          fecha: voucherDate,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          observaciones: item.notes || cleanNotes || '',
+          opId: itemOpId,
+          confirmado: true,
+          estado: 'confirmado',
+          confirmado_por: caller.cid || caller.uid,
+          confirmado_por_uid: caller.uid,
+          confirmado_por_rol: caller.role,
+          confirmado_en: nowAt,
+          pago_compartido: {
+            es_tramo_compartido: true,
+            abono_id: lockId,
+            aplicacion_id: applicationId,
+            entry_id: entryId,
+            ref_bancaria_unica: refText,
+            ref_bancaria_normalizada: normRef,
+            importe_total_comprobante: depositAmount,
+            monto_total_comprobante: depositAmount,
+            monto_aplicado: item.amount,
+            total_aplicado: totalAplicado,
+            saldo_disponible_comprobante: saldoDisponible,
+            aplicacion_indice: idx + 1,
+            total_aplicaciones: allocItems.length,
+            oportunidades_vinculadas: linkedProspectIds,
+            facturas_vinculadas: linkedInvoiceIds,
+            banco_origen: cleanBankOrigin,
+            fecha_comprobante_bancario: voucherDate,
+            fecha_registro_crm: nowAt
+          }
+        };
+
+        fac.pagos.push(paymentRecord);
+        bundle.appliedItems.push({ fac, item, paymentRecord, applicationId, entryId });
+
+        const appEntry = {
+          aplicacion_id: applicationId,
+          entry_id: entryId,
+          abono_id: lockId,
+          prospectId: item.prospectId,
+          codigo_oportunidad: bundle.p.codigo || item.prospectId,
+          proyecto: bundle.p.proyecto || null,
+          invoiceId: fac.id,
+          factura_numero: fac.numero || null,
+          paymentKey: String(payId),
+          clientId: canonicalClientId,
+          monto: item.amount,
+          monto_aplicado: item.amount,
+          metodo: cleanMetodo,
+          ref: refText,
+          normRef,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          fecha_aplicacion: nowAt,
+          observaciones: item.notes || cleanNotes || '',
+          opId: itemOpId,
+          estado: 'activa',
+          anulada: false,
+          confirmado: true,
+          aplicado_por: caller.cid || caller.uid,
+          aplicado_por_uid: caller.uid,
+          aplicado_por_rol: caller.role,
+          updatedAt: nowAt
+        };
+        aplicacionesList.push(appEntry);
+        entriesMap[entryId] = appEntry;
+      }
+
+      // 3. Escrituras en oportunidades afectadas y reevaluación de compuerta de fabricación
+      const prospectsBefore = [];
+      const prospectsAfter = [];
+
+      for (const bundle of prospectBundles.values()) {
+        const summaryParts = bundle.appliedItems.map(
+          ai => `Factura ${ai.fac.numero}: ${fmtMoney(ai.item.amount)}`
+        );
+        const logText = `Abono bancario Ref. ${refText} (${fmtMoney(depositAmount)}) aplicado a ${summaryParts.join(', ')} [${cleanMetodo}]`;
+        const lastAi = bundle.appliedItems[bundle.appliedItems.length - 1];
+
+        const { prospectPatch, postEval } = applyManufacturingReadinessUpdateOnProspectTx(tx, {
+          caller,
+          pRef: bundle.pRef,
+          p: bundle.p,
+          prospectId: bundle.prospectId,
+          facturas: bundle.facturas,
+          client: canonicalClient,
+          fabProjQuerySnap: bundle.fabProjQuerySnap,
+          fabOrdersQuerySnap: bundle.fabOrdersQuerySnap,
+          operationName: 'registerBankDeposit',
+          invoiceId: lastAi ? lastAi.fac.id : null,
+          facturaNumero: lastAi ? lastAi.fac.numero : null,
+          paymentKey: lastAi ? lastAi.paymentRecord.id : null,
+          montoAfectado: bundle.appliedItems.reduce((s, x) => round2(s + x.item.amount), 0),
+          logMessage: logText,
+          nowAt
+        });
+
+        bundle.postEval = postEval;
+        prospectsBefore.push(bundle.pBefore);
+        prospectsAfter.push({ ...bundle.p, ...prospectPatch, id: bundle.prospectId });
+      }
+
+      // 4. Escritura del registro maestro del abono en `payment_refs`
+      const canonicalClientName = canonicalClient.tipo === 'natural'
+        ? `${canonicalClient.nombres || ''} ${canonicalClient.apellidos || ''}`.trim()
+        : (canonicalClient.empresa || canonicalClient.contacto || 'Cliente');
+
+      const firstApp = aplicacionesList[0] || null;
+      const depositDoc = {
+        id: lockId,
+        abono_id: lockId,
+        active: true,
+        anulado: false,
+        es_abono_multifactura: true,
+        es_comprobante_distribuido: true,
+        distribuido_auditado: true,
+        reutilizacion_bloqueada: true,
+        estado: 'distribuido_auditado',
+        status: 'distribuido_auditado',
+        estado_abono: estadoAbono,
+        clientId: canonicalClientId,
+        cliente_nombre: canonicalClientName,
+        normRef,
+        referencia_normalizada: normRef,
+        ref: refText,
+        referencia_bancaria: refText,
+        metodo: cleanMetodo,
+        banco_origen: cleanBankOrigin,
+        fecha_comprobante_bancario: voucherDate,
+        fecha_registro_crm: nowAt,
+        importe_original_recibido: depositAmount,
+        importe_total_comprobante: depositAmount,
+        montoTotalComprobante: depositAmount,
+        monto: depositAmount,
+        total_aplicado: totalAplicado,
+        totalAplicado,
+        total_aplicaciones: aplicacionesList.length,
+        saldo_disponible: saldoDisponible,
+        saldoDisponible,
+        doc_comprobante: doc,
+        observaciones: cleanNotes,
+        opId,
+        prospectId: firstApp ? firstApp.prospectId : null,
+        invoiceId: firstApp ? firstApp.invoiceId : null,
+        paymentKey: firstApp ? firstApp.paymentKey : null,
+        aplicaciones: aplicacionesList,
+        entries: entriesMap,
+        historial_distribuciones: [
+          {
+            distribucion_id: `DIST_${normRef}_1`,
+            opId,
+            tipo: allocItems.length > 0 ? 'registro_y_distribucion_inicial' : 'registro_sin_aplicar',
+            monto_distribuido: totalAplicado,
+            saldo_disponible_resultante: saldoDisponible,
+            cantidad_facturas: allocItems.length,
+            aplicaciones_ids: aplicacionesList.map(a => a.aplicacion_id),
+            fecha: nowAt,
+            usuario: caller.cid || caller.uid,
+            usuario_uid: caller.uid,
+            usuario_rol: caller.role,
+            observaciones: cleanNotes
+          }
+        ],
+        createdAt: nowAt,
+        createdBy: caller.cid || caller.uid,
+        createdByUid: caller.uid,
+        createdByRole: caller.role,
+        updatedAt: nowAt,
+        updatedBy: caller.cid || caller.uid
+      };
+
+      tx.set(lockRef, depositDoc);
+
+      // 5. Coordinación transaccional de los agregados financieros del cliente canónico
+      applyClientFinancialDeltaTx(tx, canonicalClient, {
+        prospectsBefore,
+        prospectsAfter,
+        depositDeltaCents: {
+          dineroRecibidoDeltaCents: depositCents,
+          saldoDisponibleDeltaCents: saldoDisponibleCents
+        },
+        nowAt
+      });
+
+      addAudit(tx, caller, 'registerBankDeposit', canonicalClientId, {
+        abonoId: lockId,
+        ref: refText,
+        normRef,
+        metodo: cleanMetodo,
+        importeOriginal: depositAmount,
+        totalAplicado,
+        saldoDisponible,
+        estadoAbono,
+        aplicacionesCount: aplicacionesList.length
+      });
+
+      return {
+        status: aplicacionesList.length > 0 ? 'applied' : 'created',
+        replay: false,
+        abonoId: lockId,
+        depositId: lockId,
+        lockId,
+        clientId: canonicalClientId,
+        deposit: depositDoc,
+        aplicaciones: aplicacionesList,
+        applicationsCreated: aplicacionesList,
+        importeOriginal: depositAmount,
+        montoRecibido: depositAmount,
+        totalAplicado,
+        montoAplicadoTotal: totalAplicado,
+        saldoDisponible,
+        estadoAbono
+      };
+    });
+  }
+
+  /**
+   * B5.2 — Distribuye el saldo disponible (`saldo_disponible`) de un abono bancario existente
+   * entre una o múltiples facturas pendientes del mismo cliente canónico.
+   */
+  async function distributeBankDeposit({
+    caller,
+    abonoId,
+    depositId,
+    bankRef,
+    ref,
+    referencia,
+    clientId,
+    allocations,
+    applications,
+    distribuciones,
+    aplicaciones,
+    observaciones,
+    notas,
+    opId
+  }) {
+    authorize(caller, 'savePayment');
+    reqOpId(opId);
+    const lockId = resolveBankDepositLockIdInput({ abonoId, depositId, bankRef, ref, referencia });
+    const rawAllocList = allocations ?? applications ?? distribuciones ?? aplicaciones;
+    const { items: allocItems, totalCents: newAllocCents } = parseDepositAllocationsInput(rawAllocList);
+    if (allocItems.length === 0) {
+      throw bad('Debe indicar al menos una factura y monto positivo para distribuir el abono');
+    }
+    const cleanNotes = optString(observaciones ?? notas ?? '', 'Observaciones de distribución', 500);
+
+    return db.runTransaction(async tx => {
+      // 1. Todas las lecturas transaccionales antes de cualquier escritura
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+      if (!lockSnap.exists) throw notFound('Abono bancario');
+      const ld = lockSnap.data() || {};
+
+      if (ld.active === false || ld.anulado === true || ld.estado_abono === 'anulado') {
+        throw precondition('El abono bancario se encuentra inactivo o anulado y no admite distribuciones');
+      }
+      if (ld.estado === 'conflicto_historico' || ld.status === 'conflicto_historico' || ld.conflicto_historico === true) {
+        throw precondition('El comprobante tiene un conflicto histórico pendiente de resolución administrativa');
+      }
+
+      const histList = Array.isArray(ld.historial_distribuciones) ? ld.historial_distribuciones.slice() : [];
+      const priorDist = histList.find(h => h && h.opId === opId);
+      if (priorDist) {
+        if (toCents(priorDist.monto_distribuido) !== newAllocCents || Number(priorDist.cantidad_facturas) !== allocItems.length) {
+          throw precondition('opId ya usado con otros datos');
+        }
+        return {
+          status: 'unchanged',
+          replay: true,
+          abonoId: lockId,
+          lockId,
+          deposit: ld,
+          aplicaciones: ld.aplicaciones || [],
+          importeOriginal: round2(Number(ld.importe_original_recibido ?? ld.importe_total_comprobante ?? ld.monto) || 0),
+          totalAplicado: round2(Number(ld.total_aplicado ?? ld.totalAplicado) || 0),
+          saldoDisponible: round2(Number(ld.saldo_disponible ?? ld.saldoDisponible) || 0),
+          estadoAbono: ld.estado_abono
+        };
+      }
+
+      const rawDepositClientId = ld.clientId || clientId;
+      if (!rawDepositClientId) {
+        throw precondition('El abono bancario no tiene un cliente asociado');
+      }
+      const { canonicalId: canonicalClientId, client: canonicalClient } = await loadCanonicalClientByIdTx(tx, rawDepositClientId);
+      authorizeClientAccess(caller, canonicalClient);
+
+      if (clientId) {
+        const { canonicalId: callerCanonicalClientId } = await loadCanonicalClientByIdTx(tx, clientId);
+        if (callerCanonicalClientId !== canonicalClientId) {
+          throw precondition('El cliente indicado no coincide con el titular canónico del abono bancario');
+        }
+      }
+
+      const importeOriginalCents = toCents(
+        ld.importe_original_recibido ?? ld.importe_total_comprobante ?? ld.montoTotalComprobante ?? ld.monto
+      );
+      const existingAplicaciones = Array.isArray(ld.aplicaciones)
+        ? ld.aplicaciones.slice()
+        : extractLockEntries(ld).map(e => ({ ...e, monto_aplicado: e.monto_aplicado ?? e.monto, anulada: false }));
+      const activeExistingApps = existingAplicaciones.filter(a => a && a.anulada !== true && a.anulado !== true && a.estado !== 'anulada');
+      const alreadyAppliedCents = activeExistingApps.reduce((acc, a) => acc + toCents(a.monto_aplicado ?? a.monto), 0);
+      const availableBeforeCents = Math.max(0, importeOriginalCents - alreadyAppliedCents);
+
+      if (availableBeforeCents <= 0) {
+        throw precondition('El abono bancario ya fue totalmente aplicado y no tiene saldo disponible para distribuir');
+      }
+      if (newAllocCents > availableBeforeCents) {
+        throw precondition(
+          `La suma de las aplicaciones (${fmtMoney(fromCents(newAllocCents))}) supera el saldo disponible del abono (${fmtMoney(fromCents(availableBeforeCents))})`
+        );
+      }
+
+      const uniqueProspectIds = Array.from(new Set(allocItems.map(item => item.prospectId)));
+      const prospectBundles = new Map();
+
+      for (const pId of uniqueProspectIds) {
+        const { ref: pRef, p } = await loadProspect(tx, caller, pId);
+        requirePostclosing(p);
+        const oppClient = await loadClient(tx, p);
+        if (!oppClient) throw notFound(`Cliente de la oportunidad ${pId}`);
+        const oppCanonicalClientId = oppClient.__canonicalId || oppClient.id || p.clientId;
+        if (oppCanonicalClientId !== canonicalClientId) {
+          throw precondition(
+            `No se puede aplicar un abono del cliente ${canonicalClientId} a una factura de otro cliente (${oppCanonicalClientId})`
+          );
+        }
+
+        let fabProjQuerySnap = null;
+        let fabOrdersQuerySnap = null;
+        if (p.enviado_a_fabricacion === true || p.fabricacion_proyecto_id || p.discrepancia_financiera_fabricacion === true) {
+          fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', pId).limit(5));
+          fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', pId).limit(10));
+        }
+
+        const facturasClone = facturasOf(p).map(f => ({
+          ...f,
+          pagos: Array.isArray(f.pagos) ? f.pagos.slice() : []
+        }));
+
+        prospectBundles.set(pId, {
+          prospectId: pId,
+          pRef,
+          pBefore: { ...p, id: pId },
+          p,
+          oppClient,
+          facturas: facturasClone,
+          fabProjQuerySnap,
+          fabOrdersQuerySnap,
+          appliedItems: []
+        });
+      }
+
+      // 2. Validar facturas y construir nuevas aplicaciones
+      const nowAt = iso();
+      const baseTs = Date.now();
+      const refText = ld.ref || ld.referencia_bancaria || lockId.replace(/^BANK_/, '');
+      const normRef = ld.normRef || normalizePaymentReference(refText);
+      const cleanMetodo = ld.metodo || 'transferencia';
+      const voucherDate = ld.fecha_comprobante_bancario || ld.voucherDate || ld.createdAt || nowAt;
+      const doc = ld.doc_comprobante || null;
+      if (!hasValidPaymentDoc(doc)) {
+        throw precondition('El abono bancario carece de soporte documental válido (doc_comprobante) para aplicarse a facturas');
+      }
+
+      const nextTotalAppliedCents = alreadyAppliedCents + newAllocCents;
+      const nextSaldoDisponibleCents = Math.max(0, importeOriginalCents - nextTotalAppliedCents);
+      const importeOriginal = fromCents(importeOriginalCents);
+      const nextTotalAplicado = fromCents(nextTotalAppliedCents);
+      const nextSaldoDisponible = fromCents(nextSaldoDisponibleCents);
+      const nextEstadoAbono = resolveDepositStatusLabel(importeOriginalCents, nextTotalAppliedCents, false);
+
+      const nextEntries = (ld.entries && typeof ld.entries === 'object') ? { ...ld.entries } : {};
+      const newAppEntries = [];
+
+      for (let idx = 0; idx < allocItems.length; idx++) {
+        const item = allocItems[idx];
+        const bundle = prospectBundles.get(item.prospectId);
+        const fac = bundle.facturas.find(f => f && f.id === item.invoiceId);
+        if (!fac) throw notFound(`Factura ${item.invoiceId}`);
+        if (!isActiveInvoice(fac)) {
+          throw precondition(`La factura ${fac.numero || item.invoiceId} no es válida o se encuentra anulada`);
+        }
+
+        const collectedCents = fac.pagos.reduce(
+          (acc, x) => (!isActivePaymentRecord(x) ? acc : acc + toCents(x.monto)),
+          0
+        );
+        const facMontoCents = toCents(fac.monto);
+        const pendingCents = Math.max(0, facMontoCents - collectedCents);
+
+        if (item.amountCents > pendingCents) {
+          throw precondition(
+            `El abono supera el saldo de esta factura (${fac.numero}). Saldo pendiente: ${fmtMoney(fromCents(pendingCents))}`
+          );
+        }
+
+        const takenIds = fac.pagos.map(x => x && x.id).filter(Boolean);
+        const payId = uniqueId(takenIds, baseTs + idx);
+        const applicationId = item.customAppId || `APP_${normRef}_${item.prospectId}_${item.invoiceId}_${payId}`;
+        const entryId = `${item.prospectId}__${item.invoiceId}__${applicationId}`;
+        const itemOpId = `${opId}__${idx + 1}`;
+
+        const paymentRecord = {
+          id: payId,
+          aplicacion_id: applicationId,
+          abono_id: lockId,
+          es_abono_multifactura: true,
+          es_aplicacion_compartida: true,
+          invoiceId: fac.id,
+          factura_numero: fac.numero,
+          monto: item.amount,
+          metodo: cleanMetodo,
+          ref: refText,
+          ref_bancaria_real: refText,
+          ref_normalizada: normRef,
+          ref_bancaria_base: normRef,
+          doc_comprobante: doc,
+          fecha: voucherDate,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          observaciones: item.notes || cleanNotes || '',
+          opId: itemOpId,
+          confirmado: true,
+          estado: 'confirmado',
+          confirmado_por: caller.cid || caller.uid,
+          confirmado_por_uid: caller.uid,
+          confirmado_por_rol: caller.role,
+          confirmado_en: nowAt,
+          pago_compartido: {
+            es_tramo_compartido: true,
+            abono_id: lockId,
+            aplicacion_id: applicationId,
+            entry_id: entryId,
+            ref_bancaria_unica: refText,
+            ref_bancaria_normalizada: normRef,
+            importe_total_comprobante: importeOriginal,
+            monto_total_comprobante: importeOriginal,
+            monto_aplicado: item.amount,
+            total_aplicado: nextTotalAplicado,
+            saldo_disponible_comprobante: nextSaldoDisponible,
+            banco_origen: ld.banco_origen || ld.bankOrigin || null,
+            fecha_comprobante_bancario: voucherDate,
+            fecha_registro_crm: nowAt
+          }
+        };
+
+        fac.pagos.push(paymentRecord);
+        bundle.appliedItems.push({ fac, item, paymentRecord, applicationId, entryId });
+
+        const appEntry = {
+          aplicacion_id: applicationId,
+          entry_id: entryId,
+          abono_id: lockId,
+          prospectId: item.prospectId,
+          codigo_oportunidad: bundle.p.codigo || item.prospectId,
+          proyecto: bundle.p.proyecto || null,
+          invoiceId: fac.id,
+          factura_numero: fac.numero || null,
+          paymentKey: String(payId),
+          clientId: canonicalClientId,
+          monto: item.amount,
+          monto_aplicado: item.amount,
+          metodo: cleanMetodo,
+          ref: refText,
+          normRef,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          fecha_aplicacion: nowAt,
+          observaciones: item.notes || cleanNotes || '',
+          opId: itemOpId,
+          estado: 'activa',
+          anulada: false,
+          confirmado: true,
+          aplicado_por: caller.cid || caller.uid,
+          aplicado_por_uid: caller.uid,
+          aplicado_por_rol: caller.role,
+          updatedAt: nowAt
+        };
+        existingAplicaciones.push(appEntry);
+        newAppEntries.push(appEntry);
+        nextEntries[entryId] = appEntry;
+      }
+
+      // 3. Actualizar oportunidades afectadas
+      const prospectsBefore = [];
+      const prospectsAfter = [];
+
+      for (const bundle of prospectBundles.values()) {
+        const summaryParts = bundle.appliedItems.map(
+          ai => `Factura ${ai.fac.numero}: ${fmtMoney(ai.item.amount)}`
+        );
+        const logText = `Distribución de abono bancario Ref. ${refText}: aplicado a ${summaryParts.join(', ')}`;
+        const lastAi = bundle.appliedItems[bundle.appliedItems.length - 1];
+
+        const { prospectPatch } = applyManufacturingReadinessUpdateOnProspectTx(tx, {
+          caller,
+          pRef: bundle.pRef,
+          p: bundle.p,
+          prospectId: bundle.prospectId,
+          facturas: bundle.facturas,
+          client: canonicalClient,
+          fabProjQuerySnap: bundle.fabProjQuerySnap,
+          fabOrdersQuerySnap: bundle.fabOrdersQuerySnap,
+          operationName: 'distributeBankDeposit',
+          invoiceId: lastAi ? lastAi.fac.id : null,
+          facturaNumero: lastAi ? lastAi.fac.numero : null,
+          paymentKey: lastAi ? lastAi.paymentRecord.id : null,
+          montoAfectado: bundle.appliedItems.reduce((s, x) => round2(s + x.item.amount), 0),
+          logMessage: logText,
+          nowAt
+        });
+
+        prospectsBefore.push(bundle.pBefore);
+        prospectsAfter.push({ ...bundle.p, ...prospectPatch, id: bundle.prospectId });
+      }
+
+      // 4. Actualizar documento maestro en `payment_refs`
+      histList.push({
+        distribucion_id: `DIST_${normRef}_${histList.length + 1}`,
+        opId,
+        tipo: 'distribucion_posterior',
+        monto_distribuido: fromCents(newAllocCents),
+        saldo_disponible_resultante: nextSaldoDisponible,
+        cantidad_facturas: allocItems.length,
+        aplicaciones_ids: newAppEntries.map(a => a.aplicacion_id),
+        fecha: nowAt,
+        usuario: caller.cid || caller.uid,
+        usuario_uid: caller.uid,
+        usuario_rol: caller.role,
+        observaciones: cleanNotes
+      });
+
+      const activeAppsAfter = existingAplicaciones.filter(a => a && a.anulada !== true && a.anulado !== true);
+      const firstActive = activeAppsAfter[0] || null;
+
+      const updatedDepositDoc = {
+        ...ld,
+        id: lockId,
+        abono_id: lockId,
+        active: true,
+        es_abono_multifactura: true,
+        es_comprobante_distribuido: true,
+        distribuido_auditado: true,
+        reutilizacion_bloqueada: true,
+        estado: 'distribuido_auditado',
+        status: 'distribuido_auditado',
+        estado_abono: nextEstadoAbono,
+        clientId: canonicalClientId,
+        importe_original_recibido: importeOriginal,
+        importe_total_comprobante: importeOriginal,
+        montoTotalComprobante: importeOriginal,
+        monto: importeOriginal,
+        total_aplicado: nextTotalAplicado,
+        totalAplicado: nextTotalAplicado,
+        total_aplicaciones: activeAppsAfter.length,
+        saldo_disponible: nextSaldoDisponible,
+        saldoDisponible: nextSaldoDisponible,
+        prospectId: firstActive ? firstActive.prospectId : (ld.prospectId || null),
+        invoiceId: firstActive ? firstActive.invoiceId : (ld.invoiceId || null),
+        paymentKey: firstActive ? firstActive.paymentKey : (ld.paymentKey || null),
+        aplicaciones: existingAplicaciones,
+        entries: nextEntries,
+        historial_distribuciones: histList,
+        updatedAt: nowAt,
+        updatedBy: caller.cid || caller.uid
+      };
+
+      tx.set(lockRef, updatedDepositDoc);
+
+      // 5. Actualizar agregados financieros del cliente canónico
+      applyClientFinancialDeltaTx(tx, canonicalClient, {
+        prospectsBefore,
+        prospectsAfter,
+        depositDeltaCents: {
+          dineroRecibidoDeltaCents: 0,
+          saldoDisponibleDeltaCents: -newAllocCents
+        },
+        nowAt
+      });
+
+      addAudit(tx, caller, 'distributeBankDeposit', canonicalClientId, {
+        abonoId: lockId,
+        ref: refText,
+        montoDistribuido: fromCents(newAllocCents),
+        totalAplicado: nextTotalAplicado,
+        saldoDisponible: nextSaldoDisponible,
+        estadoAbono: nextEstadoAbono,
+        nuevasAplicaciones: newAppEntries.map(a => ({
+          aplicacion_id: a.aplicacion_id,
+          prospectId: a.prospectId,
+          invoiceId: a.invoiceId,
+          monto: a.monto_aplicado
+        }))
+      });
+
+      return {
+        status: 'distributed',
+        replay: false,
+        abonoId: lockId,
+        depositId: lockId,
+        lockId,
+        clientId: canonicalClientId,
+        deposit: updatedDepositDoc,
+        nuevasAplicaciones: newAppEntries,
+        applicationsCreated: newAppEntries,
+        aplicaciones: existingAplicaciones,
+        importeOriginal,
+        montoRecibido: importeOriginal,
+        totalAplicado: nextTotalAplicado,
+        montoAplicadoTotal: nextTotalAplicado,
+        saldoDisponible: nextSaldoDisponible,
+        estadoAbono: nextEstadoAbono
+      };
+    });
+  }
+
+  /**
+   * B5.2 — Anula de forma auditada una aplicación específica de un abono bancario,
+   * restaurando su importe al `saldo_disponible` del abono sin borrar el comprobante
+   * bancario original, reevaluando el anticipo de fabricación y permitiendo opcionalmente
+   * reasignar (`reallocateTo`) ese saldo a otra factura válida del mismo cliente canónico
+   * dentro de la misma transacción.
+   */
+  async function voidBankDepositApplication({
+    caller,
+    abonoId,
+    depositId,
+    bankRef,
+    ref,
+    referencia,
+    aplicacionId,
+    applicationId,
+    prospectId,
+    invoiceId,
+    paymentKey,
+    motivo,
+    reallocateTo,
+    opId
+  }) {
+    authorize(caller, 'deletePayment');
+    const reason = reqString(motivo, 'El motivo de la anulación de la aplicación', 500);
+    if (opId !== undefined && opId !== null && opId !== '') {
+      reqOpId(opId);
+    }
+    const lockId = resolveBankDepositLockIdInput({ abonoId, depositId, bankRef, ref, referencia });
+    const targetAppId = typeof (aplicacionId || applicationId) === 'string'
+      ? String(aplicacionId || applicationId).trim()
+      : '';
+
+    let reallocSpec = null;
+    if (reallocateTo !== undefined && reallocateTo !== null) {
+      const ro = asObject(reallocateTo, 'Datos de reasignación (reallocateTo)');
+      const rProspectId = reqDocId(ro.prospectId, 'reallocateTo.prospectId');
+      const rInvoiceId = reqDocId(ro.invoiceId, 'reallocateTo.invoiceId');
+      const rawReallocMonto = ro.monto ?? ro.monto_aplicado ?? ro.amount;
+      const rAmount = rawReallocMonto !== undefined && rawReallocMonto !== null
+        ? money(rawReallocMonto, 'reallocateTo.monto', { positive: true })
+        : null;
+      reallocSpec = {
+        prospectId: rProspectId,
+        invoiceId: rInvoiceId,
+        amount: rAmount,
+        amountCents: rAmount !== null ? toCents(rAmount) : null,
+        notes: optString(ro.observaciones ?? ro.notas ?? '', 'reallocateTo.observaciones', 300)
+      };
+    }
+
+    return db.runTransaction(async tx => {
+      // 1. Todas las lecturas transaccionales antes de cualquier escritura
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+      if (!lockSnap.exists) throw notFound('Abono bancario');
+      const ld = lockSnap.data() || {};
+
+      const aplicaciones = Array.isArray(ld.aplicaciones)
+        ? ld.aplicaciones.slice()
+        : extractLockEntries(ld).map(e => ({
+          ...e,
+          aplicacion_id: e.aplicacion_id || `APP_${ld.normRef || 'REF'}_${e.prospectId}_${e.invoiceId}`,
+          monto_aplicado: e.monto_aplicado ?? e.monto,
+          anulada: false
+        }));
+
+      const matchIdx = aplicaciones.findIndex(app => {
+        if (!app || typeof app !== 'object') return false;
+        if (targetAppId && (app.aplicacion_id === targetAppId || app.entry_id === targetAppId)) return true;
+        if (prospectId && invoiceId && app.prospectId === prospectId && app.invoiceId === invoiceId) {
+          if (!paymentKey || String(app.paymentKey) === String(paymentKey)) return true;
+        }
+        return false;
+      });
+
+      if (matchIdx === -1) throw notFound('Aplicación de abono');
+      const targetApp = aplicaciones[matchIdx];
+
+      if (targetApp.anulada === true || targetApp.anulado === true || targetApp.estado === 'anulada') {
+        if (opId && targetApp.voidOpId === opId) {
+          return {
+            status: 'unchanged',
+            replay: true,
+            abonoId: lockId,
+            aplicacionAnulada: targetApp,
+            saldoDisponible: round2(Number(ld.saldo_disponible ?? ld.saldoDisponible) || 0),
+            totalAplicado: round2(Number(ld.total_aplicado ?? ld.totalAplicado) || 0),
+            estadoAbono: ld.estado_abono
+          };
+        }
+        throw precondition('La aplicación indicada ya fue anulada previamente');
+      }
+
+      const appProspectId = reqDocId(targetApp.prospectId, 'prospectId');
+      const appInvoiceId = reqDocId(targetApp.invoiceId, 'invoiceId');
+      const appPaymentKey = String(targetApp.paymentKey || '');
+      const voidedCents = toCents(targetApp.monto_aplicado ?? targetApp.monto);
+
+      const { ref: pRef, p } = await loadProspect(tx, caller, appProspectId);
+      requirePostclosing(p);
+      const rawClientId = ld.clientId || p.clientId;
+      const { canonicalId: canonicalClientId, client: canonicalClient } = await loadCanonicalClientByIdTx(tx, rawClientId);
+      authorizeClientAccess(caller, canonicalClient);
+
+      const fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', appProspectId).limit(5));
+      const fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', appProspectId).limit(10));
+
+      let reallocBundle = null;
+      if (reallocSpec) {
+        if (reallocSpec.prospectId === appProspectId) {
+          reallocBundle = { sameProspect: true };
+        } else {
+          const { ref: rRef, p: rP } = await loadProspect(tx, caller, reallocSpec.prospectId);
+          requirePostclosing(rP);
+          const rClient = await loadClient(tx, rP);
+          if (!rClient) throw notFound(`Cliente de la oportunidad destino ${reallocSpec.prospectId}`);
+          const rCanonicalId = rClient.__canonicalId || rClient.id || rP.clientId;
+          if (rCanonicalId !== canonicalClientId) {
+            throw precondition('No se puede reasignar el saldo del abono a una factura de otro cliente');
+          }
+          let rFabProjSnap = null;
+          let rFabOrdSnap = null;
+          if (rP.enviado_a_fabricacion === true || rP.fabricacion_proyecto_id || rP.discrepancia_financiera_fabricacion === true) {
+            rFabProjSnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', reallocSpec.prospectId).limit(5));
+            rFabOrdSnap = await tx.get(col('fabricacion').where('prospecto_id', '==', reallocSpec.prospectId).limit(10));
+          }
+          reallocBundle = {
+            sameProspect: false,
+            prospectId: reallocSpec.prospectId,
+            pRef: rRef,
+            pBefore: { ...rP, id: reallocSpec.prospectId },
+            p: rP,
+            facturas: facturasOf(rP).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] })),
+            fabProjQuerySnap: rFabProjSnap,
+            fabOrdersQuerySnap: rFabOrdSnap
+          };
+        }
+      }
+
+      // 2. Marcar como anulado el pago en la factura origen (preservando trazabilidad y documento original)
+      const nowAt = iso();
+      const facturas = facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] }));
+      const fac = facturas.find(f => f && f.id === appInvoiceId);
+      if (!fac) throw notFound('Factura de la aplicación');
+
+      const payIdx = fac.pagos.findIndex(x => (
+        (targetAppId && x && x.aplicacion_id === targetAppId) ||
+        (appPaymentKey && payKeyMatches(x, appPaymentKey))
+      ));
+      if (payIdx === -1) throw notFound('Pago aplicado en factura');
+
+      const curPay = fac.pagos[payIdx];
+      fac.pagos[payIdx] = {
+        ...curPay,
+        anulado: true,
+        anulada: true,
+        estado: 'anulado',
+        motivo_anulacion: reason,
+        anulado_en: nowAt,
+        anulado_por: caller.cid || caller.uid,
+        anulado_por_uid: caller.uid,
+        anulado_por_rol: caller.role,
+        voidOpId: opId || null
+      };
+
+      const voidedAppRecord = {
+        ...targetApp,
+        anulada: true,
+        anulado: true,
+        estado: 'anulada',
+        motivo_anulacion: reason,
+        anulada_en: nowAt,
+        anulada_por: caller.cid || caller.uid,
+        anulada_por_uid: caller.uid,
+        anulada_por_rol: caller.role,
+        voidOpId: opId || null,
+        updatedAt: nowAt
+      };
+      aplicaciones[matchIdx] = voidedAppRecord;
+
+      const nextEntries = (ld.entries && typeof ld.entries === 'object') ? { ...ld.entries } : {};
+      for (const k of Object.keys(nextEntries)) {
+        const e = nextEntries[k];
+        if (!e) continue;
+        if (
+          (targetAppId && (e.aplicacion_id === targetAppId || k === targetAppId || e.entry_id === targetAppId)) ||
+          (e.prospectId === appProspectId && e.invoiceId === appInvoiceId && (!appPaymentKey || String(e.paymentKey) === appPaymentKey))
+        ) {
+          delete nextEntries[k];
+        }
+      }
+
+      const importeOriginalCents = toCents(
+        ld.importe_original_recibido ?? ld.importe_total_comprobante ?? ld.montoTotalComprobante ?? ld.monto
+      );
+      const activeAppsAfterVoid = aplicaciones.filter(a => a && a.anulada !== true && a.anulado !== true && a.estado !== 'anulada');
+      let nextAppliedCents = activeAppsAfterVoid.reduce((acc, a) => acc + toCents(a.monto_aplicado ?? a.monto), 0);
+      let nextAvailableCents = Math.max(0, importeOriginalCents - nextAppliedCents);
+
+      // 3. Reasignación atómica opcional (`reallocateTo`) en la misma transacción
+      let reallocatedAppEntry = null;
+      let reallocDeltaCents = 0;
+      const refText = ld.ref || ld.referencia_bancaria || curPay.ref || lockId.replace(/^BANK_/, '');
+      const normRef = ld.normRef || normalizePaymentReference(refText);
+      const cleanMetodo = ld.metodo || curPay.metodo || 'transferencia';
+      const voucherDate = ld.fecha_comprobante_bancario || curPay.fecha_comprobante_bancario || curPay.fecha || nowAt;
+      const doc = ld.doc_comprobante || curPay.doc_comprobante || null;
+
+      if (reallocSpec) {
+        const effectiveReallocCents = reallocSpec.amountCents !== null ? reallocSpec.amountCents : voidedCents;
+        const effectiveReallocAmount = fromCents(effectiveReallocCents);
+        if (effectiveReallocCents > nextAvailableCents) {
+          throw precondition(
+            `El monto a reasignar (${fmtMoney(effectiveReallocAmount)}) supera el saldo disponible del abono (${fmtMoney(fromCents(nextAvailableCents))})`
+          );
+        }
+
+        const targetFacturasList = reallocBundle.sameProspect ? facturas : reallocBundle.facturas;
+        const rFac = targetFacturasList.find(f => f && f.id === reallocSpec.invoiceId);
+        if (!rFac) throw notFound(`Factura destino ${reallocSpec.invoiceId}`);
+        if (!isActiveInvoice(rFac)) {
+          throw precondition(`La factura destino ${rFac.numero || reallocSpec.invoiceId} no es válida o se encuentra anulada`);
+        }
+
+        const rCollectedCents = rFac.pagos.reduce(
+          (acc, x) => (!isActivePaymentRecord(x) ? acc : acc + toCents(x.monto)),
+          0
+        );
+        const rPendingCents = Math.max(0, toCents(rFac.monto) - rCollectedCents);
+        if (effectiveReallocCents > rPendingCents) {
+          throw precondition(
+            `El monto a reasignar (${fmtMoney(effectiveReallocAmount)}) supera el saldo pendiente de la factura destino ${rFac.numero} (${fmtMoney(fromCents(rPendingCents))})`
+          );
+        }
+
+        const rTakenIds = rFac.pagos.map(x => x && x.id).filter(Boolean);
+        const newPayId = uniqueId(rTakenIds, Date.now() + 1);
+        const newAppId = `APP_${normRef}_${reallocSpec.prospectId}_${rFac.id}_${newPayId}`;
+        const newEntryId = `${reallocSpec.prospectId}__${rFac.id}__${newAppId}`;
+
+        nextAppliedCents += effectiveReallocCents;
+        nextAvailableCents = Math.max(0, importeOriginalCents - nextAppliedCents);
+        reallocDeltaCents = effectiveReallocCents;
+
+        const newPayRecord = {
+          id: newPayId,
+          aplicacion_id: newAppId,
+          abono_id: lockId,
+          es_abono_multifactura: true,
+          es_aplicacion_compartida: true,
+          invoiceId: rFac.id,
+          factura_numero: rFac.numero,
+          monto: effectiveReallocAmount,
+          metodo: cleanMetodo,
+          ref: refText,
+          ref_bancaria_real: refText,
+          ref_normalizada: normRef,
+          ref_bancaria_base: normRef,
+          doc_comprobante: doc,
+          fecha: voucherDate,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          observaciones: reallocSpec.notes || `Reasignado desde factura ${fac.numero} (${reason})`,
+          opId: opId ? `${opId}__REALLOC` : null,
+          confirmado: true,
+          estado: 'confirmado',
+          confirmado_por: caller.cid || caller.uid,
+          confirmado_por_uid: caller.uid,
+          confirmado_por_rol: caller.role,
+          confirmado_en: nowAt,
+          pago_compartido: {
+            es_tramo_compartido: true,
+            abono_id: lockId,
+            aplicacion_id: newAppId,
+            entry_id: newEntryId,
+            ref_bancaria_unica: refText,
+            ref_bancaria_normalizada: normRef,
+            importe_total_comprobante: fromCents(importeOriginalCents),
+            monto_total_comprobante: fromCents(importeOriginalCents),
+            monto_aplicado: effectiveReallocAmount,
+            total_aplicado: fromCents(nextAppliedCents),
+            saldo_disponible_comprobante: fromCents(nextAvailableCents),
+            reasignado_desde_aplicacion_id: voidedAppRecord.aplicacion_id,
+            fecha_comprobante_bancario: voucherDate,
+            fecha_registro_crm: nowAt
+          }
+        };
+
+        rFac.pagos.push(newPayRecord);
+        const rProspectObj = reallocBundle.sameProspect ? p : reallocBundle.p;
+        reallocatedAppEntry = {
+          aplicacion_id: newAppId,
+          entry_id: newEntryId,
+          abono_id: lockId,
+          prospectId: reallocSpec.prospectId,
+          codigo_oportunidad: rProspectObj.codigo || reallocSpec.prospectId,
+          proyecto: rProspectObj.proyecto || null,
+          invoiceId: rFac.id,
+          factura_numero: rFac.numero || null,
+          paymentKey: String(newPayId),
+          clientId: canonicalClientId,
+          monto: effectiveReallocAmount,
+          monto_aplicado: effectiveReallocAmount,
+          metodo: cleanMetodo,
+          ref: refText,
+          normRef,
+          fecha_comprobante_bancario: voucherDate,
+          fecha_registro_crm: nowAt,
+          fecha_aplicacion: nowAt,
+          observaciones: reallocSpec.notes || `Reasignado desde factura ${fac.numero}`,
+          reasignado_desde_aplicacion_id: voidedAppRecord.aplicacion_id,
+          opId: opId ? `${opId}__REALLOC` : null,
+          estado: 'activa',
+          anulada: false,
+          confirmado: true,
+          aplicado_por: caller.cid || caller.uid,
+          aplicado_por_uid: caller.uid,
+          aplicado_por_rol: caller.role,
+          updatedAt: nowAt
+        };
+        aplicaciones.push(reallocatedAppEntry);
+        nextEntries[newEntryId] = reallocatedAppEntry;
+      }
+
+      // 4. Actualizar oportunidades y evaluar estado de fabricación
+      const prospectsBefore = [{ ...p, id: appProspectId }];
+      const originLogMsg = `Aplicación de abono bancario Ref. ${refText} anulada en factura ${fac.numero} por ${fmtMoney(fromCents(voidedCents))}. Motivo: ${reason}`;
+      const originResult = applyManufacturingReadinessUpdateOnProspectTx(tx, {
+        caller,
+        pRef,
+        p,
+        prospectId: appProspectId,
+        facturas,
+        client: canonicalClient,
+        fabProjQuerySnap,
+        fabOrdersQuerySnap,
+        operationName: 'voidBankDepositApplication',
+        invoiceId: fac.id,
+        facturaNumero: fac.numero,
+        paymentKey: String(curPay.id || curPay.fecha || appPaymentKey),
+        montoAfectado: fromCents(voidedCents),
+        logMessage: originLogMsg,
+        nowAt
+      });
+      const prospectsAfter = [{ ...p, ...originResult.prospectPatch, id: appProspectId }];
+
+      if (reallocBundle && !reallocBundle.sameProspect && reallocatedAppEntry) {
+        const rLogMsg = `Abono bancario Ref. ${refText} reasignado a factura ${reallocatedAppEntry.factura_numero}: ${fmtMoney(reallocatedAppEntry.monto_aplicado)}`;
+        const rResult = applyManufacturingReadinessUpdateOnProspectTx(tx, {
+          caller,
+          pRef: reallocBundle.pRef,
+          p: reallocBundle.p,
+          prospectId: reallocBundle.prospectId,
+          facturas: reallocBundle.facturas,
+          client: canonicalClient,
+          fabProjQuerySnap: reallocBundle.fabProjQuerySnap,
+          fabOrdersQuerySnap: reallocBundle.fabOrdersQuerySnap,
+          operationName: 'reallocateBankDepositApplication',
+          invoiceId: reallocatedAppEntry.invoiceId,
+          facturaNumero: reallocatedAppEntry.factura_numero,
+          paymentKey: reallocatedAppEntry.paymentKey,
+          montoAfectado: reallocatedAppEntry.monto_aplicado,
+          logMessage: rLogMsg,
+          nowAt
+        });
+        prospectsBefore.push(reallocBundle.pBefore);
+        prospectsAfter.push({ ...reallocBundle.p, ...rResult.prospectPatch, id: reallocBundle.prospectId });
+      }
+
+      // 5. Actualizar `payment_refs/{lockId}` preservando el comprobante original y su historial
+      const importeOriginal = fromCents(importeOriginalCents);
+      const nextTotalAplicado = fromCents(nextAppliedCents);
+      const nextSaldoDisponible = fromCents(nextAvailableCents);
+      const nextEstadoAbono = resolveDepositStatusLabel(importeOriginalCents, nextAppliedCents, false);
+      const activeRemaining = aplicaciones.filter(a => a && a.anulada !== true && a.anulado !== true);
+      const firstActive = activeRemaining[0] || null;
+
+      const histList = Array.isArray(ld.historial_distribuciones) ? ld.historial_distribuciones.slice() : [];
+      histList.push({
+        distribucion_id: `VOID_${normRef}_${histList.length + 1}`,
+        opId: opId || null,
+        tipo: reallocatedAppEntry ? 'anulacion_y_reasignacion_aplicacion' : 'anulacion_aplicacion',
+        aplicacion_anulada_id: voidedAppRecord.aplicacion_id,
+        monto_liberado: fromCents(voidedCents),
+        aplicacion_reasignada_id: reallocatedAppEntry ? reallocatedAppEntry.aplicacion_id : null,
+        monto_reasignado: reallocatedAppEntry ? reallocatedAppEntry.monto_aplicado : 0,
+        saldo_disponible_resultante: nextSaldoDisponible,
+        motivo: reason,
+        fecha: nowAt,
+        usuario: caller.cid || caller.uid,
+        usuario_uid: caller.uid,
+        usuario_rol: caller.role
+      });
+
+      const updatedDepositDoc = {
+        ...ld,
+        id: lockId,
+        abono_id: lockId,
+        active: true,
+        es_abono_multifactura: true,
+        es_comprobante_distribuido: true,
+        distribuido_auditado: true,
+        reutilizacion_bloqueada: true,
+        estado: 'distribuido_auditado',
+        status: 'distribuido_auditado',
+        estado_abono: nextEstadoAbono,
+        importe_original_recibido: importeOriginal,
+        importe_total_comprobante: importeOriginal,
+        montoTotalComprobante: importeOriginal,
+        monto: importeOriginal,
+        total_aplicado: nextTotalAplicado,
+        totalAplicado: nextTotalAplicado,
+        total_aplicaciones: activeRemaining.length,
+        saldo_disponible: nextSaldoDisponible,
+        saldoDisponible: nextSaldoDisponible,
+        prospectId: firstActive ? firstActive.prospectId : null,
+        invoiceId: firstActive ? firstActive.invoiceId : null,
+        paymentKey: firstActive ? firstActive.paymentKey : null,
+        aplicaciones,
+        entries: nextEntries,
+        historial_distribuciones: histList,
+        updatedAt: nowAt,
+        updatedBy: caller.cid || caller.uid
+      };
+      tx.set(lockRef, updatedDepositDoc);
+
+      // 6. Actualizar agregados financieros del cliente canónico
+      const netAvailableDeltaCents = voidedCents - reallocDeltaCents;
+      applyClientFinancialDeltaTx(tx, canonicalClient, {
+        prospectsBefore,
+        prospectsAfter,
+        depositDeltaCents: {
+          dineroRecibidoDeltaCents: 0,
+          saldoDisponibleDeltaCents: netAvailableDeltaCents
+        },
+        nowAt
+      });
+
+      addAudit(tx, caller, 'voidBankDepositApplication', appProspectId, {
+        abonoId: lockId,
+        aplicacionId: voidedAppRecord.aplicacion_id,
+        invoiceId: fac.id,
+        facturaNumero: fac.numero,
+        montoAnulado: fromCents(voidedCents),
+        motivo: reason,
+        reallocatedTo: reallocatedAppEntry ? {
+          aplicacionId: reallocatedAppEntry.aplicacion_id,
+          prospectId: reallocatedAppEntry.prospectId,
+          invoiceId: reallocatedAppEntry.invoiceId,
+          monto: reallocatedAppEntry.monto_aplicado
+        } : null,
+        saldoDisponibleResultante: nextSaldoDisponible,
+        discrepancyRecorded: originResult.discrepancyRecorded
+      });
+      addDeletionNotice(
+        tx,
+        caller,
+        p,
+        canonicalClient,
+        'Aplicación de Abono',
+        `${fmtMoney(fromCents(voidedCents))} en factura ${fac.numero} (Ref. ${refText}). Motivo: ${reason}`
+      );
+
+      return {
+        status: 'voided',
+        subStatus: reallocatedAppEntry ? 'voided_and_reallocated' : 'voided',
+        replay: false,
+        abonoId: lockId,
+        depositId: lockId,
+        lockId,
+        aplicacionAnulada: voidedAppRecord,
+        aplicacionReasignada: reallocatedAppEntry,
+        reallocatedApplication: reallocatedAppEntry,
+        deposit: updatedDepositDoc,
+        importeOriginal,
+        totalAplicado: nextTotalAplicado,
+        montoAplicadoTotal: nextTotalAplicado,
+        saldoDisponible: nextSaldoDisponible,
+        estadoAbono: nextEstadoAbono,
+        discrepancyRecorded: originResult.discrepancyRecorded,
+        discrepancyTriggered: originResult.discrepancyRecorded,
+        discrepancyDetail: originResult.discrepancyDetail,
+        estadoHabilitacionFabricacion: originResult.prospectPatch.estado_habilitacion_fabricacion
+      };
+    });
+  }
+
+  /**
+   * B5.2 — Anula un abono bancario completo de forma auditada, anulando sus aplicaciones activas
+   * (si se autoriza `voidActiveApplications: true` o si no tiene aplicaciones activas),
+   * preservando la trazabilidad documental y actualizando los saldos del cliente canónico.
+   */
+  async function voidBankDeposit({
+    caller,
+    abonoId,
+    depositId,
+    bankRef,
+    ref,
+    referencia,
+    motivo,
+    voidActiveApplications = true,
+    opId
+  }) {
+    authorize(caller, 'deletePayment');
+    const reason = reqString(motivo, 'El motivo de la anulación del abono bancario', 500);
+    if (opId !== undefined && opId !== null && opId !== '') {
+      reqOpId(opId);
+    }
+    const lockId = resolveBankDepositLockIdInput({ abonoId, depositId, bankRef, ref, referencia });
+
+    return db.runTransaction(async tx => {
+      const lockRef = col('payment_refs').doc(lockId);
+      const lockSnap = await tx.get(lockRef);
+      if (!lockSnap.exists) throw notFound('Abono bancario');
+      const ld = lockSnap.data() || {};
+
+      if (ld.anulado === true || ld.estado_abono === 'anulado') {
+        if (opId && ld.voidOpId === opId) {
+          return { status: 'unchanged', replay: true, abonoId: lockId, deposit: ld };
+        }
+        throw precondition('El abono bancario ya se encuentra anulado');
+      }
+
+      const aplicaciones = Array.isArray(ld.aplicaciones)
+        ? ld.aplicaciones.slice()
+        : extractLockEntries(ld).map(e => ({ ...e, monto_aplicado: e.monto_aplicado ?? e.monto, anulada: false }));
+      const activeApps = aplicaciones.filter(a => a && a.anulada !== true && a.anulado !== true && a.estado !== 'anulada');
+
+      if (activeApps.length > 0 && voidActiveApplications !== true) {
+        throw precondition('El abono bancario tiene aplicaciones activas; anule primero sus aplicaciones o indique voidActiveApplications: true');
+      }
+
+      const rawClientId = ld.clientId || (activeApps[0] && activeApps[0].clientId);
+      const { canonicalId: canonicalClientId, client: canonicalClient } = rawClientId
+        ? await loadCanonicalClientByIdTx(tx, rawClientId)
+        : { canonicalId: null, client: null };
+      if (canonicalClient) {
+        authorizeClientAccess(caller, canonicalClient);
+      }
+
+      const uniqueProspectIds = Array.from(new Set(activeApps.map(a => a.prospectId).filter(Boolean)));
+      const prospectBundles = new Map();
+      for (const pId of uniqueProspectIds) {
+        const { ref: pRef, p } = await loadProspect(tx, caller, pId);
+        const fabProjQuerySnap = await tx.get(col('proyectos_fabricacion').where('prospecto_id', '==', pId).limit(5));
+        const fabOrdersQuerySnap = await tx.get(col('fabricacion').where('prospecto_id', '==', pId).limit(10));
+        prospectBundles.set(pId, {
+          prospectId: pId,
+          pRef,
+          pBefore: { ...p, id: pId },
+          p,
+          facturas: facturasOf(p).map(f => ({ ...f, pagos: Array.isArray(f.pagos) ? f.pagos.slice() : [] })),
+          fabProjQuerySnap,
+          fabOrdersQuerySnap
+        });
+      }
+
+      const nowAt = iso();
+      const refText = ld.ref || ld.referencia_bancaria || lockId.replace(/^BANK_/, '');
+      const importeOriginalCents = toCents(
+        ld.importe_original_recibido ?? ld.importe_total_comprobante ?? ld.montoTotalComprobante ?? ld.monto
+      );
+      const activeAppliedCents = activeApps.reduce((acc, a) => acc + toCents(a.monto_aplicado ?? a.monto), 0);
+      const prevAvailableCents = Math.max(0, importeOriginalCents - activeAppliedCents);
+
+      for (let i = 0; i < aplicaciones.length; i++) {
+        const app = aplicaciones[i];
+        if (!app || app.anulada === true || app.anulado === true) continue;
+        const bundle = prospectBundles.get(app.prospectId);
+        if (bundle) {
+          const fac = bundle.facturas.find(f => f && f.id === app.invoiceId);
+          if (fac) {
+            const pIdx = fac.pagos.findIndex(x => (
+              (app.aplicacion_id && x && x.aplicacion_id === app.aplicacion_id) ||
+              (app.paymentKey && payKeyMatches(x, app.paymentKey))
+            ));
+            if (pIdx !== -1) {
+              fac.pagos[pIdx] = {
+                ...fac.pagos[pIdx],
+                anulado: true,
+                anulada: true,
+                estado: 'anulado',
+                motivo_anulacion: reason,
+                anulado_en: nowAt,
+                anulado_por: caller.cid || caller.uid
+              };
+            }
+          }
+        }
+        aplicaciones[i] = {
+          ...app,
+          anulada: true,
+          anulado: true,
+          estado: 'anulada',
+          motivo_anulacion: reason,
+          anulada_en: nowAt,
+          anulada_por: caller.cid || caller.uid,
+          updatedAt: nowAt
+        };
+      }
+
+      const prospectsBefore = [];
+      const prospectsAfter = [];
+      for (const bundle of prospectBundles.values()) {
+        const { prospectPatch } = applyManufacturingReadinessUpdateOnProspectTx(tx, {
+          caller,
+          pRef: bundle.pRef,
+          p: bundle.p,
+          prospectId: bundle.prospectId,
+          facturas: bundle.facturas,
+          client: canonicalClient,
+          fabProjQuerySnap: bundle.fabProjQuerySnap,
+          fabOrdersQuerySnap: bundle.fabOrdersQuerySnap,
+          operationName: 'voidBankDeposit',
+          invoiceId: null,
+          facturaNumero: null,
+          paymentKey: null,
+          montoAfectado: fromCents(activeAppliedCents),
+          logMessage: `Abono bancario Ref. ${refText} anulado. Motivo: ${reason}`,
+          nowAt
+        });
+        prospectsBefore.push(bundle.pBefore);
+        prospectsAfter.push({ ...bundle.p, ...prospectPatch, id: bundle.prospectId });
+      }
+
+      const updatedDepositDoc = {
+        ...ld,
+        active: false,
+        anulado: true,
+        estado: 'anulado',
+        status: 'anulado',
+        estado_abono: 'anulado',
+        motivo_anulacion: reason,
+        anulado_en: nowAt,
+        anulado_por: caller.cid || caller.uid,
+        voidOpId: opId || null,
+        total_aplicado: 0,
+        totalAplicado: 0,
+        saldo_disponible: 0,
+        saldoDisponible: 0,
+        aplicaciones,
+        entries: {},
+        updatedAt: nowAt,
+        updatedBy: caller.cid || caller.uid
+      };
+      tx.set(lockRef, updatedDepositDoc);
+
+      if (canonicalClient) {
+        applyClientFinancialDeltaTx(tx, canonicalClient, {
+          prospectsBefore,
+          prospectsAfter,
+          depositDeltaCents: {
+            dineroRecibidoDeltaCents: -importeOriginalCents,
+            saldoDisponibleDeltaCents: -prevAvailableCents
+          },
+          nowAt
+        });
+      }
+
+      addAudit(tx, caller, 'voidBankDeposit', canonicalClientId || lockId, {
+        abonoId: lockId,
+        ref: refText,
+        importeOriginal: fromCents(importeOriginalCents),
+        aplicacionesAnuladas: activeApps.length,
+        motivo: reason
+      });
+
+      return {
+        status: 'voided',
+        replay: false,
+        abonoId: lockId,
+        lockId,
+        deposit: updatedDepositDoc
+      };
+    });
+  }
+
+  /**
+   * B5.2 / B5.3 — Consulta operativa de abonos bancarios de un cliente (o global),
+   * incluyendo estado (`recibido`, `parcialmente_aplicado`, `totalmente_aplicado`),
+   * importe original recibido, total aplicado, saldo disponible, facturas vinculadas y comprobante.
+   */
+  async function listClientBankDeposits({
+    caller,
+    clientId,
+    estado,
+    search,
+    includeHistoricalSinglePayments = true
+  } = {}) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!['manager', 'gestor', 'vendedor'].includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'Tu rol no puede consultar abonos bancarios');
+    }
+
+    let targetClusterIds = null;
+    let canonicalClientId = null;
+    const clientsById = new Map();
+
+    const clientsSnap = await col('clients').get();
+    for (const doc of clientsSnap.docs) {
+      clientsById.set(doc.id, { id: doc.id, ...(doc.data() || {}) });
+    }
+
+    const resolveMemoryCanonicalId = (rawId) => {
+      if (!rawId) return '';
+      let cur = String(rawId).trim();
+      const visited = new Set();
+      while (cur && !visited.has(cur)) {
+        visited.add(cur);
+        const c = clientsById.get(cur);
+        if (c && typeof c.fusionada_en === 'string' && c.fusionada_en.trim()) {
+          cur = c.fusionada_en.trim();
+        } else {
+          break;
+        }
+      }
+      return cur;
+    };
+
+    if (clientId) {
+      const cleanId = reqDocId(clientId, 'clientId');
+      canonicalClientId = resolveMemoryCanonicalId(cleanId);
+      const canonicalClient = clientsById.get(canonicalClientId);
+      if (!canonicalClient) throw notFound('Cliente');
+      authorizeClientAccess(caller, canonicalClient);
+      targetClusterIds = new Set([canonicalClientId, cleanId]);
+      for (const [cid, cData] of clientsById.entries()) {
+        if (resolveMemoryCanonicalId(cid) === canonicalClientId) {
+          targetClusterIds.add(cid);
+        }
+      }
+    }
+
+    const paymentRefsSnap = await col('payment_refs').get();
+    const prospectsSnap = await col('prospects').get();
+    const prospectsById = new Map();
+    for (const d of prospectsSnap.docs) {
+      const pd = d.data() || {};
+      if (pd.eliminado === true) continue;
+      if (caller.role === 'vendedor') {
+        const hasAccess = (
+          pd.vendedorId === caller.cid ||
+          pd.createdBy === caller.cid ||
+          pd.vendedor === caller.name
+        );
+        if (!hasAccess) continue;
+      }
+      prospectsById.set(d.id, { id: d.id, ...pd });
+    }
+
+    const depositsMap = new Map();
+
+    for (const doc of paymentRefsSnap.docs) {
+      const d = { id: doc.id, ...(doc.data() || {}) };
+      const evaluated = CrmBiEngine.evaluateBankDepositRecord(d);
+      if (!evaluated || !evaluated.isActive) continue;
+
+      const depCanonicalClientId = resolveMemoryCanonicalId(evaluated.clientId);
+      if (targetClusterIds && !targetClusterIds.has(depCanonicalClientId) && !targetClusterIds.has(evaluated.clientId)) {
+        continue;
+      }
+      if (caller.role === 'vendedor') {
+        const hasVisibleApp = evaluated.activeApplications.some(a => prospectsById.has(a.prospectId));
+        const clientDoc = clientsById.get(depCanonicalClientId);
+        const isClientVisible = clientDoc && (
+          (Array.isArray(clientDoc.visibleTo) && clientDoc.visibleTo.includes(caller.cid)) ||
+          (Array.isArray(clientDoc.assignedVendors) && clientDoc.assignedVendors.includes(caller.cid)) ||
+          clientDoc.createdBy === caller.cid
+        );
+        if (!hasVisibleApp && !isClientVisible) continue;
+      }
+
+      const clientObj = clientsById.get(depCanonicalClientId);
+      const clientName = clientObj
+        ? (clientObj.tipo === 'natural'
+          ? `${clientObj.nombres || ''} ${clientObj.apellidos || ''}`.trim()
+          : (clientObj.empresa || clientObj.contacto || depCanonicalClientId))
+        : (d.cliente_nombre || depCanonicalClientId || 'Sin cliente');
+
+      const enrichedApps = (Array.isArray(d.aplicaciones) ? d.aplicaciones : evaluated.activeApplications).map(app => {
+        const opp = prospectsById.get(app.prospectId);
+        const fac = opp && Array.isArray(opp.facturas) ? opp.facturas.find(f => f && f.id === app.invoiceId) : null;
+        return {
+          ...app,
+          codigo_oportunidad: app.codigo_oportunidad || (opp && opp.codigo) || app.prospectId,
+          proyecto: app.proyecto || (opp && opp.proyecto) || null,
+          factura_numero: app.factura_numero || (fac && fac.numero) || app.invoiceId,
+          monto_aplicado: round2(Number(app.monto_aplicado ?? app.monto) || 0),
+          anulada: Boolean(app.anulada === true || app.anulado === true || app.estado === 'anulada')
+        };
+      });
+
+      depositsMap.set(`BANK_${evaluated.normRef}`, {
+        id: doc.id,
+        abono_id: doc.id,
+        lockId: doc.id,
+        clientId: depCanonicalClientId || evaluated.clientId,
+        cliente_nombre: clientName,
+        ref: evaluated.ref,
+        normRef: evaluated.normRef,
+        metodo: evaluated.metodo,
+        banco_origen: d.banco_origen || d.bankOrigin || (d.transaccion_bancaria && d.transaccion_bancaria.banco_origen) || null,
+        fecha_comprobante_bancario: evaluated.fechaComprobante,
+        fecha_registro_crm: evaluated.fechaRegistro,
+        importe_original_recibido: fromCents(evaluated.importeOriginalCents),
+        monto_recibido: fromCents(evaluated.importeOriginalCents),
+        total_aplicado: fromCents(evaluated.totalAplicadoCents),
+        monto_aplicado_total: fromCents(evaluated.totalAplicadoCents),
+        saldo_disponible: fromCents(evaluated.saldoDisponibleCents),
+        estado_abono: evaluated.estado,
+        es_abono_multifactura: Boolean(d.es_abono_multifactura || d.es_comprobante_distribuido || enrichedApps.length > 1),
+        doc_comprobante: d.doc_comprobante || null,
+        observaciones: d.observaciones || '',
+        aplicaciones: enrichedApps,
+        historial_distribuciones: Array.isArray(d.historial_distribuciones) ? d.historial_distribuciones : []
+      });
+    }
+
+    if (includeHistoricalSinglePayments) {
+      for (const opp of prospectsById.values()) {
+        const oppCanonicalClientId = resolveMemoryCanonicalId(opp.clientId);
+        if (targetClusterIds && !targetClusterIds.has(oppCanonicalClientId) && !targetClusterIds.has(opp.clientId)) {
+          continue;
+        }
+        const clientObj = clientsById.get(oppCanonicalClientId);
+        const clientName = clientObj
+          ? (clientObj.tipo === 'natural'
+            ? `${clientObj.nombres || ''} ${clientObj.apellidos || ''}`.trim()
+            : (clientObj.empresa || clientObj.contacto || oppCanonicalClientId))
+          : (oppCanonicalClientId || 'Sin cliente');
+
+        for (const fac of facturasOf(opp)) {
+          if (!isActiveInvoice(fac)) continue;
+          for (const pay of (Array.isArray(fac.pagos) ? fac.pagos : [])) {
+            if (!isActivePaymentRecord(pay)) continue;
+            const metodo = String(pay.metodo || '').trim().toLowerCase();
+            if (metodo === 'retencion_1pct') continue;
+            const normRef = normalizePaymentReference(pay.ref || '');
+            const key = normRef ? `BANK_${normRef}` : `SINGLE_${opp.id}_${fac.id}_${pay.id || pay.fecha}`;
+            const existing = depositsMap.get(key);
+            if (existing) {
+              if (!existing.doc_comprobante && pay.doc_comprobante) {
+                existing.doc_comprobante = pay.doc_comprobante;
+              }
+              continue;
+            }
+            const payAmount = round2(Number(pay.monto) || 0);
+            depositsMap.set(key, {
+              id: key,
+              abono_id: key,
+              clientId: oppCanonicalClientId || opp.clientId,
+              cliente_nombre: clientName,
+              ref: pay.ref || 'S/R',
+              normRef,
+              metodo,
+              banco_origen: null,
+              fecha_comprobante_bancario: pay.fecha_comprobante_bancario || pay.fecha || null,
+              fecha_registro_crm: pay.fecha_registro_crm || pay.confirmado_en || pay.fecha || null,
+              importe_original_recibido: payAmount,
+              total_aplicado: payAmount,
+              saldo_disponible: 0,
+              estado_abono: 'totalmente_aplicado',
+              es_abono_multifactura: false,
+              doc_comprobante: pay.doc_comprobante || null,
+              observaciones: pay.observaciones || '',
+              aplicaciones: [
+                {
+                  aplicacion_id: pay.aplicacion_id || `APP_${normRef || 'SINGLE'}_${opp.id}_${fac.id}`,
+                  prospectId: opp.id,
+                  codigo_oportunidad: opp.codigo || opp.id,
+                  proyecto: opp.proyecto || null,
+                  invoiceId: fac.id,
+                  factura_numero: fac.numero || fac.id,
+                  paymentKey: String(pay.id || pay.fecha || ''),
+                  clientId: oppCanonicalClientId || opp.clientId,
+                  monto: payAmount,
+                  monto_aplicado: payAmount,
+                  metodo,
+                  ref: pay.ref || 'S/R',
+                  fecha_comprobante_bancario: pay.fecha_comprobante_bancario || pay.fecha || null,
+                  fecha_registro_crm: pay.fecha_registro_crm || pay.fecha || null,
+                  anulada: false,
+                  estado: 'activa'
+                }
+              ],
+              historial_distribuciones: []
+            });
+          }
+        }
+      }
+    }
+
+    let results = Array.from(depositsMap.values());
+
+    if (estado && estado !== 'todos' && estado !== 'all') {
+      const cleanFilter = String(estado).trim().toLowerCase();
+      if (cleanFilter === 'con_saldo') {
+        results = results.filter(d => toCents(d.saldo_disponible) > 0);
+      } else {
+        results = results.filter(d => d.estado_abono === cleanFilter);
+      }
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim().toLowerCase();
+      results = results.filter(d => {
+        const matchHeader = (
+          String(d.ref || '').toLowerCase().includes(q) ||
+          String(d.cliente_nombre || '').toLowerCase().includes(q) ||
+          String(d.metodo || '').toLowerCase().includes(q) ||
+          String(d.banco_origen || '').toLowerCase().includes(q)
+        );
+        if (matchHeader) return true;
+        return (d.aplicaciones || []).some(a => (
+          String(a.factura_numero || '').toLowerCase().includes(q) ||
+          String(a.codigo_oportunidad || '').toLowerCase().includes(q) ||
+          String(a.proyecto || '').toLowerCase().includes(q)
+        ));
+      });
+    }
+
+    results.sort((a, b) => {
+      const da = String(a.fecha_comprobante_bancario || a.fecha_registro_crm || '');
+      const db = String(b.fecha_comprobante_bancario || b.fecha_registro_crm || '');
+      return db.localeCompare(da);
+    });
+
+    const summary = results.reduce((acc, d) => {
+      acc.importeOriginalCents += toCents(d.importe_original_recibido);
+      acc.totalAplicadoCents += toCents(d.total_aplicado);
+      acc.saldoDisponibleCents += toCents(d.saldo_disponible);
+      if (d.estado_abono === 'recibido') acc.recibidosCount += 1;
+      else if (d.estado_abono === 'parcialmente_aplicado') acc.parcialesCount += 1;
+      else if (d.estado_abono === 'totalmente_aplicado') acc.aplicadosCount += 1;
+      return acc;
+    }, {
+      importeOriginalCents: 0,
+      totalAplicadoCents: 0,
+      saldoDisponibleCents: 0,
+      recibidosCount: 0,
+      parcialesCount: 0,
+      aplicadosCount: 0
+    });
+
+    return {
+      status: 'ok',
+      clientId: canonicalClientId || clientId || null,
+      totalCount: results.length,
+      summary: {
+        importeOriginalTotal: fromCents(summary.importeOriginalCents),
+        totalAplicado: fromCents(summary.totalAplicadoCents),
+        saldoDisponibleTotal: fromCents(summary.saldoDisponibleCents),
+        recibidosCount: summary.recibidosCount,
+        parcialesCount: summary.parcialesCount,
+        aplicadosCount: summary.aplicadosCount
+      },
+      deposits: results
+    };
+  }
+
+  // =====================================================================================================
+  // B5.4.3 — Reconciliación administrativa de agregados financieros por cliente con OCC (financialVersion)
+  // =====================================================================================================
+  async function recalculateClientFinancials({
+    caller,
+    clientId,
+    dryRun = false,
+    reason,
+    opId,
+    expectedFinancialVersion = null,
+    failFastOnOcc = false
+  }) {
+    authorize(caller, 'savePayment');
+    const cleanClientId = reqDocId(clientId, 'clientId');
+    if (opId !== undefined && opId !== null && opId !== '') {
+      reqOpId(opId);
+    }
+
+    const BACKOFF_MS = [150, 300, 600];
+    const MAX_ATTEMPTS = BACKOFF_MS.length + 1;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // 1. Resolver cuenta canónica y su clúster de cuentas fusionadas fuera de la transacción
+      const resolved = await resolveCanonicalAccount(col('clients'), cleanClientId);
+      const canonicalId = resolved.canonicalId;
+      const canonicalData = resolved.canonicalData || {};
+      const preScanVersion = typeof canonicalData.financialVersion === 'number' ? canonicalData.financialVersion : 0;
+
+      if (expectedFinancialVersion !== null && expectedFinancialVersion !== undefined && preScanVersion !== expectedFinancialVersion) {
+        const occErr = precondition(`Modificación concurrente detectada en cliente ${canonicalId}: financialVersion esperado=${expectedFinancialVersion}, actual=${preScanVersion}`);
+        occErr.isOccMismatch = true;
+        occErr.isConcurrentAbort = true;
+        throw occErr;
+      }
+
+      const clusterIds = new Set([canonicalId, cleanClientId]);
+      const mergedSnap = await col('clients').where('fusionada_en', '==', canonicalId).get();
+      for (const mDoc of mergedSnap.docs) {
+        clusterIds.add(mDoc.id);
+      }
+
+      // 2. Escanear todas las oportunidades y depósitos bancarios del clúster
+      const prospectsById = new Map();
+      const paymentRefsById = new Map();
+
+      for (const cid of clusterIds) {
+        const pSnap = await col('prospects').where('clientId', '==', cid).get();
+        for (const pDoc of pSnap.docs) {
+          prospectsById.set(pDoc.id, { id: pDoc.id, ...(pDoc.data() || {}) });
+        }
+        const prSnap = await col('payment_refs').where('clientId', '==', cid).get();
+        for (const prDoc of prSnap.docs) {
+          paymentRefsById.set(prDoc.id, { id: prDoc.id, ...(prDoc.data() || {}) });
+        }
+      }
+
+      // También verificar si algún pago en las oportunidades del cliente referencia un `payment_refs` cuyo `clientId` estaba en blanco
+      for (const p of prospectsById.values()) {
+        if (p.eliminado === true) continue;
+        for (const fac of facturasOf(p)) {
+          if (!isActiveInvoice(fac)) continue;
+          for (const pay of (Array.isArray(fac.pagos) ? fac.pagos : [])) {
+            if (!isActivePaymentRecord(pay)) continue;
+            const metodo = String(pay.metodo || '').trim().toLowerCase();
+            if (metodo === 'retencion_1pct') continue;
+            const normRef = normalizePaymentReference(pay.ref || '');
+            if (!normRef) continue;
+            const lockId = buildPaymentRefLockId({ metodo, normRef });
+            if (!paymentRefsById.has(lockId)) {
+              const lSnap = await col('payment_refs').doc(lockId).get();
+              if (lSnap.exists) {
+                paymentRefsById.set(lockId, { id: lockId, ...(lSnap.data() || {}) });
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Calcular en centavos los totales reales
+      let facturadoCents = 0;
+      let cobrosMonetariosCents = 0;
+      let retencionesCents = 0;
+      let saldoPorCobrarCents = 0;
+      let saldoAFavorCents = 0;
+      let saldoPorFacturarCents = 0;
+      let ventasAdjudicadasCents = 0;
+      let activeBilledProspectsCount = 0;
+      const nextFinProspectsMap = {};
+      const countedDepositRefs = new Set();
+      let dineroRecibidoCents = 0;
+      let abonosPendientesCents = 0;
+
+      for (const [prId, prData] of paymentRefsById.entries()) {
+        const evalDep = CrmBiEngine.evaluateBankDepositRecord(prData);
+        if (!evalDep || !evalDep.isActive) continue;
+        const refKey = evalDep.normRef ? `BANK_${evalDep.normRef}` : prId;
+        if (countedDepositRefs.has(refKey)) continue;
+        countedDepositRefs.add(refKey);
+        dineroRecibidoCents += evalDep.importeOriginalCents;
+        abonosPendientesCents += evalDep.saldoDisponibleCents;
+      }
+
+      for (const [pId, p] of prospectsById.entries()) {
+        if (p.eliminado === true) continue;
+        const stats = computeProspectStatsForClient(p, canonicalData);
+        nextFinProspectsMap[pId] = stats;
+        facturadoCents += stats.facturadoCents;
+        cobrosMonetariosCents += stats.cobrosMonetariosCents;
+        retencionesCents += stats.retencionesCents;
+        saldoPorCobrarCents += stats.saldoPorCobrarCents;
+        saldoAFavorCents += stats.saldoAFavorCents;
+        saldoPorFacturarCents += stats.saldoPorFacturarCents;
+        ventasAdjudicadasCents += stats.ventasAdjudicadasCents;
+        activeBilledProspectsCount += stats.isBilled;
+
+        // Pagos bancarios históricos que no tuvieran documento en `payment_refs`
+        for (const fac of facturasOf(p).filter(isActiveInvoice)) {
+          for (const pay of (Array.isArray(fac.pagos) ? fac.pagos : [])) {
+            if (!isActivePaymentRecord(pay)) continue;
+            const metodo = String(pay.metodo || '').trim().toLowerCase();
+            if (metodo === 'retencion_1pct') continue;
+            const normRef = normalizePaymentReference(pay.ref || '');
+            const refKey = normRef ? `BANK_${normRef}` : `UNREF_${pId}_${fac.id}_${pay.id || pay.fecha}`;
+            if (!countedDepositRefs.has(refKey)) {
+              countedDepositRefs.add(refKey);
+              dineroRecibidoCents += toCents(pay.monto);
+            }
+          }
+        }
+      }
+
+      const totalCobradoCents = cobrosMonetariosCents + retencionesCents;
+      dineroRecibidoCents = Math.max(dineroRecibidoCents, cobrosMonetariosCents + abonosPendientesCents);
+      const importePendienteAplicarCents = abonosPendientesCents + saldoAFavorCents;
+
+      const reconciled = {
+        total_historico_facturado: fromCents(facturadoCents),
+        total_historico_cobrado: fromCents(totalCobradoCents),
+        activeBilledProspectsCount,
+        es_cliente_historico: Boolean(facturadoCents > 0 || totalCobradoCents > 0),
+        total_dinero_recibido: fromCents(dineroRecibidoCents),
+        total_cobros_monetarios_aplicados: fromCents(cobrosMonetariosCents),
+        total_retenciones_aplicadas: fromCents(retencionesCents),
+        saldo_abonos_pendientes_aplicar: fromCents(abonosPendientesCents),
+        saldo_a_favor: fromCents(saldoAFavorCents),
+        importe_pendiente_aplicar: fromCents(importePendienteAplicarCents),
+        saldo_por_cobrar: fromCents(saldoPorCobrarCents),
+        saldo_por_cobrar_vivo: fromCents(saldoPorCobrarCents),
+        saldo_facturado_pendiente_cobrar: fromCents(saldoPorCobrarCents),
+        saldo_por_facturar: fromCents(saldoPorFacturarCents),
+        saldo_por_facturar_vivo: fromCents(saldoPorFacturarCents),
+        total_ventas_adjudicadas: fromCents(ventasAdjudicadasCents)
+      };
+
+      const previous = {
+        total_historico_facturado: round2(Number(canonicalData.total_historico_facturado) || 0),
+        total_historico_cobrado: round2(Number(canonicalData.total_historico_cobrado) || 0),
+        activeBilledProspectsCount: Number(canonicalData.activeBilledProspectsCount) || 0,
+        es_cliente_historico: Boolean(canonicalData.es_cliente_historico),
+        total_dinero_recibido: round2(Number(canonicalData.total_dinero_recibido) || 0),
+        total_cobros_monetarios_aplicados: round2(Number(canonicalData.total_cobros_monetarios_aplicados) || 0),
+        total_retenciones_aplicadas: round2(Number(canonicalData.total_retenciones_aplicadas) || 0),
+        saldo_abonos_pendientes_aplicar: round2(Number(canonicalData.saldo_abonos_pendientes_aplicar) || 0),
+        saldo_a_favor: round2(Number(canonicalData.saldo_a_favor) || 0),
+        importe_pendiente_aplicar: round2(Number(canonicalData.importe_pendiente_aplicar) || 0),
+        saldo_por_cobrar: round2(Number(canonicalData.saldo_por_cobrar) || 0),
+        saldo_por_facturar: round2(Number(canonicalData.saldo_por_facturar) || 0)
+      };
+
+      const discrepancyDetected = Boolean(
+        toCents(previous.total_historico_facturado) !== facturadoCents ||
+        toCents(previous.total_historico_cobrado) !== totalCobradoCents ||
+        previous.activeBilledProspectsCount !== activeBilledProspectsCount ||
+        previous.es_cliente_historico !== reconciled.es_cliente_historico ||
+        toCents(previous.saldo_abonos_pendientes_aplicar) !== abonosPendientesCents ||
+        toCents(previous.saldo_a_favor) !== saldoAFavorCents ||
+        toCents(previous.saldo_por_cobrar) !== saldoPorCobrarCents
+      );
+
+      if (dryRun) {
+        return {
+          status: 'dry_run',
+          canonicalClientId: canonicalId,
+          clusterIds: Array.from(clusterIds),
+          preScanVersion,
+          discrepancyDetected,
+          hasDiscrepancy: discrepancyDetected,
+          previous,
+          reconciled,
+          summary: reconciled
+        };
+      }
+
+      try {
+        const txRes = await db.runTransaction(async tx => {
+          const clientRef = col('clients').doc(canonicalId);
+          const clientSnap = await tx.get(clientRef);
+          if (!clientSnap.exists) throw notFound('Cliente canónico');
+          const liveClient = clientSnap.data() || {};
+          authorizeClientAccess(caller, liveClient);
+
+          const currentVersion = typeof liveClient.financialVersion === 'number' ? liveClient.financialVersion : 0;
+          if (currentVersion !== preScanVersion) {
+            const occErr = new Error('OCC_VERSION_MISMATCH');
+            occErr.isOccMismatch = true;
+            throw occErr;
+          }
+
+          const nowAt = iso();
+          const nextVersion = currentVersion + 1;
+          const patch = {
+            ...reconciled,
+            financialVersion: nextVersion,
+            lastFinancialMutationAt: nowAt,
+            lastReconciledAt: nowAt,
+            _finProspects: nextFinProspectsMap
+          };
+
+          tx.update(clientRef, patch);
+
+          if (discrepancyDetected) {
+            addAudit(tx, caller, 'recalculateClientFinancialsDiscrepancy', canonicalId, {
+              canonicalClientId: canonicalId,
+              clusterIds: Array.from(clusterIds),
+              reason: reason || 'reconciliacion_administrativa',
+              previous,
+              reconciled,
+              financialVersionBefore: currentVersion,
+              financialVersionAfter: nextVersion
+            });
+          } else {
+            addAudit(tx, caller, 'recalculateClientFinancials', canonicalId, {
+              canonicalClientId: canonicalId,
+              discrepancyDetected: false,
+              financialVersionAfter: nextVersion
+            });
+          }
+
+          return {
+            status: 'reconciled',
+            canonicalClientId: canonicalId,
+            clusterIds: Array.from(clusterIds),
+            attempt: attempt + 1,
+            discrepancyDetected,
+            hasDiscrepancy: discrepancyDetected,
+            previous,
+            reconciled,
+            summary: reconciled,
+            financialVersion: nextVersion
+          };
+        });
+        return txRes;
+      } catch (err) {
+        if (err && err.isOccMismatch) {
+          if (failFastOnOcc || err.isConcurrentAbort) {
+            const abortErr = precondition(`Modificación concurrente detectada durante la reconciliación del cliente ${canonicalId}. La operación se detuvo automáticamente para no sobrescribir datos recientes.`);
+            abortErr.isOccMismatch = true;
+            abortErr.isConcurrentAbort = true;
+            throw abortErr;
+          }
+          if (attempt < BACKOFF_MS.length) {
+            await new Promise(resolve => setTimeout(resolve, BACKOFF_MS[attempt]));
+            continue;
+          }
+          throw precondition('Conflicto de concurrencia al reconciliar los saldos del cliente tras múltiples reintentos. Intente nuevamente.');
+        }
+        throw err;
+      }
+    }
+  }
+
+  // =====================================================================================================
+  // B5.5 — Motor de Business Intelligence y Métricas Financieras (`getAccountBIMetricsAdmin`)
+  // =====================================================================================================
+  async function getAccountBIMetrics({
+    caller,
+    clientId,
+    period,
+    dateFrom,
+    dateTo,
+    month,
+    vendedorId,
+    gestorId,
+    encargado,
+    clasificacion,
+    estado,
+    nowMs
+  } = {}) {
+    if (!caller || !caller.uid) {
+      throw new ServiceError('unauthenticated', 'Debes iniciar sesión');
+    }
+    if (!['manager', 'gestor', 'vendedor'].includes(caller.role)) {
+      throw new ServiceError('permission-denied', 'Tu rol no tiene acceso a las métricas de Business Intelligence');
+    }
+
+    const clientsSnap = await col('clients').get();
+    const prospectsSnap = await col('prospects').get();
+    const paymentRefsSnap = await col('payment_refs').get();
+
+    const clients = clientsSnap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+    let prospects = prospectsSnap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+    const paymentRefs = paymentRefsSnap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+
+    // Restricción de alcance para vendedor
+    if (caller.role === 'vendedor') {
+      prospects = prospects.filter(p => (
+        p && (
+          p.vendedorId === caller.cid ||
+          p.createdBy === caller.cid ||
+          p.vendedor === caller.name
+        )
+      ));
+    }
+
+    const effectiveVendedorFilter = caller.role === 'vendedor'
+      ? (vendedorId || caller.cid)
+      : (vendedorId || null);
+
+    const biResult = CrmBiEngine.computeBIMetrics({
+      prospects,
+      clients,
+      paymentRefs,
+      nowMs: typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now(),
+      filters: {
+        period: period || 'current_year',
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        month: month || null,
+        clientId: clientId || null,
+        vendedorId: effectiveVendedorFilter,
+        gestorId: gestorId || encargado || null,
+        clasificacion: clasificacion || null,
+        estado: estado || null
+      }
+    });
+
+    return {
+      status: 'ok',
+      ...biResult
+    };
+  }
+
   return {
     advanceStage,
     revertStage,
@@ -5142,6 +7865,13 @@ function createProspectWorkflowService({ db, FieldValue, kit, fileUrlPrefixes = 
     savePayment,
     deletePayment,
     resolveHistoricalBankConflict,
+    registerBankDeposit,
+    distributeBankDeposit,
+    voidBankDepositApplication,
+    voidBankDeposit,
+    listClientBankDeposits,
+    recalculateClientFinancials,
+    getAccountBIMetrics,
     deleteProspect,
     reactivateProspect,
     resolveAdvanceInvoice,

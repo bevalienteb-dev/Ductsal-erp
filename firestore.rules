@@ -73,16 +73,36 @@ service cloud.firestore {
         && request.resource.data.get('dui', '') == resource.data.get('dui', '')
         && request.resource.data.get('tipo', '') == resource.data.get('tipo', '');
     }
-    // Phase 2 Block B3 & SEC-10: Sensitive legal, assignment, visibility and backend-controlled projection
-    // fields on clients_prod must ONLY be mutated through authorized backend callables (Admin SDK),
-    // never via direct client-side Firestore writes.
+    // Phase 2 Block B3, B5 & SEC-10: Sensitive legal, assignment, visibility, financial aggregate and
+    // backend-controlled projection fields on clients_prod must ONLY be mutated through authorized
+    // backend callables (Admin SDK), never via direct client-side Firestore writes.
     function protectedClientFieldsKept() {
       return request.resource.data.get('closingVendors', null) == resource.data.get('closingVendors', null)
         && request.resource.data.get('vendedor_asignado', null) == resource.data.get('vendedor_asignado', null)
         && request.resource.data.get('representanteLegalVigente', null) == resource.data.get('representanteLegalVigente', null)
         && request.resource.data.get('apoderadosVigentes', null) == resource.data.get('apoderadosVigentes', null)
         && request.resource.data.get('biennialReviews', null) == resource.data.get('biennialReviews', null)
-        && request.resource.data.get('documentos', null) == resource.data.get('documentos', null);
+        && request.resource.data.get('documentos', null) == resource.data.get('documentos', null)
+        && request.resource.data.get('total_historico_facturado', null) == resource.data.get('total_historico_facturado', null)
+        && request.resource.data.get('total_historico_cobrado', null) == resource.data.get('total_historico_cobrado', null)
+        && request.resource.data.get('activeBilledProspectsCount', null) == resource.data.get('activeBilledProspectsCount', null)
+        && request.resource.data.get('es_cliente_historico', null) == resource.data.get('es_cliente_historico', null)
+        && request.resource.data.get('financialVersion', null) == resource.data.get('financialVersion', null)
+        && request.resource.data.get('lastFinancialMutationAt', null) == resource.data.get('lastFinancialMutationAt', null)
+        && request.resource.data.get('lastReconciledAt', null) == resource.data.get('lastReconciledAt', null)
+        && request.resource.data.get('total_dinero_recibido', null) == resource.data.get('total_dinero_recibido', null)
+        && request.resource.data.get('total_cobros_monetarios_aplicados', null) == resource.data.get('total_cobros_monetarios_aplicados', null)
+        && request.resource.data.get('total_retenciones_aplicadas', null) == resource.data.get('total_retenciones_aplicadas', null)
+        && request.resource.data.get('saldo_abonos_pendientes_aplicar', null) == resource.data.get('saldo_abonos_pendientes_aplicar', null)
+        && request.resource.data.get('saldo_a_favor', null) == resource.data.get('saldo_a_favor', null)
+        && request.resource.data.get('importe_pendiente_aplicar', null) == resource.data.get('importe_pendiente_aplicar', null)
+        && request.resource.data.get('saldo_facturado_pendiente_cobrar', null) == resource.data.get('saldo_facturado_pendiente_cobrar', null)
+        && request.resource.data.get('saldo_por_cobrar', null) == resource.data.get('saldo_por_cobrar', null)
+        && request.resource.data.get('saldo_por_cobrar_vivo', null) == resource.data.get('saldo_por_cobrar_vivo', null)
+        && request.resource.data.get('saldo_por_facturar', null) == resource.data.get('saldo_por_facturar', null)
+        && request.resource.data.get('saldo_por_facturar_vivo', null) == resource.data.get('saldo_por_facturar_vivo', null)
+        && request.resource.data.get('total_ventas_adjudicadas', null) == resource.data.get('total_ventas_adjudicadas', null)
+        && request.resource.data.get('_finProspects', null) == resource.data.get('_finProspects', null);
     }
     match /clients_prod/{clientId} {
       allow get, list: if clientVisible(resource.data);
@@ -186,6 +206,12 @@ service cloud.firestore {
 
     match /opportunity_contacts_prod/{ocId} {
       allow get, list: if isPrivileged() || (isVendedor() && prospectVisible(get(/databases/$(database)/documents/prospects_prod/$(resource.data.opportunityId)).data));
+      allow write: if false;
+    }
+
+    // ---------- payment references / bank deposits (Phase 2 Block B5) ----------
+    match /payment_refs_prod/{refId} {
+      allow get, list: if isPrivileged();
       allow write: if false;
     }
 

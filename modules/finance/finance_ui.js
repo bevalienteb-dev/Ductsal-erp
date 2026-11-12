@@ -261,6 +261,10 @@
                 ? 'Consulta de expedientes y estado financiero de tus proyectos asignados.'
                 : 'Gestión operativa y financiera de proyectos y liquidación de cobros.';
         }
+        const btnMultiDep = doc.getElementById('btn-open-multi-deposit-modal');
+        if (btnMultiDep) {
+            btnMultiDep.style.display = isVendedor ? 'none' : 'inline-flex';
+        }
 
         const tbody = doc.getElementById('proj-table-body');
         if (!tbody) return;
@@ -337,10 +341,12 @@
             let totalCobrado = 0;
             if (Array.isArray(p.facturas)) {
                 p.facturas.forEach(f => {
+                    if (!f || f.anulada === true || f.eliminada === true) return;
                     const fm = parseFloat(f.monto);
                     if (!isNaN(fm) && fm > 0) totalFacturado += fm;
                     if (Array.isArray(f.pagos)) {
                         f.pagos.forEach(pay => {
+                            if (!pay || pay.anulado === true || pay.anulada === true || pay.eliminado === true || pay.revertido === true) return;
                             const m = parseFloat(pay.monto);
                             if (!isNaN(m) && m > 0) totalCobrado += m;
                         });
@@ -718,6 +724,7 @@
             let pRetencion = 0;
             if (Array.isArray(f.pagos)) {
                 f.pagos.forEach(b => {
+                    if (!b || b.anulado === true || b.anulada === true || b.eliminado === true || b.revertido === true) return;
                     const bm = parseFloat(b && b.monto) || 0;
                     if (bm > 0) {
                         pCobrado += bm;
@@ -735,6 +742,7 @@
 
             let pHistory = '';
             if (Array.isArray(f.pagos) && f.pagos.length > 0) {
+                const activePaymentsCount = f.pagos.filter(b => b && b.anulado !== true && b.anulada !== true && b.eliminado !== true).length;
                 pHistory = `
                     <div class="invoice-payments-section">
                         <div class="invoice-payments-header">
@@ -742,10 +750,17 @@
                                 <span style="color:var(--brand-gold); margin-right:6px;">💳</span>
                                 <strong>Historial de Pagos de esta factura:</strong>
                             </div>
-                            <span class="invoice-payments-counter">${f.pagos.length} ${f.pagos.length === 1 ? 'abono registrado' : 'abonos registrados'}</span>
+                            <span class="invoice-payments-counter">${activePaymentsCount} ${activePaymentsCount === 1 ? 'abono registrado' : 'abonos registrados'}</span>
                         </div>
                         <div class="invoice-payments-list">
                             ${f.pagos.map((pay, i) => {
+                    const isVoided = Boolean(pay.anulado === true || pay.anulada === true || pay.estado === 'anulado');
+                    const isShared = Boolean(
+                        pay.es_abono_multifactura === true ||
+                        pay.es_aplicacion_compartida === true ||
+                        pay.abono_id ||
+                        (pay.pago_compartido && pay.pago_compartido.es_tramo_compartido === true)
+                    );
                     let docLink = '';
                     if (pay.doc_comprobante) {
                         docLink = `<div class="payment-doc-chip">
@@ -756,15 +771,29 @@
                         docLink = `<span class="pay-no-doc">Sin comprobante</span>`;
                     }
                     let lbl = pay.metodo === 'retencion_1pct' ? '<span class="badge badge-retencion" style="color:var(--brand-gold);">[Retención 1%]</span>' : '<span class="badge badge-abono">Abono:</span>';
+                    if (isShared) {
+                        const totalVoucher = pay.pago_compartido && pay.pago_compartido.importe_total_comprobante
+                            ? ` (${_deps.formatCurrency(pay.pago_compartido.importe_total_comprobante)} total comprobante)`
+                            : '';
+                        lbl += ` <span class="badge" style="background:rgba(56,189,248,0.18); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); font-size:0.66rem;" title="Aplicación de abono bancario distribuido${totalVoucher}">🏦 Multifactura</span>`;
+                    }
+                    if (isVoided) {
+                        lbl += ` <span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.66rem;">ANULADO</span>`;
+                    }
                     let met = pay.metodo === 'retencion_1pct' ? 'Comprobante Fiscal' : (pay.metodo || 'N/A');
-                    let editDelPaySpans = !isFinancialReadOnly
+                    const abonoIdAttr = pay.abono_id || (pay.ref_normalizada ? `BANK_${pay.ref_normalizada}` : `BANK_${pay.ref || ''}`);
+                    const voidAppBtn = isShared
+                        ? `<button type="button" class="btn-subtle-delete" onclick="promptVoidDepositApplication('${_deps.escapeHtmlDoc(abonoIdAttr)}', '${_deps.escapeHtmlDoc(pay.aplicacion_id || '')}', '${_deps.escapeHtmlDoc(p.id)}', '${_deps.escapeHtmlDoc(f.id)}', '${_deps.escapeHtmlDoc(pay.id || pay.fecha)}')" title="Anular esta aplicación y devolver el saldo al abono">↩️ [Anular Aplicación]</button>`
+                        : '';
+                    let editDelPaySpans = !isFinancialReadOnly && !isVoided
                         ? `<div class="payment-item-actions">
                                            <button type="button" class="btn-subtle-edit" onclick="editPayment('${f.id}', ${i})" title="Editar abono">✏️ [Editar]</button>
+                                           ${voidAppBtn}
                                            <button type="button" class="btn-subtle-delete" onclick="deletePayment('${f.id}', ${i})" title="Eliminar abono">🗑️ [Eliminar]</button>
                                        </div>`
                         : '';
                     return `
-                                    <div class="payment-item-card">
+                                    <div class="payment-item-card" style="${isVoided ? 'opacity:0.58; text-decoration:line-through;' : ''}">
                                         <div class="pay-item-top">
                                             <div class="pay-item-main">
                                                 <span class="pay-item-date">📅 ${_deps.formatDate(pay.fecha)}</span>
@@ -878,6 +907,28 @@
                 if (invForm) invForm.style.display = 'none';
             } else {
                 btnAddInvoice.style.display = 'inline-block';
+            }
+            if (btnAddInvoice.parentNode) {
+                let btnMultiDepDetail = doc.getElementById('btn-detail-multi-deposit');
+                if (!btnMultiDepDetail && typeof doc.createElement === 'function' && typeof btnAddInvoice.parentNode.appendChild === 'function') {
+                    btnMultiDepDetail = doc.createElement('button');
+                    btnMultiDepDetail.type = 'button';
+                    btnMultiDepDetail.id = 'btn-detail-multi-deposit';
+                    btnMultiDepDetail.className = 'btn-secondary';
+                    btnMultiDepDetail.style.cssText = 'font-weight:600; padding:0.5rem 1.05rem; font-size:0.84rem; margin-left:8px;';
+                    btnMultiDepDetail.textContent = '🏦 Abono Bancario / Multifactura Cliente';
+                    btnAddInvoice.parentNode.appendChild(btnMultiDepDetail);
+                }
+                if (btnMultiDepDetail) {
+                    btnMultiDepDetail.style.display = isFinancialReadOnly ? 'none' : 'inline-block';
+                    btnMultiDepDetail.onclick = () => {
+                        if (typeof openBankDepositModal === 'function') {
+                            openBankDepositModal({ clientId: p.clientId, prospectId: p.id });
+                        } else if (typeof window !== 'undefined' && typeof window.openBankDepositModal === 'function') {
+                            window.openBankDepositModal({ clientId: p.clientId, prospectId: p.id });
+                        }
+                    };
+                }
             }
         }
     }

@@ -301,6 +301,18 @@
         const cxcBar = doc.getElementById('cxc-bar-cobrado');
         if (cxcBar) cxcBar.style.width = cxcMetrics.pctCobrado + '%';
 
+        const metricCxcMonetario = doc.getElementById('metric-cxc-monetario');
+        if (metricCxcMonetario) metricCxcMonetario.textContent = formatMoney(cxcMetrics.cobrosMonetariosAplicados || 0);
+
+        const metricCxcRetenciones = doc.getElementById('metric-cxc-retenciones');
+        if (metricCxcRetenciones) metricCxcRetenciones.textContent = formatMoney(cxcMetrics.retencionesAplicadas || 0);
+
+        const metricCxcPorFacturar = doc.getElementById('metric-cxc-por-facturar');
+        if (metricCxcPorFacturar) metricCxcPorFacturar.textContent = formatMoney(cxcMetrics.saldoPorFacturar || 0);
+
+        const metricAbonosDisponibles = doc.getElementById('metric-abonos-disponibles');
+        if (metricAbonosDisponibles) metricAbonosDisponibles.textContent = formatMoney(cxcMetrics.saldoAbonosDisponibles || 0);
+
         // 7. ALERTAS Y RESUMEN OPERATIVO DEL STOCK: ATENCIÓN GERENCIAL
         const managerAttention = (followUp && typeof followUp.calculateManagerAttentionItems === 'function')
             ? followUp.calculateManagerAttentionItems(safeProspects, safeUsers)
