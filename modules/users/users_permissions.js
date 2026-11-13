@@ -100,9 +100,10 @@
         const navUsers = doc.getElementById('nav-users');
         const navList = doc.getElementById('nav-list');
         const navClients = doc.getElementById('nav-clients');
+        const navContacts = doc.getElementById('nav-contacts');
 
         // Ocultar todos inicialmente
-        [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => {
+        [navDashboard, navProjects, navSettings, navUsers, navList, navClients, navContacts].forEach(n => {
             if (n && n.style) n.style.display = 'none';
         });
         if (headerAction && headerAction.style) headerAction.style.display = 'none';
@@ -114,14 +115,14 @@
 
         if (role === 'manager') {
             deps.setCurrentListMode('pipeline');
-            [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => {
+            [navDashboard, navProjects, navSettings, navUsers, navList, navClients, navContacts].forEach(n => {
                 if (n && n.style) n.style.display = 'flex';
             });
             if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
             else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
         } else if (role === 'gestor') {
             deps.setCurrentListMode('agenda');
-            [navProjects, navList, navClients].forEach(n => {
+            [navProjects, navList, navClients, navContacts].forEach(n => {
                 if (n && n.style) n.style.display = 'flex';
             });
             if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
@@ -129,7 +130,7 @@
             if (headerAction && headerAction.style) headerAction.style.display = 'table-cell';
         } else if (role === 'vendedor') {
             deps.setCurrentListMode('agenda');
-            [navProjects, navList, navClients].forEach(n => {
+            [navProjects, navList, navClients, navContacts].forEach(n => {
                 if (n && n.style) n.style.display = 'flex';
             });
             if (navProjectsText) navProjectsText.textContent = 'Mis Proyectos y Cobros Asignados';
@@ -137,7 +138,7 @@
             if (headerAction && headerAction.style) headerAction.style.display = 'table-cell';
         } else {
             deps.setCurrentListMode('agenda');
-            [navList, navClients].forEach(n => {
+            [navList, navClients, navContacts].forEach(n => {
                 if (n && n.style) n.style.display = 'flex';
             });
             if (headerAction && headerAction.style) headerAction.style.display = 'table-cell';

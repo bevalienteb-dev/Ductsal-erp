@@ -2322,13 +2322,13 @@ function renderSettingsLists() {
     let listVis = document.getElementById('list-visitantes');
     listVis.innerHTML = '';
     settings.visitantes.forEach((v, i) => {
-        listVis.innerHTML += `<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding:6px 0; font-size:0.9rem;"><span>👤 ${v}</span><button class="btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="removeSetting('visitantes', ${i})">X</button></div>`;
+        listVis.innerHTML += `<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--ds-border, #CBD5E1);padding:6px 0; font-size:0.88rem; color:var(--ds-text-primary, #0F172A);"><span>👤 ${v}</span><button class="btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="removeSetting('visitantes', ${i})">X</button></div>`;
     });
 
     let listEnc = document.getElementById('list-encargados');
     listEnc.innerHTML = '';
     settings.encargados.forEach((e, i) => {
-        listEnc.innerHTML += `<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding:6px 0; font-size:0.9rem;"><span>👷 ${e}</span><button class="btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="removeSetting('encargados', ${i})">X</button></div>`;
+        listEnc.innerHTML += `<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--ds-border, #CBD5E1);padding:6px 0; font-size:0.88rem; color:var(--ds-text-primary, #0F172A);"><span>👷 ${e}</span><button class="btn-danger" style="padding:2px 8px;font-size:0.75rem;" onclick="removeSetting('encargados', ${i})">X</button></div>`;
     });
 }
 
@@ -2367,11 +2367,12 @@ function showView(viewId, options) {
         return;
     }
     const previousSection = lastViewedSection;
-    if (viewId !== 'detail-view' && viewId !== 'client-detail-view' && !String(viewId).startsWith('b3-')) {
+    if (viewId !== 'detail-view' && viewId !== 'client-detail-view' && viewId !== 'contact-360-view' && !String(viewId).startsWith('b3-')) {
         lastViewedSection = viewId;
     }
     document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-    document.getElementById(viewId).classList.add('active');
+    const targetEl = document.getElementById(viewId);
+    if (targetEl) targetEl.classList.add('active');
     document.querySelectorAll('.nav-links li').forEach(el => el.classList.remove('active'));
 
     // Sincronizar encabezado móvil integrado (Fase 5.2 Bloque 3: corrección de superposición)
@@ -2388,7 +2389,8 @@ function showView(viewId, options) {
     }
 
     if (viewId === 'list-view') {
-        document.getElementById('nav-list').classList.add('active');
+        const navL = document.getElementById('nav-list');
+        if (navL) navL.classList.add('active');
         // Al entrar en Oportunidades de Venta como gerente, debe aparecer primero Cartera Completa / Pipeline.
         // La Agenda Diaria de Seguimiento sigue disponible como vista secundaria.
         // Los demás roles (vendedor/gestor) entran a su Agenda Diaria de Seguimiento.
@@ -2404,9 +2406,32 @@ function showView(viewId, options) {
             renderList();
         }
     }
-    if (viewId === 'clients-view') { document.getElementById('nav-clients').classList.add('active'); renderClientsTable(); }
-    if (viewId === 'dashboard-view') { document.getElementById('nav-dashboard').classList.add('active'); renderDashboard(); }
-    if (viewId === 'projects-view') { document.getElementById('nav-projects').classList.add('active'); renderProjectsList(); }
+    if (viewId === 'clients-view') {
+        const navC = document.getElementById('nav-clients');
+        if (navC) navC.classList.add('active');
+        renderClientsTable();
+    }
+    if (viewId === 'contacts-view') {
+        const navCon = document.getElementById('nav-contacts');
+        if (navCon) navCon.classList.add('active');
+        if (typeof ContactsUI !== 'undefined' && typeof ContactsUI.loadGlobalContactsDirectory === 'function') {
+            ContactsUI.loadGlobalContactsDirectory();
+        }
+    }
+    if (viewId === 'contact-360-view') {
+        const navCon = document.getElementById('nav-contacts');
+        if (navCon) navCon.classList.add('active');
+    }
+    if (viewId === 'dashboard-view') {
+        const navD = document.getElementById('nav-dashboard');
+        if (navD) navD.classList.add('active');
+        renderDashboard();
+    }
+    if (viewId === 'projects-view') {
+        const navP = document.getElementById('nav-projects');
+        if (navP) navP.classList.add('active');
+        renderProjectsList();
+    }
     if (viewId === 'users-view') {
         const navU = document.getElementById('nav-users');
         if (navU) navU.classList.add('active');
@@ -2848,10 +2873,11 @@ function applyRolePermissions() {
     const navDashboard = document.getElementById('nav-dashboard'); const navProjects = document.getElementById('nav-projects'); const headerAction = document.getElementById('client-action-header');
     const navSettings = document.getElementById('nav-settings'); const navUsers = document.getElementById('nav-users');
     const navList = document.getElementById('nav-list'); const navClients = document.getElementById('nav-clients');
+    const navContacts = document.getElementById('nav-contacts');
 
     // Hide all initially
-    [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'none'; });
-    headerAction.style.display = 'none';
+    [navDashboard, navProjects, navSettings, navUsers, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'none'; });
+    if (headerAction) headerAction.style.display = 'none';
 
     // Preserve active view if already open (e.g. detail-view or subviews) to prevent jarring resets
     const activeView = (typeof document !== 'undefined') ? document.querySelector('.view-section.active') : null;
@@ -2861,28 +2887,28 @@ function applyRolePermissions() {
 
     if (role === 'manager') {
         currentListMode = 'pipeline';
-        [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navDashboard, navProjects, navSettings, navUsers, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
     }
     else if (role === 'gestor') {
         currentListMode = 'agenda';
-        [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navProjects, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
-        headerAction.style.display = 'table-cell';
+        if (headerAction) headerAction.style.display = 'table-cell';
     }
     else if (role === 'vendedor') {
         currentListMode = 'agenda';
-        [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navProjects, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
         if (navProjectsText) navProjectsText.textContent = 'Mis Proyectos y Cobros Asignados';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Mis Proyectos y Cobros Asignados';
-        headerAction.style.display = 'table-cell';
+        if (headerAction) headerAction.style.display = 'table-cell';
     }
     else {
         currentListMode = 'agenda';
-        [navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
-        headerAction.style.display = 'table-cell';
+        [navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
+        if (headerAction) headerAction.style.display = 'table-cell';
     }
 
     // Role-specific initial view synchronization
@@ -3076,17 +3102,17 @@ function renderUsersTable() {
             'dibujante': 'Dibujante', 'operario': 'Operario', 'control_calidad': 'Control de Calidad', 'despacho': 'Despacho'
         };
         const rName = roleMap[u.role] || u.role;
-        const stHtml = u.activo ? `<span style="color:var(--success);">Activo</span>` : `<span style="color:var(--danger);">Inactivo</span>`;
+        const stHtml = u.activo ? `<span class="ds-badge ds-badge-success">Activo</span>` : `<span class="ds-badge ds-badge-danger">Inactivo</span>`;
         tbody.innerHTML += `<tr class="user-table-row">
-            <td class="col-usr-name">${u.nombre}</td>
-            <td class="col-usr-email">${u.email || '-'}</td>
-            <td class="col-usr-role">${rName}</td>
+            <td class="col-usr-name" style="font-weight:600; color:var(--ds-text-primary, #0F172A);">${u.nombre}</td>
+            <td class="col-usr-email" style="color:var(--ds-text-secondary, #334155);">${u.email || '-'}</td>
+            <td class="col-usr-role"><span class="ds-badge ds-badge-neutral">${rName}</span></td>
             <td class="col-usr-status">${stHtml}</td>
             <td class="col-usr-actions">
                 <div class="user-actions-group">
-                    <button class="btn-secondary btn-usr-edit" style="padding:4px 8px; font-size:0.7rem;" onclick="openUserModal('${u.id}')">Editar</button>
-                    <button class="btn-secondary btn-usr-reset" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
-                    <button class="btn-danger btn-usr-toggle" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
+                    <button class="btn-secondary btn-usr-edit" style="padding:4px 8px; font-size:0.74rem;" onclick="openUserModal('${u.id}')">Editar</button>
+                    <button class="btn-secondary btn-usr-reset" style="padding:4px 8px; font-size:0.74rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
+                    <button class="${u.activo ? 'btn-danger' : 'btn-success'} btn-usr-toggle" style="padding:4px 8px; font-size:0.74rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
                 </div>
             </td>
         </tr>`;

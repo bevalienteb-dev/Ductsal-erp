@@ -20,29 +20,29 @@
 </head>
 <body>
     <!-- Login Screen -->
-    <div id="login-screen" class="modal" style="display:flex; z-index: 1000; background: var(--bg-dark);">
+    <div id="login-screen" class="modal ds-scope-light" style="display:flex; z-index: 1000; background: var(--bg-dark);">
         <div class="modal-content glass-panel" style="max-width: 400px; width: 92%; text-align: center; margin: auto;">
             <img src="logo.svg" alt="Ductsal Logo" style="width: 60px; height: 60px; display: block; margin: 0 auto 1rem;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
             <div class="hexagon-logo fallback" style="display:none; margin: 0 auto 1rem;"></div>
             <h2>Ingresar al Sistema</h2>
-            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Ductsal ERP Financials</p>
+            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:1.5rem;">Ductsal ERP Comercial</p>
             <div id="activation-return-banner" style="display:none; margin-bottom: 1.25rem; padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.85rem; line-height: 1.4; background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.3); color: #22c55e; text-align: center;"></div>
             <form id="login-form" onsubmit="processLogin(event)">
                 <div class="form-group"><input type="email" id="login-email" placeholder="Correo electrónico" required style="text-align:center;"></div>
                 <div class="form-group"><input type="password" id="login-password" placeholder="Contraseña" style="text-align:center;"></div>
                 <button type="submit" id="btn-login-submit" class="btn-primary" style="width:100%;">Iniciar Sesión</button>
                 <div style="margin-top: 1.25rem;">
-                    <a href="#" id="link-forgot-password" onclick="openForgotPasswordModal(event)" style="color: var(--brand-gold, #c5a059); font-size: 0.85rem; text-decoration: none;">¿Olvidaste tu contraseña?</a>
+                    <a href="#" id="link-forgot-password" onclick="openForgotPasswordModal(event)" style="color: var(--ds-brand-primary, #0062B8); font-size: 0.85rem; text-decoration: none;">¿Olvidaste tu contraseña?</a>
                 </div>
             </form>
         </div>
     </div>
 
     <!-- Forgot Password Modal (Step 6.3.2 / 6.3.4 Autoservicio de Recuperación con Anti-Enumeración) -->
-    <div id="forgot-password-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" onclick="if (event.target === this) closeForgotPasswordModal()" style="display:none; z-index: 1100; background: rgba(0,0,0,0.85);">
+    <div id="forgot-password-modal" class="modal ds-scope-light" role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" onclick="if (event.target === this) closeForgotPasswordModal()" style="display:none; z-index: 1100; background: rgba(15, 23, 42, 0.55);">
         <div class="modal-content glass-panel" style="max-width: 420px; width: 92%; text-align: center; margin: auto; padding: 2rem;">
-            <h3 id="forgot-password-title" style="margin-bottom: 0.5rem; color: #fff;">Recuperar Contraseña</h3>
-            <p style="color: var(--text-secondary, #a0aec0); font-size: 0.85rem; margin-bottom: 1.5rem;">
+            <h3 id="forgot-password-title" style="margin-bottom: 0.5rem; color: var(--ds-text-primary);">Recuperar Contraseña</h3>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
                 Ingresa tu correo registrado para recibir un enlace seguro de restablecimiento.
             </p>
             <form id="forgot-password-form" onsubmit="processForgotPassword(event)">
@@ -61,11 +61,11 @@
     <div class="app-container" id="main-app" style="display:none;">
         
         <!-- Mobile Top Header (Integrado: marca general o navegación contextual en detalle) -->
-        <div class="mobile-header" id="mobile-header">
+        <div class="mobile-header ds-scope-light" id="mobile-header">
             <div class="mobile-header-default" id="mobile-header-default" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                     <div class="hexagon-logo fallback" style="width: 24px; height: 26px;"></div>
-                    <h2 style="font-size: 1.2rem; color: white;">Ductsal</h2>
+                    <h2 style="font-size: 1.2rem; color: var(--ds-brand-primary);">Ductsal</h2>
                 </div>
                 <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="processLogout()">Salir</button>
             </div>
@@ -84,37 +84,40 @@
         </div>
 
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar ds-scope-light">
             <div class="logo-container">
                 <img src="logo.svg" alt="Ductsal Logo" class="main-logo" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='block';">
                 <div class="hexagon-logo fallback" style="display:none;"></div>
                 <h2>Ductsal</h2>
             </div>
             
-            <div class="user-profile" style="margin-bottom: 2rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid var(--panel-border);">
-                <div style="font-weight: 600; font-size: 1rem; color: white;" id="ui-user-name">Cargando...</div>
-                <div style="font-size: 0.8rem; color: var(--brand-gold); margin-bottom: 0.5rem; text-transform: uppercase;" id="ui-user-role">Rol</div>
+            <div class="user-profile" style="margin-bottom: 1.25rem; padding: 0.85rem; background: var(--ds-bg-subtle); border-radius: 8px; border: 1px solid var(--ds-border);">
+                <div style="font-weight: 700; font-size: 0.95rem; color: var(--ds-text-primary);" id="ui-user-name">Cargando...</div>
+                <div style="font-size: 0.75rem; color: var(--ds-brand-primary); margin-bottom: 0.5rem; text-transform: uppercase; font-weight: 700;" id="ui-user-role">Rol</div>
                 <button class="btn-secondary" style="width:100%; font-size:0.75rem; padding: 4px;" onclick="processLogout()">🚪 Cerrar Sesión</button>
             </div>
 
             <ul class="nav-links">
-                <li id="nav-list" class="active" onclick="showView('list-view')">
-                    <span class="icon">💼</span> Mis Oportunidades
+                <li id="nav-dashboard" onclick="showView('dashboard-view')" style="display: none;">
+                    <span class="icon">📊</span> Dashboard
                 </li>
                 <li id="nav-clients" onclick="showView('clients-view')">
-                    <span class="icon">👥</span> Directorio de Clientes
+                    <span class="icon">🏢</span> Cuentas
+                </li>
+                <li id="nav-contacts" onclick="showView('contacts-view')">
+                    <span class="icon">👤</span> Contactos
+                </li>
+                <li id="nav-list" class="active" onclick="showView('list-view')">
+                    <span class="icon">💼</span> Oportunidades
                 </li>
                 <li id="nav-projects" onclick="showView('projects-view')" style="display: none;">
                     <span class="icon">🏗️</span> <span id="nav-projects-text">Proyectos y Cobros</span>
                 </li>
-                <li id="nav-dashboard" onclick="showView('dashboard-view')" style="display: none;">
-                    <span class="icon">📊</span> Dashboard
-                </li>
                 <li id="nav-users" onclick="showView('users-view')" style="display: none;">
-                    <span class="icon">🛡️</span> Gestión de Usuarios
+                    <span class="icon">🛡️</span> Usuarios
                 </li>
 
-                <li id="nav-settings" onclick="openSettingsModal()" style="display: none; border-top: 1px solid var(--panel-border); margin-top: 10px; padding-top: 10px;">
+                <li id="nav-settings" onclick="openSettingsModal()" style="display: none; border-top: 1px solid var(--ds-border); margin-top: 10px; padding-top: 10px;">
                     <span class="icon">⚙️</span> Configuración
                 </li>
             </ul>
@@ -451,7 +454,7 @@
                             <tr style="user-select: none;">
                                 <th onclick="toggleCliSort('tipo')" style="cursor: pointer; width: 110px;">Tipo <span id="sort-cli-tipo" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('nombre')" style="cursor: pointer;">Nombre / Razón Social <span id="sort-cli-nombre" style="color: var(--text-muted);">↕</span></th>
-                                <th onclick="toggleCliSort('contacto')" style="cursor: pointer;">Contacto Principal <span id="sort-cli-contacto" style="color: var(--text-muted);">↕</span></th>
+                                <th onclick="toggleCliSort('contacto')" style="cursor: pointer;">Contactos Vinculados <span id="sort-cli-contacto" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('telefono')" style="cursor: pointer;">Teléfono <span id="sort-cli-telefono" style="color: var(--text-muted);">↕</span></th>
                                 <th onclick="toggleCliSort('correo')" style="cursor: pointer;">Correo <span id="sort-cli-correo" style="color: var(--text-muted);">↕</span></th>
                                 <th id="client-action-header" style="text-align: right; width: 140px;">Acción</th>
@@ -461,6 +464,61 @@
                             <!-- Populated by JS -->
                         </tbody>
                     </table>
+                </div>
+            </section>
+
+            <!-- Global Contacts Directory View (B6 Commercial First) -->
+            <section id="contacts-view" class="view-section ds-scope-light">
+                <header class="header-flex">
+                    <div>
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <h1 style="margin: 0;">Directorio Global de Contactos</h1>
+                            <span id="global-contacts-count-badge" class="ds-badge ds-badge-neutral">0 personas</span>
+                        </div>
+                        <p>Personas registradas en la cartera autorizada, vinculaciones multiempresa y oportunidades asociadas.</p>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" class="btn-secondary" onclick="if (window.ContactsUI && ContactsUI.loadGlobalContactsDirectory) ContactsUI.loadGlobalContactsDirectory(true)">🔄 Actualizar</button>
+                        <button type="button" class="btn-primary" id="btn-new-global-person" onclick="if (window.ContactsUI && ContactsUI.openCreatePersonFromGlobal) ContactsUI.openCreatePersonFromGlobal()">+ Nueva Persona</button>
+                    </div>
+                </header>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 0.85rem;">
+                    <div class="filter-pills-group" id="global-contacts-filter-pills">
+                        <button type="button" class="filter-pill active" id="filter-gcontacts-all" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('all')">Todos</button>
+                        <button type="button" class="filter-pill" id="filter-gcontacts-active" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('active_accounts')">🏢 Con Cuenta Activa</button>
+                        <button type="button" class="filter-pill" id="filter-gcontacts-multi" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('multi_account')">🔗 Multiempresa</button>
+                        <button type="button" class="filter-pill" id="filter-gcontacts-opps" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('with_opps')">💼 En Oportunidades</button>
+                    </div>
+                    <div style="flex: 1; min-width: 260px; max-width: 460px;">
+                        <input type="text" id="global-contacts-search" class="form-control" placeholder="🔍 Buscar por nombre, cargo, cuenta, correo o teléfono..." style="width: 100%;" oninput="if (window.ContactsUI) ContactsUI.renderGlobalContactsTable()">
+                    </div>
+                </div>
+
+                <div id="global-contacts-status" class="alert-feedback-banner" style="display: none; margin-bottom: 0.85rem;"></div>
+
+                <div class="table-container glass-panel">
+                    <table id="globalContactsTable">
+                        <thead>
+                            <tr>
+                                <th>Persona</th>
+                                <th>Cuentas Vinculadas y Cargo Vigente</th>
+                                <th>Canales Corporativos / Personales</th>
+                                <th>Participación en Oportunidades</th>
+                                <th style="text-align: right; width: 160px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="global-contacts-tbody">
+                            <tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--ds-text-tertiary);">Cargando directorio de contactos...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Contacto 360 View (B6 Commercial First) -->
+            <section id="contact-360-view" class="view-section ds-scope-light">
+                <div id="contact-360-container">
+                    <!-- Rendered dynamically by ContactsUI.openContact360View(contactId) -->
                 </div>
             </section>
 
@@ -871,7 +929,7 @@
             </section>
 
             <!-- Users View (Admin only) -->
-            <section id="users-view" class="view-section">
+            <section id="users-view" class="view-section ds-scope-light">
                 <header class="header-flex">
                     <div>
                         <h1>Gestión de Usuarios</h1>
@@ -898,8 +956,8 @@
                 </div>
 
                 <!-- Audit Panel (Only Managers) -->
-                <div id="audit-panel" class="glass-panel" style="display:none; padding: 1.5rem; margin-top: 1.5rem; border-left: 4px solid var(--danger);">
-                    <h3 style="margin: 0 0 1rem 0; font-size: 1.1rem; color: var(--danger);">Auditoría de Eliminaciones (Solo Gerencia)</h3>
+                <div id="audit-panel" class="glass-panel" style="display:none; padding: 1.5rem; margin-top: 1.5rem; border-left: 4px solid var(--ds-danger-text);">
+                    <h3 style="margin: 0 0 1rem 0; font-size: 1.1rem; color: var(--ds-danger-text);">Auditoría de Eliminaciones (Solo Gerencia)</h3>
                     <div id="audit-logs-container" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;">
                         <!-- Injected by JS -->
                     </div>
@@ -2982,26 +3040,26 @@
     </div>
 
     <!-- Settings Modal -->
-    <div id="settingsModal" class="modal" style="z-index: 120;">
+    <div id="settingsModal" class="modal ds-scope-light" style="z-index: 120;">
         <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
             <span class="close" onclick="closeModal('settingsModal')">&times;</span>
             <h2>Configuración del Sistema</h2>
             <div class="mt-4">
-                <h3 style="color:var(--brand-gold); font-size: 1rem;">Vendedores / Quien Visita</h3>
+                <h3 style="color:var(--ds-brand-primary); font-size: 1rem;">Vendedores / Quien Visita</h3>
                 <div style="display:flex; gap:10px; margin-bottom:10px; margin-top:5px;">
-                    <input type="text" id="new-visitantes-input" placeholder="Nombre completo" style="flex:1;">
+                    <input type="text" id="new-visitantes-input" class="form-control" placeholder="Nombre completo" style="flex:1;">
                     <button class="btn-primary" onclick="addSetting('visitantes')">Agregar</button>
                 </div>
-                <div id="list-visitantes" style="max-height:150px; overflow-y:auto; margin-bottom: 20px; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px;"></div>
+                <div id="list-visitantes" style="max-height:150px; overflow-y:auto; margin-bottom: 20px; background:var(--ds-bg-subtle); border:1px solid var(--ds-border); padding:10px; border-radius:4px;"></div>
 
-                <h3 style="color:var(--brand-gold); font-size: 1rem;">Encargados de Instalación</h3>
+                <h3 style="color:var(--ds-brand-primary); font-size: 1rem;">Encargados de Instalación</h3>
                 <div style="display:flex; gap:10px; margin-bottom:10px; margin-top:5px;">
-                    <input type="text" id="new-encargados-input" placeholder="Nombre completo" style="flex:1;">
+                    <input type="text" id="new-encargados-input" class="form-control" placeholder="Nombre completo" style="flex:1;">
                     <button class="btn-primary" onclick="addSetting('encargados')">Agregar</button>
                 </div>
-                <div id="list-encargados" style="max-height:150px; overflow-y:auto; background:rgba(0,0,0,0.2); padding:10px; border-radius:4px;"></div>
+                <div id="list-encargados" style="max-height:150px; overflow-y:auto; background:var(--ds-bg-subtle); border:1px solid var(--ds-border); padding:10px; border-radius:4px;"></div>
                 
-                <h3 style="color:var(--brand-gold); font-size: 1rem; margin-top:20px;">Ubicación de Fábrica</h3>
+                <h3 style="color:var(--ds-brand-primary); font-size: 1rem; margin-top:20px;">Ubicación de Fábrica</h3>
                 <div class="form-group full-width mt-2">
                     <label>Dirección base para calcular distancias (Abre en Google Maps)</label>
                     <input type="text" id="set-gmaps-factory" placeholder="Ej. Calle Principal, San Salvador">
@@ -3012,7 +3070,7 @@
     </div>
 
     <!-- User Management Modal -->
-    <div id="userModal" class="modal" style="z-index: 110;">
+    <div id="userModal" class="modal ds-scope-light" style="z-index: 110;">
         <div class="modal-content glass-panel" style="max-width: 400px; width: 92%;">
             <span class="close" onclick="closeModal('userModal')">&times;</span>
             <h2 id="user-modal-title">Registrar Usuario</h2>
@@ -3461,13 +3519,13 @@
 
 
     <!-- Loading Spinner Overlay -->
-    <div id="global-spinner" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
-        <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--brand-gold); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
-        <h3 id="spinner-msg" style="margin-bottom: 1rem;">Subiendo archivo a la nube...</h3>
-        <div id="upload-progress-container" style="display:none; width: 300px; max-width: 90%; background: rgba(255,255,255,0.1); border-radius: 10px; height: 8px; overflow: hidden;">
-            <div id="upload-progress-bar" style="width: 0%; height: 100%; background: var(--brand-gold); transition: width 0.2s;"></div>
+    <div id="global-spinner" class="ds-scope-light" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15, 23, 42, 0.72); z-index:9999; justify-content:center; align-items:center; flex-direction:column; color:white;">
+        <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid var(--ds-brand-primary, #0062B8); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
+        <h3 id="spinner-msg" style="margin-bottom: 1rem; color: #FFFFFF;">Subiendo archivo a la nube...</h3>
+        <div id="upload-progress-container" style="display:none; width: 300px; max-width: 90%; background: rgba(255,255,255,0.2); border-radius: 10px; height: 8px; overflow: hidden;">
+            <div id="upload-progress-bar" style="width: 0%; height: 100%; background: var(--ds-brand-primary, #0062B8); transition: width 0.2s;"></div>
         </div>
-        <p id="upload-progress-text" style="display:none; font-size: 0.8rem; margin-top: 0.5rem; color: var(--brand-gold);">0%</p>
+        <p id="upload-progress-text" style="display:none; font-size: 0.8rem; margin-top: 0.5rem; color: #FFFFFF;">0%</p>
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
     </div>
 

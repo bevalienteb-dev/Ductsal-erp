@@ -1,4 +1,6 @@
-:root {
+:root,
+[data-theme="light"] {
+    /* Legacy variables kept intact during progressive view-by-view migration (Blocks 1-5) */
     --bg-dark: #1E2337;
     --bg-panel: rgba(255, 255, 255, 0.05);
     --panel-border: rgba(255, 255, 255, 0.1);
@@ -14,6 +16,81 @@
     --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
+
+    /* =========================================================================
+       DUCTSAL GLOBAL DESIGN SYSTEM TOKENS (FASE B6 — CORPORATE LIGHT DEFAULT)
+       WCAG 2.2 AA Verified: Text >= 7.1:1 | Control Borders >= 4.76:1 | Focus >= 6.10:1
+       ========================================================================= */
+    --ds-bg-app: #F4F6F9;
+    --ds-bg-surface: #FFFFFF;
+    --ds-bg-subtle: #F8FAFC;
+    --ds-bg-hover: #F1F5F9;
+    --ds-bg-selected: #EFF6FF;
+
+    --ds-border: #CBD5E1;
+    --ds-border-strong: #94A3B8;
+    --ds-border-control: #64748B;        /* 4.76:1 on #FFFFFF (SC 1.4.11 >= 3.0:1) */
+    --ds-border-control-hover: #334155;  /* 10.40:1 on #FFFFFF */
+
+    --ds-brand-primary: #0062B8;         /* DUCTSAL Corporate Blue (6.10:1 on #FFFFFF) */
+    --ds-brand-primary-hover: #004E94;   /* 8.20:1 on #FFFFFF */
+    --ds-brand-primary-active: #003B70;
+    --ds-brand-tint: #E8F1FB;
+    --ds-brand-accent: #B45309;
+
+    --ds-text-primary: #0F172A;          /* 17.4:1 on #FFFFFF */
+    --ds-text-secondary: #334155;        /* 10.4:1 on #FFFFFF */
+    --ds-text-tertiary: #475569;         /* 7.1:1 on #FFFFFF */
+    --ds-text-inverse: #FFFFFF;
+
+    --ds-success-bg: #ECFDF5;
+    --ds-success-text: #065F46;          /* 7.4:1 on #ECFDF5 */
+    --ds-success-border: #059669;        /* 3.8:1 on #FFFFFF */
+
+    --ds-info-bg: #EFF6FF;
+    --ds-info-text: #1E40AF;             /* 7.2:1 on #EFF6FF */
+    --ds-info-border: #2563EB;           /* 4.5:1 on #FFFFFF */
+
+    --ds-warning-bg: #FFFBEB;
+    --ds-warning-text: #92400E;          /* 7.1:1 on #FFFBEB */
+    --ds-warning-border: #D97706;        /* 3.4:1 on #FFFFFF */
+
+    --ds-danger-bg: #FEF2F2;
+    --ds-danger-text: #991B1B;           /* 7.8:1 on #FEF2F2 */
+    --ds-danger-border: #DC2626;         /* 4.3:1 on #FFFFFF */
+
+    --ds-neutral-bg: #F1F5F9;
+    --ds-neutral-text: #334155;          /* 9.3:1 on #F1F5F9 */
+    --ds-neutral-border: #64748B;        /* 4.76:1 on #FFFFFF */
+
+    --ds-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --ds-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --ds-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --ds-radius-sm: 6px;
+    --ds-radius-md: 8px;
+    --ds-radius-lg: 10px;
+    --ds-focus-ring: 0 0 0 3px rgba(0, 98, 184, 0.24);
+}
+
+[data-theme="dark"] {
+    --ds-bg-app: #0F172A;
+    --ds-bg-surface: #1E293B;
+    --ds-bg-subtle: #162032;
+    --ds-bg-hover: #263449;
+    --ds-bg-selected: #1E3A5F;
+    --ds-border: #334155;
+    --ds-border-strong: #475569;
+    --ds-border-control: #94A3B8;
+    --ds-border-control-hover: #CBD5E1;
+    --ds-brand-primary: #38BDF8;
+    --ds-brand-primary-hover: #7DD3FC;
+    --ds-brand-primary-active: #0284C7;
+    --ds-brand-tint: rgba(56, 189, 248, 0.14);
+    --ds-brand-accent: #FBBF24;
+    --ds-text-primary: #F8FAFC;
+    --ds-text-secondary: #CBD5E1;
+    --ds-text-tertiary: #94A3B8;
+    --ds-text-inverse: #0F172A;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
@@ -4490,5 +4567,806 @@ body.modal-open {
     .doc-checklist-registered-actions {
         flex-direction: column;
         align-items: stretch;
+    }
+}
+
+/* =========================================================================
+   FASE B6 — DUCTSAL GLOBAL DESIGN SYSTEM (CORPORATE LIGHT MODE & CRM 360)
+   Progressive Scoping (.ds-scope-light) + Reusable Semantic Components (.ds-*)
+   ========================================================================= */
+
+.ds-scope-light {
+    --bg-dark: var(--ds-bg-subtle);
+    --bg-panel: var(--ds-bg-surface);
+    --bg-card: var(--ds-bg-surface);
+    --panel-border: var(--ds-border);
+    --border-color: var(--ds-border-control);
+    --brand-blue: #FFFFFF;
+    --brand-gold: var(--ds-brand-primary);
+    --brand-gold-hover: var(--ds-brand-primary-hover);
+    --text-primary: var(--ds-text-primary);
+    --text-secondary: var(--ds-text-secondary);
+    --text-muted: var(--ds-text-tertiary);
+    --success: var(--ds-success-text);
+    --warning: var(--ds-warning-text);
+    --danger: var(--ds-danger-text);
+    color: var(--ds-text-primary);
+}
+
+body.ds-body-light,
+.main-content.ds-scope-light,
+.view-section.ds-scope-light {
+    color: var(--ds-text-primary);
+}
+
+.view-section.ds-scope-light {
+    background-color: var(--ds-bg-app);
+    padding: 1rem 1.25rem;
+    border-radius: var(--ds-radius-lg);
+}
+
+/* Focus Ring WCAG 2.2 AA (SC 2.4.7 & SC 2.4.13 >= 3.0:1, audited 6.10:1) */
+.ds-scope-light button:focus-visible,
+.ds-scope-light a:focus-visible,
+.ds-scope-light input:focus-visible,
+.ds-scope-light select:focus-visible,
+.ds-scope-light textarea:focus-visible,
+.ds-scope-light [tabindex]:focus-visible,
+.ds-btn:focus-visible,
+.ds-input:focus-visible,
+.ds-select:focus-visible,
+.ds-tab:focus-visible {
+    outline: 2px solid var(--ds-brand-primary) !important;
+    outline-offset: 2px !important;
+    box-shadow: var(--ds-focus-ring) !important;
+}
+
+/* Scoped Panels & Cards */
+.ds-scope-light.glass-panel,
+.ds-scope-light .glass-panel,
+.ds-scope-light .card,
+.ds-card {
+    background: var(--ds-bg-surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid var(--ds-border) !important;
+    border-radius: var(--ds-radius-md);
+    box-shadow: var(--ds-shadow-xs) !important;
+    color: var(--ds-text-primary);
+}
+
+/* Scoped Typography */
+.ds-scope-light h1,
+.ds-scope-light h2,
+.ds-scope-light h3,
+.ds-scope-light h4 {
+    color: var(--ds-text-primary);
+}
+
+.ds-scope-light header p,
+.ds-scope-light .view-header p {
+    color: var(--ds-text-secondary);
+}
+
+/* Scoped Buttons (WCAG 2.2 AA Control Border >= 3.0:1, audited 4.76:1) */
+.ds-scope-light .btn-primary,
+.ds-btn-primary {
+    background: var(--ds-brand-primary) !important;
+    color: #FFFFFF !important;
+    border: 1px solid var(--ds-brand-primary) !important;
+    padding: 0.5rem 1rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.84rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-primary:hover,
+.ds-btn-primary:hover {
+    background: var(--ds-brand-primary-hover) !important;
+    border-color: var(--ds-brand-primary-hover) !important;
+    color: #FFFFFF !important;
+}
+
+.ds-scope-light .btn-secondary,
+.ds-scope-light .btn-back,
+.ds-btn-secondary {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border-control) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-secondary:hover,
+.ds-scope-light .btn-back:hover,
+.ds-btn-secondary:hover {
+    background: var(--ds-bg-hover) !important;
+    border-color: var(--ds-border-control-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .btn-danger,
+.ds-btn-danger {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-danger:hover,
+.ds-btn-danger:hover {
+    background: #FEE2E2 !important;
+    color: #7F1D1D !important;
+}
+
+.ds-scope-light .btn-success,
+.ds-btn-success {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-success:hover,
+.ds-btn-success:hover {
+    background: #D1FAE5 !important;
+    color: #064E3B !important;
+}
+
+.ds-btn-xs {
+    padding: 0.25rem 0.55rem !important;
+    font-size: 0.74rem !important;
+}
+
+.ds-btn-sm {
+    padding: 0.35rem 0.75rem !important;
+    font-size: 0.78rem !important;
+}
+
+/* Scoped Inputs & Form Controls (WCAG 2.2 AA Control Border >= 4.76:1) */
+.ds-scope-light .form-group label,
+.ds-label {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.82rem;
+    margin-bottom: 0.35rem;
+    display: block;
+}
+
+.ds-scope-light .form-group input:not([type="checkbox"]):not([type="radio"]),
+.ds-scope-light .form-group select,
+.ds-scope-light .form-group textarea,
+.ds-scope-light .form-control,
+.ds-scope-light .filter-select,
+.ds-input,
+.ds-select {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border-control) !important;
+    border-radius: var(--ds-radius-sm);
+    padding: 0.55rem 0.75rem;
+    font-size: 0.86rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ds-scope-light .form-group input:hover:not(:disabled),
+.ds-scope-light .form-group select:hover:not(:disabled),
+.ds-scope-light .form-group textarea:hover:not(:disabled),
+.ds-scope-light .form-control:hover:not(:disabled),
+.ds-input:hover:not(:disabled),
+.ds-select:hover:not(:disabled) {
+    border-color: var(--ds-border-control-hover) !important;
+}
+
+.ds-scope-light .form-group input:focus,
+.ds-scope-light .form-group select:focus,
+.ds-scope-light .form-group textarea:focus,
+.ds-scope-light .form-control:focus,
+.ds-input:focus,
+.ds-select:focus {
+    border-color: var(--ds-brand-primary) !important;
+    box-shadow: var(--ds-focus-ring) !important;
+}
+
+.ds-scope-light .form-group input::placeholder,
+.ds-scope-light .form-group textarea::placeholder,
+.ds-scope-light .form-control::placeholder,
+.ds-input::placeholder {
+    color: var(--ds-text-tertiary) !important;
+}
+
+/* Scoped Tables */
+.ds-scope-light .table-container,
+.ds-table-wrap {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    overflow-x: auto;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-scope-light table,
+.ds-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--ds-bg-surface);
+}
+
+.ds-scope-light th,
+.ds-table th {
+    background: var(--ds-bg-subtle) !important;
+    color: var(--ds-text-secondary) !important;
+    font-weight: 700;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light td,
+.ds-table td {
+    color: var(--ds-text-primary);
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid #E2E8F0 !important;
+    font-size: 0.84rem;
+    vertical-align: middle;
+}
+
+.ds-scope-light tbody tr:hover,
+.ds-table tbody tr:hover {
+    background: var(--ds-bg-hover) !important;
+}
+
+/* Scoped Semantic Badges (WCAG 2.2 AA Text >= 7.1:1, Border >= 3.4:1) */
+.ds-badge,
+.ds-scope-light .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+    border: 1px solid var(--ds-neutral-border);
+    background: var(--ds-neutral-bg);
+    color: var(--ds-neutral-text);
+}
+
+.ds-badge-success,
+.ds-scope-light .badge.bg-success {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+}
+
+.ds-badge-info,
+.ds-scope-light .badge.bg-info {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-badge-warning,
+.ds-scope-light .badge.bg-warning {
+    background: var(--ds-warning-bg) !important;
+    color: var(--ds-warning-text) !important;
+    border: 1px solid var(--ds-warning-border) !important;
+}
+
+.ds-badge-danger,
+.ds-scope-light .badge.bg-danger {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+}
+
+.ds-badge-neutral,
+.ds-scope-light .badge.bg-neutral {
+    background: var(--ds-neutral-bg) !important;
+    color: var(--ds-neutral-text) !important;
+    border: 1px solid var(--ds-neutral-border) !important;
+}
+
+/* Scoped Filter Pills */
+.ds-scope-light .filter-pills-group {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    padding: 3px;
+    border-radius: var(--ds-radius-md);
+}
+
+.ds-scope-light .filter-pill {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--ds-radius-sm);
+}
+
+.ds-scope-light .filter-pill:hover {
+    background: var(--ds-bg-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .filter-pill.active {
+    background: var(--ds-brand-primary) !important;
+    color: #FFFFFF !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+.ds-scope-light .filter-pill .filter-badge {
+    background: rgba(15, 23, 42, 0.08) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .filter-pill.active .filter-badge {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #FFFFFF !important;
+}
+
+/* =========================================================================
+   BLOQUE 1: LOGIN, SIDEBAR, MOBILE HEADER, SETTINGS & USERS (LIGHT MODE)
+   ========================================================================= */
+
+/* Login Screen & Forgot Password Modal */
+#login-screen.ds-scope-light {
+    background: linear-gradient(135deg, #EFF6FF 0%, #F4F6F9 55%, #E2E8F0 100%) !important;
+}
+
+#login-screen.ds-scope-light .modal-content,
+#forgot-password-modal.ds-scope-light .modal-content {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+    color: var(--ds-text-primary) !important;
+    padding: 2rem 1.75rem;
+    border-radius: var(--ds-radius-lg);
+}
+
+#forgot-password-modal.ds-scope-light {
+    background: rgba(15, 23, 42, 0.55) !important;
+}
+
+#login-screen.ds-scope-light h2,
+#forgot-password-modal.ds-scope-light h3 {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700;
+}
+
+#login-screen.ds-scope-light #link-forgot-password {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 600;
+}
+
+#login-screen.ds-scope-light #link-forgot-password:hover {
+    color: var(--ds-brand-primary-hover) !important;
+    text-decoration: underline !important;
+}
+
+#login-screen.ds-scope-light #activation-return-banner {
+    background: var(--ds-success-bg) !important;
+    border: 1px solid var(--ds-success-border) !important;
+    color: var(--ds-success-text) !important;
+    font-weight: 600;
+}
+
+#forgot-password-modal.ds-scope-light #forgot-password-feedback {
+    background: var(--ds-info-bg) !important;
+    border: 1px solid var(--ds-info-border) !important;
+    color: var(--ds-info-text) !important;
+    font-weight: 600;
+}
+
+/* Global Spinner Light Scope */
+#global-spinner.ds-scope-light {
+    background: rgba(15, 23, 42, 0.65) !important;
+    color: #FFFFFF !important;
+}
+
+/* Users View & Audit Panel Light Scope */
+#users-view.ds-scope-light #audit-panel {
+    background: var(--ds-danger-bg) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+    border-left: 4px solid var(--ds-danger-text) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+#users-view.ds-scope-light #audit-panel h3 {
+    color: var(--ds-danger-text) !important;
+}
+
+#settingsModal.ds-scope-light #list-visitantes,
+#settingsModal.ds-scope-light #list-encargados {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+/* Global Toasts & Confirmation Dialogs (Corporate Light Mode) */
+.crm-toast {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+.crm-toast-title {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700 !important;
+}
+.crm-toast-message {
+    color: var(--ds-text-secondary) !important;
+}
+.crm-toast-success { border-left: 4px solid var(--ds-success-text) !important; }
+.crm-toast-info { border-left: 4px solid var(--ds-info-text) !important; }
+.crm-toast-warning { border-left: 4px solid var(--ds-warning-text) !important; }
+.crm-toast-error { border-left: 4px solid var(--ds-danger-text) !important; }
+
+.crm-confirm-overlay {
+    background: rgba(15, 23, 42, 0.52) !important;
+}
+.crm-confirm-dialog {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+.crm-confirm-title {
+    color: var(--ds-text-primary) !important;
+}
+.crm-confirm-message {
+    color: var(--ds-text-secondary) !important;
+}
+
+/* Sidebar Corporate Light */
+.sidebar.ds-scope-light {
+    background-color: var(--ds-bg-surface) !important;
+    border-right: 1px solid var(--ds-border) !important;
+    padding: 1.25rem 0.85rem;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.sidebar.ds-scope-light .logo-container {
+    margin-bottom: 1.25rem;
+    padding: 0 0.5rem 0.85rem 0.5rem;
+    border-bottom: 1px solid var(--ds-border);
+}
+
+.sidebar.ds-scope-light .logo-container h2 {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    font-size: 1.3rem;
+}
+
+.sidebar.ds-scope-light .user-profile {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    border-radius: var(--ds-radius-md);
+    padding: 0.75rem 0.85rem !important;
+    margin-bottom: 1.15rem !important;
+}
+
+.sidebar.ds-scope-light #ui-user-name {
+    color: var(--ds-text-primary) !important;
+    font-size: 0.92rem !important;
+    font-weight: 700 !important;
+}
+
+.sidebar.ds-scope-light #ui-user-role {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 700 !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.04em;
+}
+
+.sidebar.ds-scope-light .nav-links {
+    gap: 0.25rem;
+}
+
+.sidebar.ds-scope-light .nav-links li {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.88rem;
+    padding: 0.62rem 0.85rem;
+    border-radius: var(--ds-radius-sm);
+    border: 1px solid transparent;
+    align-items: center;
+}
+
+.sidebar.ds-scope-light .nav-links li:hover {
+    background: var(--ds-bg-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.sidebar.ds-scope-light .nav-links li.active {
+    background: var(--ds-brand-tint) !important;
+    color: var(--ds-brand-primary) !important;
+    border-color: #BFDBFE !important;
+    font-weight: 700;
+}
+
+.sidebar.ds-scope-light #nav-settings {
+    border-top: 1px solid var(--ds-border) !important;
+}
+
+/* Mobile Top Header Corporate Light */
+#mobile-header.ds-scope-light {
+    background: var(--ds-bg-surface) !important;
+    border-bottom: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+#mobile-header.ds-scope-light h2,
+#mobile-header.ds-scope-light .detail-sticky-client {
+    color: var(--ds-text-primary) !important;
+}
+
+#mobile-header.ds-scope-light .detail-sticky-code {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 700;
+}
+
+/* Modals in Light Scope */
+.modal.ds-scope-light {
+    background: rgba(15, 23, 42, 0.52) !important;
+}
+
+.modal.ds-scope-light .modal-content {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+
+.modal.ds-scope-light .close {
+    color: var(--ds-text-secondary) !important;
+}
+
+.modal.ds-scope-light .close:hover {
+    color: var(--ds-text-primary) !important;
+}
+
+/* =========================================================================
+   REFINED ACCOUNT 360 & CONTACT 360 SHARED COMPONENTS (BLOQUES 2, 3, 4)
+   ========================================================================= */
+
+.ds-record-header {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    padding: 8px 14px;
+    margin-bottom: 8px;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-record-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ds-record-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ds-record-eyebrow {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ds-brand-primary);
+}
+
+.ds-record-title {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--ds-text-primary);
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.ds-meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #E2E8F0;
+    font-size: 0.78rem;
+    color: var(--ds-text-secondary);
+}
+
+.ds-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ds-meta-label {
+    color: var(--ds-text-tertiary);
+    font-weight: 600;
+}
+
+.ds-meta-val {
+    color: var(--ds-text-primary);
+    font-weight: 700;
+}
+
+/* Contextual Tabs Bar */
+.ds-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--ds-border);
+    margin-bottom: 8px;
+    overflow-x: auto;
+    background: var(--ds-bg-surface);
+    padding: 0 10px;
+    border-radius: var(--ds-radius-md) var(--ds-radius-md) 0 0;
+    border: 1px solid var(--ds-border);
+}
+
+.ds-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ds-text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.ds-tab:hover {
+    color: var(--ds-text-primary);
+}
+
+.ds-tab.active {
+    color: var(--ds-brand-primary);
+    border-bottom-color: var(--ds-brand-primary);
+    font-weight: 700;
+}
+
+.ds-tab-count {
+    background: var(--ds-neutral-bg);
+    color: var(--ds-text-secondary);
+    border: 1px solid var(--ds-border);
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
+.ds-tab.active .ds-tab-count {
+    background: var(--ds-brand-tint);
+    color: var(--ds-brand-primary);
+    border-color: #93C5FD;
+}
+
+/* Compact 4-KPI Strip (Exclusive to Commercial Summary Tab) */
+.ds-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.ds-kpi-card {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    padding: 7px 11px;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-kpi-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--ds-text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+
+.ds-kpi-value {
+    font-size: 1.12rem;
+    font-weight: 800;
+    color: var(--ds-text-primary);
+    margin-top: 2px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.ds-kpi-sub {
+    font-size: 0.7rem;
+    color: var(--ds-text-tertiary);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Secondary 1-Line Financial Pulse Ribbon */
+.ds-pulse-ribbon {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    background: var(--ds-bg-subtle);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-sm);
+    padding: 5px 12px;
+    margin-bottom: 8px;
+    font-size: 0.76rem;
+    color: var(--ds-text-secondary);
+}
+
+.ds-pulse-metrics {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+}
+
+@media (max-width: 1024px) {
+    .ds-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .ds-kpi-grid {
+        grid-template-columns: 1fr;
     }
 }
