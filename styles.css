@@ -4575,7 +4575,8 @@ body.modal-open {
    Progressive Scoping (.ds-scope-light) + Reusable Semantic Components (.ds-*)
    ========================================================================= */
 
-.ds-scope-light {
+.ds-scope-light,
+[data-ds-scope="light"] {
     --bg-dark: var(--ds-bg-subtle);
     --bg-panel: var(--ds-bg-surface);
     --bg-card: var(--ds-bg-surface);
@@ -4599,7 +4600,8 @@ body.ds-body-light,
     color: var(--ds-text-primary);
 }
 
-.view-section.ds-scope-light {
+.view-section.ds-scope-light,
+.view-section[data-ds-scope="light"] {
     background-color: var(--ds-bg-app);
     padding: 1rem 1.25rem;
     border-radius: var(--ds-radius-lg);
@@ -5367,6 +5369,238 @@ body.ds-body-light,
 
 @media (max-width: 640px) {
     .ds-kpi-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* =========================================================================
+   BLOQUE 2: CUENTAS, CUENTA 360 Y EXPEDIENTE LEGAL/FISCAL (MODO CLARO)
+   ========================================================================= */
+
+.ds-scope-light .client-modal-content,
+.ds-scope-light #clientDetailContent {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+.ds-scope-light .client-modal-header {
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-modal-subtitle {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-form-section {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    backdrop-filter: none !important;
+}
+
+.ds-scope-light .client-section-header {
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-section-title {
+    color: var(--ds-brand-primary) !important;
+}
+
+.ds-scope-light .client-subsection-title {
+    color: var(--ds-text-primary) !important;
+    border-top: 1px dashed var(--ds-border) !important;
+}
+
+.ds-scope-light .section-tag-badge {
+    background: var(--ds-brand-tint) !important;
+    color: var(--ds-brand-primary) !important;
+    border: 1px solid #93C5FD !important;
+}
+
+.ds-scope-light .contact-req-pill {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .form-help-text,
+.ds-scope-light .optional-tag,
+.ds-scope-light .client-form-footer-legend {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-fiscal-pill {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-fiscal-pill:hover {
+    border-color: var(--ds-brand-primary) !important;
+    background: var(--ds-brand-tint) !important;
+}
+
+.ds-scope-light .client-fiscal-pill input[type="checkbox"] {
+    accent-color: var(--ds-brand-primary) !important;
+}
+
+.ds-scope-light .client-fiscal-title {
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .client-fiscal-subtitle {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-contact-rule-banner {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .client-file-upload-box,
+.ds-scope-light .doc-checklist-item {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .client-file-upload-box input[type="file"] {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-card {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-filename {
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-meta,
+.ds-scope-light .doc-checklist-replace-hint {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-registered {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-pending,
+.ds-scope-light .doc-checklist-badge.status-review-pending {
+    background: var(--ds-warning-bg) !important;
+    color: var(--ds-warning-text) !important;
+    border: 1px solid var(--ds-warning-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-optional {
+    background: var(--ds-neutral-bg) !important;
+    color: var(--ds-neutral-text) !important;
+    border: 1px solid var(--ds-neutral-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-not-applicable {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-expired,
+.ds-scope-light .doc-checklist-badge.status-observed {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+}
+
+.ds-scope-light .client-doc-card {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    padding: 8px 12px !important;
+    border-radius: var(--ds-radius-md) !important;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ds-scope-light .client-doc-title {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700 !important;
+}
+
+.ds-scope-light .client-doc-meta {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .btn-back {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    font-weight: 600 !important;
+}
+
+.ds-scope-light .btn-back:hover {
+    background: var(--ds-bg-subtle) !important;
+    border-color: var(--ds-border-strong) !important;
+}
+
+/* Account 360 Hub Layout */
+.ds-account-360-split {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: 10px;
+    align-items: start;
+}
+
+.ds-panel-box {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    padding: 10px 12px;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-panel-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+.ds-panel-box-title {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: var(--ds-text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ds-account-link {
+    color: var(--ds-brand-primary);
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.ds-account-link:hover {
+    text-decoration: underline;
+    color: var(--ds-brand-primary-hover);
+}
+
+@media (max-width: 960px) {
+    .ds-account-360-split {
         grid-template-columns: 1fr;
     }
 }

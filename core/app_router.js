@@ -386,6 +386,9 @@
             const target = doc.getElementById(viewId);
             if (target && target.classList) {
                 target.classList.add('active');
+                if (target.dataset && target.dataset.dsScope === 'light') {
+                    target.classList.add('ds-scope-light');
+                }
             }
 
             // Desmarcar todos los enlaces de navegación del menú

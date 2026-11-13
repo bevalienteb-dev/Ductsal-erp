@@ -48,6 +48,9 @@
             window.loadAccountMergePreview = api.loadAccountMergePreview;
             window.confirmAndExecuteAccountMerge = api.confirmAndExecuteAccountMerge;
             window.navigateToCanonicalAccount = api.navigateToCanonicalAccount;
+            window.renderAccount360Hub = api.renderAccount360Hub;
+            window.setAccount360Tab = api.setAccount360Tab;
+            window.openNewOpportunityFromAccount = api.openNewOpportunityFromAccount;
         }
     }
 })(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this), function () {
@@ -244,8 +247,8 @@
                     activeView.insertBefore(banner, activeView.firstChild);
                 }
                 banner.style.cssText = isSuccess
-                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
-                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:#ECFDF5; border:1px solid #6EE7B7; color:#047857; font-weight:600; font-size:0.84rem;'
+                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:#FEF2F2; border:1px solid #FCA5A5; color:#B91C1C; font-weight:600; font-size:0.84rem;';
                 banner.textContent = text;
             }
         }
@@ -317,10 +320,10 @@
             if (!el) return;
             if (cliSortCol === col) {
                 el.innerHTML = cliSortDir === 'asc' ? '▲' : '▼';
-                el.style.color = 'var(--brand-gold)';
+                el.style.color = 'var(--ds-primary, #0062B8)';
             } else {
                 el.innerHTML = '↕';
-                el.style.color = 'var(--text-muted)';
+                el.style.color = 'var(--ds-text-muted, #64748B)';
             }
         });
     }
@@ -339,7 +342,7 @@
 
         const countBadge = document.getElementById('clients-count-badge');
         if (countBadge) {
-            countBadge.textContent = `${filtered.length} cliente${filtered.length === 1 ? '' : 's'}`;
+            countBadge.textContent = `${filtered.length} cuenta${filtered.length === 1 ? '' : 's'}`;
         }
 
         // Apply Search Filter
@@ -399,10 +402,10 @@
                     <tr>
                         <td colspan="6">
                             <div class="table-empty-box">
-                                <div style="font-size:2rem; margin-bottom:0.4rem;">👥</div>
-                                <div style="font-size:0.95rem; font-weight:600; color:var(--text-primary);">No se encontraron clientes</div>
-                                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
-                                    ${searchVal ? 'Prueba con otro término de búsqueda.' : 'Registra un nuevo cliente para comenzar.'}
+                                <div style="font-size:2rem; margin-bottom:0.4rem;">🏢</div>
+                                <div style="font-size:0.95rem; font-weight:600; color:var(--ds-text-primary, #0F172A);">No se encontraron cuentas comerciales</div>
+                                <div style="font-size:0.8rem; color:var(--ds-text-muted, #64748B); margin-top:0.2rem;">
+                                    ${searchVal ? 'Prueba con otro término de búsqueda.' : 'Registra una nueva cuenta para comenzar.'}
                                 </div>
                             </div>
                         </td>
@@ -418,29 +421,29 @@
         filtered.forEach(c => {
             const isNatural = c.tipo === 'natural';
             const typeBadge = isNatural
-                ? '<span class="badge" style="background:rgba(255,255,255,0.06); color:#cbd5e1; border:1px solid rgba(255,255,255,0.12); font-weight:500;">Natural</span>'
-                : '<span class="badge" style="background:rgba(217, 119, 6, 0.15); color:var(--brand-gold); border:1px solid rgba(217, 119, 6, 0.35); font-weight:600;">Jurídica</span>';
+                ? '<span class="badge ds-badge ds-badge-neutral" style="font-weight:600;">👤 Natural</span>'
+                : '<span class="badge ds-badge ds-badge-primary" style="font-weight:600;">🏢 Jurídica</span>';
 
             const contactName = isNatural ? `${c.nombres || ''} ${c.apellidos || ''}`.trim() : (c.contacto || '-');
             const mainName = (isNatural ? `${c.nombres || ''} ${c.apellidos || ''}`.trim() : (c.empresa || '-')) || '-';
             const isExport = c.es_exportacion === true || c.es_exportacion === 'true';
-            const exportBadge = isExport ? ' <span class="badge" style="background:rgba(33, 150, 243, 0.15); color:#60a5fa; border:1px solid rgba(33, 150, 243, 0.35); font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
+            const exportBadge = isExport ? ' <span class="badge ds-badge ds-badge-info" style="font-size:0.68rem; margin-left:4px; vertical-align:middle;">✈️ Exp</span>' : '';
             const isAbsorbed = Boolean(c && typeof c.fusionada_en === 'string' && c.fusionada_en.trim());
-            const absorbedBadge = isAbsorbed ? ' <span class="badge" style="background:rgba(59, 130, 246, 0.18); color:#93c5fd; border:1px solid rgba(59, 130, 246, 0.4); font-size:0.68rem; margin-left:4px; vertical-align:middle;">🔗 Absorbida</span>' : '';
+            const absorbedBadge = isAbsorbed ? ' <span class="badge ds-badge ds-badge-warning" style="font-size:0.68rem; margin-left:4px; vertical-align:middle;">🔗 Absorbida</span>' : '';
 
-            const phoneStr = c.telefono ? `<span style="font-family:monospace; font-size:0.85rem; color:var(--text-secondary);">${esc(c.telefono)}</span>` : '<span style="color:var(--text-muted);">-</span>';
-            const emailStr = c.correo ? `<a href="mailto:${esc(c.correo)}" class="cell-ellipsis" style="display:inline-block; max-width:210px; color:var(--text-secondary); text-decoration:none;" title="${esc(c.correo)}">${esc(c.correo)}</a>` : '<span style="color:var(--text-muted);">-</span>';
+            const phoneStr = c.telefono ? `<span style="font-family:monospace; font-size:0.84rem; color:var(--ds-text-secondary, #334155); font-weight:600;">${esc(c.telefono)}</span>` : '<span style="color:var(--ds-text-muted, #64748B);">-</span>';
+            const emailStr = c.correo ? `<a href="mailto:${esc(c.correo)}" class="cell-ellipsis" style="display:inline-block; max-width:210px; color:var(--ds-primary, #0062B8); text-decoration:none; font-weight:500;" title="${esc(c.correo)}">${esc(c.correo)}</a>` : '<span style="color:var(--ds-text-muted, #64748B);">-</span>';
 
             let actionsHtml = `<div class="table-btn-group">
-                <button type="button" class="btn-table-action" onclick="ContactsUI.openAccountContactsModal('${c.id}')" title="Ver y gestionar personas vinculadas a esta cuenta (Hub & Spoke)" style="background:rgba(56,189,248,0.15); color:#38bdf8; border-color:rgba(56,189,248,0.3);">
-                    👥 Contactos
+                <button type="button" class="btn-table-action btn-table-edit" onclick="openClientDetailView('${c.id}')" title="Abrir Cuenta 360 de ${esc(mainName)}">
+                    🏢 Cuenta 360
                 </button>
-                <button type="button" class="btn-table-action btn-table-edit" onclick="openClientDetailView('${c.id}')" title="Editar datos y ver expediente de ${esc(mainName)}">
-                    ✏️ Editar
+                <button type="button" class="btn-table-action" onclick="ContactsUI.openAccountContactsModal('${c.id}')" title="Ver y gestionar contactos vinculados a esta cuenta">
+                    👥 Contactos
                 </button>`;
             if (currentUser && currentUser.role === 'manager') {
                 if (!isAbsorbed) {
-                    actionsHtml += `<button type="button" class="btn-table-action btn-table-merge" onclick="openAccountMergeFromTable('${c.id}')" title="Fusionar administrativamente esta cuenta duplicada" style="background:rgba(168,85,247,0.16); color:#d8b4fe; border-color:rgba(192,132,252,0.35);">
+                    actionsHtml += `<button type="button" class="btn-table-action btn-table-merge" onclick="openAccountMergeFromTable('${c.id}')" title="Fusionar administrativamente esta cuenta duplicada">
                         🔀 Fusionar
                     </button>`;
                 }
@@ -454,12 +457,12 @@
                 <tr class="client-table-row" data-client-id="${esc(c.id)}">
                     <td class="col-cli-type" style="white-space:nowrap;">${typeBadge}</td>
                     <td class="col-cli-name">
-                        <div class="cell-ellipsis cli-name-wrap" style="font-weight:600; color:white; max-width:240px;" title="${esc(mainName)}">
-                            ${esc(mainName)}${exportBadge}${absorbedBadge}
+                        <div class="cell-ellipsis cli-name-wrap" style="font-weight:700; color:var(--ds-text-primary, #0F172A); max-width:250px;" title="${esc(mainName)}">
+                            <a href="javascript:void(0)" class="ds-account-link" onclick="openClientDetailView('${c.id}')" style="color:var(--ds-primary, #0062B8); text-decoration:none; font-weight:700;">${esc(mainName)}</a>${exportBadge}${absorbedBadge}
                         </div>
                     </td>
                     <td class="col-cli-contact">
-                        <div class="cell-ellipsis cli-contact-wrap" style="max-width:200px; color:var(--text-primary);" title="${esc(contactName)}">
+                        <div class="cell-ellipsis cli-contact-wrap" style="max-width:210px; color:var(--ds-text-primary, #0F172A);" title="${esc(contactName)}">
                             <span class="cli-contact-icon" style="display:none; margin-right:4px;">👤</span>${esc(contactName)}
                         </div>
                     </td>
@@ -746,12 +749,20 @@
                     if (headerMergeBtn && headerMergeBtn.style) headerMergeBtn.style.display = isManager ? 'inline-block' : 'none';
                     if (modalMergeBtn && modalMergeBtn.style) modalMergeBtn.style.display = isManager ? 'inline-block' : 'none';
                 }
+
+                const initialTab = (options && options.initialTab) ? options.initialTab : 'resumen';
+                renderAccount360Hub(c, initialTab);
             }
         } else {
+            _restoreExpedienteToForm();
+            const hubEl = document.getElementById('account-360-hub-container');
+            if (hubEl && hubEl.style) hubEl.style.display = 'none';
+            const ctxCardEl = document.getElementById('client-detail-context-card');
+            if (ctxCardEl && ctxCardEl.style) ctxCardEl.style.display = 'block';
             if (typeof window !== 'undefined') window._activeClientBaseDocs = null;
             const titleEl = document.getElementById('client-modal-title');
             if (titleEl) titleEl.textContent = 'Registrar Cliente';
-            if (contextTitleEl) contextTitleEl.textContent = 'Registrar Nuevo Cliente';
+            if (contextTitleEl) contextTitleEl.textContent = 'Registrar Nueva Cuenta Comercial';
             if (contextSubEl) contextSubEl.textContent = 'Alta de cuenta comercial, régimen fiscal y expediente digital en vista de pantalla completa';
             const tipoEl = document.getElementById('client-tipo');
             if (tipoEl) tipoEl.value = '';
@@ -770,8 +781,15 @@
             if (submitClientBtn && submitClientBtn.style) submitClientBtn.style.display = 'inline-block';
         }
 
+        const hubCheckEl = document.getElementById('account-360-hub-container');
         const contentEl = document.getElementById('clientDetailContent');
-        if (contentEl && contentEl.style) contentEl.style.display = 'block';
+        if (contentEl && contentEl.style) {
+            if (clientId && hubCheckEl && _activeAccount360State.activeTab && _activeAccount360State.activeTab !== 'ficha') {
+                contentEl.style.display = 'none';
+            } else {
+                contentEl.style.display = 'block';
+            }
+        }
         _navigateView('client-detail-view');
 
         if (!(options && options.preserveDetailScroll) && typeof _deps.scrollDetailViewToTop === 'function') {
@@ -780,6 +798,7 @@
     }
 
     function closeClientDetailView(options = {}) {
+        _restoreExpedienteToForm();
         if (typeof _deps.cancelPendingClientReservation === 'function') {
             _deps.cancelPendingClientReservation();
         }
@@ -789,6 +808,8 @@
         if (typeof document !== 'undefined') {
             const contentEl = document.getElementById('clientDetailContent');
             if (contentEl && contentEl.style) contentEl.style.display = 'none';
+            const hubEl = document.getElementById('account-360-hub-container');
+            if (hubEl && hubEl.style) hubEl.style.display = 'none';
         }
         const navOpts = {
             fromPopstate: Boolean(options && options.fromPopstate),
@@ -829,6 +850,728 @@
                     fromPopstate: navOpts.fromPopstate
                 });
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4.1. Cuenta 360 — Commercial First Hub & Spoke (Fase B6)
+    // -------------------------------------------------------------------------
+    let _activeAccount360State = {
+        clientId: null,
+        activeTab: 'resumen',
+        contactsCache: {}
+    };
+
+    function _restoreExpedienteToForm() {
+        if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+        const expEl = document.getElementById('client-expediente-section');
+        const formEl = document.getElementById('clientForm');
+        if (!expEl || !formEl) return;
+        if (expEl.parentElement !== formEl) {
+            const submitBtn = document.getElementById('btn-submit-client');
+            const actionRow = submitBtn ? submitBtn.parentElement : null;
+            if (actionRow && actionRow.parentElement === formEl && typeof formEl.insertBefore === 'function') {
+                formEl.insertBefore(expEl, actionRow);
+            } else if (typeof formEl.appendChild === 'function') {
+                formEl.appendChild(expEl);
+            }
+        }
+    }
+
+    function _formatUsdB6(amount) {
+        const num = Number(amount) || 0;
+        return 'US$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function _computeAccount360MetricsSafe(clientId) {
+        const prospectsList = _deps.getProspects() || [];
+        if (typeof CrmBiEngine !== 'undefined' && typeof CrmBiEngine.computeAccount360Metrics === 'function') {
+            return CrmBiEngine.computeAccount360Metrics(clientId, prospectsList);
+        }
+        if (typeof window !== 'undefined' && window.CrmBiEngine && typeof window.CrmBiEngine.computeAccount360Metrics === 'function') {
+            return window.CrmBiEngine.computeAccount360Metrics(clientId, prospectsList);
+        }
+        const acctOpps = prospectsList.filter(p => p && !p.deleted && p.clientId === clientId);
+        return {
+            accountId: clientId,
+            totalOpportunitiesCount: acctOpps.length,
+            activeCount: acctOpps.filter(p => p.estado === 'activo').length,
+            wonCount: acctOpps.filter(p => p.estado === 'ganado').length,
+            lostCount: acctOpps.filter(p => p.estado === 'perdido').length,
+            facturacionTotal: 0,
+            totalCobrado: 0,
+            saldoPorCobrar: 0,
+            overdueAmount: 0,
+            pipelineActivo: 0,
+            winRate: 0,
+            ticketPromedio: 0,
+            margenRealPct: 0,
+            cicloPromedioDias: 0,
+            propuestasPresentadasCount: 0,
+            proposalCountsByState: { preliminar: 0, oferta_preparada: 0, propuesta_entregada: 0, decidida: 0 },
+            opportunitiesNeedingAttention: [],
+            opportunities: acctOpps
+        };
+    }
+
+    function _renderProposalLifecycleBadgeB6(lifecycle) {
+        if (!lifecycle || !lifecycle.state) {
+            return '<span class="ds-badge ds-badge-neutral">Sin clasificar</span>';
+        }
+        if (lifecycle.state === 'propuesta_entregada') {
+            const evHint = lifecycle.deliveryEvidenceType === 'explicit' ? 'Fecha registrada' : 'Avance de etapa';
+            const vBadge = lifecycle.offersCount > 0 ? ` · v${lifecycle.offersCount}` : '';
+            return `<span class="ds-badge ds-badge-primary" title="Propuesta entregada (${evHint})">📤 Propuesta entregada${vBadge}</span>`;
+        }
+        if (lifecycle.state === 'oferta_preparada') {
+            const vBadge = lifecycle.offersCount > 0 ? ` · v${lifecycle.offersCount}` : '';
+            return `<span class="ds-badge ds-badge-warning" title="Oferta preparada pendiente de entrega formal">📝 Oferta preparada${vBadge}</span>`;
+        }
+        if (lifecycle.state === 'decidida') {
+            const evText = lifecycle.countsAsPresented ? 'Propuesta presentada' : 'Sin oferta';
+            return `<span class="ds-badge ds-badge-neutral" title="Oportunidad decidida (${evText})">🏁 Decidida</span>`;
+        }
+        return '<span class="ds-badge ds-badge-neutral" title="Etapa inicial sin oferta económica">🌱 Preliminar</span>';
+    }
+
+    function _renderStageBadgeB6(p) {
+        const estado = String(p && p.estado || 'activo').toLowerCase();
+        const etapa = String(p && p.etapa || 'prospecto').toLowerCase();
+        if (estado === 'ganado') return '<span class="ds-badge ds-badge-success">🏆 Ganado</span>';
+        if (estado === 'perdido') return '<span class="ds-badge ds-badge-danger">❌ Perdido</span>';
+        const map = {
+            prospecto: '<span class="ds-badge ds-badge-neutral">1. Prospecto</span>',
+            levantamiento: '<span class="ds-badge ds-badge-info">2. Levantamiento</span>',
+            cotizacion: '<span class="ds-badge ds-badge-warning">3. Cotización</span>',
+            negociacion: '<span class="ds-badge ds-badge-primary">4. Negociación</span>',
+            cierre: '<span class="ds-badge ds-badge-primary">5. Cierre</span>'
+        };
+        return map[etapa] || `<span class="ds-badge ds-badge-neutral">${_escB42(etapa)}</span>`;
+    }
+
+    function openNewOpportunityFromAccount(clientId) {
+        if (!clientId) return;
+        const cName = getClientName(clientId);
+        if (typeof window !== 'undefined' && typeof window.openNewProspectModal === 'function') {
+            window.openNewProspectModal();
+            selectClientInSelector(clientId, cName);
+        } else {
+            _navigateView('list-view');
+            selectClientInSelector(clientId, cName);
+        }
+    }
+
+    function setAccount360Tab(tabId) {
+        const clientId = _activeAccount360State.clientId || (typeof document !== 'undefined' && document.getElementById('client-id-edit') ? document.getElementById('client-id-edit').value : null);
+        if (!clientId) return;
+        const clientsList = _deps.getClients() || [];
+        const c = clientsList.find(x => x && x.id === clientId);
+        if (!c) return;
+        renderAccount360Hub(c, tabId || 'resumen');
+    }
+
+    async function _loadAccount360ContactsAsync(clientId, c) {
+        if (!clientId || typeof document === 'undefined') return;
+        let items = _activeAccount360State.contactsCache[clientId] || null;
+        if (!items && typeof window !== 'undefined' && window.CrmContacts && typeof window.CrmContacts.listAccountContacts === 'function') {
+            try {
+                const res = await window.CrmContacts.listAccountContacts(clientId, { includeHistorical: true });
+                if (res && Array.isArray(res.items)) {
+                    items = res.items;
+                    _activeAccount360State.contactsCache[clientId] = items;
+                }
+            } catch (_) {
+                items = [];
+            }
+        }
+        if (!items) items = [];
+
+        const esc = _deps.escapeHtmlDoc;
+        const summaryBox = document.getElementById('account-360-summary-contacts-preview');
+        const fullBox = document.getElementById('account-360-contacts-dynamic-box');
+
+        const activeRelations = items.filter(it => it && it.relation && it.relation.status === 'active');
+        const fallbackContactName = c && c.tipo === 'natural'
+            ? `${c.nombres || ''} ${c.apellidos || ''}`.trim()
+            : (c && c.contacto ? c.contacto : '');
+
+        if (summaryBox) {
+            if (activeRelations.length > 0) {
+                summaryBox.innerHTML = activeRelations.slice(0, 4).map(item => {
+                    const person = item.contact || {};
+                    const rel = item.relation || {};
+                    const roles = Array.isArray(rel.roles) && rel.roles.length ? rel.roles.join(', ') : (rel.cargo || 'Contacto comercial');
+                    const pId = esc(person.id || rel.contactId || '');
+                    const pName = esc(person.nombreCompleto || `${person.nombres || ''} ${person.apellidos || ''}`.trim() || 'Contacto');
+                    const pCargo = esc(rel.cargo || roles);
+                    const pPhone = esc(rel.telefonoCorporativo || person.telefono || c.telefono || '-');
+                    const pEmail = esc(rel.correoCorporativo || person.correo || c.correo || '-');
+                    return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.55rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC); margin-bottom:0.45rem;">
+                            <div style="min-width:0;">
+                                <div style="font-weight:700; font-size:0.84rem; color:var(--ds-text-primary, #0F172A);">${pName}</div>
+                                <div style="font-size:0.74rem; color:var(--ds-text-secondary, #334155);">${pCargo} · 📞 ${pPhone} · ✉️ ${pEmail}</div>
+                            </div>
+                            ${pId ? `<button type="button" class="btn-secondary" style="padding:0.25rem 0.55rem; font-size:0.73rem; white-space:nowrap;" onclick="if(typeof ContactsUI!=='undefined'&&ContactsUI.openContact360View){ContactsUI.openContact360View('${pId}',{originAccountId:'${esc(clientId)}'})}else if(typeof ContactsUI!=='undefined'){ContactsUI.openAccountContactsModal('${esc(clientId)}')}">👤 Ficha 360</button>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } else if (fallbackContactName) {
+                summaryBox.innerHTML = `
+                    <div style="padding:0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                            <div>
+                                <div style="font-weight:700; font-size:0.85rem; color:var(--ds-text-primary, #0F172A);">👤 ${esc(fallbackContactName)}</div>
+                                <div style="font-size:0.76rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">Interlocutor registrado en ficha · 📞 ${esc(c.telefono || 'Sin teléfono')} · ✉️ ${esc(c.correo || 'Sin correo')}</div>
+                            </div>
+                            <span class="ds-badge ds-badge-info">Interlocutor</span>
+                        </div>
+                        ${c.rep_legal ? `<div style="margin-top:0.45rem; padding-top:0.45rem; border-top:1px solid var(--ds-border, #CBD5E1); font-size:0.76rem; color:var(--ds-text-secondary, #334155);">⚖️ <strong>Representante Legal:</strong> ${esc(c.rep_legal)} ${c.dui_rep ? `(DUI: ${esc(c.dui_rep)})` : ''}</div>` : ''}
+                    </div>
+                `;
+            } else {
+                summaryBox.innerHTML = `<div style="padding:0.75rem; text-align:center; color:var(--ds-text-muted, #64748B); font-size:0.8rem;">Sin contactos vinculados aún. Usa "Gestionar Contactos" para vincular o registrar personas.</div>`;
+            }
+        }
+
+        if (fullBox) {
+            if (items.length > 0) {
+                fullBox.innerHTML = `
+                    <div class="table-responsive">
+                        <table style="width:100%; border-collapse:collapse;">
+                            <thead>
+                                <tr>
+                                    <th>Persona / Identidad</th>
+                                    <th>Cargo y Roles en la Cuenta</th>
+                                    <th>Canales Corporativos</th>
+                                    <th>Estado / Vigencia</th>
+                                    <th style="text-align:right;">Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${items.map(item => {
+                                    const person = item.contact || {};
+                                    const rel = item.relation || {};
+                                    const isAct = rel.status === 'active';
+                                    const pId = esc(person.id || rel.contactId || '');
+                                    const pName = esc(person.nombreCompleto || `${person.nombres || ''} ${person.apellidos || ''}`.trim() || 'Contacto');
+                                    const rolesArr = Array.isArray(rel.roles) ? rel.roles : [];
+                                    const roleBadges = rolesArr.length
+                                        ? rolesArr.map(r => `<span class="ds-badge ds-badge-primary" style="margin-right:4px;">${esc(r)}</span>`).join('')
+                                        : `<span class="ds-badge ds-badge-neutral">${esc(rel.cargo || 'Comercial')}</span>`;
+                                    const phone = esc(rel.telefonoCorporativo || person.telefono || '-');
+                                    const email = esc(rel.correoCorporativo || person.correo || '-');
+                                    const statusBadge = isAct
+                                        ? '<span class="ds-badge ds-badge-success">Vigente</span>'
+                                        : '<span class="ds-badge ds-badge-neutral">Histórico</span>';
+                                    return `
+                                        <tr>
+                                            <td>
+                                                <div style="font-weight:700; color:var(--ds-text-primary, #0F172A);">${pName}</div>
+                                                <div style="font-size:0.75rem; color:var(--ds-text-muted, #64748B);">${person.dui ? `DUI: ${esc(person.dui)}` : 'Contacto comercial (DUI no requerido)'}</div>
+                                            </td>
+                                            <td>
+                                                <div style="font-weight:600; font-size:0.83rem; color:var(--ds-text-primary, #0F172A); margin-bottom:2px;">${esc(rel.cargo || 'Interlocutor Comercial')}</div>
+                                                <div>${roleBadges}</div>
+                                            </td>
+                                            <td style="font-size:0.82rem; color:var(--ds-text-secondary, #334155);">
+                                                <div>📞 ${phone}</div>
+                                                <div>✉️ ${email}</div>
+                                            </td>
+                                            <td>${statusBadge}</td>
+                                            <td style="text-align:right; white-space:nowrap;">
+                                                ${pId ? `<button type="button" class="btn-table-action" onclick="if(typeof ContactsUI!=='undefined'&&ContactsUI.openContact360View){ContactsUI.openContact360View('${pId}',{originAccountId:'${esc(clientId)}'})}">👤 Contacto 360</button>` : ''}
+                                                <button type="button" class="btn-table-action" onclick="ContactsUI.openAccountContactsModal('${esc(clientId)}')">⚙️ Gestionar</button>
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            } else {
+                fullBox.innerHTML = `
+                    <div style="padding:1rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:8px; background:var(--ds-bg-subtle, #F8FAFC);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+                            <div>
+                                <div style="font-weight:700; font-size:0.9rem; color:var(--ds-text-primary, #0F172A);">
+                                    ${fallbackContactName ? `👤 Interlocutor registrado: ${esc(fallbackContactName)}` : 'Sin relaciones multiproceso registradas en account_contacts'}
+                                </div>
+                                <div style="font-size:0.8rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
+                                    📞 ${esc(c.telefono || 'Sin teléfono')} · ✉️ ${esc(c.correo || 'Sin correo')}
+                                    ${c.rep_legal ? ` · ⚖️ Representante Legal: <strong>${esc(c.rep_legal)}</strong>` : ''}
+                                </div>
+                                <div style="font-size:0.76rem; color:var(--ds-text-muted, #64748B); margin-top:4px;">
+                                    Nota de arquitectura B6: No se exige "Contacto Principal de Cuenta". Puedes vincular múltiples contactos comerciales, técnicos, representantes legales o apoderados reutilizando identidades globales.
+                                </div>
+                            </div>
+                            <button type="button" class="btn-primary" style="padding:0.45rem 0.9rem; font-size:0.82rem;" onclick="ContactsUI.openAccountContactsModal('${esc(clientId)}')">
+                                👥 Abrir Gestor de Contactos de la Cuenta
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    function renderAccount360Hub(c, activeTab = 'resumen') {
+        if (typeof document === 'undefined' || typeof document.getElementById !== 'function' || !c) return;
+        const hubContainer = document.getElementById('account-360-hub-container');
+        if (!hubContainer) return;
+
+        // First rescue #client-expediente-section back into #clientForm before replacing hubContainer.innerHTML
+        _restoreExpedienteToForm();
+
+        const validTabs = ['resumen', 'contactos', 'oportunidades', 'legal', 'finanzas', 'ficha'];
+        const tab = validTabs.includes(activeTab) ? activeTab : 'resumen';
+        _activeAccount360State.clientId = c.id;
+        _activeAccount360State.activeTab = tab;
+
+        const esc = _deps.escapeHtmlDoc;
+        const currentUser = _deps.getCurrentUser();
+        const isManager = Boolean(currentUser && currentUser.role === 'manager');
+        const isNatural = c.tipo === 'natural';
+        const isExport = c.es_exportacion === true || c.es_exportacion === 'true';
+        const isGranContrib = c.is_gran_contribuyente === true || c.is_gran_contribuyente === 'true';
+        const isAbsorbed = Boolean(typeof c.fusionada_en === 'string' && c.fusionada_en.trim());
+
+        const displayName = isNatural
+            ? `${c.nombres || ''} ${c.apellidos || ''}`.trim()
+            : (c.empresa || 'Cuenta Comercial');
+
+        const metrics = _computeAccount360MetricsSafe(c.id);
+        const docsObj = (c.documentos && typeof c.documentos === 'object') ? c.documentos : {};
+        const uploadedDocsCount = Object.keys(docsObj).filter(k => docsObj[k] && (docsObj[k].storagePath || docsObj[k].url || docsObj[k].fileName)).length;
+        const requiredDocsCount = isNatural ? 3 : 6;
+        const legalStatusBadge = uploadedDocsCount >= requiredDocsCount
+            ? `<span class="ds-badge ds-badge-success">⚖️ Expediente Legal (${uploadedDocsCount}/${requiredDocsCount})</span>`
+            : `<span class="ds-badge ds-badge-warning">⚖️ Doc. Legal (${uploadedDocsCount}/${requiredDocsCount})</span>`;
+
+        const cxcBadge = metrics.overdueAmount > 0
+            ? `<span class="ds-badge ds-badge-danger">Vencido: ${_formatUsdB6(metrics.overdueAmount)}</span>`
+            : (metrics.saldoPorCobrar > 0
+                ? `<span class="ds-badge ds-badge-warning">Por vencer</span>`
+                : `<span class="ds-badge ds-badge-success">Al día</span>`);
+
+        const kpiStripHtml = tab === 'legal' ? '' : `
+            <div class="ds-kpi-grid" style="margin-bottom: 0.75rem;">
+                <div class="ds-kpi-card">
+                    <span class="ds-kpi-label">Facturación Histórica</span>
+                    <div class="ds-kpi-value">${_formatUsdB6(metrics.facturacionTotal)}</div>
+                    <div class="ds-kpi-sub">
+                        <span class="ds-badge ds-badge-success">${metrics.wonCount} ganadas</span>
+                        <span>Ticket prom: ${_formatUsdB6(metrics.ticketPromedio)}</span>
+                    </div>
+                </div>
+                <div class="ds-kpi-card">
+                    <span class="ds-kpi-label">Pipeline Activo</span>
+                    <div class="ds-kpi-value" style="color:var(--ds-primary, #0062B8);">${_formatUsdB6(metrics.pipelineActivo)}</div>
+                    <div class="ds-kpi-sub">
+                        <span class="ds-badge ds-badge-info">${metrics.activeCount} activas</span>
+                        <span>${metrics.opportunitiesNeedingAttention.length > 0 ? `<strong style="color:var(--ds-warning, #B45309);">⚠️ ${metrics.opportunitiesNeedingAttention.length} por atender</strong>` : 'Al día en seguimiento'}</span>
+                    </div>
+                </div>
+                <div class="ds-kpi-card">
+                    <span class="ds-kpi-label">Saldo Pendiente (CxC)</span>
+                    <div class="ds-kpi-value" style="color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'};">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
+                    <div class="ds-kpi-sub">
+                        ${cxcBadge}
+                        <span>Cobrado: ${_formatUsdB6(metrics.totalCobrado)}</span>
+                    </div>
+                </div>
+                <div class="ds-kpi-card">
+                    <span class="ds-kpi-label">Win Rate &amp; Propuestas</span>
+                    <div class="ds-kpi-value">${metrics.winRate.toFixed(1)}%</div>
+                    <div class="ds-kpi-sub">
+                        <span class="ds-badge ds-badge-primary" title="Cada oportunidad con propuesta entregada cuenta máximo 1 vez aunque tenga versiones v1..vN">${metrics.propuestasPresentadasCount} propuestas presentadas</span>
+                        <span>Ciclo: ${metrics.cicloPromedioDias || 0}d</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        let tabBodyHtml = '';
+        if (tab === 'resumen') {
+            const oppsRowsHtml = metrics.opportunities.length === 0
+                ? `<div style="padding:1.2rem; text-align:center; color:var(--ds-text-muted, #64748B); font-size:0.84rem;">
+                    Esta cuenta aún no registra oportunidades comerciales.
+                    <div style="margin-top:0.5rem;">
+                        <button type="button" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Crear Primera Oportunidad</button>
+                    </div>
+                   </div>`
+                : `<div class="table-responsive">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th>Oportunidad / Proyecto</th>
+                                <th>Etapa</th>
+                                <th>Ciclo de Propuesta</th>
+                                <th style="text-align:right;">Monto</th>
+                                <th>Seguimiento</th>
+                                <th style="text-align:right;">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${metrics.opportunities.slice(0, 8).map(p => {
+                                const amt = Number(p.estado === 'ganado' ? (p.precio_pactado || p.precio_final || p.precio_cotizado || 0) : (p.precio_cotizado || p.precio_pactado || 0));
+                                const attnBadge = p.requiresAttention
+                                    ? `<span class="ds-badge ds-badge-warning" title="${esc((p.attentionReasons || []).join(' · '))}">⚠️ ${esc(p.attentionReasons[0] || 'Atención')}</span>`
+                                    : (p.estado === 'activo' ? '<span class="ds-badge ds-badge-success">✅ Al día</span>' : '<span class="ds-badge ds-badge-neutral">Cerrada</span>');
+                                return `
+                                    <tr>
+                                        <td>
+                                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || 'Proyecto sin título')}</div>
+                                            <div style="font-size:0.74rem; color:var(--ds-text-muted, #64748B); font-family:monospace;">${esc(p.codigo || p.id)} · Vend: ${esc(p.vendedor || '-')}</div>
+                                        </td>
+                                        <td>${_renderStageBadgeB6(p)}</td>
+                                        <td>${_renderProposalLifecycleBadgeB6(p.proposalLifecycle)}</td>
+                                        <td style="text-align:right; font-weight:700; font-variant-numeric:tabular-nums;">${_formatUsdB6(amt)}</td>
+                                        <td>${attnBadge}</td>
+                                        <td style="text-align:right;">
+                                            <button type="button" class="btn-table-action" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Abrir</button>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                   </div>`;
+
+            tabBodyHtml = `
+                <div class="ds-account-360-split">
+                    <div style="display:flex; flex-direction:column; gap:0.85rem;">
+                        <div class="ds-panel-box">
+                            <div class="ds-panel-box-header">
+                                <div class="ds-panel-box-title">
+                                    <span>💼 Oportunidades de la Cuenta y Atención Prioritaria</span>
+                                    ${metrics.opportunitiesNeedingAttention.length > 0 ? `<span class="ds-badge ds-badge-warning">⚠️ ${metrics.opportunitiesNeedingAttention.length} requieren atención</span>` : ''}
+                                </div>
+                                <div style="display:flex; gap:0.4rem;">
+                                    <button type="button" class="btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.76rem;" onclick="ClientsUI.setAccount360Tab('oportunidades')">Ver todas (${metrics.totalOpportunitiesCount})</button>
+                                    <button type="button" class="btn-primary" style="padding:0.3rem 0.7rem; font-size:0.76rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Nueva Oportunidad</button>
+                                </div>
+                            </div>
+                            ${oppsRowsHtml}
+                        </div>
+
+                        <div class="ds-panel-box">
+                            <div class="ds-panel-box-header">
+                                <div class="ds-panel-box-title">
+                                    <span>📐 Regla Comercial de Propuestas Presentadas (1 máx. por oportunidad)</span>
+                                </div>
+                                <span class="ds-badge ds-badge-primary">${metrics.propuestasPresentadasCount} presentadas de ${metrics.totalOpportunitiesCount} op.</span>
+                            </div>
+                            <div style="display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0.55rem;">
+                                <div style="padding:0.55rem 0.7rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div style="font-size:0.7rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">1. Preliminar</div>
+                                    <div style="font-size:1.1rem; font-weight:800; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${metrics.proposalCountsByState.preliminar}</div>
+                                    <div style="font-size:0.72rem; color:var(--ds-text-secondary, #334155);">Prospecto / Levantamiento</div>
+                                </div>
+                                <div style="padding:0.55rem 0.7rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div style="font-size:0.7rem; font-weight:700; color:var(--ds-warning, #B45309); text-transform:uppercase;">2. Oferta Preparada</div>
+                                    <div style="font-size:1.1rem; font-weight:800; color:var(--ds-warning, #B45309); margin-top:2px;">${metrics.proposalCountsByState.oferta_preparada}</div>
+                                    <div style="font-size:0.72rem; color:var(--ds-text-secondary, #334155);">Cotización sin entrega</div>
+                                </div>
+                                <div style="padding:0.55rem 0.7rem; border:1px solid var(--ds-primary-border, #93C5FD); border-radius:6px; background:var(--ds-primary-soft, #EBF3FA);">
+                                    <div style="font-size:0.7rem; font-weight:700; color:var(--ds-primary, #0062B8); text-transform:uppercase;">3. Propuesta Entregada</div>
+                                    <div style="font-size:1.1rem; font-weight:800; color:var(--ds-primary, #0062B8); margin-top:2px;">${metrics.proposalCountsByState.propuesta_entregada}</div>
+                                    <div style="font-size:0.72rem; color:var(--ds-text-secondary, #334155);">En negociación / cierre</div>
+                                </div>
+                                <div style="padding:0.55rem 0.7rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div style="font-size:0.7rem; font-weight:700; color:var(--ds-success, #047857); text-transform:uppercase;">4. Decidida</div>
+                                    <div style="font-size:1.1rem; font-weight:800; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${metrics.proposalCountsByState.decidida}</div>
+                                    <div style="font-size:0.72rem; color:var(--ds-text-secondary, #334155);">${metrics.wonCount} ganadas · ${metrics.lostCount} perdidas</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; flex-direction:column; gap:0.85rem;">
+                        <div class="ds-panel-box">
+                            <div class="ds-panel-box-header">
+                                <div class="ds-panel-box-title">
+                                    <span>👥 Contactos de la Cuenta</span>
+                                </div>
+                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="ContactsUI.openAccountContactsModal('${esc(c.id)}')">Gestionar</button>
+                            </div>
+                            <div id="account-360-summary-contacts-preview">
+                                <div style="font-size:0.8rem; color:var(--ds-text-muted, #64748B);">Cargando contactos vinculados...</div>
+                            </div>
+                        </div>
+
+                        <div class="ds-panel-box">
+                            <div class="ds-panel-box-header">
+                                <div class="ds-panel-box-title">
+                                    <span>⚖️ Síntesis Legal y Fiscal</span>
+                                </div>
+                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="ClientsUI.setAccount360Tab('legal')">Ver Expediente</button>
+                            </div>
+                            <div style="font-size:0.82rem; color:var(--ds-text-secondary, #334155); display:flex; flex-direction:column; gap:0.4rem;">
+                                <div><strong>Régimen:</strong> ${isNatural ? 'Persona Natural' : 'Persona Jurídica'} ${isGranContrib ? '· 🏛️ Gran Contribuyente (1% IVA)' : ''} ${isExport ? '· ✈️ Exportación (0% IVA)' : ''}</div>
+                                <div><strong>NIT:</strong> <span style="font-family:monospace;">${esc(c.nit || 'Pendiente')}</span> · <strong>${isNatural ? 'DUI' : 'NRC'}:</strong> <span style="font-family:monospace;">${esc(isNatural ? (c.dui || 'Pendiente') : (c.nrc || 'Pendiente'))}</span></div>
+                                ${!isNatural ? `<div><strong>Representante Legal:</strong> ${esc(c.rep_legal || 'Pendiente')}</div>` : ''}
+                                <div><strong>Facturación Electrónica (DTE):</strong> ${esc(c.correo_fact || c.correo || 'Sin correo')}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (tab === 'contactos') {
+            tabBodyHtml = `
+                <div class="ds-panel-box">
+                    <div class="ds-panel-box-header">
+                        <div>
+                            <div class="ds-panel-box-title">👥 Contactos Vinculados a ${esc(displayName)}</div>
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
+                                Personas asociadas a esta cuenta comercial (roles comerciales, técnicos, representantes legales y apoderados). Una misma persona puede tener vínculos con varias empresas sin duplicar su identidad.
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <button type="button" class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="if(typeof showView==='function'){showView('contacts-view')}">🌐 Directorio Global de Contactos</button>
+                            <button type="button" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem;" onclick="ContactsUI.openAccountContactsModal('${esc(c.id)}')">+ Vincular / Gestionar Contactos</button>
+                        </div>
+                    </div>
+                    <div id="account-360-contacts-dynamic-box">
+                        <div style="padding:1rem; color:var(--ds-text-muted, #64748B); font-size:0.84rem;">Cargando directorio de contactos de la cuenta...</div>
+                    </div>
+                </div>
+            `;
+        } else if (tab === 'oportunidades') {
+            tabBodyHtml = `
+                <div class="ds-panel-box">
+                    <div class="ds-panel-box-header">
+                        <div>
+                            <div class="ds-panel-box-title">💼 Historial Completo de Oportunidades y Propuestas (${metrics.totalOpportunitiesCount})</div>
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
+                                Propuestas presentadas: <strong>${metrics.propuestasPresentadasCount}</strong> (cada oportunidad cuenta máximo 1 vez aunque tenga múltiples versiones v1..vN).
+                            </div>
+                        </div>
+                        <button type="button" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Nueva Oportunidad</button>
+                    </div>
+                    ${metrics.opportunities.length === 0
+                        ? `<div style="padding:1.5rem; text-align:center; color:var(--ds-text-muted, #64748B);">No hay oportunidades registradas para esta cuenta.</div>`
+                        : `<div class="table-responsive">
+                            <table style="width:100%; border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th>Código</th>
+                                        <th>Proyecto</th>
+                                        <th>Vendedor</th>
+                                        <th>Etapa</th>
+                                        <th>Estado de Propuesta</th>
+                                        <th>Evidencia Entrega</th>
+                                        <th style="text-align:right;">Monto</th>
+                                        <th>Atención</th>
+                                        <th style="text-align:right;">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${metrics.opportunities.map(p => {
+                                        const lc = p.proposalLifecycle || {};
+                                        const amt = Number(p.estado === 'ganado' ? (p.precio_pactado || p.precio_final || p.precio_cotizado || 0) : (p.precio_cotizado || p.precio_pactado || 0));
+                                        const evLabel = lc.deliveryEvidenceType === 'explicit'
+                                            ? `<span style="color:var(--ds-success, #047857); font-weight:600; font-size:0.76rem;">📅 ${esc(lc.explicitDeliveryDate || 'Explícita')}</span>`
+                                            : (lc.deliveryEvidenceType === 'inferred'
+                                                ? `<span style="color:var(--ds-primary, #0062B8); font-size:0.76rem;" title="Inferida por avance histórico a negociación/cierre/ganado (sin inventar fecha)">🔄 Inferida por etapa</span>`
+                                                : `<span style="color:var(--ds-text-muted, #64748B); font-size:0.76rem;">—</span>`);
+                                        const attnBadge = p.requiresAttention
+                                            ? `<span class="ds-badge ds-badge-warning">⚠️ ${esc((p.attentionReasons && p.attentionReasons[0]) || 'Atender')}</span>`
+                                            : '<span class="ds-badge ds-badge-neutral">Normal</span>';
+                                        return `
+                                            <tr>
+                                                <td style="font-family:monospace; font-size:0.8rem; font-weight:600;">${esc(p.codigo || p.id)}</td>
+                                                <td style="font-weight:700; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || '-')}</td>
+                                                <td style="font-size:0.82rem;">${esc(p.vendedor || '-')}</td>
+                                                <td>${_renderStageBadgeB6(p)}</td>
+                                                <td>${_renderProposalLifecycleBadgeB6(lc)}</td>
+                                                <td>${evLabel}</td>
+                                                <td style="text-align:right; font-weight:700; font-variant-numeric:tabular-nums;">${_formatUsdB6(amt)}</td>
+                                                <td>${attnBadge}</td>
+                                                <td style="text-align:right;">
+                                                    <button type="button" class="btn-table-action" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Expediente</button>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                           </div>`}
+                </div>
+            `;
+        } else if (tab === 'legal') {
+            tabBodyHtml = `
+                <div class="ds-panel-box" style="margin-bottom:0.85rem;">
+                    <div class="ds-panel-box-header">
+                        <div>
+                            <div class="ds-panel-box-title">⚖️ Identidad Jurídica, Fiscal y Gobernanza Documental B3</div>
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
+                                Vista unificada del expediente legal y fiscal de la cuenta (sin duplicar bloques de carga ni repetir KPIs comerciales).
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:0.45rem; flex-wrap:wrap;">
+                            ${!isNatural ? `<button type="button" class="btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="ClientDocuments.openB3DossierHistoryModal('${esc(c.id)}')">📜 Historial Legal B3</button>` : ''}
+                            <button type="button" class="btn-primary" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="ClientsUI.setAccount360Tab('ficha')">✏️ Editar Datos Fiscales</button>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:0.65rem; font-size:0.82rem;">
+                        <div style="padding:0.55rem 0.75rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; color:var(--ds-text-muted, #64748B); font-weight:700; text-transform:uppercase;">Razón Social / Titular</div>
+                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${esc(displayName)}</div>
+                        </div>
+                        <div style="padding:0.55rem 0.75rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; color:var(--ds-text-muted, #64748B); font-weight:700; text-transform:uppercase;">Identificación Fiscal</div>
+                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A); font-family:monospace; margin-top:2px;">NIT: ${esc(c.nit || 'Pendiente')} · ${isNatural ? `DUI: ${esc(c.dui || 'Pendiente')}` : `NRC: ${esc(c.nrc || 'Pendiente')}`}</div>
+                        </div>
+                        <div style="padding:0.55rem 0.75rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; color:var(--ds-text-muted, #64748B); font-weight:700; text-transform:uppercase;">Representación Legal</div>
+                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${esc(isNatural ? 'Titular Persona Natural' : (c.rep_legal || 'Sin RL registrado'))}</div>
+                        </div>
+                        <div style="padding:0.55rem 0.75rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; color:var(--ds-text-muted, #64748B); font-weight:700; text-transform:uppercase;">Condición Tributaria</div>
+                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${isGranContrib ? '🏛️ Gran Contribuyente (1%)' : 'Régimen General'} ${isExport ? '· ✈️ Exportación' : ''}</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="account-360-legal-dossier-mount"></div>
+            `;
+        } else if (tab === 'finanzas') {
+            const wonOpps = metrics.opportunities.filter(p => p.estado === 'ganado' || (Array.isArray(p.facturas) && p.facturas.length > 0));
+            tabBodyHtml = `
+                <div class="ds-panel-box">
+                    <div class="ds-panel-box-header">
+                        <div>
+                            <div class="ds-panel-box-title">💰 Estado de Cuenta, Facturación y Cobranza B5</div>
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
+                                Facturado Histórico: <strong>${_formatUsdB6(metrics.facturacionTotal)}</strong> · Cobrado: <strong style="color:var(--ds-success, #047857);">${_formatUsdB6(metrics.totalCobrado)}</strong> · Saldo CxC: <strong style="color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'};">${_formatUsdB6(metrics.saldoPorCobrar)}</strong> · Margen Real Prom.: <strong>${metrics.margenRealPct.toFixed(1)}%</strong>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="if(typeof showView==='function'){showView('projects-view')}">🏗️ Ir a Proyectos y Cobros</button>
+                    </div>
+                    ${wonOpps.length === 0
+                        ? `<div style="padding:1.4rem; text-align:center; color:var(--ds-text-muted, #64748B);">Esta cuenta aún no registra proyectos ganados ni facturas emitidas.</div>`
+                        : `<div class="table-responsive">
+                            <table style="width:100%; border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th>Código / Proyecto</th>
+                                        <th>Facturas</th>
+                                        <th style="text-align:right;">Pactado / Facturado</th>
+                                        <th style="text-align:right;">Cobrado</th>
+                                        <th style="text-align:right;">Saldo Pendiente</th>
+                                        <th>Estado Cobranza</th>
+                                        <th style="text-align:right;">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${wonOpps.map(p => {
+                                        const invs = Array.isArray(p.facturas) ? p.facturas.filter(f => f && String(f.estado || '').toLowerCase() !== 'anulada') : [];
+                                        const billed = invs.length > 0
+                                            ? invs.reduce((s, f) => s + (Number(f.montoTotal ?? f.monto ?? 0) || 0), 0)
+                                            : Number(p.precio_final || p.precio_pactado || p.precio_cotizado || 0);
+                                        const paid = invs.length > 0
+                                            ? invs.reduce((s, f) => s + (Number(f.montoPagado ?? 0) || 0), 0)
+                                            : (p.pago_completado ? billed : 0);
+                                        const bal = Math.max(0, Math.round((billed - paid) * 100) / 100);
+                                        const invLabels = invs.length > 0
+                                            ? invs.map(f => esc(f.numeroFactura || f.correlativo || f.id || 'Fact')).join(', ')
+                                            : (p.n_factura ? esc(p.n_factura) : 'Pendiente facturar');
+                                        const statusBadge = bal <= 0.01 && billed > 0
+                                            ? '<span class="ds-badge ds-badge-success">Pagado</span>'
+                                            : (paid > 0 ? '<span class="ds-badge ds-badge-warning">Abono Parcial</span>' : '<span class="ds-badge ds-badge-info">Pendiente</span>');
+                                        return `
+                                            <tr>
+                                                <td>
+                                                    <div style="font-weight:700; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || '-')}</div>
+                                                    <div style="font-size:0.74rem; color:var(--ds-text-muted, #64748B); font-family:monospace;">${esc(p.codigo || p.id)}</div>
+                                                </td>
+                                                <td style="font-family:monospace; font-size:0.8rem;">${invLabels}</td>
+                                                <td style="text-align:right; font-weight:700; font-variant-numeric:tabular-nums;">${_formatUsdB6(billed)}</td>
+                                                <td style="text-align:right; color:var(--ds-success, #047857); font-weight:700; font-variant-numeric:tabular-nums;">${_formatUsdB6(paid)}</td>
+                                                <td style="text-align:right; font-weight:700; font-variant-numeric:tabular-nums; color:${bal > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-muted, #64748B)'};">${_formatUsdB6(bal)}</td>
+                                                <td>${statusBadge}</td>
+                                                <td style="text-align:right;">
+                                                    <button type="button" class="btn-table-action" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Ver</button>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                           </div>`}
+                </div>
+            `;
+        }
+
+        const ctxCardEl = document.getElementById('client-detail-context-card');
+        if (ctxCardEl && ctxCardEl.style) ctxCardEl.style.display = 'none';
+
+        hubContainer.style.display = 'block';
+        hubContainer.innerHTML = `
+            <div class="ds-record-header" style="padding:0.75rem 1rem; margin-bottom:0.7rem;">
+                <div class="ds-record-header-top" style="margin-bottom:0;">
+                    <div>
+                        <div class="ds-breadcrumb" style="margin-bottom:0.2rem;">
+                            <a href="javascript:void(0)" onclick="closeClientDetailView()" style="color:var(--ds-primary, #0062B8); text-decoration:none; font-weight:700;">← Directorio de Cuentas</a>
+                            <span>/</span>
+                            <span>Cuenta 360</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                            <h2 class="ds-record-title" style="font-size:1.2rem; margin:0;">${esc(displayName)}</h2>
+                            <span class="ds-badge ${isNatural ? 'ds-badge-neutral' : 'ds-badge-primary'}">${isNatural ? '👤 Persona Natural' : '🏢 Persona Jurídica'}</span>
+                            ${isGranContrib ? '<span class="ds-badge ds-badge-warning">🏛️ Gran Contribuyente (1%)</span>' : ''}
+                            ${isExport ? '<span class="ds-badge ds-badge-info">✈️ Exportación (0%)</span>' : ''}
+                            ${legalStatusBadge}
+                        </div>
+                        <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:0.25rem;">
+                            NIT: <strong style="font-family:monospace;">${esc(c.nit || 'Pendiente')}</strong> ·
+                            ${isNatural ? `DUI: <strong style="font-family:monospace;">${esc(c.dui || 'Pendiente')}</strong>` : `NRC: <strong style="font-family:monospace;">${esc(c.nrc || 'Pendiente')}</strong>`} ·
+                            📞 ${esc(c.telefono || 'Sin teléfono')} · ✉️ ${esc(c.correo || 'Sin correo')}
+                        </div>
+                    </div>
+                    <div class="ds-record-actions">
+                        <button type="button" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Nueva Oportunidad</button>
+                        <button type="button" class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="ContactsUI.openAccountContactsModal('${esc(c.id)}')">👥 Contactos</button>
+                        ${!isNatural ? `<button type="button" class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="ClientDocuments.openB3DossierHistoryModal('${esc(c.id)}')">📜 Historial Legal</button>` : ''}
+                        ${isManager && !isAbsorbed ? `<button type="button" class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="openAccountMergePanel('${esc(c.id)}')">🔀 Fusionar</button>` : ''}
+                    </div>
+                </div>
+            </div>
+
+            ${kpiStripHtml}
+
+            <div class="ds-tabs-bar" role="tablist" aria-label="Secciones de Cuenta 360">
+                <button type="button" class="ds-tab-btn ${tab === 'resumen' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('resumen')">📊 Resumen 360</button>
+                <button type="button" class="ds-tab-btn ${tab === 'contactos' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('contactos')">👥 Contactos</button>
+                <button type="button" class="ds-tab-btn ${tab === 'oportunidades' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('oportunidades')">💼 Oportunidades (${metrics.totalOpportunitiesCount})</button>
+                <button type="button" class="ds-tab-btn ${tab === 'legal' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('legal')">⚖️ Legal y Fiscal</button>
+                <button type="button" class="ds-tab-btn ${tab === 'finanzas' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('finanzas')">💰 Finanzas e Historial</button>
+                <button type="button" class="ds-tab-btn ${tab === 'ficha' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('ficha')">✏️ Editar Datos Fiscales</button>
+            </div>
+
+            <div id="account-360-tab-panel-body">
+                ${tabBodyHtml}
+            </div>
+        `;
+
+        const contentEl = document.getElementById('clientDetailContent');
+        if (tab === 'ficha') {
+            if (contentEl && contentEl.style) contentEl.style.display = 'block';
+        } else {
+            if (contentEl && contentEl.style) contentEl.style.display = 'none';
+            if (tab === 'legal') {
+                const mountEl = document.getElementById('account-360-legal-dossier-mount');
+                const expEl = document.getElementById('client-expediente-section');
+                if (mountEl && expEl && typeof mountEl.appendChild === 'function') {
+                    mountEl.appendChild(expEl);
+                    if (expEl.style) expEl.style.display = 'block';
+                }
+            }
+        }
+
+        if (tab === 'resumen' || tab === 'contactos') {
+            _loadAccount360ContactsAsync(c.id, c);
         }
     }
 
@@ -1184,21 +1927,21 @@
         const cleanPhoneDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
 
         const typeBadge = isJuridica
-            ? `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.72rem;">🏢 Empresa</span>`
-            : `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35); font-size: 0.72rem;">👤 Persona Natural</span>`;
+            ? `<span class="badge ds-badge ds-badge-primary" style="font-size: 0.72rem;">🏢 Empresa</span>`
+            : `<span class="badge ds-badge ds-badge-neutral" style="font-size: 0.72rem;">👤 Persona Natural</span>`;
 
         const granContribBadge = isGranContribuyente
-            ? `<span class="badge" style="background: rgba(212, 175, 55, 0.15); color: var(--brand-gold); border: 1px solid rgba(212, 175, 55, 0.4); font-size: 0.72rem;">🏛️ Gran Contribuyente (1% IVA)</span>`
+            ? `<span class="badge ds-badge ds-badge-warning" style="font-size: 0.72rem;">🏛️ Gran Contribuyente (1% IVA)</span>`
             : '';
         const exportBadge = isExport
-            ? `<span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.4); font-size: 0.72rem;">✈️ Exportación (0% IVA)</span>`
+            ? `<span class="badge ds-badge ds-badge-info" style="font-size: 0.72rem;">✈️ Exportación (0% IVA)</span>`
             : '';
 
         let contactPersonHtml = '';
         if (contactPerson) {
             contactPersonHtml = `<span class="client-contact-person" title="Contacto comercial">👤 Contacto: <strong>${_deps.escapeHtmlDoc(contactPerson)}</strong></span>`;
         } else {
-            contactPersonHtml = `<span class="client-contact-person" style="color:var(--text-muted); font-weight:normal;" title="Sin contacto específico">👤 Sin contacto asignado</span>`;
+            contactPersonHtml = `<span class="client-contact-person" style="color:var(--ds-text-muted, var(--text-muted)); font-weight:normal;" title="Sin contacto específico">👤 Sin contacto asignado</span>`;
         }
 
         const telHtml = (phone && cleanPhoneDigits)
@@ -1217,10 +1960,15 @@
             ? `<button type="button" class="btn-primary btn-quick-followup" onclick="openRecordFollowUpModal('${p.id}')" title="Registrar contacto de seguimiento">📞 Registrar Gestión</button>`
             : '';
 
+        const safeClientId = p.clientId ? _deps.escapeHtmlDoc(p.clientId) : '';
+        const accountLinkBtn = safeClientId
+            ? `<button type="button" class="btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.78rem;" onclick="if(typeof openClientDetailView==='function'){openClientDetailView('${safeClientId}',{originView:'detail-view',prospectId:'${_deps.escapeHtmlDoc(p.id || '')}'})}" title="Ir a Cuenta 360">🏢 Cuenta 360</button>`
+            : '';
+
         cardEl.innerHTML = `
             <div class="client-contact-main">
                 <div class="client-contact-name-row">
-                    <span class="client-contact-company">${_deps.escapeHtmlDoc(clientName)}</span>
+                    <a href="javascript:void(0)" class="client-contact-company ds-account-link" onclick="if(typeof openClientDetailView==='function'&&'${safeClientId}'){openClientDetailView('${safeClientId}',{originView:'detail-view',prospectId:'${_deps.escapeHtmlDoc(p.id || '')}'})}" title="Abrir Cuenta 360">${_deps.escapeHtmlDoc(clientName)}</a>
                     ${typeBadge}
                     ${granContribBadge}
                     ${exportBadge}
@@ -1234,7 +1982,8 @@
                     ${emailHtml}
                 </div>
             </div>
-            <div class="client-contact-actions">
+            <div class="client-contact-actions" style="display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
+                ${accountLinkBtn}
                 ${quickFollowUpBtn}
             </div>
         `;
@@ -1623,6 +2372,9 @@
         renderAccountMergePreview,
         confirmAndExecuteAccountMerge,
         navigateToCanonicalAccount,
+        renderAccount360Hub,
+        setAccount360Tab,
+        openNewOpportunityFromAccount,
         _deps
     };
 
