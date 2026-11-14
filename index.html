@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,7 +18,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-functions-compat.js"></script>
 </head>
-<body>
+<body class="ds-scope-light">
     <!-- Login Screen -->
     <div id="login-screen" class="modal ds-scope-light" style="display:flex; z-index: 1000; background: var(--bg-dark);">
         <div class="modal-content glass-panel" style="max-width: 400px; width: 92%; text-align: center; margin: auto;">
@@ -1546,7 +1546,7 @@
             <!-- ===================================================================== -->
 
             <!-- Vista Global: Directorio Independiente de Contactos -->
-            <section id="contacts-view" class="view-section ds-scope-light" data-ds-scope="light" style="display: none;">
+            <section id="contacts-view" class="view-section ds-scope-light" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <h1 style="display:flex; align-items:center; gap:0.5rem;">👥 Directorio Global de Contactos</h1>
@@ -1607,7 +1607,7 @@
             </section>
 
             <!-- Vista: Contacto 360 (Ficha Integral de Persona y Relaciones Multiempresa) -->
-            <section id="contact-360-view" class="view-section ds-scope-light" data-ds-scope="light" style="display: none;">
+            <section id="contact-360-view" class="view-section ds-scope-light" data-ds-scope="light">
                 <div id="contact-360-status" class="alert-feedback-banner" style="display: none; margin-bottom: 0.85rem;"></div>
                 <div id="contact-360-content-container">
                     <!-- Renderizado dinámicamente por ContactsUI.openContact360View -->

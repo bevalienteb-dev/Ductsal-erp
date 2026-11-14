@@ -2887,20 +2887,23 @@ function applyRolePermissions() {
 
     if (role === 'manager') {
         currentListMode = 'pipeline';
-        [navDashboard, navProjects, navSettings, navUsers, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navDashboard, navProjects, navSettings, navUsers, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        if (navContacts) navContacts.style.display = 'flex';
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
     }
     else if (role === 'gestor') {
         currentListMode = 'agenda';
-        [navProjects, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        if (navContacts) navContacts.style.display = 'flex';
         if (navProjectsText) navProjectsText.textContent = 'Proyectos y Cobros';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Proyectos y Cobros';
         if (headerAction) headerAction.style.display = 'table-cell';
     }
     else if (role === 'vendedor') {
         currentListMode = 'agenda';
-        [navProjects, navList, navClients, navContacts].forEach(n => { if (n) n.style.display = 'flex'; });
+        [navProjects, navList, navClients].forEach(n => { if (n) n.style.display = 'flex'; });
+        if (navContacts) navContacts.style.display = 'flex';
         if (navProjectsText) navProjectsText.textContent = 'Mis Proyectos y Cobros Asignados';
         else if (navProjects) navProjects.innerHTML = '<span class="icon">🏗️</span> Mis Proyectos y Cobros Asignados';
         if (headerAction) headerAction.style.display = 'table-cell';

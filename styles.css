@@ -1,22 +1,5 @@
 :root,
 [data-theme="light"] {
-    /* Legacy variables kept intact during progressive view-by-view migration (Blocks 1-5) */
-    --bg-dark: #1E2337;
-    --bg-panel: rgba(255, 255, 255, 0.05);
-    --panel-border: rgba(255, 255, 255, 0.1);
-    
-    --brand-blue: #2c3553;
-    --brand-gold: #ffcc4d;
-    --brand-gold-hover: #e6b845;
-    
-    --text-primary: #ffffff;
-    --text-secondary: #a0aabf;
-    --text-muted: #6b7280;
-    
-    --success: #10b981;
-    --warning: #f59e0b;
-    --danger: #ef4444;
-
     /* =========================================================================
        DUCTSAL GLOBAL DESIGN SYSTEM TOKENS (FASE B6 — CORPORATE LIGHT DEFAULT)
        WCAG 2.2 AA Verified: Text >= 7.1:1 | Control Borders >= 4.76:1 | Focus >= 6.10:1
@@ -70,6 +53,20 @@
     --ds-radius-md: 8px;
     --ds-radius-lg: 10px;
     --ds-focus-ring: 0 0 0 3px rgba(0, 98, 184, 0.24);
+
+    /* Unified Global Corporate Light Aliases */
+    --bg-dark: var(--ds-bg-app);
+    --bg-panel: var(--ds-bg-surface);
+    --panel-border: var(--ds-border);
+    --brand-blue: #FFFFFF;
+    --brand-gold: var(--ds-brand-primary);
+    --brand-gold-hover: var(--ds-brand-primary-hover);
+    --text-primary: var(--ds-text-primary);
+    --text-secondary: var(--ds-text-secondary);
+    --text-muted: var(--ds-text-tertiary);
+    --success: #059669;
+    --warning: #D97706;
+    --danger: #DC2626;
 }
 
 [data-theme="dark"] {
@@ -91,11 +88,24 @@
     --ds-text-secondary: #CBD5E1;
     --ds-text-tertiary: #94A3B8;
     --ds-text-inverse: #0F172A;
+
+    --bg-dark: #1E2337;
+    --bg-panel: rgba(255, 255, 255, 0.05);
+    --panel-border: rgba(255, 255, 255, 0.1);
+    --brand-blue: #2c3553;
+    --brand-gold: #ffcc4d;
+    --brand-gold-hover: #e6b845;
+    --text-primary: #ffffff;
+    --text-secondary: #a0aabf;
+    --text-muted: #6b7280;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 html, body { max-width: 100vw; overflow-x: hidden; }
-body { background-color: var(--bg-dark); color: var(--text-primary); min-height: 100vh; }
+body { background-color: var(--ds-bg-app, var(--bg-dark)); color: var(--ds-text-primary, var(--text-primary)); min-height: 100vh; }
 .glass-panel { background: var(--bg-panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--panel-border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
 .app-container { display: flex; min-height: 100vh; }
 .sidebar { width: 260px; background-color: rgba(0, 0, 0, 0.2); border-right: 1px solid var(--panel-border); padding: 2rem 1rem; display: flex; flex-direction: column; }
@@ -5853,7 +5863,101 @@ body.ds-body-light,
     color: var(--ds-warning-text, #B45309) !important;
 }
 
+[data-ds-scope="light"] .stage-workflow-box,
+.ds-scope-light .stage-workflow-box {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-phone,
+.ds-scope-light .btn-contact-chip.chip-phone,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-tel,
+.ds-scope-light .contact-channel-pill.contact-channel-tel,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-tel span,
+.ds-scope-light .contact-channel-pill.contact-channel-tel span {
+    background: var(--ds-info-bg, #EFF6FF) !important;
+    color: var(--ds-info-text, #1E40AF) !important;
+    border-color: var(--ds-info-border, #93C5FD) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-whatsapp,
+.ds-scope-light .btn-contact-chip.chip-whatsapp,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-wa,
+.ds-scope-light .contact-channel-pill.contact-channel-wa,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-wa span,
+.ds-scope-light .contact-channel-pill.contact-channel-wa span {
+    background: var(--ds-success-bg, #ECFDF5) !important;
+    color: var(--ds-success-text, #065F46) !important;
+    border-color: var(--ds-success-border, #6EE7B7) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-email,
+.ds-scope-light .btn-contact-chip.chip-email,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-email,
+.ds-scope-light .contact-channel-pill.contact-channel-email,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-email span,
+.ds-scope-light .contact-channel-pill.contact-channel-email span {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+    border-color: var(--ds-warning-border, #FCD34D) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-empty,
+.ds-scope-light .contact-channel-pill.contact-channel-empty {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    color: var(--ds-text-tertiary, #475569) !important;
+    border: 1px dashed var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] [style*="color:rgba(255,255,255"],
+.ds-scope-light [style*="color:rgba(255,255,255"],
+[data-ds-scope="light"] [style*="color: rgba(255, 255, 255"],
+.ds-scope-light [style*="color: rgba(255, 255, 255"] {
+    color: var(--ds-text-tertiary, #475569) !important;
+}
+
+[data-ds-scope="light"] .proj-filter-tab .tab-count,
+.ds-scope-light .proj-filter-tab .tab-count {
+    background: #E2E8F0 !important;
+    color: #334155 !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .proj-filter-tab.active .tab-count,
+.ds-scope-light .proj-filter-tab.active .tab-count {
+    background: #DBEAFE !important;
+    color: #0062B8 !important;
+}
+
+[data-ds-scope="light"] #bi-period-filter,
+.ds-scope-light #bi-period-filter {
+    background: #FFFFFF !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    border: 1px solid var(--ds-border-control, #64748B) !important;
+    border-radius: 6px !important;
+    padding: 0.35rem 0.65rem !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] #client-detail-view > .view-header,
+.ds-scope-light #client-detail-view > .view-header,
+[data-ds-scope="light"] #client-detail-view > .detail-header,
+.ds-scope-light #client-detail-view > .detail-header {
+    display: none !important;
+}
+
 @media (max-width: 768px) {
+    .financial-balance-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    .invoice-amounts-strip {
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
     [data-ds-scope="light"] #projectsTable tr.cursor-pointer,
     .ds-scope-light #projectsTable tr.cursor-pointer {
         background: var(--ds-bg-surface, #FFFFFF) !important;
