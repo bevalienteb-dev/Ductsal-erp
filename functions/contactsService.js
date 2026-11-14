@@ -34,6 +34,7 @@ function namesFor(suffix) {
     contacts: `contacts${suffix}`,
     accountContacts: `account_contacts${suffix}`,
     periods: `periods${suffix}`,
+    opportunityContacts: `opportunity_contacts${suffix}`,
     audit: `commercialAudit${suffix}`,
     ops: `contactOps${suffix}`
   };
@@ -267,6 +268,9 @@ function createContactsService({
     gestoresSnap.docs.forEach(d => privilegedUserIds.add(d.id));
 
     return {
+      authorizedAccountIds,
+      authorizedContactIds,
+      privilegedUserIds,
       isAuthorized: (contact) => {
         if (!contact) return false;
         if (contact.createdBy === caller.cid) return true;
@@ -277,7 +281,7 @@ function createContactsService({
     };
   }
 
-  async function getContact({ caller, contactId }) {
+  async function getContact({ caller, contactId, includeDossier = false }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
     const cId = reqDocId(contactId, 'contactId');
     const snap = await col('contacts').doc(cId).get();
@@ -289,19 +293,137 @@ function createContactsService({
       throw new ServiceError('permission-denied', 'No tiene permisos para consultar los datos de esta persona');
     }
 
+    if (!includeDossier) {
+      return {
+        contact: {
+          id: contact.id,
+          nombres: contact.nombres || '',
+          apellidos: contact.apellidos || '',
+          nombre_completo: `${contact.nombres || ''} ${contact.apellidos || ''}`.trim(),
+          correo: contact.correo || null,
+          telefono: contact.telefono || null
+        }
+      };
+    }
+
+    const personalDataRestricted = Boolean(
+      authFilter !== null &&
+      contact.createdBy &&
+      contact.createdBy !== caller.cid &&
+      !authFilter.privilegedUserIds.has(contact.createdBy)
+    );
+
+    // 1. Authorized Account Relations & Periods
+    const relsSnap = await col('accountContacts').where('contactId', '==', cId).get();
+    const rawRels = relsSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(r => r && r.eliminado !== true && (authFilter === null || authFilter.authorizedAccountIds.has(r.accountId)));
+
+    const accountMap = new Map();
+    await Promise.all(Array.from(new Set(rawRels.map(r => r.accountId).filter(Boolean))).map(async aId => {
+      const aSnap = await col('clients').doc(aId).get();
+      if (aSnap.exists) accountMap.set(aId, { id: aSnap.id, ...aSnap.data() });
+    }));
+
+    const allPeriods = [];
+    const accountRelations = await Promise.all(rawRels.map(async r => {
+      const acc = accountMap.get(r.accountId) || {};
+      const accountName = acc.tipo === 'natural'
+        ? `${acc.nombres || ''} ${acc.apellidos || ''}`.trim()
+        : (acc.empresa || r.accountId);
+      const pSnap = await col('accountContacts').doc(r.id).collection(names.periods).get();
+      const relPeriods = pSnap.docs.map(pd => ({
+        id: pd.id,
+        ...pd.data(),
+        accountId: r.accountId,
+        accountName
+      }));
+      relPeriods.sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || '')));
+      allPeriods.push(...relPeriods);
+      return {
+        ...r,
+        accountName,
+        accountType: acc.tipo || 'juridica',
+        periodsCount: relPeriods.length
+      };
+    }));
+
+    accountRelations.sort((a, b) => {
+      if (a.activo !== b.activo) return a.activo ? -1 : 1;
+      return String(b.fecha_ultimo_cambio || '').localeCompare(String(a.fecha_ultimo_cambio || ''));
+    });
+    allPeriods.sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || '')));
+
+    // 2. Authorized Opportunity Participations
+    let opportunityParticipations = [];
+    try {
+      const oppLinksSnap = await col('opportunityContacts').where('contactId', '==', cId).get();
+      const rawLinks = oppLinksSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(l => l && l.eliminado !== true && l.activo !== false);
+      const oppIds = Array.from(new Set(rawLinks.map(l => l.opportunityId).filter(Boolean)));
+      const oppMap = new Map();
+      await Promise.all(oppIds.map(async oId => {
+        const oSnap = await col('prospects').doc(oId).get();
+        if (oSnap.exists) oppMap.set(oId, { id: oSnap.id, ...oSnap.data() });
+      }));
+      opportunityParticipations = rawLinks
+        .filter(l => {
+          const opp = oppMap.get(l.opportunityId);
+          if (opp && opp.eliminado === true) return false;
+          const accId = (opp && opp.clientId) || l.accountId || null;
+          if (!opp && !accId) return false;
+          if (authFilter === null) return true;
+          return (opp && opp.vendedorId === caller.cid) || (accId && authFilter.authorizedAccountIds.has(accId));
+        })
+        .map(l => {
+          const opp = oppMap.get(l.opportunityId) || {};
+          return {
+            id: l.id,
+            opportunityId: l.opportunityId,
+            accountId: l.accountId || opp.clientId || null,
+            roleId: l.roleId || l.roleCode || null,
+            roleCode: l.roleCode || l.roleId || null,
+            roleLabel: l.roleLabel || l.roleName || l.rol || 'Participante',
+            roleName: l.roleName || l.roleLabel || l.rol || 'Participante',
+            isPrimary: Boolean(l.isPrimary || l.es_principal),
+            proyecto: opp.proyecto || l.opportunityId,
+            codigo: opp.codigo || opp.id || l.opportunityId,
+            etapa: opp.etapa || 'prospecto',
+            estado: opp.estado || 'activo',
+            precio_cotizado: Number(opp.precio_cotizado || 0)
+          };
+        });
+    } catch (_) {
+      opportunityParticipations = [];
+    }
+
     return {
       contact: {
         id: contact.id,
         nombres: contact.nombres || '',
         apellidos: contact.apellidos || '',
         nombre_completo: `${contact.nombres || ''} ${contact.apellidos || ''}`.trim(),
-        correo: contact.correo || null,
-        telefono: contact.telefono || null
+        correo: personalDataRestricted ? null : (contact.correo || null),
+        telefono: personalDataRestricted ? null : (contact.telefono || null),
+        dui: contact.dui || null,
+        profesion: contact.profesion || null,
+        domicilio: contact.domicilio || null,
+        personalDataRestricted,
+        accountRelations,
+        periods: allPeriods,
+        opportunityParticipations
+      },
+      dossier: {
+        accountRelations,
+        periods: allPeriods,
+        opportunityParticipations,
+        personalDataRestricted
       }
     };
   }
 
-  async function searchContacts({ caller, q = '', limit = 20, excludeAccountId = null }) {
+  async function searchContacts({ caller, q = '', limit = 20, excludeAccountId = null, includeRelations = false }) {
     if (!CRM_ROLES.includes(caller.role)) throw new ServiceError('permission-denied', 'Permiso denegado');
     const authFilter = await getAuthorizedContactIds(caller);
 
@@ -337,17 +459,98 @@ function createContactsService({
       });
     }
 
-    const max = Math.min(Math.max(1, parseInt(limit, 10) || 20), 50);
-    const sliced = all.slice(0, max).map(c => ({
-      id: c.id,
-      nombres: c.nombres || '',
-      apellidos: c.apellidos || '',
-      nombre_completo: `${c.nombres || ''} ${c.apellidos || ''}`.trim(),
-      correo: c.correo || null,
-      telefono: c.telefono || null
-    }));
+    if (!includeRelations) {
+      const max = Math.min(Math.max(1, parseInt(limit, 10) || 20), 50);
+      const sliced = all.slice(0, max).map(c => ({
+        id: c.id,
+        nombres: c.nombres || '',
+        apellidos: c.apellidos || '',
+        nombre_completo: `${c.nombres || ''} ${c.apellidos || ''}`.trim(),
+        correo: c.correo || null,
+        telefono: c.telefono || null
+      }));
+      return { results: sliced, contacts: sliced };
+    }
 
-    return { results: sliced, contacts: sliced };
+    const max = Math.min(Math.max(1, parseInt(limit, 10) || 100), 200);
+    const slicedRaw = all.slice(0, max);
+
+    const [relsSnap, clientsSnap, oppLinksSnap, oppsSnap] = await Promise.all([
+      col('accountContacts').get(),
+      col('clients').get(),
+      col('opportunityContacts').get().catch(() => ({ docs: [] })),
+      col('prospects').get().catch(() => ({ docs: [] }))
+    ]);
+
+    const clientMap = new Map();
+    clientsSnap.docs.forEach(d => clientMap.set(d.id, { id: d.id, ...d.data() }));
+
+    const oppMap = new Map();
+    oppsSnap.docs.forEach(d => oppMap.set(d.id, { id: d.id, ...d.data() }));
+
+    const relsByContact = new Map();
+    relsSnap.docs.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (!r.contactId || r.eliminado === true) return;
+      if (authFilter !== null && !authFilter.authorizedAccountIds.has(r.accountId)) return;
+      const acc = clientMap.get(r.accountId) || {};
+      const accountName = acc.tipo === 'natural'
+        ? `${acc.nombres || ''} ${acc.apellidos || ''}`.trim()
+        : (acc.empresa || r.accountId);
+      const list = relsByContact.get(r.contactId) || [];
+      list.push({
+        id: r.id,
+        accountId: r.accountId,
+        accountName,
+        cargo: r.cargo || 'Contacto Comercial',
+        activo: r.activo === true,
+        telefono_corporativo: r.telefono_corporativo || null,
+        correo_corporativo: r.correo_corporativo || null
+      });
+      relsByContact.set(r.contactId, list);
+    });
+
+    const oppsCountByContact = new Map();
+    oppLinksSnap.docs.forEach(d => {
+      const l = d.data() || {};
+      if (!l.contactId || l.eliminado === true || l.activo === false) return;
+      const opp = oppMap.get(l.opportunityId);
+      if (opp && opp.eliminado === true) return;
+      const accId = (opp && opp.clientId) || l.accountId || null;
+      if (!opp && !accId) return;
+      if (authFilter !== null && (!opp || opp.vendedorId !== caller.cid) && (!accId || !authFilter.authorizedAccountIds.has(accId))) return;
+      oppsCountByContact.set(l.contactId, (oppsCountByContact.get(l.contactId) || 0) + 1);
+    });
+
+    const enriched = slicedRaw.map(c => {
+      const personalDataRestricted = Boolean(
+        authFilter !== null &&
+        c.createdBy &&
+        c.createdBy !== caller.cid &&
+        !authFilter.privilegedUserIds.has(c.createdBy)
+      );
+      const accountRelations = relsByContact.get(c.id) || [];
+      const activeCnt = accountRelations.filter(r => r.activo).length;
+      const oppCnt = oppsCountByContact.get(c.id) || 0;
+      return {
+        id: c.id,
+        nombres: c.nombres || '',
+        apellidos: c.apellidos || '',
+        nombre_completo: `${c.nombres || ''} ${c.apellidos || ''}`.trim(),
+        correo: personalDataRestricted ? null : (c.correo || null),
+        telefono: personalDataRestricted ? null : (c.telefono || null),
+        dui: c.dui || null,
+        personalDataRestricted,
+        accountRelations,
+        activeAccountCount: activeCnt,
+        activeAccountsCount: activeCnt,
+        totalAccountCount: accountRelations.length,
+        opportunityCount: oppCnt,
+        opportunitiesCount: oppCnt
+      };
+    });
+
+    return { results: enriched, contacts: enriched };
   }
 
   // =====================================================================================================

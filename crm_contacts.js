@@ -68,13 +68,17 @@
         return r.data;
     }
 
-    async function getContact(fb, { contactId, dbSuffix }) {
-        const r = await fb.functions().httpsCallable('getContactAdmin')({ contactId, dbSuffix });
+    async function getContact(fb, { contactId, includeDossier, dbSuffix }) {
+        const payload = { contactId, dbSuffix };
+        if (includeDossier !== undefined) payload.includeDossier = Boolean(includeDossier);
+        const r = await fb.functions().httpsCallable('getContactAdmin')(payload);
         return r.data;
     }
 
-    async function searchContacts(fb, { q, limit, excludeAccountId, dbSuffix }) {
-        const r = await fb.functions().httpsCallable('searchContactsAdmin')({ q, limit, excludeAccountId, dbSuffix });
+    async function searchContacts(fb, { q, limit, excludeAccountId, includeRelations, dbSuffix }) {
+        const payload = { q, limit, excludeAccountId, dbSuffix };
+        if (includeRelations !== undefined) payload.includeRelations = Boolean(includeRelations);
+        const r = await fb.functions().httpsCallable('searchContactsAdmin')(payload);
         return r.data;
     }
 
