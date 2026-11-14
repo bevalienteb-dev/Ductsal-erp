@@ -134,8 +134,8 @@
         const doc = _deps.getDocument();
         if (!ChartLib || !doc) return;
 
-        ChartLib.defaults.color = '#a0aabf';
-        const gold = '#ffcc4d', blue = '#3b476e', success = '#10b981', danger = '#ef4444', accent1 = '#8b5cf6', accent2 = '#f97316', cyan = '#38bdf8';
+        ChartLib.defaults.color = '#334155';
+        const gold = '#D97706', blue = '#0062B8', success = '#059669', danger = '#DC2626', accent1 = '#7C3AED', accent2 = '#EA580C', cyan = '#0284C7';
         const calc = _deps.getCrmDashboardCalc();
         const formatMoney = _deps.formatCurrency;
 
@@ -201,7 +201,7 @@
                                 type: 'bar',
                                 label: 'Ventas Ganadas ($)',
                                 data: dataVentas,
-                                backgroundColor: '#ffcc4d',
+                                backgroundColor: '#0062B8',
                                 borderRadius: 3,
                                 yAxisID: 'y'
                             },
@@ -209,7 +209,7 @@
                                 type: 'bar',
                                 label: 'Margen Bruto ($)',
                                 data: dataMargen,
-                                backgroundColor: '#10b981',
+                                backgroundColor: '#059669',
                                 borderRadius: 3,
                                 yAxisID: 'y'
                             },
@@ -217,8 +217,8 @@
                                 type: 'line',
                                 label: '% Margen',
                                 data: dataMargenPct,
-                                borderColor: '#38bdf8',
-                                backgroundColor: '#38bdf8',
+                                borderColor: '#0284C7',
+                                backgroundColor: '#0284C7',
                                 borderWidth: 2,
                                 pointRadius: 3,
                                 yAxisID: 'yPct',
@@ -232,7 +232,7 @@
                         scales: {
                             x: {
                                 display: true,
-                                ticks: { font: { size: 10 }, color: '#a0aabf' },
+                                ticks: { font: { size: 10 }, color: '#334155' },
                                 grid: { display: false }
                             },
                             y: {
@@ -240,10 +240,10 @@
                                 ticks: {
                                     callback: v => formatMoney(v),
                                     font: { size: 10 },
-                                    color: '#a0aabf'
+                                    color: '#334155'
                                 },
-                                title: { display: true, text: 'Importe ($)', font: { size: 10 }, color: '#a0aabf' },
-                                grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                                title: { display: true, text: 'Importe ($)', font: { size: 10 }, color: '#334155' },
+                                grid: { color: '#E2E8F0' }
                             },
                             yPct: {
                                 position: 'right',
@@ -253,15 +253,15 @@
                                 ticks: {
                                     callback: v => v + '%',
                                     font: { size: 10 },
-                                    color: '#a0aabf'
+                                    color: '#334155'
                                 },
-                                title: { display: true, text: '% Margen', font: { size: 10 }, color: '#a0aabf' }
+                                title: { display: true, text: '% Margen', font: { size: 10 }, color: '#334155' }
                             }
                         },
                         plugins: {
                             legend: {
                                 position: 'bottom',
-                                labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#a0aabf' }
+                                labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#334155' }
                             },
                             tooltip: {
                                 callbacks: {
@@ -421,7 +421,7 @@
                             display: true,
                             ticks: {
                                 font: { size: isMobileScreen ? 8.5 : 9.5, weight: '500' },
-                                color: '#cbd5e1',
+                                color: '#334155',
                                 maxRotation: isMobileScreen ? 45 : 35,
                                 minRotation: isMobileScreen ? 40 : 30,
                                 autoSkip: false,
@@ -435,16 +435,16 @@
                             ticks: {
                                 stepSize: 1,
                                 font: { size: isMobileScreen ? 9 : 10 },
-                                color: '#a0aabf',
+                                color: '#334155',
                                 padding: isMobileScreen ? 3 : 6
                             },
                             title: {
                                 display: true,
                                 text: isMobileScreen ? 'Ops' : 'Volumen Ops',
                                 font: { size: isMobileScreen ? 9 : 10 },
-                                color: '#a0aabf'
+                                color: '#334155'
                             },
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                            grid: { color: '#E2E8F0' }
                         },
                         yRate: {
                             position: 'right',
@@ -454,14 +454,14 @@
                             ticks: {
                                 callback: v => v + '%',
                                 font: { size: isMobileScreen ? 9 : 10 },
-                                color: '#a0aabf',
+                                color: '#334155',
                                 padding: isMobileScreen ? 3 : 6
                             },
                             title: {
                                 display: true,
                                 text: isMobileScreen ? '% Cierre' : 'Tasa de Cierre',
                                 font: { size: isMobileScreen ? 9 : 10 },
-                                color: '#a0aabf'
+                                color: '#334155'
                             }
                         }
                     },
@@ -472,7 +472,7 @@
                                 boxWidth: isMobileScreen ? 8 : 10,
                                 font: { size: isMobileScreen ? 8.5 : 9.5 },
                                 padding: isMobileScreen ? 8 : 12,
-                                color: '#a0aabf'
+                                color: '#334155'
                             }
                         },
                         tooltip: {
@@ -588,19 +588,19 @@
                             {
                                 label: 'Ventas Ganadas ($)',
                                 data: sellers.map(s => s.ventasGanadas),
-                                backgroundColor: '#ffcc4d',
+                                backgroundColor: '#0062B8',
                                 borderRadius: 3
                             },
                             {
                                 label: 'Margen Bruto ($)',
                                 data: sellers.map(s => s.margen),
-                                backgroundColor: '#10b981',
+                                backgroundColor: '#059669',
                                 borderRadius: 3
                             },
                             {
                                 label: 'Cartera Activa ($)',
                                 data: sellers.map(s => s.pipelineNominal),
-                                backgroundColor: '#38bdf8',
+                                backgroundColor: '#0284C7',
                                 borderRadius: 3
                             }
                         ]
@@ -615,14 +615,14 @@
                                 ticks: {
                                     callback: v => formatMoney(v),
                                     font: { size: 10 },
-                                    color: '#a0aabf'
+                                    color: '#334155'
                                 },
-                                grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                                grid: { color: '#E2E8F0' }
                             },
                             y: {
                                 ticks: {
-                                    font: { size: 11, weight: '500' },
-                                    color: '#ffffff'
+                                    font: { size: 11, weight: '600' },
+                                    color: '#0F172A'
                                 },
                                 grid: { display: false }
                             }
@@ -630,7 +630,7 @@
                         plugins: {
                             legend: {
                                 position: 'bottom',
-                                labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#a0aabf' }
+                                labels: { boxWidth: 10, font: { size: 10 }, padding: 10, color: '#334155' }
                             },
                             tooltip: {
                                 callbacks: {
@@ -712,7 +712,7 @@
                         plugins: {
                             legend: {
                                 position: 'bottom',
-                                labels: { boxWidth: 10, font: { size: 10 }, padding: 8, color: '#a0aabf' }
+                                labels: { boxWidth: 10, font: { size: 10 }, padding: 8, color: '#334155' }
                             },
                             tooltip: {
                                 callbacks: {
@@ -740,7 +740,7 @@
             plugins: {
                 legend: {
                     position: 'bottom',
-                    labels: { boxWidth: 10, font: { size: 10 }, padding: 6, color: '#a0aabf' }
+                    labels: { boxWidth: 10, font: { size: 10 }, padding: 6, color: '#334155' }
                 },
                 tooltip: {
                     callbacks: {

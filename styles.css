@@ -5765,3 +5765,104 @@ body.ds-body-light,
     color: var(--ds-brand-primary, #0062B8) !important;
     text-decoration: underline;
 }
+
+/* ============================================================================
+   B6 BLOCK 5 — PROJECTS, BILLING & DASHBOARD BI CORPORATE LIGHT MODE SCOPING
+   ============================================================================ */
+[data-ds-scope="light"] .metric-card,
+.ds-scope-light .metric-card,
+[data-ds-scope="light"] .chart-card,
+.ds-scope-light .chart-card,
+[data-ds-scope="light"] .dash-chart-subcard,
+.ds-scope-light .dash-chart-subcard,
+[data-ds-scope="light"] .kpi-time-card,
+.ds-scope-light .kpi-time-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+[data-ds-scope="light"] .kpi-value-lg,
+.ds-scope-light .kpi-value-lg {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .kpi-label,
+.ds-scope-light .kpi-label,
+[data-ds-scope="light"] .dash-chart-subtitle,
+.ds-scope-light .dash-chart-subtitle {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-label,
+.ds-scope-light .dash-funnel-label {
+    color: var(--ds-text-primary, #0F172A) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-bar-container,
+.ds-scope-light .dash-funnel-bar-container {
+    background: #F1F5F9 !important;
+    border: 1px solid #E2E8F0 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-bar,
+.ds-scope-light .dash-funnel-bar {
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-val,
+.ds-scope-light .dash-funnel-val,
+[data-ds-scope="light"] .dash-funnel-subval,
+.ds-scope-light .dash-funnel-subval {
+    color: #FFFFFF !important;
+}
+
+[data-ds-scope="light"] [style*="background: rgba(15, 23, 42"],
+.ds-scope-light [style*="background: rgba(15, 23, 42"],
+[data-ds-scope="light"] [style*="background:rgba(15,23,42"],
+.ds-scope-light [style*="background:rgba(15,23,42"] {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border-color: var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-recibido,
+.ds-scope-light #dep-sum-recibido,
+[data-ds-scope="light"] #metric-win-rate,
+.ds-scope-light #metric-win-rate {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-aplicado,
+.ds-scope-light #dep-sum-aplicado,
+[data-ds-scope="light"] #metric-margen,
+.ds-scope-light #metric-margen,
+[data-ds-scope="light"] #bdep-live-now-applying,
+.ds-scope-light #bdep-live-now-applying {
+    color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-disponible,
+.ds-scope-light #dep-sum-disponible,
+[data-ds-scope="light"] #bdep-live-remaining,
+.ds-scope-light #bdep-live-remaining {
+    color: var(--ds-warning-text, #B45309) !important;
+}
+
+@media (max-width: 768px) {
+    [data-ds-scope="light"] #projectsTable tr.cursor-pointer,
+    .ds-scope-light #projectsTable tr.cursor-pointer {
+        background: var(--ds-bg-surface, #FFFFFF) !important;
+        border: 1px solid var(--ds-border, #CBD5E1) !important;
+        box-shadow: var(--ds-shadow-xs) !important;
+    }
+    [data-ds-scope="light"] #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-wrap,
+    .ds-scope-light #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-wrap {
+        background: var(--ds-bg-subtle, #F8FAFC) !important;
+        border: 1px solid var(--ds-border, #CBD5E1) !important;
+    }
+}
