@@ -127,7 +127,7 @@
         <main class="main-content">
             
             <!-- List View (Sales Rep) -->
-            <section id="list-view" class="view-section">
+            <section id="list-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex">
                     <div>
                         <h1>Oportunidades de Venta</h1>
@@ -464,61 +464,6 @@
                             <!-- Populated by JS -->
                         </tbody>
                     </table>
-                </div>
-            </section>
-
-            <!-- Global Contacts Directory View (B6 Commercial First) -->
-            <section id="contacts-view" class="view-section ds-scope-light">
-                <header class="header-flex">
-                    <div>
-                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                            <h1 style="margin: 0;">Directorio Global de Contactos</h1>
-                            <span id="global-contacts-count-badge" class="ds-badge ds-badge-neutral">0 personas</span>
-                        </div>
-                        <p>Personas registradas en la cartera autorizada, vinculaciones multiempresa y oportunidades asociadas.</p>
-                    </div>
-                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                        <button type="button" class="btn-secondary" onclick="if (window.ContactsUI && ContactsUI.loadGlobalContactsDirectory) ContactsUI.loadGlobalContactsDirectory(true)">🔄 Actualizar</button>
-                        <button type="button" class="btn-primary" id="btn-new-global-person" onclick="if (window.ContactsUI && ContactsUI.openCreatePersonFromGlobal) ContactsUI.openCreatePersonFromGlobal()">+ Nueva Persona</button>
-                    </div>
-                </header>
-
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 0.85rem;">
-                    <div class="filter-pills-group" id="global-contacts-filter-pills">
-                        <button type="button" class="filter-pill active" id="filter-gcontacts-all" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('all')">Todos</button>
-                        <button type="button" class="filter-pill" id="filter-gcontacts-active" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('active_accounts')">🏢 Con Cuenta Activa</button>
-                        <button type="button" class="filter-pill" id="filter-gcontacts-multi" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('multi_account')">🔗 Multiempresa</button>
-                        <button type="button" class="filter-pill" id="filter-gcontacts-opps" onclick="if (window.ContactsUI) ContactsUI.setGlobalContactsFilter('with_opps')">💼 En Oportunidades</button>
-                    </div>
-                    <div style="flex: 1; min-width: 260px; max-width: 460px;">
-                        <input type="text" id="global-contacts-search" class="form-control" placeholder="🔍 Buscar por nombre, cargo, cuenta, correo o teléfono..." style="width: 100%;" oninput="if (window.ContactsUI) ContactsUI.renderGlobalContactsTable()">
-                    </div>
-                </div>
-
-                <div id="global-contacts-status" class="alert-feedback-banner" style="display: none; margin-bottom: 0.85rem;"></div>
-
-                <div class="table-container glass-panel">
-                    <table id="globalContactsTable">
-                        <thead>
-                            <tr>
-                                <th>Persona</th>
-                                <th>Cuentas Vinculadas y Cargo Vigente</th>
-                                <th>Canales Corporativos / Personales</th>
-                                <th>Participación en Oportunidades</th>
-                                <th style="text-align: right; width: 160px;">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody id="global-contacts-tbody">
-                            <tr><td colspan="5" style="text-align: center; padding: 1.5rem; color: var(--ds-text-tertiary);">Cargando directorio de contactos...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Contacto 360 View (B6 Commercial First) -->
-            <section id="contact-360-view" class="view-section ds-scope-light">
-                <div id="contact-360-container">
-                    <!-- Rendered dynamically by ContactsUI.openContact360View(contactId) -->
                 </div>
             </section>
 
@@ -965,7 +910,7 @@
             </section>
 
             <!-- Detail View -->
-            <section id="detail-view" class="view-section">
+            <section id="detail-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex">
                     <div>
                         <button class="btn-secondary mb-2" onclick="goBackFromDetail()">← Volver</button>
@@ -1241,7 +1186,7 @@
             <!-- ========================================================================= -->
 
             <!-- Vista 1: Agregar Participante a Oportunidad -->
-            <section id="add-opportunity-contact-view" class="view-section">
+            <section id="add-opportunity-contact-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
@@ -1308,10 +1253,10 @@
                         <div class="form-group mb-3" style="background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 6px; padding: 0.85rem 1rem;">
                             <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: white; margin: 0;">
                                 <input type="checkbox" id="add-opp-contact-is-primary" style="width: 18px; height: 18px; accent-color: var(--brand-gold);">
-                                <span style="font-size: 0.92rem;">⭐ <strong>Designar como Contacto Principal</strong> de la oportunidad</span>
+                                <span style="font-size: 0.92rem;">⭐ <strong>Designar como Contacto Principal</strong> de esta oportunidad <span style="font-size: 0.78rem; font-weight: 500;">(Opcional)</span></span>
                             </label>
                             <small style="color: var(--text-secondary); display: block; margin-top: 6px; margin-left: 28px; font-size: 0.8rem; line-height: 1.4;">
-                                La oportunidad solo puede tener un contacto principal a la vez. Si ya existe un contacto principal, será sustituido de forma atómica.
+                                Atributo opcional y exclusivo de esta oportunidad (<code>opportunity_contacts_prod</code>). No modifica la cuenta general. Si ya existe un contacto principal en la oportunidad, será sustituido de forma atómica.
                             </small>
                         </div>
 
@@ -1329,7 +1274,7 @@
             </section>
 
             <!-- Vista 2: Editar Rol y Notas de Participante -->
-            <section id="edit-opportunity-contact-view" class="view-section">
+            <section id="edit-opportunity-contact-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
@@ -1395,7 +1340,7 @@
             </section>
 
             <!-- Vista 3: Designar o Cambiar Contacto Principal -->
-            <section id="set-opportunity-primary-contact-view" class="view-section">
+            <section id="set-opportunity-primary-contact-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
@@ -1446,7 +1391,7 @@
                     </div>
 
                     <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 1.5rem; font-size: 0.84rem; color: #93c5fd; line-height: 1.45;">
-                        ℹ️ <strong>Regla de negocio:</strong> La oportunidad mantiene exactamente un contacto principal a la vez. Al confirmar, la fuente de verdad (SSOT) se actualizará de forma atómica bajo control de concurrencia y las proyecciones se sincronizarán inmediatamente.
+                        ℹ️ <strong>Regla de negocio (Spoke de Oportunidad):</strong> El Contacto Principal (<code>isPrimary</code>) es opcional y exclusivo de esta oportunidad comercial (no existe como atributo obligatorio de Cuenta). Al confirmar, la fuente de verdad (SSOT) se actualizará de forma atómica bajo control de concurrencia.
                     </div>
 
                     <input type="hidden" id="set-primary-opp-id">
@@ -1462,7 +1407,7 @@
             </section>
 
             <!-- Vista 4: Retirar Participante de Oportunidad -->
-            <section id="remove-opportunity-contact-view" class="view-section">
+            <section id="remove-opportunity-contact-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
@@ -1526,7 +1471,7 @@
             </section>
 
             <!-- Vista 5: Cambiar Cuenta Comercial de la Oportunidad -->
-            <section id="change-opportunity-account-view" class="view-section">
+            <section id="change-opportunity-account-view" class="view-section" data-ds-scope="light">
                 <header class="header-flex mb-3">
                     <div>
                         <button type="button" class="btn-secondary mb-2" onclick="cancelOpportunityContactOperation()">← Volver a Oportunidad</button>
@@ -3039,7 +2984,7 @@
 
 
     <!-- New Prospect Modal -->
-    <div id="newProspectModal" class="modal">
+    <div id="newProspectModal" class="modal ds-scope-light">
         <div class="modal-content glass-panel">
             <span class="close" onclick="closeModal('newProspectModal')">&times;</span>
             <h2>Nuevo Prospecto</h2>
@@ -3100,7 +3045,7 @@
     </div>
 
     <!-- Document & Excel Preview Modal -->
-    <div id="docPreviewModal" class="modal" style="z-index: 150;">
+    <div id="docPreviewModal" class="modal ds-scope-light" style="z-index: 150;">
         <div class="modal-content glass-panel" style="width: 92vw; max-width: 1100px; height: 88vh; max-height: 900px; display: flex; flex-direction: column; padding: 1.25rem;">
             <div class="preview-header">
                 <div class="preview-title-box">
@@ -3205,7 +3150,7 @@
     </div>
 
     <!-- Edit Base Price Modal -->
-    <div id="editBasePriceModal" class="modal" style="z-index: 110;">
+    <div id="editBasePriceModal" class="modal ds-scope-light" style="z-index: 110;">
         <div class="modal-content glass-panel" style="max-width: 400px; width: 92%;">
             <span class="close" onclick="closeModal('editBasePriceModal')">&times;</span>
             <h2 style="font-size: 1.15rem; color: var(--brand-gold); margin-bottom: 6px;">Corregir Error de Digitación</h2>
@@ -3222,7 +3167,7 @@
     </div>
 
     <!-- Follow-Up Management Modal -->
-    <div id="followUpModal" class="modal" style="display:none; z-index: 1050;">
+    <div id="followUpModal" class="modal ds-scope-light" style="display:none; z-index: 1050;">
         <div class="modal-content glass-panel modal-scrollable-container" style="max-width: 620px; width: 95%;">
             <div class="modal-header-fixed">
                 <span class="close" onclick="closeModal('followUpModal')">&times;</span>
@@ -3320,7 +3265,7 @@
     </div>
 
     <!-- Reassign Vendor Modal -->
-    <div id="reassignModal" class="modal" style="display:none; z-index: 1060;">
+    <div id="reassignModal" class="modal ds-scope-light" style="display:none; z-index: 1060;">
         <div class="modal-content glass-panel" style="max-width: 500px; width: 95%;">
             <span class="close" onclick="closeModal('reassignModal')">&times;</span>
             <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">🔄 Reasignar Oportunidad</h2>
@@ -3357,7 +3302,7 @@
     </div>
 
     <!-- Modal: Configuración de Cadencia Comercial (Fase 2.1) -->
-    <div id="cadenceModal" class="modal" style="display:none; z-index: 1065;">
+    <div id="cadenceModal" class="modal ds-scope-light" style="display:none; z-index: 1065;">
         <div class="modal-content glass-panel" style="max-width: 580px; width: 95%;">
             <span class="close" onclick="closeModal('cadenceModal')">&times;</span>
             <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">⚙️ Configurar Cadencia Comercial</h2>
@@ -3397,7 +3342,7 @@
     </div>
 
     <!-- Modal: Reclasificación Comercial (Presupuesto vs Ejecución) -->
-    <div id="reclassifyModal" class="modal" style="display:none; z-index: 1065;">
+    <div id="reclassifyModal" class="modal ds-scope-light" style="display:none; z-index: 1065;">
         <div class="modal-content glass-panel" style="max-width: 560px; width: 95%;">
             <span class="close" onclick="closeModal('reclassifyModal')">&times;</span>
             <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">🔄 Clasificación Comercial</h2>
@@ -3434,7 +3379,7 @@
     </div>
 
     <!-- Modal: Decisión Gerencial de Seguimiento (Fase 1.3) -->
-    <div id="modal-manager-decision" class="modal" style="display:none; z-index: 1060;">
+    <div id="modal-manager-decision" class="modal ds-scope-light" style="display:none; z-index: 1060;">
         <div class="modal-content glass-panel" style="max-width: 650px; width: 95%; max-height: 90vh; overflow-y: auto;">
             <span class="close" onclick="closeModal('modal-manager-decision')">&times;</span>
             <h2 style="color:var(--brand-gold); margin-bottom: 0.25rem;">⚖️ Decisión Gerencial de Seguimiento</h2>
@@ -3545,7 +3490,7 @@
     </div>
 
     <!-- Modal: Confirmar Pérdida Comercial (Fase 5.2 Bloque 2) -->
-    <div id="markLostModal" class="modal" style="display:none; z-index: 1070;">
+    <div id="markLostModal" class="modal ds-scope-light" style="display:none; z-index: 1070;">
         <div class="modal-content glass-panel" style="max-width: 520px; width: 95%;">
             <span class="close" onclick="closeMarkLostModal()">&times;</span>
             <div style="display:flex; align-items:center; gap:10px; margin-bottom: 0.5rem;">

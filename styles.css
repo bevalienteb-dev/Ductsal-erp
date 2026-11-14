@@ -5604,3 +5604,164 @@ body.ds-body-light,
         grid-template-columns: 1fr;
     }
 }
+
+/* ============================================================================
+   B6 BLOCK 3 & 4 — CONTACTS & OPPORTUNITIES CORPORATE LIGHT MODE SCOPING
+   ============================================================================ */
+[data-ds-scope="light"] h1,
+[data-ds-scope="light"] h2,
+[data-ds-scope="light"] h3,
+[data-ds-scope="light"] h4,
+[data-ds-scope="light"] strong,
+[data-ds-scope="light"] label,
+.ds-scope-light h1,
+.ds-scope-light h2,
+.ds-scope-light h3,
+.ds-scope-light h4,
+.ds-scope-light label {
+    color: var(--ds-text-primary, #0F172A);
+}
+
+[data-ds-scope="light"] [style*="color: white"],
+[data-ds-scope="light"] [style*="color:white"],
+[data-ds-scope="light"] [style*="color: #fff"],
+.ds-scope-light [style*="color: white"]:not(.btn-primary):not(.btn-danger):not(.btn-success):not(#global-spinner *),
+.ds-scope-light [style*="color:white"]:not(.btn-primary):not(.btn-danger):not(.btn-success):not(#global-spinner *) {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] [style*="background: rgba(0,0,0"],
+[data-ds-scope="light"] [style*="background:rgba(0,0,0"],
+[data-ds-scope="light"] [style*="background: rgba(255, 255, 255, 0.0"],
+[data-ds-scope="light"] [style*="background: rgba(255,255,255,0.0"],
+[data-ds-scope="light"] [style*="background: rgba(44, 53, 83"],
+.ds-scope-light [style*="background: rgba(0,0,0"],
+.ds-scope-light [style*="background:rgba(0,0,0"],
+.ds-scope-light [style*="background: rgba(255, 255, 255, 0.0"],
+.ds-scope-light [style*="background: rgba(255,255,255,0.0"],
+.ds-scope-light [style*="background: rgba(44, 53, 83"] {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border-color: var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card,
+.ds-scope-light .kpi-hero-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-label,
+.ds-scope-light .kpi-hero-card .kpi-label {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-val,
+.ds-scope-light .kpi-hero-card .kpi-val {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-val.highlight-gold,
+.ds-scope-light .kpi-hero-card .kpi-val.highlight-gold {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] .stage-tracker,
+.ds-scope-light .stage-tracker {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    border-radius: var(--ds-radius-md) !important;
+    padding: 0.85rem 1rem !important;
+}
+
+[data-ds-scope="light"] .stage-step .stage-circle,
+.ds-scope-light .stage-step .stage-circle {
+    background: #E2E8F0 !important;
+    color: #334155 !important;
+    border: 2px solid #CBD5E1 !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .stage-step.completed .stage-circle,
+.ds-scope-light .stage-step.completed .stage-circle {
+    background: var(--ds-success-text, #047857) !important;
+    color: #FFFFFF !important;
+    border-color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] .stage-step.current .stage-circle,
+.ds-scope-light .stage-step.current .stage-circle {
+    background: var(--ds-brand-primary, #0062B8) !important;
+    color: #FFFFFF !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+    box-shadow: 0 0 0 4px rgba(0, 98, 184, 0.16) !important;
+}
+
+[data-ds-scope="light"] .stage-step .stage-label,
+.ds-scope-light .stage-step .stage-label {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .stage-step.current .stage-label,
+.ds-scope-light .stage-step.current .stage-label {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .fin-group-card,
+.ds-scope-light .fin-group-card,
+[data-ds-scope="light"] .invoice-card,
+.ds-scope-light .invoice-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .log-item,
+.ds-scope-light .log-item,
+[data-ds-scope="light"] .doc-card-row,
+.ds-scope-light .doc-card-row {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .doc-card-name,
+.ds-scope-light .doc-card-name {
+    color: var(--ds-text-primary, #0F172A) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .doc-card-category,
+.ds-scope-light .doc-card-category {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .stage-filter-pill,
+.ds-scope-light .stage-filter-pill,
+[data-ds-scope="light"] .filter-pill,
+.ds-scope-light .filter-pill {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    color: var(--ds-text-secondary, #334155) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .stage-filter-pill.active,
+.ds-scope-light .stage-filter-pill.active,
+[data-ds-scope="light"] .filter-pill.active,
+.ds-scope-light .filter-pill.active {
+    background: var(--ds-brand-primary-light, #EBF5FF) !important;
+    color: var(--ds-brand-primary, #0062B8) !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] #detail-cliente:hover,
+.ds-scope-light #detail-cliente:hover {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    text-decoration: underline;
+}
