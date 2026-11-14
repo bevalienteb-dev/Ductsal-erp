@@ -1562,6 +1562,7 @@
         };
 
         let facturacionTotalCents = 0;
+        let negociosAdjudicadosCents = 0;
         let totalCobradoCents = 0;
         let saldoPorCobrarCents = 0;
         let overdueCents = 0;
@@ -1624,6 +1625,10 @@
                 }
             } else if (estado === 'ganado') {
                 wonCount += 1;
+                const oppAwardedCents = subtotalCents > 0
+                    ? subtotalCents
+                    : toCents(p.precio_pactado || p.precio_final || p.precio_cotizado || 0);
+                negociosAdjudicadosCents += oppAwardedCents;
                 const invoices = Array.isArray(p.facturas)
                     ? p.facturas.filter(inv => {
                         if (!inv || typeof inv !== 'object') return false;
@@ -1710,6 +1715,7 @@
         const decidedCount = wonCount + lostCount;
         const winRate = decidedCount > 0 ? round2((wonCount / decidedCount) * 100) : 0;
         const ticketPromedio = wonCount > 0 ? fromCents(Math.round(facturacionTotalCents / wonCount)) : 0;
+        const ticketPromedioAdjudicado = wonCount > 0 ? fromCents(Math.round(negociosAdjudicadosCents / wonCount)) : 0;
         const margenRealPct = facturacionTotalCents > 0
             ? round2(((facturacionTotalCents - totalCostWonCents) / facturacionTotalCents) * 100)
             : 0;
@@ -1721,6 +1727,10 @@
             activeCount,
             wonCount,
             lostCount,
+            decidedCount,
+            negociosAdjudicadosCount: wonCount,
+            negociosAdjudicadosMonto: fromCents(negociosAdjudicadosCents),
+            ticketPromedioAdjudicado,
             facturacionTotal: fromCents(facturacionTotalCents),
             totalCobrado: fromCents(totalCobradoCents),
             saldoPorCobrar: fromCents(saldoPorCobrarCents),
@@ -1738,6 +1748,15 @@
             proposalCountsByState,
             opportunitiesNeedingAttention,
             opportunities,
+            primaryCommercialKpis: {
+                tasaExitoComercialPct: winRate,
+                pipelineAbiertoMonto: fromCents(activePipelineCents),
+                pipelineAbiertoCount: activeCount,
+                negociosAdjudicadosMonto: fromCents(negociosAdjudicadosCents),
+                negociosAdjudicadosCount: wonCount,
+                propuestasPresentadasCount,
+                propuestasPresentadasMonto: fromCents(propuestasPresentadasCents)
+            },
             pulsoFinanciero: {
                 facturadoVigente: fromCents(facturacionTotalCents),
                 cobradoTotal: fromCents(totalCobradoCents),

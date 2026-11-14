@@ -5564,9 +5564,13 @@ body.ds-body-light,
 /* Account 360 Hub Layout */
 .ds-account-360-split {
     display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    gap: 10px;
+    grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+    gap: 12px;
     align-items: start;
+}
+
+.ds-account-360-split > * {
+    min-width: 0;
 }
 
 .ds-panel-box {
@@ -5933,13 +5937,146 @@ body.ds-body-light,
 }
 
 [data-ds-scope="light"] #bi-period-filter,
-.ds-scope-light #bi-period-filter {
+.ds-scope-light #bi-period-filter,
+[data-ds-scope="light"] #dash-time-filter,
+.ds-scope-light #dash-time-filter,
+[data-ds-scope="light"] #filter-mgr-motivo,
+.ds-scope-light #filter-mgr-motivo,
+[data-ds-scope="light"] #filter-mgr-responsable,
+.ds-scope-light #filter-mgr-responsable,
+[data-ds-scope="light"] #filter-mgr-estado,
+.ds-scope-light #filter-mgr-estado {
     background: #FFFFFF !important;
     color: var(--ds-text-primary, #0F172A) !important;
     border: 1px solid var(--ds-border-control, #64748B) !important;
     border-radius: 6px !important;
     padding: 0.35rem 0.65rem !important;
     font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] #metric-total-cxc,
+.ds-scope-light #metric-total-cxc {
+    color: #6D28D9 !important;
+}
+
+[data-ds-scope="light"] #metric-cxc-monetario,
+.ds-scope-light #metric-cxc-monetario {
+    color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] #metric-cxc-por-facturar,
+.ds-scope-light #metric-cxc-por-facturar {
+    color: var(--ds-info-text, #1E40AF) !important;
+}
+
+[data-ds-scope="light"] #metric-abonos-disponibles,
+.ds-scope-light #metric-abonos-disponibles {
+    color: #0369A1 !important;
+}
+
+[data-ds-scope="light"] #cxc-b5-breakdown,
+.ds-scope-light #cxc-b5-breakdown {
+    border-top-color: var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-secondary, #334155) !important;
+}
+
+[data-ds-scope="light"] .dash-section-title,
+.ds-scope-light .dash-section-title {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .dash-section-desc,
+.ds-scope-light .dash-section-desc {
+    color: var(--ds-text-secondary, #334155) !important;
+}
+
+[data-ds-scope="light"] .dash-stage-card,
+.ds-scope-light .dash-stage-card {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .dash-stage-name,
+.ds-scope-light .dash-stage-name {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-stage-val,
+.ds-scope-light .dash-stage-val {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 800 !important;
+}
+
+[data-ds-scope="light"] .dash-stage-sub,
+.ds-scope-light .dash-stage-sub {
+    color: var(--ds-text-tertiary, #475569) !important;
+}
+
+[data-ds-scope="light"] #dash-seller-inactive-notice,
+.ds-scope-light #dash-seller-inactive-notice {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    border-color: var(--ds-warning-border, #FCD34D) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-followup,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-followup,
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-overdue,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-overdue {
+    background: var(--ds-danger-bg, #FEF2F2) !important;
+    color: var(--ds-danger-text, #991B1B) !important;
+    border: 1px solid var(--ds-danger-border, #FCA5A5) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-contract,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-contract,
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-age,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-age {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+    border: 1px solid var(--ds-warning-border, #FCD34D) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-reversion,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-reversion {
+    background: var(--ds-info-bg, #EFF6FF) !important;
+    color: var(--ds-info-text, #1E40AF) !important;
+    border: 1px solid var(--ds-info-border, #93C5FD) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-alert,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-alert {
+    background: var(--ds-danger-bg, #FEF2F2) !important;
+    color: var(--ds-danger-text, #991B1B) !important;
+    border: 1px solid var(--ds-danger-border, #FCA5A5) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #fca5a5"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #fca5a5"],
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #f87171"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #f87171"] {
+    color: var(--ds-danger-text, #991B1B) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #93c5fd"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #93c5fd"] {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #fcd34d"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #fcd34d"],
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: var(--brand-gold)"],
+.ds-scope-light #dashActiveTimesTable [style*="color: var(--brand-gold)"] {
+    color: var(--ds-warning-text, #92400E) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: white"],
+.ds-scope-light #dashActiveTimesTable [style*="color: white"],
+[data-ds-scope="light"] #dashActiveTimesTable td strong[style*="color: white"],
+.ds-scope-light #dashActiveTimesTable td strong[style*="color: white"] {
+    color: var(--ds-text-primary, #0F172A) !important;
 }
 
 [data-ds-scope="light"] #client-detail-view > .view-header,

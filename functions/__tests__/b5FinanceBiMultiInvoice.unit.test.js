@@ -1414,6 +1414,23 @@ describe('FASE B5 — Coordinación Transaccional Financiera, Abonos Multi-Factu
       expect(acctMetrics.totalCobrado).toBe(20000);
       expect(acctMetrics.saldoPorCobrar).toBe(10000);
       expect(acctMetrics.pipelineActivo).toBe(55000); // 0 + 12000 + 25000 + 18000
+      expect(acctMetrics.negociosAdjudicadosCount).toBe(1);
+      expect(acctMetrics.negociosAdjudicadosMonto).toBe(30000);
+      expect(acctMetrics.primaryCommercialKpis).toEqual({
+        tasaExitoComercialPct: 100,
+        pipelineAbiertoMonto: 55000,
+        pipelineAbiertoCount: 4,
+        negociosAdjudicadosMonto: 30000,
+        negociosAdjudicadosCount: 1,
+        propuestasPresentadasCount: 3,
+        propuestasPresentadasMonto: 73000
+      });
+      expect(acctMetrics.pulsoFinanciero).toEqual({
+        facturadoVigente: 30000,
+        cobradoTotal: 20000,
+        cxcPendiente: 10000,
+        abonosDisponibles: 0
+      });
     });
   });
 });

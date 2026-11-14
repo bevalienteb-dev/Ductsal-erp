@@ -885,25 +885,34 @@
 
     function _computeAccount360MetricsSafe(clientId) {
         const prospectsList = _deps.getProspects() || [];
+        const clientsList = _deps.getClients() || [];
         if (typeof CrmBiEngine !== 'undefined' && typeof CrmBiEngine.computeAccount360Metrics === 'function') {
-            return CrmBiEngine.computeAccount360Metrics(clientId, prospectsList);
+            return CrmBiEngine.computeAccount360Metrics(clientId, prospectsList, { clients: clientsList });
         }
         if (typeof window !== 'undefined' && window.CrmBiEngine && typeof window.CrmBiEngine.computeAccount360Metrics === 'function') {
-            return window.CrmBiEngine.computeAccount360Metrics(clientId, prospectsList);
+            return window.CrmBiEngine.computeAccount360Metrics(clientId, prospectsList, { clients: clientsList });
         }
         const acctOpps = prospectsList.filter(p => p && !p.deleted && p.clientId === clientId);
+        const wonOpps = acctOpps.filter(p => p.estado === 'ganado');
+        const lostOpps = acctOpps.filter(p => p.estado === 'perdido');
+        const activeOpps = acctOpps.filter(p => p.estado === 'activo');
+        const decidedCount = wonOpps.length + lostOpps.length;
         return {
             accountId: clientId,
             totalOpportunitiesCount: acctOpps.length,
-            activeCount: acctOpps.filter(p => p.estado === 'activo').length,
-            wonCount: acctOpps.filter(p => p.estado === 'ganado').length,
-            lostCount: acctOpps.filter(p => p.estado === 'perdido').length,
+            activeCount: activeOpps.length,
+            wonCount: wonOpps.length,
+            lostCount: lostOpps.length,
+            decidedCount,
+            negociosAdjudicadosCount: wonOpps.length,
+            negociosAdjudicadosMonto: 0,
+            ticketPromedioAdjudicado: 0,
             facturacionTotal: 0,
             totalCobrado: 0,
             saldoPorCobrar: 0,
             overdueAmount: 0,
             pipelineActivo: 0,
-            winRate: 0,
+            winRate: decidedCount > 0 ? Math.round((wonOpps.length / decidedCount) * 1000) / 10 : 0,
             ticketPromedio: 0,
             margenRealPct: 0,
             cicloPromedioDias: 0,
@@ -1155,38 +1164,55 @@
                 ? `<span class="ds-badge ds-badge-warning">Por vencer</span>`
                 : `<span class="ds-badge ds-badge-success">Al día</span>`);
 
+        const decidedTotalCount = (metrics.wonCount || 0) + (metrics.lostCount || 0);
+        const awardedAmount = metrics.negociosAdjudicadosMonto !== undefined
+            ? metrics.negociosAdjudicadosMonto
+            : metrics.facturacionTotal;
+        const awardedAvgTicket = metrics.ticketPromedioAdjudicado !== undefined
+            ? metrics.ticketPromedioAdjudicado
+            : metrics.ticketPromedio;
+        const dineroRecibidoCuenta = Math.max(
+            Number(metrics.totalCobrado) || 0,
+            Number(c.total_dinero_recibido) || 0
+        );
+        const abonosDisponiblesCuenta = Number(
+            c.saldo_abonos_pendientes_aplicar ??
+            (metrics.pulsoFinanciero && metrics.pulsoFinanciero.abonosDisponibles) ??
+            0
+        ) || 0;
+
         const kpiStripHtml = tab === 'legal' ? '' : `
-            <div class="ds-kpi-grid" style="margin-bottom: 0.75rem;">
-                <div class="ds-kpi-card">
-                    <span class="ds-kpi-label">Facturación Histórica</span>
-                    <div class="ds-kpi-value">${_formatUsdB6(metrics.facturacionTotal)}</div>
+            <div id="account-360-kpi-grid" class="ds-kpi-grid" style="margin-bottom: 0.75rem;">
+                <div id="acct360-kpi-win-rate" class="ds-kpi-card">
+                    <span class="ds-kpi-label">Tasa de Éxito Comercial</span>
+                    <div class="ds-kpi-value" style="color:var(--ds-success, #047857);">${metrics.winRate.toFixed(1)}%</div>
                     <div class="ds-kpi-sub">
-                        <span class="ds-badge ds-badge-success">${metrics.wonCount} ganadas</span>
-                        <span>Ticket prom: ${_formatUsdB6(metrics.ticketPromedio)}</span>
+                        <span class="ds-badge ds-badge-success">${metrics.wonCount} ganadas / ${decidedTotalCount} cerradas</span>
+                        <span>Ciclo prom: ${metrics.cicloPromedioDias || 0}d</span>
                     </div>
                 </div>
-                <div class="ds-kpi-card">
-                    <span class="ds-kpi-label">Pipeline Activo</span>
+                <div id="acct360-kpi-pipeline" class="ds-kpi-card">
+                    <span class="ds-kpi-label">Pipeline Abierto</span>
                     <div class="ds-kpi-value" style="color:var(--ds-primary, #0062B8);">${_formatUsdB6(metrics.pipelineActivo)}</div>
                     <div class="ds-kpi-sub">
                         <span class="ds-badge ds-badge-info">${metrics.activeCount} activas</span>
                         <span>${metrics.opportunitiesNeedingAttention.length > 0 ? `<strong style="color:var(--ds-warning, #B45309);">⚠️ ${metrics.opportunitiesNeedingAttention.length} por atender</strong>` : 'Al día en seguimiento'}</span>
                     </div>
                 </div>
-                <div class="ds-kpi-card">
-                    <span class="ds-kpi-label">Saldo Pendiente (CxC)</span>
-                    <div class="ds-kpi-value" style="color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'};">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
+                <div id="acct360-kpi-adjudicados" class="ds-kpi-card">
+                    <span class="ds-kpi-label">Negocios Adjudicados</span>
+                    <div class="ds-kpi-value">${_formatUsdB6(awardedAmount)}</div>
                     <div class="ds-kpi-sub">
-                        ${cxcBadge}
-                        <span>Cobrado: ${_formatUsdB6(metrics.totalCobrado)}</span>
+                        <span class="ds-badge ds-badge-success">${metrics.wonCount} adjudicados</span>
+                        <span>Ticket prom: ${_formatUsdB6(awardedAvgTicket)}</span>
                     </div>
                 </div>
-                <div class="ds-kpi-card">
-                    <span class="ds-kpi-label">Win Rate &amp; Propuestas</span>
-                    <div class="ds-kpi-value">${metrics.winRate.toFixed(1)}%</div>
+                <div id="acct360-kpi-propuestas" class="ds-kpi-card">
+                    <span class="ds-kpi-label">Propuestas Presentadas</span>
+                    <div class="ds-kpi-value" style="color:var(--ds-primary, #0062B8);">${metrics.propuestasPresentadasCount}</div>
                     <div class="ds-kpi-sub">
-                        <span class="ds-badge ds-badge-primary" title="Cada oportunidad con propuesta entregada cuenta máximo 1 vez aunque tenga versiones v1..vN">${metrics.propuestasPresentadasCount} propuestas presentadas</span>
-                        <span>Ciclo: ${metrics.cicloPromedioDias || 0}d</span>
+                        <span class="ds-badge ds-badge-primary" title="Cada oportunidad con propuesta entregada cuenta máximo 1 vez aunque tenga versiones v1..vN">${metrics.proposalCountsByState.propuesta_entregada} activas · ${metrics.proposalCountsByState.decidida} decididas</span>
+                        <span>${metrics.proposalCountsByState.oferta_preparada > 0 ? `${metrics.proposalCountsByState.oferta_preparada} oferta(s) en Cotización` : 'Máx. 1 por oportunidad'}</span>
                     </div>
                 </div>
             </div>
@@ -1206,8 +1232,7 @@
                         <thead>
                             <tr>
                                 <th>Oportunidad / Proyecto</th>
-                                <th>Etapa</th>
-                                <th>Ciclo de Propuesta</th>
+                                <th>Etapa y Propuesta</th>
                                 <th style="text-align:right;">Monto</th>
                                 <th>Seguimiento</th>
                                 <th style="text-align:right;">Acción</th>
@@ -1216,18 +1241,24 @@
                         <tbody>
                             ${metrics.opportunities.slice(0, 8).map(p => {
                                 const amt = Number(p.estado === 'ganado' ? (p.precio_pactado || p.precio_final || p.precio_cotizado || 0) : (p.precio_cotizado || p.precio_pactado || 0));
+                                const rawReason = (p.attentionReasons && p.attentionReasons[0]) || 'Atención';
+                                const shortReason = rawReason === 'Oferta preparada pendiente de entrega' ? 'Oferta por entregar' : rawReason;
                                 const attnBadge = p.requiresAttention
-                                    ? `<span class="ds-badge ds-badge-warning" title="${esc((p.attentionReasons || []).join(' · '))}">⚠️ ${esc(p.attentionReasons[0] || 'Atención')}</span>`
+                                    ? `<span class="ds-badge ds-badge-warning" title="${esc((p.attentionReasons || []).join(' · '))}">⚠️ ${esc(shortReason)}</span>`
                                     : (p.estado === 'activo' ? '<span class="ds-badge ds-badge-success">✅ Al día</span>' : '<span class="ds-badge ds-badge-neutral">Cerrada</span>');
                                 return `
                                     <tr>
                                         <td>
-                                            <div style="font-weight:700; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || 'Proyecto sin título')}</div>
-                                            <div style="font-size:0.74rem; color:var(--ds-text-muted, #64748B); font-family:monospace;">${esc(p.codigo || p.id)} · Vend: ${esc(p.vendedor || '-')}</div>
+                                            <div style="font-weight:700; font-size:0.82rem; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || 'Proyecto sin título')}</div>
+                                            <div style="font-size:0.72rem; color:var(--ds-text-muted, #64748B); font-family:monospace;">${esc(p.codigo || p.id)} · ${esc(p.vendedor || '-')}</div>
                                         </td>
-                                        <td>${_renderStageBadgeB6(p)}</td>
-                                        <td>${_renderProposalLifecycleBadgeB6(p.proposalLifecycle)}</td>
-                                        <td style="text-align:right; font-weight:700; font-variant-numeric:tabular-nums;">${_formatUsdB6(amt)}</td>
+                                        <td>
+                                            <div style="display:flex; flex-direction:column; align-items:flex-start; gap:3px;">
+                                                ${_renderStageBadgeB6(p)}
+                                                ${_renderProposalLifecycleBadgeB6(p.proposalLifecycle)}
+                                            </div>
+                                        </td>
+                                        <td style="text-align:right; font-weight:700; font-size:0.84rem; font-variant-numeric:tabular-nums;">${_formatUsdB6(amt)}</td>
                                         <td>${attnBadge}</td>
                                         <td style="text-align:right;">
                                             <button type="button" class="btn-table-action" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Abrir</button>
@@ -1289,6 +1320,38 @@
                     </div>
 
                     <div style="display:flex; flex-direction:column; gap:0.85rem;">
+                        <div id="account-360-secondary-financial-summary" class="ds-panel-box">
+                            <div class="ds-panel-box-header">
+                                <div class="ds-panel-box-title">
+                                    <span>💰 Resumen Financiero Secundario</span>
+                                </div>
+                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem; white-space:nowrap;" onclick="ClientsUI.setAccount360Tab('finanzas')">Finanzas e Historial →</button>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.45rem;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div>
+                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Facturación</div>
+                                        <div style="font-size:0.71rem; color:var(--ds-text-secondary, #334155);">Facturado histórico vigente</div>
+                                    </div>
+                                    <div id="acct360-sec-facturacion" style="font-size:0.95rem; font-weight:800; color:var(--ds-text-primary, #0F172A); font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.facturacionTotal)}</div>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div>
+                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Dinero Recibido</div>
+                                        <div style="font-size:0.71rem; color:var(--ds-text-secondary, #334155);">${abonosDisponiblesCuenta > 0 ? `Abonos disp.: ${_formatUsdB6(abonosDisponiblesCuenta)}` : `Aplicado: ${_formatUsdB6(metrics.totalCobrado)}`}</div>
+                                    </div>
+                                    <div id="acct360-sec-dinero-recibido" style="font-size:0.95rem; font-weight:800; color:var(--ds-success, #047857); font-variant-numeric:tabular-nums;">${_formatUsdB6(dineroRecibidoCuenta)}</div>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                                    <div>
+                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Cuentas por Cobrar</div>
+                                        <div style="font-size:0.71rem; margin-top:1px;">${cxcBadge}</div>
+                                    </div>
+                                    <div id="acct360-sec-cxc" style="font-size:0.95rem; font-weight:800; color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'}; font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="ds-panel-box">
                             <div class="ds-panel-box-header">
                                 <div class="ds-panel-box-title">
@@ -1442,12 +1505,29 @@
                 <div class="ds-panel-box">
                     <div class="ds-panel-box-header">
                         <div>
-                            <div class="ds-panel-box-title">💰 Estado de Cuenta, Facturación y Cobranza B5</div>
+                            <div class="ds-panel-box-title">💰 Estado de Cuenta, Facturación, Dinero Recibido y Cuentas por Cobrar (B5)</div>
                             <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155); margin-top:2px;">
-                                Facturado Histórico: <strong>${_formatUsdB6(metrics.facturacionTotal)}</strong> · Cobrado: <strong style="color:var(--ds-success, #047857);">${_formatUsdB6(metrics.totalCobrado)}</strong> · Saldo CxC: <strong style="color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'};">${_formatUsdB6(metrics.saldoPorCobrar)}</strong> · Margen Real Prom.: <strong>${metrics.margenRealPct.toFixed(1)}%</strong>
+                                Facturación Registrada: <strong>${_formatUsdB6(metrics.facturacionTotal)}</strong> · Dinero Recibido: <strong style="color:var(--ds-success, #047857);">${_formatUsdB6(dineroRecibidoCuenta)}</strong> · Cuentas por Cobrar (CxC): <strong style="color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'};">${_formatUsdB6(metrics.saldoPorCobrar)}</strong> · Margen Presupuestado Prom.: <strong>${metrics.margenRealPct.toFixed(1)}%</strong>
                             </div>
                         </div>
                         <button type="button" class="btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="if(typeof showView==='function'){showView('projects-view')}">🏗️ Ir a Proyectos y Cobros</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:0.65rem; margin-bottom:0.85rem;">
+                        <div style="padding:0.6rem 0.8rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Facturación Registrada</div>
+                            <div style="font-size:1.15rem; font-weight:800; color:var(--ds-text-primary, #0F172A); margin-top:2px; font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.facturacionTotal)}</div>
+                            <div style="font-size:0.74rem; color:var(--ds-text-secondary, #334155);">Negocios adjudicados: ${_formatUsdB6(awardedAmount)}</div>
+                        </div>
+                        <div style="padding:0.6rem 0.8rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Dinero Recibido</div>
+                            <div style="font-size:1.15rem; font-weight:800; color:var(--ds-success, #047857); margin-top:2px; font-variant-numeric:tabular-nums;">${_formatUsdB6(dineroRecibidoCuenta)}</div>
+                            <div style="font-size:0.74rem; color:var(--ds-text-secondary, #334155);">Aplicado a facturas: ${_formatUsdB6(metrics.totalCobrado)}</div>
+                        </div>
+                        <div style="padding:0.6rem 0.8rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
+                            <div style="font-size:0.7rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Cuentas por Cobrar (CxC)</div>
+                            <div style="font-size:1.15rem; font-weight:800; color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'}; margin-top:2px; font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
+                            <div style="font-size:0.74rem; margin-top:2px;">${cxcBadge}</div>
+                        </div>
                     </div>
                     ${wonOpps.length === 0
                         ? `<div style="padding:1.4rem; text-align:center; color:var(--ds-text-muted, #64748B);">Esta cuenta aún no registra proyectos ganados ni facturas emitidas.</div>`
