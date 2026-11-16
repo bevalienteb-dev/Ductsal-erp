@@ -5247,58 +5247,69 @@ body.ds-body-light,
 }
 
 /* Contextual Tabs Bar */
-.ds-tabs {
+.ds-tabs,
+.ds-tabs-bar {
     display: flex;
     align-items: center;
-    gap: 4px;
-    border-bottom: 1px solid var(--ds-border);
-    margin-bottom: 8px;
+    gap: 2px;
+    margin-bottom: 10px;
     overflow-x: auto;
-    background: var(--ds-bg-surface);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    background: var(--ds-bg-surface, #FFFFFF);
     padding: 0 10px;
-    border-radius: var(--ds-radius-md) var(--ds-radius-md) 0 0;
-    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md, 8px);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    box-shadow: var(--ds-shadow-xs);
 }
 
-.ds-tab {
+.ds-tab,
+.ds-tab-btn {
     background: transparent;
     border: none;
-    border-bottom: 2px solid transparent;
-    padding: 8px 12px;
+    border-bottom: 3px solid transparent;
+    padding: 9px 12px 7px 12px;
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--ds-text-secondary);
+    color: var(--ds-text-secondary, #334155);
     cursor: pointer;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: color 0.15s ease, border-color 0.15s ease;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    border-radius: 6px 6px 0 0;
 }
 
-.ds-tab:hover {
-    color: var(--ds-text-primary);
+.ds-tab:hover,
+.ds-tab-btn:hover {
+    color: var(--ds-brand-primary, #0062B8);
+    background: var(--ds-bg-subtle, #F8FAFC);
 }
 
-.ds-tab.active {
-    color: var(--ds-brand-primary);
-    border-bottom-color: var(--ds-brand-primary);
+.ds-tab.active,
+.ds-tab-btn.active {
+    color: var(--ds-brand-primary, #0062B8);
+    border-bottom-color: var(--ds-brand-primary, #0062B8);
+    background: rgba(0, 98, 184, 0.05);
     font-weight: 700;
 }
 
 .ds-tab-count {
-    background: var(--ds-neutral-bg);
-    color: var(--ds-text-secondary);
-    border: 1px solid var(--ds-border);
+    background: var(--ds-neutral-bg, #F1F5F9);
+    color: var(--ds-text-secondary, #334155);
+    border: 1px solid var(--ds-border, #CBD5E1);
     padding: 1px 6px;
     border-radius: 999px;
     font-size: 0.68rem;
     font-weight: 700;
+    line-height: 1.3;
 }
 
-.ds-tab.active .ds-tab-count {
-    background: var(--ds-brand-tint);
-    color: var(--ds-brand-primary);
+.ds-tab.active .ds-tab-count,
+.ds-tab-btn.active .ds-tab-count {
+    background: var(--ds-brand-tint, #EBF5FF);
+    color: var(--ds-brand-primary, #0062B8);
     border-color: #93C5FD;
 }
 
@@ -5307,15 +5318,16 @@ body.ds-body-light,
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
 
 .ds-kpi-card {
-    background: var(--ds-bg-surface);
-    border: 1px solid var(--ds-border);
-    border-radius: var(--ds-radius-md);
-    padding: 7px 11px;
+    background: var(--ds-bg-surface, #FFFFFF);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: var(--ds-radius-md, 8px);
+    padding: 8px 11px;
     box-shadow: var(--ds-shadow-xs);
+    min-width: 0;
 }
 
 .ds-kpi-label {
@@ -5323,7 +5335,7 @@ body.ds-body-light,
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: var(--ds-text-secondary);
+    color: var(--ds-text-secondary, #334155);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -5333,7 +5345,7 @@ body.ds-body-light,
 .ds-kpi-value {
     font-size: 1.12rem;
     font-weight: 800;
-    color: var(--ds-text-primary);
+    color: var(--ds-text-primary, #0F172A);
     margin-top: 2px;
     line-height: 1.2;
     white-space: nowrap;
@@ -5341,11 +5353,13 @@ body.ds-body-light,
 
 .ds-kpi-sub {
     font-size: 0.7rem;
-    color: var(--ds-text-tertiary);
-    margin-top: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--ds-text-tertiary, #475569);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 6px;
 }
 
 /* Secondary 1-Line Financial Pulse Ribbon */
@@ -5379,7 +5393,20 @@ body.ds-body-light,
 
 @media (max-width: 640px) {
     .ds-kpi-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+    }
+    .ds-kpi-card {
+        padding: 6px 8px;
+    }
+    .ds-kpi-value {
+        font-size: 0.98rem;
+    }
+    .ds-kpi-label {
+        font-size: 0.62rem;
+    }
+    .ds-kpi-sub {
+        font-size: 0.65rem;
     }
 }
 
@@ -5561,44 +5588,225 @@ body.ds-body-light,
     border-color: var(--ds-border-strong) !important;
 }
 
-/* Account 360 Hub Layout */
-.ds-account-360-split {
-    display: grid;
-    grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
-    gap: 12px;
-    align-items: start;
-}
-
-.ds-account-360-split > * {
+/* Account 360 Hub Layout & Responsive Overflow Prevention */
+.main-content {
     min-width: 0;
 }
 
+@media (min-width: 1025px) {
+    .sidebar.ds-scope-light {
+        width: 220px;
+        flex-shrink: 0;
+        padding: 1.1rem 0.7rem;
+    }
+    .main-content {
+        padding: 1.1rem 1.2rem;
+    }
+    .view-section.ds-scope-light,
+    .view-section[data-ds-scope="light"] {
+        padding: 0.4rem 0.25rem;
+    }
+}
+
+@media (min-width: 1025px) and (max-width: 1360px) {
+    .sidebar.ds-scope-light {
+        width: 204px;
+        flex-shrink: 0;
+        padding: 0.95rem 0.55rem;
+    }
+    .main-content {
+        padding: 0.85rem 0.9rem;
+    }
+    .view-section.ds-scope-light,
+    .view-section[data-ds-scope="light"] {
+        padding: 0.25rem 0.15rem;
+    }
+}
+
+.table-responsive {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ds-account-360-split {
+    display: grid;
+    grid-template-columns: minmax(0, 2.38fr) minmax(260px, 0.9fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.ds-account-360-split > *,
+.ds-account-360-main-col,
+.ds-account-360-side-col {
+    min-width: 0;
+}
+
+.ds-account-360-main-col,
+.ds-account-360-side-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
 .ds-panel-box {
-    background: var(--ds-bg-surface);
-    border: 1px solid var(--ds-border);
-    border-radius: var(--ds-radius-md);
-    padding: 10px 12px;
+    background: var(--ds-bg-surface, #FFFFFF);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: var(--ds-radius-md, 8px);
+    padding: 9px 10px;
     box-shadow: var(--ds-shadow-xs);
+    min-width: 0;
+    overflow: hidden;
 }
 
 .ds-panel-box-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
     padding-bottom: 6px;
     margin-bottom: 8px;
     border-bottom: 1px solid #E2E8F0;
 }
 
 .ds-panel-box-title {
-    font-size: 0.84rem;
+    font-size: 0.83rem;
     font-weight: 700;
-    color: var(--ds-text-primary);
+    color: var(--ds-text-primary, #0F172A);
     margin: 0;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
+    min-width: 0;
+}
+
+.ds-record-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Account 360 Opportunities Summary Table */
+.ds-account360-opps-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+}
+
+.ds-scope-light .ds-account360-opps-table th,
+.ds-account360-opps-table th {
+    padding: 0.42rem 0.35rem !important;
+    font-size: 0.67rem !important;
+    white-space: nowrap;
+}
+
+.ds-scope-light .ds-account360-opps-table td,
+.ds-account360-opps-table td {
+    padding: 0.44rem 0.35rem !important;
+    font-size: 0.78rem !important;
+    vertical-align: middle;
+}
+
+.ds-account360-opps-table .ds-badge {
+    font-size: 0.67rem !important;
+    padding: 1px 6px !important;
+}
+
+.ds-account360-opps-table th.col-opp-title,
+.ds-account360-opps-table td.col-opp-title {
+    width: 35%;
+    min-width: 150px;
+}
+
+.ds-account360-opps-table th.col-opp-stage,
+.ds-account360-opps-table td.col-opp-stage {
+    width: 23%;
+}
+
+.ds-account360-opps-table th.col-opp-amount,
+.ds-account360-opps-table td.col-opp-amount {
+    width: 14%;
+    white-space: nowrap;
+}
+
+.ds-account360-opps-table th.col-opp-followup,
+.ds-account360-opps-table td.col-opp-followup {
+    width: 17%;
+}
+
+.ds-account360-opps-table th.col-opp-action,
+.ds-account360-opps-table td.col-opp-action {
+    width: 11%;
+    white-space: nowrap;
+}
+
+.ds-opp-project-title {
+    font-weight: 700;
+    font-size: 0.79rem;
+    line-height: 1.28;
+    color: var(--ds-text-primary, #0F172A);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.ds-opp-project-meta {
+    font-size: 0.69rem;
+    color: var(--ds-text-muted, #64748B);
+    font-family: monospace;
+    margin-top: 2px;
+    line-height: 1.2;
+}
+
+.ds-opp-stage-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+
+.ds-scope-light .btn-table-action,
+.btn-table-action.ds-btn-open-opp {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    color: var(--ds-brand-primary, #0062B8) !important;
+    border: 1px solid #93C5FD !important;
+    padding: 0.24rem 0.5rem !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 3px !important;
+}
+
+.ds-scope-light .btn-table-action:hover,
+.btn-table-action.ds-btn-open-opp:hover {
+    background: var(--ds-brand-tint, #EBF5FF) !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+.ds-sec-fin-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: 6px;
+    background: var(--ds-bg-subtle, #F8FAFC);
+}
+
+.ds-proposal-lifecycle-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.55rem;
 }
 
 .ds-account-link {
@@ -5613,9 +5821,73 @@ body.ds-body-light,
     color: var(--ds-brand-primary-hover);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1180px) {
     .ds-account-360-split {
         grid-template-columns: 1fr;
+    }
+    .ds-account-360-side-col {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        align-items: start;
+    }
+}
+
+@media (max-width: 860px) {
+    .ds-account-360-side-col {
+        grid-template-columns: 1fr;
+    }
+    .ds-proposal-lifecycle-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .ds-account360-opps-table thead {
+        display: none;
+    }
+    .ds-account360-opps-table,
+    .ds-account360-opps-table tbody {
+        display: block;
+        width: 100%;
+    }
+    .ds-account360-opps-table tr.ds-acct360-opp-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px 8px;
+        padding: 0.65rem 0.5rem;
+        border-bottom: 1px solid #E2E8F0;
+        align-items: center;
+    }
+    .ds-scope-light .ds-account360-opps-table td,
+    .ds-account360-opps-table td {
+        padding: 0 !important;
+        border-bottom: none !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }
+    .ds-account360-opps-table td.col-opp-title {
+        grid-column: 1 / 2;
+    }
+    .ds-account360-opps-table td.col-opp-amount {
+        grid-column: 2 / 3;
+        text-align: right;
+        align-self: start;
+    }
+    .ds-account360-opps-table td.col-opp-stage {
+        grid-column: 1 / -1;
+    }
+    .ds-account360-opps-table td.col-opp-stage .ds-opp-stage-stack {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .ds-account360-opps-table td.col-opp-followup {
+        grid-column: 1 / 2;
+    }
+    .ds-account360-opps-table td.col-opp-action {
+        grid-column: 2 / 3;
+        text-align: right;
     }
 }
 

@@ -1227,15 +1227,15 @@
                         <button type="button" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Crear Primera Oportunidad</button>
                     </div>
                    </div>`
-                : `<div class="table-responsive">
-                    <table style="width:100%; border-collapse:collapse;">
+                : `<div class="table-responsive ds-table-wrap" style="border:none; box-shadow:none;">
+                    <table id="account-360-opps-summary-table" class="ds-table ds-account360-opps-table" style="width:100%; border-collapse:collapse;">
                         <thead>
                             <tr>
-                                <th>Oportunidad / Proyecto</th>
-                                <th>Etapa y Propuesta</th>
-                                <th style="text-align:right;">Monto</th>
-                                <th>Seguimiento</th>
-                                <th style="text-align:right;">Acción</th>
+                                <th class="col-opp-title">Oportunidad / Proyecto</th>
+                                <th class="col-opp-stage">Etapa y Propuesta</th>
+                                <th class="col-opp-amount" style="text-align:right;">Monto</th>
+                                <th class="col-opp-followup">Seguimiento</th>
+                                <th class="col-opp-action" style="text-align:right;">Acción</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1247,21 +1247,21 @@
                                     ? `<span class="ds-badge ds-badge-warning" title="${esc((p.attentionReasons || []).join(' · '))}">⚠️ ${esc(shortReason)}</span>`
                                     : (p.estado === 'activo' ? '<span class="ds-badge ds-badge-success">✅ Al día</span>' : '<span class="ds-badge ds-badge-neutral">Cerrada</span>');
                                 return `
-                                    <tr>
-                                        <td>
-                                            <div style="font-weight:700; font-size:0.82rem; color:var(--ds-text-primary, #0F172A);">${esc(p.proyecto || 'Proyecto sin título')}</div>
-                                            <div style="font-size:0.72rem; color:var(--ds-text-muted, #64748B); font-family:monospace;">${esc(p.codigo || p.id)} · ${esc(p.vendedor || '-')}</div>
+                                    <tr class="ds-acct360-opp-row">
+                                        <td class="col-opp-title" data-label="Proyecto">
+                                            <div class="ds-opp-project-title" title="${esc(p.proyecto || 'Proyecto sin título')}">${esc(p.proyecto || 'Proyecto sin título')}</div>
+                                            <div class="ds-opp-project-meta">${esc(p.codigo || p.id)} · ${esc(p.vendedor || '-')}</div>
                                         </td>
-                                        <td>
-                                            <div style="display:flex; flex-direction:column; align-items:flex-start; gap:3px;">
+                                        <td class="col-opp-stage" data-label="Etapa y Propuesta">
+                                            <div class="ds-opp-stage-stack">
                                                 ${_renderStageBadgeB6(p)}
                                                 ${_renderProposalLifecycleBadgeB6(p.proposalLifecycle)}
                                             </div>
                                         </td>
-                                        <td style="text-align:right; font-weight:700; font-size:0.84rem; font-variant-numeric:tabular-nums;">${_formatUsdB6(amt)}</td>
-                                        <td>${attnBadge}</td>
-                                        <td style="text-align:right;">
-                                            <button type="button" class="btn-table-action" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Abrir</button>
+                                        <td class="col-opp-amount" data-label="Monto" style="text-align:right; font-weight:700; font-size:0.83rem; font-variant-numeric:tabular-nums; white-space:nowrap;">${_formatUsdB6(amt)}</td>
+                                        <td class="col-opp-followup" data-label="Seguimiento">${attnBadge}</td>
+                                        <td class="col-opp-action" data-label="Acción" style="text-align:right; white-space:nowrap;">
+                                            <button type="button" class="btn-table-action ds-btn-open-opp" onclick="if(typeof openDetail==='function'){openDetail('${esc(p.id)}')}">📂 Abrir</button>
                                         </td>
                                     </tr>
                                 `;
@@ -1272,16 +1272,16 @@
 
             tabBodyHtml = `
                 <div class="ds-account-360-split">
-                    <div style="display:flex; flex-direction:column; gap:0.85rem;">
-                        <div class="ds-panel-box">
+                    <div id="account-360-main-col" class="ds-account-360-main-col">
+                        <div id="account-360-opps-panel" class="ds-panel-box">
                             <div class="ds-panel-box-header">
                                 <div class="ds-panel-box-title">
                                     <span>💼 Oportunidades de la Cuenta y Atención Prioritaria</span>
                                     ${metrics.opportunitiesNeedingAttention.length > 0 ? `<span class="ds-badge ds-badge-warning">⚠️ ${metrics.opportunitiesNeedingAttention.length} requieren atención</span>` : ''}
                                 </div>
-                                <div style="display:flex; gap:0.4rem;">
-                                    <button type="button" class="btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.76rem;" onclick="ClientsUI.setAccount360Tab('oportunidades')">Ver todas (${metrics.totalOpportunitiesCount})</button>
-                                    <button type="button" class="btn-primary" style="padding:0.3rem 0.7rem; font-size:0.76rem;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Nueva Oportunidad</button>
+                                <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                                    <button type="button" class="btn-secondary" style="padding:0.28rem 0.6rem; font-size:0.75rem; white-space:nowrap;" onclick="ClientsUI.setAccount360Tab('oportunidades')">Ver todas (${metrics.totalOpportunitiesCount})</button>
+                                    <button type="button" class="btn-primary" style="padding:0.28rem 0.65rem; font-size:0.75rem; white-space:nowrap;" onclick="ClientsUI.openNewOpportunityFromAccount('${esc(c.id)}')">+ Nueva Oportunidad</button>
                                 </div>
                             </div>
                             ${oppsRowsHtml}
@@ -1294,7 +1294,7 @@
                                 </div>
                                 <span class="ds-badge ds-badge-primary">${metrics.propuestasPresentadasCount} presentadas de ${metrics.totalOpportunitiesCount} op.</span>
                             </div>
-                            <div style="display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0.55rem;">
+                            <div class="ds-proposal-lifecycle-grid">
                                 <div style="padding:0.55rem 0.7rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
                                     <div style="font-size:0.7rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">1. Preliminar</div>
                                     <div style="font-size:1.1rem; font-weight:800; color:var(--ds-text-primary, #0F172A); margin-top:2px;">${metrics.proposalCountsByState.preliminar}</div>
@@ -1319,35 +1319,35 @@
                         </div>
                     </div>
 
-                    <div style="display:flex; flex-direction:column; gap:0.85rem;">
+                    <div id="account-360-side-col" class="ds-account-360-side-col">
                         <div id="account-360-secondary-financial-summary" class="ds-panel-box">
                             <div class="ds-panel-box-header">
                                 <div class="ds-panel-box-title">
                                     <span>💰 Resumen Financiero Secundario</span>
                                 </div>
-                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem; white-space:nowrap;" onclick="ClientsUI.setAccount360Tab('finanzas')">Finanzas e Historial →</button>
+                                <button type="button" class="btn-secondary" style="padding:0.24rem 0.55rem; font-size:0.73rem; white-space:nowrap;" onclick="ClientsUI.setAccount360Tab('finanzas')">Finanzas e Historial →</button>
                             </div>
                             <div style="display:flex; flex-direction:column; gap:0.45rem;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
-                                    <div>
-                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Facturación</div>
-                                        <div style="font-size:0.71rem; color:var(--ds-text-secondary, #334155);">Facturado histórico vigente</div>
+                                <div class="ds-sec-fin-row">
+                                    <div style="min-width:0;">
+                                        <div style="font-size:0.71rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Facturación</div>
+                                        <div style="font-size:0.7rem; color:var(--ds-text-secondary, #334155);">Facturado histórico vigente</div>
                                     </div>
-                                    <div id="acct360-sec-facturacion" style="font-size:0.95rem; font-weight:800; color:var(--ds-text-primary, #0F172A); font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.facturacionTotal)}</div>
+                                    <div id="acct360-sec-facturacion" style="font-size:0.92rem; font-weight:800; color:var(--ds-text-primary, #0F172A); font-variant-numeric:tabular-nums; white-space:nowrap;">${_formatUsdB6(metrics.facturacionTotal)}</div>
                                 </div>
-                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
-                                    <div>
-                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Dinero Recibido</div>
-                                        <div style="font-size:0.71rem; color:var(--ds-text-secondary, #334155);">${abonosDisponiblesCuenta > 0 ? `Abonos disp.: ${_formatUsdB6(abonosDisponiblesCuenta)}` : `Aplicado: ${_formatUsdB6(metrics.totalCobrado)}`}</div>
+                                <div class="ds-sec-fin-row">
+                                    <div style="min-width:0;">
+                                        <div style="font-size:0.71rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Dinero Recibido</div>
+                                        <div style="font-size:0.7rem; color:var(--ds-text-secondary, #334155);">${abonosDisponiblesCuenta > 0 ? `Abonos disp.: ${_formatUsdB6(abonosDisponiblesCuenta)}` : `Aplicado: ${_formatUsdB6(metrics.totalCobrado)}`}</div>
                                     </div>
-                                    <div id="acct360-sec-dinero-recibido" style="font-size:0.95rem; font-weight:800; color:var(--ds-success, #047857); font-variant-numeric:tabular-nums;">${_formatUsdB6(dineroRecibidoCuenta)}</div>
+                                    <div id="acct360-sec-dinero-recibido" style="font-size:0.92rem; font-weight:800; color:var(--ds-success, #047857); font-variant-numeric:tabular-nums; white-space:nowrap;">${_formatUsdB6(dineroRecibidoCuenta)}</div>
                                 </div>
-                                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.45rem 0.65rem; border:1px solid var(--ds-border, #CBD5E1); border-radius:6px; background:var(--ds-bg-subtle, #F8FAFC);">
-                                    <div>
-                                        <div style="font-size:0.72rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Cuentas por Cobrar</div>
-                                        <div style="font-size:0.71rem; margin-top:1px;">${cxcBadge}</div>
+                                <div class="ds-sec-fin-row">
+                                    <div style="min-width:0;">
+                                        <div style="font-size:0.71rem; font-weight:700; color:var(--ds-text-muted, #64748B); text-transform:uppercase;">Cuentas por Cobrar</div>
+                                        <div style="font-size:0.69rem; margin-top:2px;">${cxcBadge}</div>
                                     </div>
-                                    <div id="acct360-sec-cxc" style="font-size:0.95rem; font-weight:800; color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'}; font-variant-numeric:tabular-nums;">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
+                                    <div id="acct360-sec-cxc" style="font-size:0.92rem; font-weight:800; color:${metrics.overdueAmount > 0 ? 'var(--ds-danger, #B91C1C)' : 'var(--ds-text-primary, #0F172A)'}; font-variant-numeric:tabular-nums; white-space:nowrap;">${_formatUsdB6(metrics.saldoPorCobrar)}</div>
                                 </div>
                             </div>
                         </div>
@@ -1357,7 +1357,7 @@
                                 <div class="ds-panel-box-title">
                                     <span>👥 Contactos de la Cuenta</span>
                                 </div>
-                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="ContactsUI.openAccountContactsModal('${esc(c.id)}')">Gestionar</button>
+                                <button type="button" class="btn-secondary" style="padding:0.24rem 0.55rem; font-size:0.73rem; white-space:nowrap;" onclick="ContactsUI.openAccountContactsModal('${esc(c.id)}')">Gestionar</button>
                             </div>
                             <div id="account-360-summary-contacts-preview">
                                 <div style="font-size:0.8rem; color:var(--ds-text-muted, #64748B);">Cargando contactos vinculados...</div>
@@ -1369,9 +1369,9 @@
                                 <div class="ds-panel-box-title">
                                     <span>⚖️ Síntesis Legal y Fiscal</span>
                                 </div>
-                                <button type="button" class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="ClientsUI.setAccount360Tab('legal')">Ver Expediente</button>
+                                <button type="button" class="btn-secondary" style="padding:0.24rem 0.55rem; font-size:0.73rem; white-space:nowrap;" onclick="ClientsUI.setAccount360Tab('legal')">Ver Expediente</button>
                             </div>
-                            <div style="font-size:0.82rem; color:var(--ds-text-secondary, #334155); display:flex; flex-direction:column; gap:0.4rem;">
+                            <div style="font-size:0.8rem; color:var(--ds-text-secondary, #334155); display:flex; flex-direction:column; gap:0.35rem; word-break:break-word;">
                                 <div><strong>Régimen:</strong> ${isNatural ? 'Persona Natural' : 'Persona Jurídica'} ${isGranContrib ? '· 🏛️ Gran Contribuyente (1% IVA)' : ''} ${isExport ? '· ✈️ Exportación (0% IVA)' : ''}</div>
                                 <div><strong>NIT:</strong> <span style="font-family:monospace;">${esc(c.nit || 'Pendiente')}</span> · <strong>${isNatural ? 'DUI' : 'NRC'}:</strong> <span style="font-family:monospace;">${esc(isNatural ? (c.dui || 'Pendiente') : (c.nrc || 'Pendiente'))}</span></div>
                                 ${!isNatural ? `<div><strong>Representante Legal:</strong> ${esc(c.rep_legal || 'Pendiente')}</div>` : ''}
@@ -1621,13 +1621,13 @@
 
             ${kpiStripHtml}
 
-            <div class="ds-tabs-bar" role="tablist" aria-label="Secciones de Cuenta 360">
-                <button type="button" class="ds-tab-btn ${tab === 'resumen' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('resumen')">📊 Resumen 360</button>
-                <button type="button" class="ds-tab-btn ${tab === 'contactos' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('contactos')">👥 Contactos</button>
-                <button type="button" class="ds-tab-btn ${tab === 'oportunidades' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('oportunidades')">💼 Oportunidades (${metrics.totalOpportunitiesCount})</button>
-                <button type="button" class="ds-tab-btn ${tab === 'legal' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('legal')">⚖️ Legal y Fiscal</button>
-                <button type="button" class="ds-tab-btn ${tab === 'finanzas' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('finanzas')">💰 Finanzas e Historial</button>
-                <button type="button" class="ds-tab-btn ${tab === 'ficha' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('ficha')">✏️ Editar Datos Fiscales</button>
+            <div class="ds-tabs ds-tabs-bar" role="tablist" aria-label="Secciones de Cuenta 360">
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'resumen' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('resumen')">📊 Resumen 360</button>
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'contactos' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('contactos')">👥 Contactos</button>
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'oportunidades' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('oportunidades')">💼 Oportunidades <span class="ds-tab-count">${metrics.totalOpportunitiesCount}</span></button>
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'legal' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('legal')">⚖️ Legal y Fiscal <span class="ds-tab-count">${uploadedDocsCount}/${requiredDocsCount}</span></button>
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'finanzas' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('finanzas')">💰 Finanzas e Historial</button>
+                <button type="button" class="ds-tab ds-tab-btn ${tab === 'ficha' ? 'active' : ''}" onclick="ClientsUI.setAccount360Tab('ficha')">✏️ Editar Datos Fiscales</button>
             </div>
 
             <div id="account-360-tab-panel-body">

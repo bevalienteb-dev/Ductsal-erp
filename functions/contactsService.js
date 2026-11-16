@@ -317,7 +317,7 @@ function createContactsService({
     const relsSnap = await col('accountContacts').where('contactId', '==', cId).get();
     const rawRels = relsSnap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(r => r && r.eliminado !== true && (authFilter === null || authFilter.authorizedAccountIds.has(r.accountId)));
+      .filter(r => r && !r.accountContactId && r.eliminado !== true && (authFilter === null || authFilter.authorizedAccountIds.has(r.accountId)));
 
     const accountMap = new Map();
     await Promise.all(Array.from(new Set(rawRels.map(r => r.accountId).filter(Boolean))).map(async aId => {
@@ -491,7 +491,7 @@ function createContactsService({
     const relsByContact = new Map();
     relsSnap.docs.forEach(d => {
       const r = { id: d.id, ...d.data() };
-      if (!r.contactId || r.eliminado === true) return;
+      if (!r.contactId || r.accountContactId || r.eliminado === true) return;
       if (authFilter !== null && !authFilter.authorizedAccountIds.has(r.accountId)) return;
       const acc = clientMap.get(r.accountId) || {};
       const accountName = acc.tipo === 'natural'
