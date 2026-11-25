@@ -123,19 +123,19 @@
         }
         banner.style.display = 'block';
         if (type === 'error') {
-            banner.style.background = 'rgba(239, 68, 68, 0.15)';
-            banner.style.border = '1px solid rgba(239, 68, 68, 0.4)';
-            banner.style.color = '#fca5a5';
+            banner.style.background = 'var(--ds-danger-bg, #FEF2F2)';
+            banner.style.border = '1px solid var(--ds-danger-border, #FECACA)';
+            banner.style.color = 'var(--ds-danger-text, #B91C1C)';
             banner.innerHTML = `⚠️ <strong>Error:</strong> ${_deps.esc(message)}`;
         } else if (type === 'success') {
-            banner.style.background = 'rgba(16, 185, 129, 0.15)';
-            banner.style.border = '1px solid rgba(16, 185, 129, 0.4)';
-            banner.style.color = '#6ee7b7';
+            banner.style.background = 'var(--ds-success-bg, #ECFDF5)';
+            banner.style.border = '1px solid var(--ds-success-border, #A7F3D0)';
+            banner.style.color = 'var(--ds-success-text, #047857)';
             banner.innerHTML = `✅ <strong>Éxito:</strong> ${_deps.esc(message)}`;
         } else if (type === 'loading') {
-            banner.style.background = 'rgba(59, 130, 246, 0.15)';
-            banner.style.border = '1px solid rgba(59, 130, 246, 0.4)';
-            banner.style.color = '#93c5fd';
+            banner.style.background = 'var(--ds-info-bg, #EFF6FF)';
+            banner.style.border = '1px solid var(--ds-info-border, #BFDBFE)';
+            banner.style.color = 'var(--ds-info-text, #1D4ED8)';
             banner.innerHTML = `⏳ <strong>Procesando:</strong> ${_deps.esc(message)}`;
         }
     }
@@ -217,13 +217,13 @@
 
         // Loading state
         container.innerHTML = `
-            <div class="opp-participants-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem;">
+            <div class="opp-participants-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--ds-border, var(--panel-border)); padding-bottom: 0.5rem;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h3 style="margin: 0; font-size: 1.05rem; color: white;">👥 Participantes Comerciales</h3>
-                    <span class="badge bg-neutral" style="font-size: 0.75rem;">Cargando...</span>
+                    <h3 style="margin: 0; font-size: 1.05rem; color: var(--ds-text-primary, #0F172A);">👥 Participantes Comerciales</h3>
+                    <span class="badge ds-badge ds-badge-neutral" style="font-size: 0.75rem;">Cargando...</span>
                 </div>
             </div>
-            <div style="padding: 1.5rem; text-align: center; color: var(--text-secondary);">
+            <div style="padding: 1.25rem; text-align: center; color: var(--ds-text-secondary, #334155);">
                 Cargando participantes del proceso comercial...
             </div>
         `;
@@ -252,8 +252,8 @@
         }
 
         const countBadge = participants.length > 0
-            ? `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); font-size: 0.75rem;">${participants.length} participante${participants.length === 1 ? '' : 's'}</span>`
-            : `<span class="badge bg-neutral" style="font-size: 0.75rem;">0 participantes</span>`;
+            ? `<span class="badge ds-badge ds-badge-primary" style="font-size: 0.75rem;">${participants.length} participante${participants.length === 1 ? '' : 's'}</span>`
+            : `<span class="badge ds-badge ds-badge-neutral" style="font-size: 0.75rem;">0 participantes</span>`;
 
         const addBtn = (canManage && p.estado === 'activo')
             ? `<button type="button" class="btn-primary" style="padding: 4px 10px; font-size: 0.78rem;" onclick="openAddOpportunityContactView('${p.id}', '${p.clientId}')">+ Agregar Participante</button>`
@@ -266,13 +266,13 @@
         let contentHtml = '';
         if (participants.length === 0) {
             contentHtml = `
-                <div style="padding: 1.25rem; text-align: center; background: rgba(0,0,0,0.15); border-radius: 6px; border: 1px dashed var(--panel-border);">
-                    <div style="font-size: 1.5rem; margin-bottom: 6px;">👥</div>
-                    <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 0.5rem 0;">
+                <div style="padding: 1.15rem; text-align: center; background: var(--ds-bg-subtle, #F8FAFC); border-radius: 6px; border: 1px dashed var(--ds-border, #CBD5E1);">
+                    <div style="font-size: 1.35rem; margin-bottom: 4px;">👥</div>
+                    <p style="color: var(--ds-text-primary, #0F172A); font-weight: 600; font-size: 0.85rem; margin: 0 0 0.35rem 0;">
                         No hay participantes asignados a esta oportunidad comercial.
                     </p>
-                    <small style="color: var(--text-muted); display: block;">
-                        Asigna decisores, evaluadores técnicos y compradores económicos desde los contactos de la cuenta para estructurar el seguimiento comercial.
+                    <small style="color: var(--ds-text-secondary, #334155); display: block;">
+                        Asigna decisores, evaluadores técnicos y compradores económicos desde los contactos de la cuenta para estructurar el seguimiento comercial. El Contacto Principal es opcional y exclusivo de cada oportunidad.
                     </small>
                 </div>
             `;
@@ -286,12 +286,13 @@
                 const phone = snap.telefono || '';
                 const email = snap.correo || '';
                 const ext = snap.extension ? ` Ext. ${snap.extension}` : '';
+                const contactId = part.contactId || snap.contactId || '';
 
                 const primaryBadge = isPrimary
-                    ? `<span class="badge" style="background: rgba(212, 175, 55, 0.2); color: var(--brand-gold); border: 1px solid var(--brand-gold); font-size: 0.72rem; font-weight: 700;">⭐ Contacto Principal</span>`
+                    ? `<span class="badge ds-badge ds-badge-warning" style="font-size: 0.72rem; font-weight: 700;" title="Atributo opcional y exclusivo de esta oportunidad">⭐ Contacto Principal</span>`
                     : '';
 
-                const roleBadge = `<span class="badge" style="background: rgba(99, 102, 241, 0.18); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4); font-size: 0.72rem;">🏷️ ${_deps.esc(roleName)}</span>`;
+                const roleBadge = `<span class="badge ds-badge ds-badge-info" style="font-size: 0.72rem;">🏷️ ${_deps.esc(roleName)}</span>`;
 
                 const phoneLink = phone
                     ? `<a href="tel:${phone.replace(/[^\d+]/g, '')}" class="contact-channel-pill contact-channel-tel" style="padding: 2px 7px; font-size: 0.72rem;" title="Llamar">📞 <span>${_deps.esc(phone)}${_deps.esc(ext)}</span></a>`
@@ -301,34 +302,41 @@
                     ? `<a href="mailto:${encodeURIComponent(email)}" class="contact-channel-pill contact-channel-email" style="padding: 2px 7px; font-size: 0.72rem;" title="Enviar correo">✉️ <span>${_deps.esc(email)}</span></a>`
                     : '';
 
+                const contact360Btn = contactId
+                    ? `<button type="button" class="btn-secondary" style="padding: 2px 7px; font-size: 0.72rem;" onclick="if(window.ContactsUI&&typeof window.ContactsUI.openContact360View==='function')window.ContactsUI.openContact360View('${_deps.esc(contactId)}',{originView:'detail-view',prospectId:'${_deps.esc(p.id || '')}'})" title="Abrir Ficha Contacto 360">👤 Contacto 360</button>`
+                    : '';
+
                 const notesHtml = part.notes
-                    ? `<div style="font-size: 0.76rem; color: var(--text-secondary); margin-top: 5px; font-style: italic; background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 4px;">📝 ${_deps.esc(part.notes)}</div>`
+                    ? `<div style="font-size: 0.76rem; color: var(--ds-text-secondary, #334155); margin-top: 5px; font-style: italic; background: var(--ds-bg-subtle, #F8FAFC); border: 1px solid var(--ds-border, #CBD5E1); padding: 4px 8px; border-radius: 4px;">📝 ${_deps.esc(part.notes)}</div>`
                     : '';
 
                 // Actions
                 let actionsHtml = '';
                 if (canManage && p.estado === 'activo') {
                     const makePrimaryBtn = !isPrimary
-                        ? `<button type="button" class="btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; color: var(--brand-gold);" onclick="openSetOpportunityPrimaryContactView('${p.id}', '${part.id}')" title="Designar como contacto principal de esta oportunidad">⭐ Hacer Principal</button>`
+                        ? `<button type="button" class="btn-secondary" style="padding: 2px 7px; font-size: 0.72rem; color: var(--ds-warning-text, #B45309);" onclick="openSetOpportunityPrimaryContactView('${p.id}', '${part.id}')" title="Designar como contacto principal de esta oportunidad (opcional)">⭐ Hacer Principal</button>`
                         : '';
                     const editRoleBtn = `<button type="button" class="btn-secondary" style="padding: 2px 7px; font-size: 0.72rem;" onclick="openEditOpportunityContactRoleView('${p.id}', '${part.id}')" title="Modificar rol o notas">✏️ Rol / Notas</button>`;
                     const removeBtn = `<button type="button" class="btn-danger" style="padding: 2px 7px; font-size: 0.72rem;" onclick="openRemoveOpportunityContactView('${p.id}', '${part.id}')" title="Retirar participante de la oportunidad">✕ Retirar</button>`;
 
                     actionsHtml = `
-                        <div style="display: flex; gap: 0.4rem; align-items: center; margin-top: 6px;">
+                        <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-top: 6px;">
+                            ${contact360Btn}
                             ${makePrimaryBtn}
                             ${editRoleBtn}
                             ${removeBtn}
                         </div>
                     `;
+                } else if (contact360Btn) {
+                    actionsHtml = `<div style="display: flex; gap: 0.4rem; align-items: center; margin-top: 6px;">${contact360Btn}</div>`;
                 }
 
                 return `
-                    <div class="opp-participant-item" style="background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 0.75rem; display: flex; flex-direction: column; gap: 4px; ${isPrimary ? 'border-left: 3px solid var(--brand-gold);' : ''}">
+                    <div class="opp-participant-item" style="background: var(--ds-bg-surface, #FFFFFF); border: 1px solid var(--ds-border, #CBD5E1); border-radius: 6px; padding: 0.75rem; display: flex; flex-direction: column; gap: 4px; ${isPrimary ? 'border-left: 3px solid var(--ds-primary, #0062B8);' : ''}">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 6px;">
                             <div>
-                                <span style="font-weight: 600; color: white; font-size: 0.92rem;">${_deps.esc(name)}</span>
-                                <span style="color: var(--text-secondary); font-size: 0.8rem; margin-left: 6px;">— ${_deps.esc(cargo)}</span>
+                                <span style="font-weight: 700; color: var(--ds-text-primary, #0F172A); font-size: 0.92rem;">${_deps.esc(name)}</span>
+                                <span style="color: var(--ds-text-secondary, #334155); font-size: 0.8rem; margin-left: 6px;">— ${_deps.esc(cargo)}</span>
                             </div>
                             <div style="display: flex; gap: 6px; align-items: center;">
                                 ${primaryBadge}
@@ -349,9 +357,9 @@
         }
 
         container.innerHTML = `
-            <div class="opp-participants-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+            <div class="opp-participants-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--ds-border, var(--panel-border)); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h3 style="margin: 0; font-size: 1.05rem; color: white;">👥 Participantes Comerciales</h3>
+                    <h3 style="margin: 0; font-size: 1.05rem; color: var(--ds-text-primary, #0F172A);">👥 Participantes Comerciales</h3>
                     ${countBadge}
                 </div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">

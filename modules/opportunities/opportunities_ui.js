@@ -143,10 +143,10 @@
         const isError = type === 'error' || /error|no se|denegado|inválid|falta|requiere|obligatorio|❌|⛔/i.test(String(message || ''));
         const isSuccess = !isError && (type === 'success' || /exitosamente|✅|🎉|guardad|registrad|confirmad|actualizad/i.test(String(message || '')));
         banner.style.cssText = isError
-            ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;'
+            ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:var(--ds-danger-bg, #FEF2F2); border:1px solid var(--ds-danger-border, #FECACA); color:var(--ds-danger-text, #B91C1C); font-weight:600; font-size:0.84rem;'
             : (isSuccess
-                ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
-                : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.45); color:#bae6fd; font-size:0.84rem;');
+                ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:var(--ds-success-bg, #ECFDF5); border:1px solid var(--ds-success-border, #A7F3D0); color:var(--ds-success-text, #047857); font-weight:600; font-size:0.84rem;'
+                : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:var(--ds-info-bg, #EFF6FF); border:1px solid var(--ds-info-border, #BFDBFE); color:var(--ds-info-text, #1D4ED8); font-weight:600; font-size:0.84rem;');
         banner.textContent = String(message || '');
     }
 
@@ -1213,7 +1213,25 @@ function openDetail(id) {
     }
     showView('detail-view');
     const clientNameStr = getClientName(p.clientId);
-    document.getElementById('detail-cliente').textContent = clientNameStr;
+    const detailClienteEl = document.getElementById('detail-cliente');
+    if (detailClienteEl) {
+        detailClienteEl.textContent = clientNameStr;
+        if (p.clientId) {
+            detailClienteEl.style.cursor = 'pointer';
+            detailClienteEl.title = 'Ir a Cuenta 360 (' + clientNameStr + ')';
+            detailClienteEl.onclick = function () {
+                if (typeof openClientDetailView === 'function') {
+                    openClientDetailView(p.clientId, { originView: 'detail-view', prospectId: p.id });
+                } else if (typeof window !== 'undefined' && typeof window.openClientDetailView === 'function') {
+                    window.openClientDetailView(p.clientId, { originView: 'detail-view', prospectId: p.id });
+                }
+            };
+        } else {
+            detailClienteEl.style.cursor = '';
+            detailClienteEl.title = '';
+            detailClienteEl.onclick = null;
+        }
+    }
     document.getElementById('detail-proyecto').innerHTML = `${p.proyecto} <span class="badge bg-neutral ml-2">${p.codigo || ''}</span>`;
 
     // Sincronizar barra móvil pegajosa superior (Fase 5.2 Bloque 3)
@@ -1339,16 +1357,35 @@ function openDetail(id) {
     var currentUser = ((typeof _deps !== 'undefined' && _deps.getCurrentUser) ? _deps.getCurrentUser() : null) || (typeof window !== 'undefined' ? window.currentUser : (typeof global !== 'undefined' ? global.currentUser : null));
     const STAGES = _deps.getStages();
     const tracker = document.getElementById('stage-tracker'); tracker.innerHTML = ''; const currentIndex = STAGES.indexOf(p.etapa);
+    const stageTooltips = {
+        prospecto: '1. Prospecto — Identificación comercial preliminar',
+        levantamiento: '2. Levantamiento — Visita técnica y toma de medidas',
+        cotizacion: '3. Cotización — Oferta preparada internamente (pendiente de entrega formal)',
+        negociacion: '4. Negociación — Propuesta entregada al cliente en evaluación',
+        cierre: '5. Cierre — Formalización contractual y expediente legal'
+    };
     STAGES.forEach((stage, index) => {
         let statusClass = '';
         if (p.estado === 'perdido' && index <= currentIndex) statusClass = 'completed';
         else if (p.estado !== 'perdido') { if (index < currentIndex) statusClass = 'completed'; if (index === currentIndex) statusClass = 'current'; if (p.estado === 'ganado' && stage === 'cierre') statusClass = 'completed'; }
-        tracker.innerHTML += `<div class="stage-step ${statusClass}"><div class="stage-circle">${index + 1}</div><div class="stage-label">${stage}</div></div>`;
+        const tip = stageTooltips[stage] || stage;
+        tracker.innerHTML += `<div class="stage-step ${statusClass}" title="${tip}"><div class="stage-circle">${index + 1}</div><div class="stage-label">${stage}</div></div>`;
     });
     const isPresupuesto = p.clasificacion === 'presupuesto';
     const clasifBadge = isPresupuesto
-        ? `<span class="badge" style="background: rgba(147, 51, 234, 0.2); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.45); font-size: 0.75rem; margin-left: 8px;">📐 Cotización para Presupuesto</span>`
-        : `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); font-size: 0.75rem; margin-left: 8px;">🏗️ Oferta para Ejecución</span>`;
+        ? `<span class="badge ds-badge ds-badge-info" style="font-size: 0.75rem; margin-left: 8px;">📐 Cotización para Presupuesto</span>`
+        : `<span class="badge ds-badge ds-badge-primary" style="font-size: 0.75rem; margin-left: 8px;">🏗️ Oferta para Ejecución</span>`;
+
+    let proposalLifecycleBadge = '';
+    const biEngine = (typeof CrmBiEngine !== 'undefined' && CrmBiEngine) ? CrmBiEngine : (typeof window !== 'undefined' && window.CrmBiEngine ? window.CrmBiEngine : null);
+    if (biEngine && typeof biEngine.classifyProposalLifecycle === 'function') {
+        const lc = biEngine.classifyProposalLifecycle(p);
+        if (lc && lc.proposalState === 'oferta_preparada') {
+            proposalLifecycleBadge = `<span class="badge ds-badge ds-badge-warning" style="font-size: 0.72rem; margin-left: 6px;" title="Oferta preparada internamente en etapa Cotización">📝 Oferta preparada</span>`;
+        } else if (lc && lc.proposalState === 'propuesta_entregada') {
+            proposalLifecycleBadge = `<span class="badge ds-badge ds-badge-primary" style="font-size: 0.72rem; margin-left: 6px;" title="Propuesta entregada formalmente al cliente">📤 Propuesta entregada</span>`;
+        }
+    }
 
     const isAssigned = currentUser && (p.vendedorId === currentUser.id || (!p.vendedorId && p.createdBy === currentUser.id));
     const canReclassify = p.estado === 'activo' && !!currentUser && (currentUser.role === 'manager' || isAssigned);
@@ -1357,10 +1394,10 @@ function openDetail(id) {
         : '';
 
     const cierreDocBadge = (p.etapa === 'cierre' && p.estado === 'activo')
-        ? `<span class="badge" style="background: rgba(212, 175, 55, 0.2); color: var(--brand-gold); border: 1px solid var(--brand-gold); margin-left: 8px;">PENDIENTE DE DOCUMENTACIÓN</span>`
+        ? `<span class="badge ds-badge ds-badge-warning" style="margin-left: 8px;">PENDIENTE DE DOCUMENTACIÓN</span>`
         : '';
 
-    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>${cierreDocBadge}${clasifBadge}${reclassBtn}`;
+    document.getElementById('detail-badges').innerHTML = `<span class="badge ${p.estado === 'activo' ? 'activo' : (p.estado === 'ganado' ? 'ganado' : 'perdido')}">${(p.estado || 'activo').toUpperCase()}</span>${cierreDocBadge}${clasifBadge}${proposalLifecycleBadge}${reclassBtn}`;
 }
 
 function renderInfo(p) {

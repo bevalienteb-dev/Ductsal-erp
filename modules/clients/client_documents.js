@@ -140,8 +140,8 @@
                     activeView.insertBefore(banner, activeView.firstChild);
                 }
                 banner.style.cssText = isSuccess
-                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-size:0.84rem;'
-                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.45); color:#fca5a5; font-size:0.84rem;';
+                    ? 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:#ECFDF5; border:1px solid #6EE7B7; color:#047857; font-weight:600; font-size:0.84rem;'
+                    : 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:12px; border-radius:6px; background:#FEF2F2; border:1px solid #FCA5A5; color:#B91C1C; font-weight:600; font-size:0.84rem;';
                 banner.textContent = text;
             }
         }
@@ -684,9 +684,9 @@
                 if (previewable) {
                     viewBtn = `<button type="button" class="btn-table-action btn-table-edit" onclick="viewStoredClientDoc('${storeId}')" title="Previsualizar documento">👁️ Ver</button>`;
                 }
-                const dlBtn = `<button type="button" class="btn-table-action" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar original" style="background:rgba(255,255,255,0.06); color:var(--text-secondary); border:1px solid rgba(255,255,255,0.12);">⬇️ Descargar</button>`;
-                const substBtn = `<button type="button" class="btn-table-action" onclick="ClientDocuments.openSubstituteDocView('${c.id}', '${item.key}', '${safeLabel}')" title="Sustituir documento en vista de pantalla completa" style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">🔄 Sustituir</button>`;
-                const histBtn = `<button type="button" class="btn-table-action" onclick="showDocumentVersionHistory('client', '${c.id}', '${item.key}', '${safeLabel}')" title="Consultar historial de versiones en vista de pantalla completa" style="background:rgba(245,158,11,0.12); color:#fbbf24; border:1px solid rgba(245,158,11,0.3);">📜 Versiones</button>`;
+                const dlBtn = `<button type="button" class="btn-table-action" onclick="downloadStoredClientDoc('${storeId}')" title="Descargar original">⬇️ Descargar</button>`;
+                const substBtn = `<button type="button" class="btn-table-action" onclick="ClientDocuments.openSubstituteDocView('${c.id}', '${item.key}', '${safeLabel}')" title="Sustituir documento en vista de pantalla completa">🔄 Sustituir</button>`;
+                const histBtn = `<button type="button" class="btn-table-action" onclick="showDocumentVersionHistory('client', '${c.id}', '${item.key}', '${safeLabel}')" title="Consultar historial de versiones en vista de pantalla completa">📜 Versiones</button>`;
                 const delBtn = isManager ? `<button type="button" class="btn-table-action btn-table-delete" onclick="deleteStoredClientDoc('${storeId}')" title="Eliminar documento del expediente">🗑️</button>` : '';
 
                 return `
@@ -699,7 +699,7 @@
                             </div>
                         </div>
                         <div class="client-doc-actions" style="flex-wrap:wrap; gap:6px;">
-                            <span class="badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:0.65rem; border:1px solid rgba(255,255,255,0.1);">${_deps.escapeHtmlDoc(ext)}</span>
+                            <span class="badge ds-badge ds-badge-neutral" style="font-size:0.65rem;">${_deps.escapeHtmlDoc(ext)}</span>
                             ${viewBtn}
                             ${dlBtn}
                             ${substBtn}
@@ -713,8 +713,8 @@
 
         // Botones de acceso directo a vista de pantalla completa para Cargar o Sustituir cualquier documento del catálogo
         const quickUploadHtml = `
-            <div style="margin-top: 0.85rem; padding: 0.85rem; background: rgba(15, 23, 42, 0.45); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 8px;">
-                <div style="font-size: 0.78rem; font-weight: 600; color: #38bdf8; margin-bottom: 0.5rem;">
+            <div style="margin-top: 0.85rem; padding: 0.85rem; background: var(--ds-primary-soft, #EBF3FA); border: 1px dashed var(--ds-primary-border, #93C5FD); border-radius: 8px;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: var(--ds-primary, #0062B8); margin-bottom: 0.5rem;">
                     📤 Cargar o Sustituir Documentos en Vista de Pantalla Completa (Control SHA-256 y Versionado):
                 </div>
                 <div style="display: flex; flex-wrap: wrap; gap: 6px;">
@@ -733,53 +733,53 @@
             const rl = c.representanteLegalVigente || null;
             const powers = Array.isArray(c.apoderadosVigentes) ? c.apoderadosVigentes : [];
             const b3Html = `
-                <div style="margin-top: 1.15rem; border-top: 1px solid var(--panel-border); padding-top: 1rem;">
+                <div style="margin-top: 1.15rem; border-top: 1px solid var(--ds-border, var(--panel-border)); padding-top: 1rem;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:0.75rem;">
-                        <h4 style="margin:0; font-size:0.92rem; color:var(--brand-gold); display:flex; align-items:center; gap:6px;">
+                        <h4 style="margin:0; font-size:0.92rem; color:var(--ds-primary, var(--brand-gold)); display:flex; align-items:center; gap:6px;">
                             <span>🏛️</span> Gobierno Societario y Facultades Contractuales (Bloque B3)
                         </h4>
                         <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px; border-color:rgba(16,185,129,0.4); color:#34d399;" onclick="ClientDocuments.openBiennialConfirmationView('${c.id}')">
+                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openBiennialConfirmationView('${c.id}')">
                                 🗓️ Confirmación Bienal (Pacto Social)
                             </button>
-                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px; border-color:rgba(251,191,36,0.4); color:#fbbf24;" onclick="ClientDocuments.openDossierHistoryView('${c.id}')">
+                            <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.openDossierHistoryView('${c.id}')">
                                 🗂️ Historial de Representantes y Poderes
                             </button>
                         </div>
                     </div>
 
                     <!-- Representante Legal -->
-                    <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:12px; margin-bottom:10px;">
+                    <div style="background:var(--ds-bg-subtle, #F8FAFC); border:1px solid var(--ds-border, var(--panel-border)); border-radius:8px; padding:12px; margin-bottom:10px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
-                            <div style="font-weight:700; font-size:0.85rem; color:white; display:flex; align-items:center; gap:6px;">
+                            <div style="font-weight:700; font-size:0.85rem; color:var(--ds-text-primary, #0F172A); display:flex; align-items:center; gap:6px;">
                                 <span>⚖️</span> Representante Legal Vigente
                             </div>
-                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px; border-color:#ef4444; color:#f87171;" onclick="ClientDocuments.openRLElectionView('${c.id}')">
+                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px;" onclick="ClientDocuments.openRLElectionView('${c.id}')">
                                 ➕ Registrar / Cambiar Representante Legal
                             </button>
                         </div>
                         ${rl && rl.estado === 'vigente' ? `
-                            <div style="font-size:0.82rem; color:#e2e8f0;">
+                            <div style="font-size:0.82rem; color:var(--ds-text-primary, #0F172A);">
                                 👤 <strong>${_deps.escapeHtmlDoc(rl.nombre)}</strong>
-                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.68rem; margin-left:6px;">🟢 Vigente</span>
-                                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;">
+                                <span class="badge ds-badge ds-badge-success" style="font-size:0.68rem; margin-left:6px;">🟢 Vigente</span>
+                                <div style="font-size:0.75rem; color:var(--ds-text-secondary, #334155); margin-top:3px;">
                                     Elección: ${_deps.escapeHtmlDoc(rl.fechaEleccion || '-')} | Vencimiento de Credencial: ${_deps.escapeHtmlDoc(rl.fechaVencimiento || 'Indefinido')}
                                 </div>
                             </div>
                         ` : `
-                            <div style="font-size:0.78rem; color:var(--text-muted);">
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155);">
                                 ⚠️ Sin nombramiento vigente registrado en el expediente societario. Utilice el botón superior para registrar al Representante Legal e incorporar su DUI y Credencial.
                             </div>
                         `}
                     </div>
 
                     <!-- Apoderados para Contratos -->
-                    <div style="background:rgba(15,23,42,0.55); border:1px solid var(--panel-border); border-radius:8px; padding:12px;">
+                    <div style="background:var(--ds-bg-subtle, #F8FAFC); border:1px solid var(--ds-border, var(--panel-border)); border-radius:8px; padding:12px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
-                            <div style="font-weight:700; font-size:0.85rem; color:white; display:flex; align-items:center; gap:6px;">
+                            <div style="font-weight:700; font-size:0.85rem; color:var(--ds-text-primary, #0F172A); display:flex; align-items:center; gap:6px;">
                                 <span>📜</span> Apoderados para Firma de Contratos (${powers.length})
                             </div>
-                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px; border-color:#38bdf8; color:#38bdf8;" onclick="ClientDocuments.openGrantPowerView('${c.id}')">
+                            <button type="button" class="btn-secondary" style="font-size:0.75rem; padding:4px 10px;" onclick="ClientDocuments.openGrantPowerView('${c.id}')">
                                 ➕ Registrar Apoderado y Poder
                             </button>
                         </div>
@@ -788,21 +788,21 @@
                                 ${powers.map(pw => {
                                     const pwId = pw.id || pw.powerId;
                                     return `
-                                    <div style="font-size:0.78rem; padding:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:6px;">
+                                    <div style="font-size:0.78rem; padding:8px; background:var(--ds-bg-surface, #FFFFFF); border:1px solid var(--ds-border, #CBD5E1); border-radius:6px;">
                                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                                            <div>
+                                            <div style="color:var(--ds-text-primary, #0F172A);">
                                                 <span>🖋️ <strong>${_deps.escapeHtmlDoc(pw.nombreApoderado)}</strong></span>
-                                                <span class="badge" style="background:rgba(16,185,129,0.2); color:#34d399; font-size:0.65rem; margin-left:4px;">🟢 Poder Vigente</span>
+                                                <span class="badge ds-badge ds-badge-success" style="font-size:0.65rem; margin-left:4px;">🟢 Poder Vigente</span>
                                             </div>
-                                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; color:#f87171; border-color:rgba(239,68,68,0.35);" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">
+                                            <button type="button" class="btn-secondary" style="font-size:0.72rem; padding:2px 8px; color:var(--ds-danger, #B91C1C); border-color:var(--ds-danger-border, #FCA5A5);" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">
                                                 Revocar Poder
                                             </button>
                                         </div>
-                                        <div id="b3-inline-revoke-${pwId}" style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed rgba(239,68,68,0.35);">
-                                            <label style="display:block; font-size:0.74rem; color:#fca5a5; margin-bottom:4px;">Motivo de revocación del poder (obligatorio):</label>
+                                        <div id="b3-inline-revoke-${pwId}" style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed var(--ds-danger-border, #FCA5A5);">
+                                            <label style="display:block; font-size:0.74rem; color:var(--ds-danger, #B91C1C); margin-bottom:4px;">Motivo de revocación del poder (obligatorio):</label>
                                             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                                                <input type="text" id="b3-revoke-reason-${pwId}" placeholder="Ej. Sustitución de apoderado / Revocatoria por junta directiva" style="flex:1; min-width:200px; padding:4px 8px; font-size:0.76rem; background:rgba(0,0,0,0.35); border:1px solid #ef4444; border-radius:4px; color:white;">
-                                                <button type="button" class="btn-primary" style="font-size:0.74rem; padding:4px 10px; background:#ef4444; border-color:#dc2626;" onclick="ClientDocuments.submitInlineRevokePower('${c.id}', '${pwId}')">Confirmar Revocación</button>
+                                                <input type="text" id="b3-revoke-reason-${pwId}" placeholder="Ej. Sustitución de apoderado / Revocatoria por junta directiva" style="flex:1; min-width:200px; padding:4px 8px; font-size:0.76rem; background:var(--ds-bg-surface, #FFFFFF); border:1px solid var(--ds-danger, #B91C1C); border-radius:4px; color:var(--ds-text-primary, #0F172A);">
+                                                <button type="button" class="btn-primary" style="font-size:0.74rem; padding:4px 10px; background:var(--ds-danger, #B91C1C); border-color:var(--ds-danger, #B91C1C); color:#FFFFFF;" onclick="ClientDocuments.submitInlineRevokePower('${c.id}', '${pwId}')">Confirmar Revocación</button>
                                                 <button type="button" class="btn-secondary" style="font-size:0.74rem; padding:4px 10px;" onclick="ClientDocuments.toggleInlineRevokePower('${pwId}')">Cancelar</button>
                                             </div>
                                         </div>
@@ -810,7 +810,7 @@
                                 `;}).join('')}
                             </div>
                         ` : `
-                            <div style="font-size:0.78rem; color:var(--text-muted);">
+                            <div style="font-size:0.78rem; color:var(--ds-text-secondary, #334155);">
                                 Sin apoderados con poder vigente. (El Representante Legal vigente puede suscribir contratos o puede acreditar apoderados).
                             </div>
                         `}

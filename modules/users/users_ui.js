@@ -38,17 +38,17 @@
 
         userList.forEach(u => {
             const rName = getRoleLabel(u.role);
-            const stHtml = u.activo ? `<span style="color:var(--success);">Activo</span>` : `<span style="color:var(--danger);">Inactivo</span>`;
+            const stHtml = u.activo ? `<span class="ds-badge ds-badge-success">Activo</span>` : `<span class="ds-badge ds-badge-danger">Inactivo</span>`;
             tbody.innerHTML += `<tr class="user-table-row">
-            <td class="col-usr-name">${u.nombre || '-'}</td>
-            <td class="col-usr-email">${u.email || '-'}</td>
-            <td class="col-usr-role">${rName}</td>
+            <td class="col-usr-name" style="font-weight:600; color:var(--ds-text-primary, #0F172A);">${u.nombre || '-'}</td>
+            <td class="col-usr-email" style="color:var(--ds-text-secondary, #334155);">${u.email || '-'}</td>
+            <td class="col-usr-role"><span class="ds-badge ds-badge-neutral">${rName}</span></td>
             <td class="col-usr-status">${stHtml}</td>
             <td class="col-usr-actions">
                 <div class="user-actions-group">
-                    <button class="btn-secondary btn-usr-edit" style="padding:4px 8px; font-size:0.7rem;" onclick="openUserModal('${u.id}')">Editar</button>
-                    <button class="btn-secondary btn-usr-reset" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
-                    <button class="btn-danger btn-usr-toggle" style="padding:4px 8px; font-size:0.7rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
+                    <button class="btn-secondary btn-usr-edit" style="padding:4px 8px; font-size:0.74rem;" onclick="openUserModal('${u.id}')">Editar</button>
+                    <button class="btn-secondary btn-usr-reset" style="padding:4px 8px; font-size:0.74rem; margin-left:4px;" onclick="resetUserPassword('${u.id}')">Reset Pass</button>
+                    <button class="${u.activo ? 'btn-danger' : 'btn-success'} btn-usr-toggle" style="padding:4px 8px; font-size:0.74rem; margin-left:4px;" onclick="toggleUserStatus('${u.id}')">${u.activo ? 'Desactivar' : 'Activar'}</button>
                 </div>
             </td>
         </tr>`;

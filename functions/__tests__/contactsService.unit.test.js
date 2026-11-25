@@ -824,5 +824,96 @@ describe('Contacts Service — Unit Tests (Phase 2 Block 1)', () => {
       expect(listRes.contacts.length).toBeGreaterThanOrEqual(1);
       expect(listRes.contacts.some(c => c.persona.nombres === 'Mateo')).toBe(true);
     });
+
+    test('B6 Contact 360 & Global Directory: includeRelations and includeDossier enforce portfolio RBAC and personalDataRestricted', async () => {
+      const callerV1 = { uid: 'uid-v1', cid: V1, role: 'vendedor', name: 'Vendedor Uno' };
+      const callerV2 = { uid: 'uid-v2', cid: V2, role: 'vendedor', name: 'Vendedor Dos' };
+      const callerMgr = { uid: 'uid-mgr', cid: MGR, role: 'manager', name: 'Gerente General' };
+
+      // Person created by V2 with personal phone/email, linked to C2 (V2) and C1 (V1)
+      const sharedRes = await svc.createContact({
+        caller: callerV2,
+        contact: {
+          nombres: 'Elena',
+          apellidos: 'Multiempresa',
+          correo: 'elena.personal@privado.com',
+          telefono: '7777-8888'
+        }
+      });
+      const sharedId = sharedRes.contact.id;
+
+      await svc.linkContactToAccount({
+        caller: callerV2,
+        accountId: 'C2',
+        contactId: sharedId,
+        cargo: 'Directora Financiera C2',
+        correo_corporativo: 'elena@c2.com'
+      });
+
+      await svc.linkContactToAccount({
+        caller: callerMgr,
+        accountId: 'C1',
+        contactId: sharedId,
+        cargo: 'Asesora Externa C1',
+        correo_corporativo: 'elena@c1.com'
+      });
+
+      // Seed an opportunity participation in C1 and C2
+      state.docs[`opportunity_contacts_prod/OC_1`] = {
+        opportunityId: 'OPP_C1_1',
+        accountId: 'C1',
+        contactId: sharedId,
+        roleCode: 'decisor',
+        roleLabel: 'Decisor',
+        isPrimary: true,
+        eliminado: false
+      };
+      state.docs[`opportunity_contacts_prod/OC_2`] = {
+        opportunityId: 'OPP_C2_1',
+        accountId: 'C2',
+        contactId: sharedId,
+        roleCode: 'evaluador_tecnico',
+        roleLabel: 'Evaluador Técnico',
+        isPrimary: false,
+        eliminado: false
+      };
+
+      // Manager sees both C1 and C2 relations, both opportunity participations, and personal data
+      const mgrDossier = await svc.getContact({
+        caller: callerMgr,
+        contactId: sharedId,
+        includeDossier: true
+      });
+      expect(mgrDossier.contact.correo).toBe('elena.personal@privado.com');
+      expect(mgrDossier.contact.accountRelations).toHaveLength(2);
+      expect(mgrDossier.contact.opportunityParticipations).toHaveLength(2);
+
+      // V1 only sees C1 relation and C1 opportunity participation, and personal data is masked (created by V2)
+      const v1Dossier = await svc.getContact({
+        caller: callerV1,
+        contactId: sharedId,
+        includeDossier: true
+      });
+      expect(v1Dossier.contact.personalDataRestricted).toBe(true);
+      expect(v1Dossier.contact.correo).toBeNull();
+      expect(v1Dossier.contact.telefono).toBeNull();
+      expect(v1Dossier.contact.accountRelations).toHaveLength(1);
+      expect(v1Dossier.contact.accountRelations[0].accountId).toBe('C1');
+      expect(v1Dossier.contact.opportunityParticipations).toHaveLength(1);
+      expect(v1Dossier.contact.opportunityParticipations[0].accountId).toBe('C1');
+
+      // Global directory search with includeRelations: true
+      const v1Dir = await svc.searchContacts({
+        caller: callerV1,
+        q: 'Elena',
+        includeRelations: true
+      });
+      expect(v1Dir.results).toHaveLength(1);
+      expect(v1Dir.results[0].personalDataRestricted).toBe(true);
+      expect(v1Dir.results[0].correo).toBeNull();
+      expect(v1Dir.results[0].accountRelations).toHaveLength(1);
+      expect(v1Dir.results[0].accountRelations[0].accountId).toBe('C1');
+      expect(v1Dir.results[0].opportunityCount).toBe(1);
+    });
   });
 });

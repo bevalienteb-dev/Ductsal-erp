@@ -64,6 +64,7 @@
         return (
             v === 'detail-view' ||
             v === 'client-detail-view' ||
+            v === 'contact-360-view' ||
             v.startsWith('b3-') ||
             v.includes('opportunity-contact') ||
             v.includes('opportunity-account') ||
@@ -385,6 +386,9 @@
             const target = doc.getElementById(viewId);
             if (target && target.classList) {
                 target.classList.add('active');
+                if (target.dataset && target.dataset.dsScope === 'light') {
+                    target.classList.add('ds-scope-light');
+                }
             }
 
             // Desmarcar todos los enlaces de navegación del menú
@@ -424,6 +428,29 @@
                 if (navClients && navClients.classList) navClients.classList.add('active');
             }
             _deps.renderClientsTable();
+        } else if (viewId === 'contacts-view') {
+            if (doc) {
+                const navContacts = doc.getElementById('nav-contacts');
+                if (navContacts && navContacts.classList) navContacts.classList.add('active');
+            }
+            if (typeof window !== 'undefined' && window.ContactsUI && typeof window.ContactsUI.loadGlobalContactsDirectory === 'function') {
+                window.ContactsUI.loadGlobalContactsDirectory();
+            }
+        } else if (viewId === 'contact-360-view') {
+            if (doc) {
+                const navContacts = doc.getElementById('nav-contacts');
+                if (navContacts && navContacts.classList) navContacts.classList.add('active');
+            }
+        } else if (viewId === 'client-detail-view' || viewId === 'account-contacts-view') {
+            if (doc) {
+                const navClients = doc.getElementById('nav-clients');
+                if (navClients && navClients.classList) navClients.classList.add('active');
+            }
+        } else if (viewId === 'detail-view') {
+            if (doc) {
+                const navList = doc.getElementById('nav-list');
+                if (navList && navList.classList) navList.classList.add('active');
+            }
         } else if (viewId === 'dashboard-view') {
             if (doc) {
                 const navDashboard = doc.getElementById('nav-dashboard');

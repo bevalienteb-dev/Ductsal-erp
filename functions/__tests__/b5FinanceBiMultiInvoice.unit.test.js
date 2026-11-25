@@ -1312,5 +1312,125 @@ describe('FASE B5 — Coordinación Transaccional Financiera, Abonos Multi-Factu
         ecuacionReconciliacionCuadra: true
       });
     });
+
+    test('Escenario 25 (B6): Regla comercial de Propuestas Presentadas (4 estados, máx 1 por oportunidad con v1..vN, evidencia explícita vs inferida sin inventar fecha) y métricas de Cuenta 360', () => {
+      const CrmBiEngine = require('../../crm_bi_engine.js');
+      const opps = [
+        // 1. Preliminar: en levantamiento sin oferta económica
+        {
+          id: 'OPP-B6-1',
+          clientId: 'ACC-360',
+          proyecto: 'LEV INICIAL',
+          estado: 'activo',
+          etapa: 'levantamiento',
+          precio_cotizado: 0
+        },
+        // 2. Oferta preparada: en cotización con precio_cotizado > 0 pero sin fecha de entrega ni avance a negociación
+        {
+          id: 'OPP-B6-2',
+          clientId: 'ACC-360',
+          proyecto: 'COT PREPARADA',
+          estado: 'activo',
+          etapa: 'cotizacion',
+          precio_cotizado: 12000,
+          doc_oferta: { storagePath: 'prod_files/ofertas/cot_v1.pdf' },
+          ofertas_historicas: [{ version: 1 }, { version: 2 }]
+        },
+        // 3. Propuesta entregada con evidencia explícita (fecha_entrega_oferta) y 4 versiones v1..v4 -> cuenta como 1 sola propuesta presentada
+        {
+          id: 'OPP-B6-3',
+          clientId: 'ACC-360',
+          proyecto: 'COT ENTREGADA EXPLICITA',
+          estado: 'activo',
+          etapa: 'cotizacion',
+          precio_cotizado: 25000,
+          fecha_entrega_oferta: '2026-10-15',
+          ofertas_historicas: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]
+        },
+        // 4. Propuesta entregada con evidencia inferida por avance a negociación (sin fecha_entrega_oferta -> explicitDeliveryDate permanece null)
+        {
+          id: 'OPP-B6-4',
+          clientId: 'ACC-360',
+          proyecto: 'NEG INFERIDA',
+          estado: 'activo',
+          etapa: 'negociacion',
+          precio_cotizado: 18000,
+          ofertas_historicas: [{ version: 1 }, { version: 2 }, { version: 3 }]
+        },
+        // 5. Decidida (ganada): cuenta 1 vez en propuestasPresentadasCount
+        {
+          id: 'OPP-B6-5',
+          clientId: 'ACC-360',
+          proyecto: 'GANADA CON 2 VERSIONES',
+          estado: 'ganado',
+          etapa: 'cierre',
+          precio_cotizado: 30000,
+          precio_pactado: 30000,
+          costo_venta: 20000,
+          ofertas_historicas: [{ version: 1 }, { version: 2 }],
+          facturas: [
+            { id: 'F-B6-1', montoTotal: 30000, montoPagado: 20000, estado: 'parcial' }
+          ]
+        }
+      ];
+
+      const lc1 = CrmBiEngine.classifyProposalLifecycle(opps[0]);
+      expect(lc1.state).toBe('preliminar');
+      expect(lc1.countsAsPresented).toBe(false);
+
+      const lc2 = CrmBiEngine.classifyProposalLifecycle(opps[1]);
+      expect(lc2.state).toBe('oferta_preparada');
+      expect(lc2.countsAsPresented).toBe(false);
+      expect(lc2.offersCount).toBe(2);
+
+      const lc3 = CrmBiEngine.classifyProposalLifecycle(opps[2]);
+      expect(lc3.state).toBe('propuesta_entregada');
+      expect(lc3.deliveryEvidenceType).toBe('explicit');
+      expect(lc3.explicitDeliveryDate).toBe('2026-10-15');
+      expect(lc3.countsAsPresented).toBe(true);
+      expect(lc3.offersCount).toBe(4);
+
+      const lc4 = CrmBiEngine.classifyProposalLifecycle(opps[3]);
+      expect(lc4.state).toBe('propuesta_entregada');
+      expect(lc4.deliveryEvidenceType).toBe('inferred');
+      expect(lc4.explicitDeliveryDate).toBeNull();
+      expect(lc4.countsAsPresented).toBe(true);
+
+      const lc5 = CrmBiEngine.classifyProposalLifecycle(opps[4]);
+      expect(lc5.state).toBe('decidida');
+      expect(lc5.countsAsPresented).toBe(true);
+
+      const acctMetrics = CrmBiEngine.computeAccount360Metrics('ACC-360', opps, { nowIso: '2026-11-13' });
+      expect(acctMetrics.totalOpportunitiesCount).toBe(5);
+      // Solo OPP-B6-3, OPP-B6-4 y OPP-B6-5 cuentan como propuestas presentadas (1 cada una = 3, nunca la suma de versiones 4+3+2=9)
+      expect(acctMetrics.propuestasPresentadasCount).toBe(3);
+      expect(acctMetrics.proposalCountsByState).toEqual({
+        preliminar: 1,
+        oferta_preparada: 1,
+        propuesta_entregada: 2,
+        decidida: 1
+      });
+      expect(acctMetrics.facturacionTotal).toBe(30000);
+      expect(acctMetrics.totalCobrado).toBe(20000);
+      expect(acctMetrics.saldoPorCobrar).toBe(10000);
+      expect(acctMetrics.pipelineActivo).toBe(55000); // 0 + 12000 + 25000 + 18000
+      expect(acctMetrics.negociosAdjudicadosCount).toBe(1);
+      expect(acctMetrics.negociosAdjudicadosMonto).toBe(30000);
+      expect(acctMetrics.primaryCommercialKpis).toEqual({
+        tasaExitoComercialPct: 100,
+        pipelineAbiertoMonto: 55000,
+        pipelineAbiertoCount: 4,
+        negociosAdjudicadosMonto: 30000,
+        negociosAdjudicadosCount: 1,
+        propuestasPresentadasCount: 3,
+        propuestasPresentadasMonto: 73000
+      });
+      expect(acctMetrics.pulsoFinanciero).toEqual({
+        facturadoVigente: 30000,
+        cobradoTotal: 20000,
+        cxcPendiente: 10000,
+        abonosDisponibles: 0
+      });
+    });
   });
 });

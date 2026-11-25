@@ -1,16 +1,103 @@
-:root {
+:root,
+[data-theme="light"] {
+    /* =========================================================================
+       DUCTSAL GLOBAL DESIGN SYSTEM TOKENS (FASE B6 — CORPORATE LIGHT DEFAULT)
+       WCAG 2.2 AA Verified: Text >= 7.1:1 | Control Borders >= 4.76:1 | Focus >= 6.10:1
+       ========================================================================= */
+    --ds-bg-app: #F4F6F9;
+    --ds-bg-surface: #FFFFFF;
+    --ds-bg-subtle: #F8FAFC;
+    --ds-bg-hover: #F1F5F9;
+    --ds-bg-selected: #EFF6FF;
+
+    --ds-border: #CBD5E1;
+    --ds-border-strong: #94A3B8;
+    --ds-border-control: #64748B;        /* 4.76:1 on #FFFFFF (SC 1.4.11 >= 3.0:1) */
+    --ds-border-control-hover: #334155;  /* 10.40:1 on #FFFFFF */
+
+    --ds-brand-primary: #0062B8;         /* DUCTSAL Corporate Blue (6.10:1 on #FFFFFF) */
+    --ds-brand-primary-hover: #004E94;   /* 8.20:1 on #FFFFFF */
+    --ds-brand-primary-active: #003B70;
+    --ds-brand-tint: #E8F1FB;
+    --ds-brand-accent: #B45309;
+
+    --ds-text-primary: #0F172A;          /* 17.4:1 on #FFFFFF */
+    --ds-text-secondary: #334155;        /* 10.4:1 on #FFFFFF */
+    --ds-text-tertiary: #475569;         /* 7.1:1 on #FFFFFF */
+    --ds-text-inverse: #FFFFFF;
+
+    --ds-success-bg: #ECFDF5;
+    --ds-success-text: #065F46;          /* 7.4:1 on #ECFDF5 */
+    --ds-success-border: #059669;        /* 3.8:1 on #FFFFFF */
+
+    --ds-info-bg: #EFF6FF;
+    --ds-info-text: #1E40AF;             /* 7.2:1 on #EFF6FF */
+    --ds-info-border: #2563EB;           /* 4.5:1 on #FFFFFF */
+
+    --ds-warning-bg: #FFFBEB;
+    --ds-warning-text: #92400E;          /* 7.1:1 on #FFFBEB */
+    --ds-warning-border: #D97706;        /* 3.4:1 on #FFFFFF */
+
+    --ds-danger-bg: #FEF2F2;
+    --ds-danger-text: #991B1B;           /* 7.8:1 on #FEF2F2 */
+    --ds-danger-border: #DC2626;         /* 4.3:1 on #FFFFFF */
+
+    --ds-neutral-bg: #F1F5F9;
+    --ds-neutral-text: #334155;          /* 9.3:1 on #F1F5F9 */
+    --ds-neutral-border: #64748B;        /* 4.76:1 on #FFFFFF */
+
+    --ds-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --ds-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --ds-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --ds-radius-sm: 6px;
+    --ds-radius-md: 8px;
+    --ds-radius-lg: 10px;
+    --ds-focus-ring: 0 0 0 3px rgba(0, 98, 184, 0.24);
+
+    /* Unified Global Corporate Light Aliases */
+    --bg-dark: var(--ds-bg-app);
+    --bg-panel: var(--ds-bg-surface);
+    --panel-border: var(--ds-border);
+    --brand-blue: #FFFFFF;
+    --brand-gold: var(--ds-brand-primary);
+    --brand-gold-hover: var(--ds-brand-primary-hover);
+    --text-primary: var(--ds-text-primary);
+    --text-secondary: var(--ds-text-secondary);
+    --text-muted: var(--ds-text-tertiary);
+    --success: #059669;
+    --warning: #D97706;
+    --danger: #DC2626;
+}
+
+[data-theme="dark"] {
+    --ds-bg-app: #0F172A;
+    --ds-bg-surface: #1E293B;
+    --ds-bg-subtle: #162032;
+    --ds-bg-hover: #263449;
+    --ds-bg-selected: #1E3A5F;
+    --ds-border: #334155;
+    --ds-border-strong: #475569;
+    --ds-border-control: #94A3B8;
+    --ds-border-control-hover: #CBD5E1;
+    --ds-brand-primary: #38BDF8;
+    --ds-brand-primary-hover: #7DD3FC;
+    --ds-brand-primary-active: #0284C7;
+    --ds-brand-tint: rgba(56, 189, 248, 0.14);
+    --ds-brand-accent: #FBBF24;
+    --ds-text-primary: #F8FAFC;
+    --ds-text-secondary: #CBD5E1;
+    --ds-text-tertiary: #94A3B8;
+    --ds-text-inverse: #0F172A;
+
     --bg-dark: #1E2337;
     --bg-panel: rgba(255, 255, 255, 0.05);
     --panel-border: rgba(255, 255, 255, 0.1);
-    
     --brand-blue: #2c3553;
     --brand-gold: #ffcc4d;
     --brand-gold-hover: #e6b845;
-    
     --text-primary: #ffffff;
     --text-secondary: #a0aabf;
     --text-muted: #6b7280;
-    
     --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
@@ -18,7 +105,7 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
 html, body { max-width: 100vw; overflow-x: hidden; }
-body { background-color: var(--bg-dark); color: var(--text-primary); min-height: 100vh; }
+body { background-color: var(--ds-bg-app, var(--bg-dark)); color: var(--ds-text-primary, var(--text-primary)); min-height: 100vh; }
 .glass-panel { background: var(--bg-panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--panel-border); border-radius: 12px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
 .app-container { display: flex; min-height: 100vh; }
 .sidebar { width: 260px; background-color: rgba(0, 0, 0, 0.2); border-right: 1px solid var(--panel-border); padding: 2rem 1rem; display: flex; flex-direction: column; }
@@ -4490,5 +4577,1805 @@ body.modal-open {
     .doc-checklist-registered-actions {
         flex-direction: column;
         align-items: stretch;
+    }
+}
+
+/* =========================================================================
+   FASE B6 — DUCTSAL GLOBAL DESIGN SYSTEM (CORPORATE LIGHT MODE & CRM 360)
+   Progressive Scoping (.ds-scope-light) + Reusable Semantic Components (.ds-*)
+   ========================================================================= */
+
+.ds-scope-light,
+[data-ds-scope="light"] {
+    --bg-dark: var(--ds-bg-subtle);
+    --bg-panel: var(--ds-bg-surface);
+    --bg-card: var(--ds-bg-surface);
+    --panel-border: var(--ds-border);
+    --border-color: var(--ds-border-control);
+    --brand-blue: #FFFFFF;
+    --brand-gold: var(--ds-brand-primary);
+    --brand-gold-hover: var(--ds-brand-primary-hover);
+    --text-primary: var(--ds-text-primary);
+    --text-secondary: var(--ds-text-secondary);
+    --text-muted: var(--ds-text-tertiary);
+    --success: var(--ds-success-text);
+    --warning: var(--ds-warning-text);
+    --danger: var(--ds-danger-text);
+    color: var(--ds-text-primary);
+}
+
+body.ds-body-light,
+.main-content.ds-scope-light,
+.view-section.ds-scope-light {
+    color: var(--ds-text-primary);
+}
+
+.view-section.ds-scope-light,
+.view-section[data-ds-scope="light"] {
+    background-color: var(--ds-bg-app);
+    padding: 1rem 1.25rem;
+    border-radius: var(--ds-radius-lg);
+}
+
+/* Focus Ring WCAG 2.2 AA (SC 2.4.7 & SC 2.4.13 >= 3.0:1, audited 6.10:1) */
+.ds-scope-light button:focus-visible,
+.ds-scope-light a:focus-visible,
+.ds-scope-light input:focus-visible,
+.ds-scope-light select:focus-visible,
+.ds-scope-light textarea:focus-visible,
+.ds-scope-light [tabindex]:focus-visible,
+.ds-btn:focus-visible,
+.ds-input:focus-visible,
+.ds-select:focus-visible,
+.ds-tab:focus-visible {
+    outline: 2px solid var(--ds-brand-primary) !important;
+    outline-offset: 2px !important;
+    box-shadow: var(--ds-focus-ring) !important;
+}
+
+/* Scoped Panels & Cards */
+.ds-scope-light.glass-panel,
+.ds-scope-light .glass-panel,
+.ds-scope-light .card,
+.ds-card {
+    background: var(--ds-bg-surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid var(--ds-border) !important;
+    border-radius: var(--ds-radius-md);
+    box-shadow: var(--ds-shadow-xs) !important;
+    color: var(--ds-text-primary);
+}
+
+/* Scoped Typography */
+.ds-scope-light h1,
+.ds-scope-light h2,
+.ds-scope-light h3,
+.ds-scope-light h4 {
+    color: var(--ds-text-primary);
+}
+
+.ds-scope-light header p,
+.ds-scope-light .view-header p {
+    color: var(--ds-text-secondary);
+}
+
+/* Scoped Buttons (WCAG 2.2 AA Control Border >= 3.0:1, audited 4.76:1) */
+.ds-scope-light .btn-primary,
+.ds-btn-primary {
+    background: var(--ds-brand-primary) !important;
+    color: #FFFFFF !important;
+    border: 1px solid var(--ds-brand-primary) !important;
+    padding: 0.5rem 1rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.84rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-primary:hover,
+.ds-btn-primary:hover {
+    background: var(--ds-brand-primary-hover) !important;
+    border-color: var(--ds-brand-primary-hover) !important;
+    color: #FFFFFF !important;
+}
+
+.ds-scope-light .btn-secondary,
+.ds-scope-light .btn-back,
+.ds-btn-secondary {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border-control) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-secondary:hover,
+.ds-scope-light .btn-back:hover,
+.ds-btn-secondary:hover {
+    background: var(--ds-bg-hover) !important;
+    border-color: var(--ds-border-control-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .btn-danger,
+.ds-btn-danger {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-danger:hover,
+.ds-btn-danger:hover {
+    background: #FEE2E2 !important;
+    color: #7F1D1D !important;
+}
+
+.ds-scope-light .btn-success,
+.ds-btn-success {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+    padding: 0.45rem 0.9rem;
+    border-radius: var(--ds-radius-sm);
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.ds-scope-light .btn-success:hover,
+.ds-btn-success:hover {
+    background: #D1FAE5 !important;
+    color: #064E3B !important;
+}
+
+.ds-btn-xs {
+    padding: 0.25rem 0.55rem !important;
+    font-size: 0.74rem !important;
+}
+
+.ds-btn-sm {
+    padding: 0.35rem 0.75rem !important;
+    font-size: 0.78rem !important;
+}
+
+/* Scoped Inputs & Form Controls (WCAG 2.2 AA Control Border >= 4.76:1) */
+.ds-scope-light .form-group label,
+.ds-label {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.82rem;
+    margin-bottom: 0.35rem;
+    display: block;
+}
+
+.ds-scope-light .form-group input:not([type="checkbox"]):not([type="radio"]),
+.ds-scope-light .form-group select,
+.ds-scope-light .form-group textarea,
+.ds-scope-light .form-control,
+.ds-scope-light .filter-select,
+.ds-input,
+.ds-select {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border-control) !important;
+    border-radius: var(--ds-radius-sm);
+    padding: 0.55rem 0.75rem;
+    font-size: 0.86rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ds-scope-light .form-group input:hover:not(:disabled),
+.ds-scope-light .form-group select:hover:not(:disabled),
+.ds-scope-light .form-group textarea:hover:not(:disabled),
+.ds-scope-light .form-control:hover:not(:disabled),
+.ds-input:hover:not(:disabled),
+.ds-select:hover:not(:disabled) {
+    border-color: var(--ds-border-control-hover) !important;
+}
+
+.ds-scope-light .form-group input:focus,
+.ds-scope-light .form-group select:focus,
+.ds-scope-light .form-group textarea:focus,
+.ds-scope-light .form-control:focus,
+.ds-input:focus,
+.ds-select:focus {
+    border-color: var(--ds-brand-primary) !important;
+    box-shadow: var(--ds-focus-ring) !important;
+}
+
+.ds-scope-light .form-group input::placeholder,
+.ds-scope-light .form-group textarea::placeholder,
+.ds-scope-light .form-control::placeholder,
+.ds-input::placeholder {
+    color: var(--ds-text-tertiary) !important;
+}
+
+/* Scoped Tables */
+.ds-scope-light .table-container,
+.ds-table-wrap {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    overflow-x: auto;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-scope-light table,
+.ds-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--ds-bg-surface);
+}
+
+.ds-scope-light th,
+.ds-table th {
+    background: var(--ds-bg-subtle) !important;
+    color: var(--ds-text-secondary) !important;
+    font-weight: 700;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light td,
+.ds-table td {
+    color: var(--ds-text-primary);
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid #E2E8F0 !important;
+    font-size: 0.84rem;
+    vertical-align: middle;
+}
+
+.ds-scope-light tbody tr:hover,
+.ds-table tbody tr:hover {
+    background: var(--ds-bg-hover) !important;
+}
+
+/* Scoped Semantic Badges (WCAG 2.2 AA Text >= 7.1:1, Border >= 3.4:1) */
+.ds-badge,
+.ds-scope-light .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+    border: 1px solid var(--ds-neutral-border);
+    background: var(--ds-neutral-bg);
+    color: var(--ds-neutral-text);
+}
+
+.ds-badge-success,
+.ds-scope-light .badge.bg-success {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+}
+
+.ds-badge-info,
+.ds-scope-light .badge.bg-info {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-badge-warning,
+.ds-scope-light .badge.bg-warning {
+    background: var(--ds-warning-bg) !important;
+    color: var(--ds-warning-text) !important;
+    border: 1px solid var(--ds-warning-border) !important;
+}
+
+.ds-badge-danger,
+.ds-scope-light .badge.bg-danger {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+}
+
+.ds-badge-neutral,
+.ds-scope-light .badge.bg-neutral {
+    background: var(--ds-neutral-bg) !important;
+    color: var(--ds-neutral-text) !important;
+    border: 1px solid var(--ds-neutral-border) !important;
+}
+
+/* Scoped Filter Pills */
+.ds-scope-light .filter-pills-group {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    padding: 3px;
+    border-radius: var(--ds-radius-md);
+}
+
+.ds-scope-light .filter-pill {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--ds-radius-sm);
+}
+
+.ds-scope-light .filter-pill:hover {
+    background: var(--ds-bg-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .filter-pill.active {
+    background: var(--ds-brand-primary) !important;
+    color: #FFFFFF !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+.ds-scope-light .filter-pill .filter-badge {
+    background: rgba(15, 23, 42, 0.08) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .filter-pill.active .filter-badge {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #FFFFFF !important;
+}
+
+/* =========================================================================
+   BLOQUE 1: LOGIN, SIDEBAR, MOBILE HEADER, SETTINGS & USERS (LIGHT MODE)
+   ========================================================================= */
+
+/* Login Screen & Forgot Password Modal */
+#login-screen.ds-scope-light {
+    background: linear-gradient(135deg, #EFF6FF 0%, #F4F6F9 55%, #E2E8F0 100%) !important;
+}
+
+#login-screen.ds-scope-light .modal-content,
+#forgot-password-modal.ds-scope-light .modal-content {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+    color: var(--ds-text-primary) !important;
+    padding: 2rem 1.75rem;
+    border-radius: var(--ds-radius-lg);
+}
+
+#forgot-password-modal.ds-scope-light {
+    background: rgba(15, 23, 42, 0.55) !important;
+}
+
+#login-screen.ds-scope-light h2,
+#forgot-password-modal.ds-scope-light h3 {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700;
+}
+
+#login-screen.ds-scope-light #link-forgot-password {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 600;
+}
+
+#login-screen.ds-scope-light #link-forgot-password:hover {
+    color: var(--ds-brand-primary-hover) !important;
+    text-decoration: underline !important;
+}
+
+#login-screen.ds-scope-light #activation-return-banner {
+    background: var(--ds-success-bg) !important;
+    border: 1px solid var(--ds-success-border) !important;
+    color: var(--ds-success-text) !important;
+    font-weight: 600;
+}
+
+#forgot-password-modal.ds-scope-light #forgot-password-feedback {
+    background: var(--ds-info-bg) !important;
+    border: 1px solid var(--ds-info-border) !important;
+    color: var(--ds-info-text) !important;
+    font-weight: 600;
+}
+
+/* Global Spinner Light Scope */
+#global-spinner.ds-scope-light {
+    background: rgba(15, 23, 42, 0.65) !important;
+    color: #FFFFFF !important;
+}
+
+/* Users View & Audit Panel Light Scope */
+#users-view.ds-scope-light #audit-panel {
+    background: var(--ds-danger-bg) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+    border-left: 4px solid var(--ds-danger-text) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+#users-view.ds-scope-light #audit-panel h3 {
+    color: var(--ds-danger-text) !important;
+}
+
+#settingsModal.ds-scope-light #list-visitantes,
+#settingsModal.ds-scope-light #list-encargados {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+/* Global Toasts & Confirmation Dialogs (Corporate Light Mode) */
+.crm-toast {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+.crm-toast-title {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700 !important;
+}
+.crm-toast-message {
+    color: var(--ds-text-secondary) !important;
+}
+.crm-toast-success { border-left: 4px solid var(--ds-success-text) !important; }
+.crm-toast-info { border-left: 4px solid var(--ds-info-text) !important; }
+.crm-toast-warning { border-left: 4px solid var(--ds-warning-text) !important; }
+.crm-toast-error { border-left: 4px solid var(--ds-danger-text) !important; }
+
+.crm-confirm-overlay {
+    background: rgba(15, 23, 42, 0.52) !important;
+}
+.crm-confirm-dialog {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+.crm-confirm-title {
+    color: var(--ds-text-primary) !important;
+}
+.crm-confirm-message {
+    color: var(--ds-text-secondary) !important;
+}
+
+/* Sidebar Corporate Light */
+.sidebar.ds-scope-light {
+    background-color: var(--ds-bg-surface) !important;
+    border-right: 1px solid var(--ds-border) !important;
+    padding: 1.25rem 0.85rem;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.sidebar.ds-scope-light .logo-container {
+    margin-bottom: 1.25rem;
+    padding: 0 0.5rem 0.85rem 0.5rem;
+    border-bottom: 1px solid var(--ds-border);
+}
+
+.sidebar.ds-scope-light .logo-container h2 {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    font-size: 1.3rem;
+}
+
+.sidebar.ds-scope-light .user-profile {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    border-radius: var(--ds-radius-md);
+    padding: 0.75rem 0.85rem !important;
+    margin-bottom: 1.15rem !important;
+}
+
+.sidebar.ds-scope-light #ui-user-name {
+    color: var(--ds-text-primary) !important;
+    font-size: 0.92rem !important;
+    font-weight: 700 !important;
+}
+
+.sidebar.ds-scope-light #ui-user-role {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 700 !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.04em;
+}
+
+.sidebar.ds-scope-light .nav-links {
+    gap: 0.25rem;
+}
+
+.sidebar.ds-scope-light .nav-links li {
+    color: var(--ds-text-secondary) !important;
+    font-weight: 600;
+    font-size: 0.88rem;
+    padding: 0.62rem 0.85rem;
+    border-radius: var(--ds-radius-sm);
+    border: 1px solid transparent;
+    align-items: center;
+}
+
+.sidebar.ds-scope-light .nav-links li:hover {
+    background: var(--ds-bg-hover) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.sidebar.ds-scope-light .nav-links li.active {
+    background: var(--ds-brand-tint) !important;
+    color: var(--ds-brand-primary) !important;
+    border-color: #BFDBFE !important;
+    font-weight: 700;
+}
+
+.sidebar.ds-scope-light #nav-settings {
+    border-top: 1px solid var(--ds-border) !important;
+}
+
+/* Mobile Top Header Corporate Light */
+#mobile-header.ds-scope-light {
+    background: var(--ds-bg-surface) !important;
+    border-bottom: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+#mobile-header.ds-scope-light h2,
+#mobile-header.ds-scope-light .detail-sticky-client {
+    color: var(--ds-text-primary) !important;
+}
+
+#mobile-header.ds-scope-light .detail-sticky-code {
+    color: var(--ds-brand-primary) !important;
+    font-weight: 700;
+}
+
+/* Modals in Light Scope */
+.modal.ds-scope-light {
+    background: rgba(15, 23, 42, 0.52) !important;
+}
+
+.modal.ds-scope-light .modal-content {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    box-shadow: var(--ds-shadow-md) !important;
+}
+
+.modal.ds-scope-light .close {
+    color: var(--ds-text-secondary) !important;
+}
+
+.modal.ds-scope-light .close:hover {
+    color: var(--ds-text-primary) !important;
+}
+
+/* =========================================================================
+   REFINED ACCOUNT 360 & CONTACT 360 SHARED COMPONENTS (BLOQUES 2, 3, 4)
+   ========================================================================= */
+
+.ds-record-header {
+    background: var(--ds-bg-surface);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    padding: 8px 14px;
+    margin-bottom: 8px;
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-record-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ds-record-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ds-record-eyebrow {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ds-brand-primary);
+}
+
+.ds-record-title {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--ds-text-primary);
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.ds-meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #E2E8F0;
+    font-size: 0.78rem;
+    color: var(--ds-text-secondary);
+}
+
+.ds-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ds-meta-label {
+    color: var(--ds-text-tertiary);
+    font-weight: 600;
+}
+
+.ds-meta-val {
+    color: var(--ds-text-primary);
+    font-weight: 700;
+}
+
+/* Contextual Tabs Bar */
+.ds-tabs,
+.ds-tabs-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 10px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    background: var(--ds-bg-surface, #FFFFFF);
+    padding: 0 10px;
+    border-radius: var(--ds-radius-md, 8px);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    box-shadow: var(--ds-shadow-xs);
+}
+
+.ds-tab,
+.ds-tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 9px 12px 7px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ds-text-secondary, #334155);
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    border-radius: 6px 6px 0 0;
+}
+
+.ds-tab:hover,
+.ds-tab-btn:hover {
+    color: var(--ds-brand-primary, #0062B8);
+    background: var(--ds-bg-subtle, #F8FAFC);
+}
+
+.ds-tab.active,
+.ds-tab-btn.active {
+    color: var(--ds-brand-primary, #0062B8);
+    border-bottom-color: var(--ds-brand-primary, #0062B8);
+    background: rgba(0, 98, 184, 0.05);
+    font-weight: 700;
+}
+
+.ds-tab-count {
+    background: var(--ds-neutral-bg, #F1F5F9);
+    color: var(--ds-text-secondary, #334155);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.ds-tab.active .ds-tab-count,
+.ds-tab-btn.active .ds-tab-count {
+    background: var(--ds-brand-tint, #EBF5FF);
+    color: var(--ds-brand-primary, #0062B8);
+    border-color: #93C5FD;
+}
+
+/* Compact 4-KPI Strip (Exclusive to Commercial Summary Tab) */
+.ds-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.ds-kpi-card {
+    background: var(--ds-bg-surface, #FFFFFF);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: var(--ds-radius-md, 8px);
+    padding: 8px 11px;
+    box-shadow: var(--ds-shadow-xs);
+    min-width: 0;
+}
+
+.ds-kpi-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--ds-text-secondary, #334155);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+}
+
+.ds-kpi-value {
+    font-size: 1.12rem;
+    font-weight: 800;
+    color: var(--ds-text-primary, #0F172A);
+    margin-top: 2px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.ds-kpi-sub {
+    font-size: 0.7rem;
+    color: var(--ds-text-tertiary, #475569);
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+}
+
+/* Secondary 1-Line Financial Pulse Ribbon */
+.ds-pulse-ribbon {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    background: var(--ds-bg-subtle);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-sm);
+    padding: 5px 12px;
+    margin-bottom: 8px;
+    font-size: 0.76rem;
+    color: var(--ds-text-secondary);
+}
+
+.ds-pulse-metrics {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+}
+
+@media (max-width: 1024px) {
+    .ds-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .ds-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+    }
+    .ds-kpi-card {
+        padding: 6px 8px;
+    }
+    .ds-kpi-value {
+        font-size: 0.98rem;
+    }
+    .ds-kpi-label {
+        font-size: 0.62rem;
+    }
+    .ds-kpi-sub {
+        font-size: 0.65rem;
+    }
+}
+
+/* =========================================================================
+   BLOQUE 2: CUENTAS, CUENTA 360 Y EXPEDIENTE LEGAL/FISCAL (MODO CLARO)
+   ========================================================================= */
+
+.ds-scope-light .client-modal-content,
+.ds-scope-light #clientDetailContent {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+.ds-scope-light .client-modal-header {
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-modal-subtitle {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-form-section {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    backdrop-filter: none !important;
+}
+
+.ds-scope-light .client-section-header {
+    border-bottom: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-section-title {
+    color: var(--ds-brand-primary) !important;
+}
+
+.ds-scope-light .client-subsection-title {
+    color: var(--ds-text-primary) !important;
+    border-top: 1px dashed var(--ds-border) !important;
+}
+
+.ds-scope-light .section-tag-badge {
+    background: var(--ds-brand-tint) !important;
+    color: var(--ds-brand-primary) !important;
+    border: 1px solid #93C5FD !important;
+}
+
+.ds-scope-light .contact-req-pill {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .form-help-text,
+.ds-scope-light .optional-tag,
+.ds-scope-light .client-form-footer-legend {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-fiscal-pill {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+}
+
+.ds-scope-light .client-fiscal-pill:hover {
+    border-color: var(--ds-brand-primary) !important;
+    background: var(--ds-brand-tint) !important;
+}
+
+.ds-scope-light .client-fiscal-pill input[type="checkbox"] {
+    accent-color: var(--ds-brand-primary) !important;
+}
+
+.ds-scope-light .client-fiscal-title {
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .client-fiscal-subtitle {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .client-contact-rule-banner {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .client-file-upload-box,
+.ds-scope-light .doc-checklist-item {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .client-file-upload-box input[type="file"] {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-card {
+    background: var(--ds-bg-subtle) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-filename {
+    color: var(--ds-text-primary) !important;
+}
+
+.ds-scope-light .doc-checklist-registered-meta,
+.ds-scope-light .doc-checklist-replace-hint {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-registered {
+    background: var(--ds-success-bg) !important;
+    color: var(--ds-success-text) !important;
+    border: 1px solid var(--ds-success-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-pending,
+.ds-scope-light .doc-checklist-badge.status-review-pending {
+    background: var(--ds-warning-bg) !important;
+    color: var(--ds-warning-text) !important;
+    border: 1px solid var(--ds-warning-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-optional {
+    background: var(--ds-neutral-bg) !important;
+    color: var(--ds-neutral-text) !important;
+    border: 1px solid var(--ds-neutral-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-not-applicable {
+    background: var(--ds-info-bg) !important;
+    color: var(--ds-info-text) !important;
+    border: 1px solid var(--ds-info-border) !important;
+}
+
+.ds-scope-light .doc-checklist-badge.status-expired,
+.ds-scope-light .doc-checklist-badge.status-observed {
+    background: var(--ds-danger-bg) !important;
+    color: var(--ds-danger-text) !important;
+    border: 1px solid var(--ds-danger-border) !important;
+}
+
+.ds-scope-light .client-doc-card {
+    background: var(--ds-bg-surface) !important;
+    border: 1px solid var(--ds-border) !important;
+    color: var(--ds-text-primary) !important;
+    padding: 8px 12px !important;
+    border-radius: var(--ds-radius-md) !important;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ds-scope-light .client-doc-title {
+    color: var(--ds-text-primary) !important;
+    font-weight: 700 !important;
+}
+
+.ds-scope-light .client-doc-meta {
+    color: var(--ds-text-secondary) !important;
+}
+
+.ds-scope-light .btn-back {
+    background: var(--ds-bg-surface) !important;
+    color: var(--ds-text-primary) !important;
+    border: 1px solid var(--ds-border) !important;
+    font-weight: 600 !important;
+}
+
+.ds-scope-light .btn-back:hover {
+    background: var(--ds-bg-subtle) !important;
+    border-color: var(--ds-border-strong) !important;
+}
+
+/* Account 360 Hub Layout & Responsive Overflow Prevention */
+.main-content {
+    min-width: 0;
+}
+
+@media (min-width: 1025px) {
+    .sidebar.ds-scope-light {
+        width: 220px;
+        flex-shrink: 0;
+        padding: 1.1rem 0.7rem;
+    }
+    .main-content {
+        padding: 1.1rem 1.2rem;
+    }
+    .view-section.ds-scope-light,
+    .view-section[data-ds-scope="light"] {
+        padding: 0.4rem 0.25rem;
+    }
+}
+
+@media (min-width: 1025px) and (max-width: 1360px) {
+    .sidebar.ds-scope-light {
+        width: 204px;
+        flex-shrink: 0;
+        padding: 0.95rem 0.55rem;
+    }
+    .main-content {
+        padding: 0.85rem 0.9rem;
+    }
+    .view-section.ds-scope-light,
+    .view-section[data-ds-scope="light"] {
+        padding: 0.25rem 0.15rem;
+    }
+}
+
+.table-responsive {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ds-account-360-split {
+    display: grid;
+    grid-template-columns: minmax(0, 2.38fr) minmax(260px, 0.9fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.ds-account-360-split > *,
+.ds-account-360-main-col,
+.ds-account-360-side-col {
+    min-width: 0;
+}
+
+.ds-account-360-main-col,
+.ds-account-360-side-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.ds-panel-box {
+    background: var(--ds-bg-surface, #FFFFFF);
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: var(--ds-radius-md, 8px);
+    padding: 9px 10px;
+    box-shadow: var(--ds-shadow-xs);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.ds-panel-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+.ds-panel-box-title {
+    font-size: 0.83rem;
+    font-weight: 700;
+    color: var(--ds-text-primary, #0F172A);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ds-record-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Account 360 Opportunities Summary Table */
+.ds-account360-opps-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+}
+
+.ds-scope-light .ds-account360-opps-table th,
+.ds-account360-opps-table th {
+    padding: 0.42rem 0.35rem !important;
+    font-size: 0.67rem !important;
+    white-space: nowrap;
+}
+
+.ds-scope-light .ds-account360-opps-table td,
+.ds-account360-opps-table td {
+    padding: 0.44rem 0.35rem !important;
+    font-size: 0.78rem !important;
+    vertical-align: middle;
+}
+
+.ds-account360-opps-table .ds-badge {
+    font-size: 0.67rem !important;
+    padding: 1px 6px !important;
+}
+
+.ds-account360-opps-table th.col-opp-title,
+.ds-account360-opps-table td.col-opp-title {
+    width: 35%;
+    min-width: 150px;
+}
+
+.ds-account360-opps-table th.col-opp-stage,
+.ds-account360-opps-table td.col-opp-stage {
+    width: 23%;
+}
+
+.ds-account360-opps-table th.col-opp-amount,
+.ds-account360-opps-table td.col-opp-amount {
+    width: 14%;
+    white-space: nowrap;
+}
+
+.ds-account360-opps-table th.col-opp-followup,
+.ds-account360-opps-table td.col-opp-followup {
+    width: 17%;
+}
+
+.ds-account360-opps-table th.col-opp-action,
+.ds-account360-opps-table td.col-opp-action {
+    width: 11%;
+    white-space: nowrap;
+}
+
+.ds-opp-project-title {
+    font-weight: 700;
+    font-size: 0.79rem;
+    line-height: 1.28;
+    color: var(--ds-text-primary, #0F172A);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.ds-opp-project-meta {
+    font-size: 0.69rem;
+    color: var(--ds-text-muted, #64748B);
+    font-family: monospace;
+    margin-top: 2px;
+    line-height: 1.2;
+}
+
+.ds-opp-stage-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+
+.ds-scope-light .btn-table-action,
+.btn-table-action.ds-btn-open-opp {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    color: var(--ds-brand-primary, #0062B8) !important;
+    border: 1px solid #93C5FD !important;
+    padding: 0.24rem 0.5rem !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    border-radius: 6px !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 3px !important;
+}
+
+.ds-scope-light .btn-table-action:hover,
+.btn-table-action.ds-btn-open-opp:hover {
+    background: var(--ds-brand-tint, #EBF5FF) !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+.ds-sec-fin-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--ds-border, #CBD5E1);
+    border-radius: 6px;
+    background: var(--ds-bg-subtle, #F8FAFC);
+}
+
+.ds-proposal-lifecycle-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.55rem;
+}
+
+.ds-account-link {
+    color: var(--ds-brand-primary);
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.ds-account-link:hover {
+    text-decoration: underline;
+    color: var(--ds-brand-primary-hover);
+}
+
+@media (max-width: 1180px) {
+    .ds-account-360-split {
+        grid-template-columns: 1fr;
+    }
+    .ds-account-360-side-col {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        align-items: start;
+    }
+}
+
+@media (max-width: 860px) {
+    .ds-account-360-side-col {
+        grid-template-columns: 1fr;
+    }
+    .ds-proposal-lifecycle-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .ds-account360-opps-table thead {
+        display: none;
+    }
+    .ds-account360-opps-table,
+    .ds-account360-opps-table tbody {
+        display: block;
+        width: 100%;
+    }
+    .ds-account360-opps-table tr.ds-acct360-opp-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px 8px;
+        padding: 0.65rem 0.5rem;
+        border-bottom: 1px solid #E2E8F0;
+        align-items: center;
+    }
+    .ds-scope-light .ds-account360-opps-table td,
+    .ds-account360-opps-table td {
+        padding: 0 !important;
+        border-bottom: none !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }
+    .ds-account360-opps-table td.col-opp-title {
+        grid-column: 1 / 2;
+    }
+    .ds-account360-opps-table td.col-opp-amount {
+        grid-column: 2 / 3;
+        text-align: right;
+        align-self: start;
+    }
+    .ds-account360-opps-table td.col-opp-stage {
+        grid-column: 1 / -1;
+    }
+    .ds-account360-opps-table td.col-opp-stage .ds-opp-stage-stack {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .ds-account360-opps-table td.col-opp-followup {
+        grid-column: 1 / 2;
+    }
+    .ds-account360-opps-table td.col-opp-action {
+        grid-column: 2 / 3;
+        text-align: right;
+    }
+}
+
+/* ============================================================================
+   B6 BLOCK 3 & 4 — CONTACTS & OPPORTUNITIES CORPORATE LIGHT MODE SCOPING
+   ============================================================================ */
+[data-ds-scope="light"] h1,
+[data-ds-scope="light"] h2,
+[data-ds-scope="light"] h3,
+[data-ds-scope="light"] h4,
+[data-ds-scope="light"] strong,
+[data-ds-scope="light"] label,
+.ds-scope-light h1,
+.ds-scope-light h2,
+.ds-scope-light h3,
+.ds-scope-light h4,
+.ds-scope-light label {
+    color: var(--ds-text-primary, #0F172A);
+}
+
+[data-ds-scope="light"] [style*="color: white"],
+[data-ds-scope="light"] [style*="color:white"],
+[data-ds-scope="light"] [style*="color: #fff"],
+.ds-scope-light [style*="color: white"]:not(.btn-primary):not(.btn-danger):not(.btn-success):not(#global-spinner *),
+.ds-scope-light [style*="color:white"]:not(.btn-primary):not(.btn-danger):not(.btn-success):not(#global-spinner *) {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] [style*="background: rgba(0,0,0"],
+[data-ds-scope="light"] [style*="background:rgba(0,0,0"],
+[data-ds-scope="light"] [style*="background: rgba(255, 255, 255, 0.0"],
+[data-ds-scope="light"] [style*="background: rgba(255,255,255,0.0"],
+[data-ds-scope="light"] [style*="background: rgba(44, 53, 83"],
+.ds-scope-light [style*="background: rgba(0,0,0"],
+.ds-scope-light [style*="background:rgba(0,0,0"],
+.ds-scope-light [style*="background: rgba(255, 255, 255, 0.0"],
+.ds-scope-light [style*="background: rgba(255,255,255,0.0"],
+.ds-scope-light [style*="background: rgba(44, 53, 83"] {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border-color: var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card,
+.ds-scope-light .kpi-hero-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-label,
+.ds-scope-light .kpi-hero-card .kpi-label {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-val,
+.ds-scope-light .kpi-hero-card .kpi-val {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .kpi-hero-card .kpi-val.highlight-gold,
+.ds-scope-light .kpi-hero-card .kpi-val.highlight-gold {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] .stage-tracker,
+.ds-scope-light .stage-tracker {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    border-radius: var(--ds-radius-md) !important;
+    padding: 0.85rem 1rem !important;
+}
+
+[data-ds-scope="light"] .stage-step .stage-circle,
+.ds-scope-light .stage-step .stage-circle {
+    background: #E2E8F0 !important;
+    color: #334155 !important;
+    border: 2px solid #CBD5E1 !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .stage-step.completed .stage-circle,
+.ds-scope-light .stage-step.completed .stage-circle {
+    background: var(--ds-success-text, #047857) !important;
+    color: #FFFFFF !important;
+    border-color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] .stage-step.current .stage-circle,
+.ds-scope-light .stage-step.current .stage-circle {
+    background: var(--ds-brand-primary, #0062B8) !important;
+    color: #FFFFFF !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+    box-shadow: 0 0 0 4px rgba(0, 98, 184, 0.16) !important;
+}
+
+[data-ds-scope="light"] .stage-step .stage-label,
+.ds-scope-light .stage-step .stage-label {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .stage-step.current .stage-label,
+.ds-scope-light .stage-step.current .stage-label {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .fin-group-card,
+.ds-scope-light .fin-group-card,
+[data-ds-scope="light"] .invoice-card,
+.ds-scope-light .invoice-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .log-item,
+.ds-scope-light .log-item,
+[data-ds-scope="light"] .doc-card-row,
+.ds-scope-light .doc-card-row {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .doc-card-name,
+.ds-scope-light .doc-card-name {
+    color: var(--ds-text-primary, #0F172A) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .doc-card-category,
+.ds-scope-light .doc-card-category {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .stage-filter-pill,
+.ds-scope-light .stage-filter-pill,
+[data-ds-scope="light"] .filter-pill,
+.ds-scope-light .filter-pill {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    color: var(--ds-text-secondary, #334155) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .stage-filter-pill.active,
+.ds-scope-light .stage-filter-pill.active,
+[data-ds-scope="light"] .filter-pill.active,
+.ds-scope-light .filter-pill.active {
+    background: var(--ds-brand-primary-light, #EBF5FF) !important;
+    color: var(--ds-brand-primary, #0062B8) !important;
+    border-color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] #detail-cliente:hover,
+.ds-scope-light #detail-cliente:hover {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    text-decoration: underline;
+}
+
+/* ============================================================================
+   B6 BLOCK 5 — PROJECTS, BILLING & DASHBOARD BI CORPORATE LIGHT MODE SCOPING
+   ============================================================================ */
+[data-ds-scope="light"] .metric-card,
+.ds-scope-light .metric-card,
+[data-ds-scope="light"] .chart-card,
+.ds-scope-light .chart-card,
+[data-ds-scope="light"] .dash-chart-subcard,
+.ds-scope-light .dash-chart-subcard,
+[data-ds-scope="light"] .kpi-time-card,
+.ds-scope-light .kpi-time-card {
+    background: var(--ds-bg-surface, #FFFFFF) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    box-shadow: var(--ds-shadow-xs) !important;
+}
+
+[data-ds-scope="light"] .kpi-value-lg,
+.ds-scope-light .kpi-value-lg {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .kpi-label,
+.ds-scope-light .kpi-label,
+[data-ds-scope="light"] .dash-chart-subtitle,
+.ds-scope-light .dash-chart-subtitle {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-label,
+.ds-scope-light .dash-funnel-label {
+    color: var(--ds-text-primary, #0F172A) !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-bar-container,
+.ds-scope-light .dash-funnel-bar-container {
+    background: #F1F5F9 !important;
+    border: 1px solid #E2E8F0 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-bar,
+.ds-scope-light .dash-funnel-bar {
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-funnel-val,
+.ds-scope-light .dash-funnel-val,
+[data-ds-scope="light"] .dash-funnel-subval,
+.ds-scope-light .dash-funnel-subval {
+    color: #FFFFFF !important;
+}
+
+[data-ds-scope="light"] [style*="background: rgba(15, 23, 42"],
+.ds-scope-light [style*="background: rgba(15, 23, 42"],
+[data-ds-scope="light"] [style*="background:rgba(15,23,42"],
+.ds-scope-light [style*="background:rgba(15,23,42"] {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border-color: var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-recibido,
+.ds-scope-light #dep-sum-recibido,
+[data-ds-scope="light"] #metric-win-rate,
+.ds-scope-light #metric-win-rate {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-aplicado,
+.ds-scope-light #dep-sum-aplicado,
+[data-ds-scope="light"] #metric-margen,
+.ds-scope-light #metric-margen,
+[data-ds-scope="light"] #bdep-live-now-applying,
+.ds-scope-light #bdep-live-now-applying {
+    color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] #dep-sum-disponible,
+.ds-scope-light #dep-sum-disponible,
+[data-ds-scope="light"] #bdep-live-remaining,
+.ds-scope-light #bdep-live-remaining {
+    color: var(--ds-warning-text, #B45309) !important;
+}
+
+[data-ds-scope="light"] .stage-workflow-box,
+.ds-scope-light .stage-workflow-box {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-phone,
+.ds-scope-light .btn-contact-chip.chip-phone,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-tel,
+.ds-scope-light .contact-channel-pill.contact-channel-tel,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-tel span,
+.ds-scope-light .contact-channel-pill.contact-channel-tel span {
+    background: var(--ds-info-bg, #EFF6FF) !important;
+    color: var(--ds-info-text, #1E40AF) !important;
+    border-color: var(--ds-info-border, #93C5FD) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-whatsapp,
+.ds-scope-light .btn-contact-chip.chip-whatsapp,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-wa,
+.ds-scope-light .contact-channel-pill.contact-channel-wa,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-wa span,
+.ds-scope-light .contact-channel-pill.contact-channel-wa span {
+    background: var(--ds-success-bg, #ECFDF5) !important;
+    color: var(--ds-success-text, #065F46) !important;
+    border-color: var(--ds-success-border, #6EE7B7) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .btn-contact-chip.chip-email,
+.ds-scope-light .btn-contact-chip.chip-email,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-email,
+.ds-scope-light .contact-channel-pill.contact-channel-email,
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-email span,
+.ds-scope-light .contact-channel-pill.contact-channel-email span {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+    border-color: var(--ds-warning-border, #FCD34D) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .contact-channel-pill.contact-channel-empty,
+.ds-scope-light .contact-channel-pill.contact-channel-empty {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    color: var(--ds-text-tertiary, #475569) !important;
+    border: 1px dashed var(--ds-border, #CBD5E1) !important;
+}
+
+[data-ds-scope="light"] [style*="color:rgba(255,255,255"],
+.ds-scope-light [style*="color:rgba(255,255,255"],
+[data-ds-scope="light"] [style*="color: rgba(255, 255, 255"],
+.ds-scope-light [style*="color: rgba(255, 255, 255"] {
+    color: var(--ds-text-tertiary, #475569) !important;
+}
+
+[data-ds-scope="light"] .proj-filter-tab .tab-count,
+.ds-scope-light .proj-filter-tab .tab-count {
+    background: #E2E8F0 !important;
+    color: #334155 !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .proj-filter-tab.active .tab-count,
+.ds-scope-light .proj-filter-tab.active .tab-count {
+    background: #DBEAFE !important;
+    color: #0062B8 !important;
+}
+
+[data-ds-scope="light"] #bi-period-filter,
+.ds-scope-light #bi-period-filter,
+[data-ds-scope="light"] #dash-time-filter,
+.ds-scope-light #dash-time-filter,
+[data-ds-scope="light"] #filter-mgr-motivo,
+.ds-scope-light #filter-mgr-motivo,
+[data-ds-scope="light"] #filter-mgr-responsable,
+.ds-scope-light #filter-mgr-responsable,
+[data-ds-scope="light"] #filter-mgr-estado,
+.ds-scope-light #filter-mgr-estado {
+    background: #FFFFFF !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+    border: 1px solid var(--ds-border-control, #64748B) !important;
+    border-radius: 6px !important;
+    padding: 0.35rem 0.65rem !important;
+    font-weight: 600 !important;
+}
+
+[data-ds-scope="light"] #metric-total-cxc,
+.ds-scope-light #metric-total-cxc {
+    color: #6D28D9 !important;
+}
+
+[data-ds-scope="light"] #metric-cxc-monetario,
+.ds-scope-light #metric-cxc-monetario {
+    color: var(--ds-success-text, #047857) !important;
+}
+
+[data-ds-scope="light"] #metric-cxc-por-facturar,
+.ds-scope-light #metric-cxc-por-facturar {
+    color: var(--ds-info-text, #1E40AF) !important;
+}
+
+[data-ds-scope="light"] #metric-abonos-disponibles,
+.ds-scope-light #metric-abonos-disponibles {
+    color: #0369A1 !important;
+}
+
+[data-ds-scope="light"] #cxc-b5-breakdown,
+.ds-scope-light #cxc-b5-breakdown {
+    border-top-color: var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-secondary, #334155) !important;
+}
+
+[data-ds-scope="light"] .dash-section-title,
+.ds-scope-light .dash-section-title {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .dash-section-desc,
+.ds-scope-light .dash-section-desc {
+    color: var(--ds-text-secondary, #334155) !important;
+}
+
+[data-ds-scope="light"] .dash-stage-card,
+.ds-scope-light .dash-stage-card {
+    background: var(--ds-bg-subtle, #F8FAFC) !important;
+    border: 1px solid var(--ds-border, #CBD5E1) !important;
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] .dash-stage-name,
+.ds-scope-light .dash-stage-name {
+    color: var(--ds-text-secondary, #334155) !important;
+    font-weight: 700 !important;
+}
+
+[data-ds-scope="light"] .dash-stage-val,
+.ds-scope-light .dash-stage-val {
+    color: var(--ds-brand-primary, #0062B8) !important;
+    font-weight: 800 !important;
+}
+
+[data-ds-scope="light"] .dash-stage-sub,
+.ds-scope-light .dash-stage-sub {
+    color: var(--ds-text-tertiary, #475569) !important;
+}
+
+[data-ds-scope="light"] #dash-seller-inactive-notice,
+.ds-scope-light #dash-seller-inactive-notice {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    border-color: var(--ds-warning-border, #FCD34D) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-followup,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-followup,
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-overdue,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-overdue {
+    background: var(--ds-danger-bg, #FEF2F2) !important;
+    color: var(--ds-danger-text, #991B1B) !important;
+    border: 1px solid var(--ds-danger-border, #FCA5A5) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-contract,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-contract,
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-age,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-age {
+    background: var(--ds-warning-bg, #FFFBEB) !important;
+    color: var(--ds-warning-text, #92400E) !important;
+    border: 1px solid var(--ds-warning-border, #FCD34D) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-reversion,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-reversion {
+    background: var(--ds-info-bg, #EFF6FF) !important;
+    color: var(--ds-info-text, #1E40AF) !important;
+    border: 1px solid var(--ds-info-border, #93C5FD) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable .badge-mgr-alert,
+.ds-scope-light #dashActiveTimesTable .badge-mgr-alert {
+    background: var(--ds-danger-bg, #FEF2F2) !important;
+    color: var(--ds-danger-text, #991B1B) !important;
+    border: 1px solid var(--ds-danger-border, #FCA5A5) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #fca5a5"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #fca5a5"],
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #f87171"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #f87171"] {
+    color: var(--ds-danger-text, #991B1B) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #93c5fd"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #93c5fd"] {
+    color: var(--ds-brand-primary, #0062B8) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: #fcd34d"],
+.ds-scope-light #dashActiveTimesTable [style*="color: #fcd34d"],
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: var(--brand-gold)"],
+.ds-scope-light #dashActiveTimesTable [style*="color: var(--brand-gold)"] {
+    color: var(--ds-warning-text, #92400E) !important;
+}
+
+[data-ds-scope="light"] #dashActiveTimesTable [style*="color: white"],
+.ds-scope-light #dashActiveTimesTable [style*="color: white"],
+[data-ds-scope="light"] #dashActiveTimesTable td strong[style*="color: white"],
+.ds-scope-light #dashActiveTimesTable td strong[style*="color: white"] {
+    color: var(--ds-text-primary, #0F172A) !important;
+}
+
+[data-ds-scope="light"] #client-detail-view > .view-header,
+.ds-scope-light #client-detail-view > .view-header,
+[data-ds-scope="light"] #client-detail-view > .detail-header,
+.ds-scope-light #client-detail-view > .detail-header {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .financial-balance-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    .invoice-amounts-strip {
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
+    [data-ds-scope="light"] #projectsTable tr.cursor-pointer,
+    .ds-scope-light #projectsTable tr.cursor-pointer {
+        background: var(--ds-bg-surface, #FFFFFF) !important;
+        border: 1px solid var(--ds-border, #CBD5E1) !important;
+        box-shadow: var(--ds-shadow-xs) !important;
+    }
+    [data-ds-scope="light"] #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-wrap,
+    .ds-scope-light #projectsTable tr.cursor-pointer > td.col-proj-total .proj-amount-wrap {
+        background: var(--ds-bg-subtle, #F8FAFC) !important;
+        border: 1px solid var(--ds-border, #CBD5E1) !important;
     }
 }

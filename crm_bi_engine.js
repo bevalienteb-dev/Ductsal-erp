@@ -1396,6 +1396,376 @@
         };
     }
 
+    // -------------------------------------------------------------------------
+    // 11. Regla Comercial B6: Ciclo de Propuesta en 4 Estados y KPIs Cuenta 360
+    // -------------------------------------------------------------------------
+    /**
+     * Clasifica una oportunidad en los 4 estados del ciclo de propuesta comercial B6:
+     * 1. preliminar: En prospecto o levantamiento sin oferta preparada.
+     * 2. oferta_preparada: En cotización con precio_cotizado > 0 o doc_oferta, sin evidencia de entrega.
+     * 3. propuesta_entregada: Con fecha_entrega_oferta explícita o avance histórico a negociación, cierre o ganado.
+     * 4. decidida: Con estado ganado o perdido.
+     *
+     * Regla crítica: Cada oportunidad cuenta como máximo una sola vez (countedUnits: 0 o 1),
+     * independientemente de cuántas versiones (v1..vN) existan en historial_propuestas.
+     * Nunca se inventan fechas de entrega ficticias cuando la entrega es inferida por avance de etapa.
+     */
+    function _isOppDeletedB6(opportunity) {
+        return Boolean(opportunity && (opportunity.eliminado === true || opportunity.deleted === true));
+    }
+
+    function classifyProposalLifecycle(opportunity) {
+        if (!opportunity || typeof opportunity !== 'object' || _isOppDeletedB6(opportunity)) {
+            return {
+                isDeleted: true,
+                state: 'preliminar',
+                lifecycleState: 'eliminada',
+                lifecycleLabel: 'Eliminada',
+                hasOfferPrepared: false,
+                isProposalPrepared: false,
+                hasDeliveryEvidence: false,
+                isProposalDelivered: false,
+                deliveryEvidenceType: 'none',
+                explicitDeliveryDate: null,
+                fechaEntregaExplicita: null,
+                isDecided: false,
+                decisionState: null,
+                offersCount: 0,
+                proposalVersionCount: 0,
+                countsAsPresented: false,
+                countedUnits: 0
+            };
+        }
+
+        const etapa = String(opportunity.etapa || '').trim().toLowerCase();
+        const estado = String(opportunity.estado || 'activo').trim().toLowerCase();
+        const precioCotizadoCents = toCents(opportunity.precio_cotizado || 0);
+
+        const rawDocOferta = opportunity.doc_oferta;
+        const hasDocOferta = Boolean(
+            rawDocOferta && (
+                (typeof rawDocOferta === 'string' && rawDocOferta.trim().length > 0) ||
+                (typeof rawDocOferta === 'object' && (rawDocOferta.storagePath || rawDocOferta.url || rawDocOferta.path || rawDocOferta.name))
+            )
+        );
+
+        const histOffers = Array.isArray(opportunity.ofertas_historicas)
+            ? opportunity.ofertas_historicas
+            : (Array.isArray(opportunity.historial_propuestas) ? opportunity.historial_propuestas : []);
+
+        const fechaEntregaExplicita = (typeof opportunity.fecha_entrega_oferta === 'string' && opportunity.fecha_entrega_oferta.trim().length > 0)
+            ? opportunity.fecha_entrega_oferta.trim()
+            : null;
+
+        const hasStageProgressionEvidence = ['negociacion', 'cierre'].includes(etapa) || estado === 'ganado';
+        const isProposalDelivered = Boolean(fechaEntregaExplicita) || hasStageProgressionEvidence;
+        const deliveryEvidenceType = fechaEntregaExplicita
+            ? 'explicit'
+            : (hasStageProgressionEvidence ? 'inferred' : 'none');
+
+        const isProposalPrepared = isProposalDelivered || precioCotizadoCents > 0 || hasDocOferta || histOffers.length > 0;
+        const isDecided = estado === 'ganado' || estado === 'perdido';
+
+        const proposalVersionCount = histOffers.length > 0
+            ? histOffers.length
+            : (isProposalPrepared ? 1 : 0);
+
+        let lifecycleState = 'preliminar';
+        let lifecycleLabel = 'Oportunidad Preliminar';
+        if (isDecided) {
+            lifecycleState = 'decidida';
+            lifecycleLabel = estado === 'ganado' ? 'Oportunidad Decidida (Ganada)' : 'Oportunidad Decidida (Perdida)';
+        } else if (isProposalDelivered) {
+            lifecycleState = 'propuesta_entregada';
+            lifecycleLabel = 'Propuesta Entregada / Presentada';
+        } else if (isProposalPrepared) {
+            lifecycleState = 'oferta_preparada';
+            lifecycleLabel = 'Oferta Preparada (Pendiente de Entrega)';
+        }
+
+        const countsAsPresented = Boolean(
+            lifecycleState === 'propuesta_entregada' ||
+            (lifecycleState === 'decidida' && (isProposalDelivered || isProposalPrepared || estado === 'ganado'))
+        );
+
+        return {
+            isDeleted: false,
+            state: lifecycleState,
+            lifecycleState,
+            lifecycleLabel,
+            hasOfferPrepared: isProposalPrepared,
+            isProposalPrepared,
+            hasDeliveryEvidence: isProposalDelivered,
+            isProposalDelivered,
+            deliveryEvidenceType,
+            explicitDeliveryDate: fechaEntregaExplicita,
+            fechaEntregaExplicita,
+            isDecided,
+            decisionState: isDecided ? estado : null,
+            offersCount: proposalVersionCount,
+            proposalVersionCount,
+            countsAsPresented,
+            countedUnits: countsAsPresented ? 1 : 0
+        };
+    }
+
+    /**
+     * Calcula los 4 KPIs comerciales compactos y el pulso financiero secundario
+     * para la vista Cuenta 360 (Commercial First), reutilizando la lógica canónica B5.
+     */
+    function computeAccount360Metrics(accountId, prospectsInput, options = {}) {
+        const targetId = String(accountId || '').trim();
+        const clients = Array.isArray(options.clients) ? options.clients : [];
+        const bankDeposits = Array.isArray(options.bankDeposits) ? options.bankDeposits : [];
+        const nowIso = (options && options.nowIso) ? String(options.nowIso).slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const nowMs = new Date(nowIso).getTime() || Date.now();
+
+        const clientsById = new Map();
+        for (const c of clients) {
+            if (c && c.id) clientsById.set(String(c.id), c);
+        }
+        const resolveCanonId = (rawId) => {
+            if (!rawId) return '';
+            let curId = String(rawId).trim();
+            const visited = new Set([curId]);
+            for (let depth = 0; depth < 6; depth++) {
+                const c = clientsById.get(curId);
+                if (!c || !c.fusionada_en || typeof c.fusionada_en !== 'string' || !c.fusionada_en.trim()) {
+                    return curId;
+                }
+                const nextId = c.fusionada_en.trim();
+                if (visited.has(nextId)) break;
+                visited.add(nextId);
+                curId = nextId;
+            }
+            return curId;
+        };
+
+        const canonicalAccountId = targetId ? resolveCanonId(targetId) : '';
+        const prospects = Array.isArray(prospectsInput) ? prospectsInput : [];
+        const seenOppIds = new Set();
+
+        let activePipelineCents = 0;
+        let activeCount = 0;
+        let wonCount = 0;
+        let lostCount = 0;
+
+        let propuestasPresentadasCount = 0;
+        let propuestasPresentadasCents = 0;
+        let propuestasExplicitaCount = 0;
+        let propuestasInferidaCount = 0;
+        const proposalCountsByState = {
+            preliminar: 0,
+            oferta_preparada: 0,
+            propuesta_entregada: 0,
+            decidida: 0
+        };
+
+        let facturacionTotalCents = 0;
+        let negociosAdjudicadosCents = 0;
+        let totalCobradoCents = 0;
+        let saldoPorCobrarCents = 0;
+        let overdueCents = 0;
+        let totalCostWonCents = 0;
+        let totalCycleDays = 0;
+        let cycleCount = 0;
+
+        const opportunities = [];
+        const opportunitiesNeedingAttention = [];
+
+        for (let i = 0; i < prospects.length; i++) {
+            const p = prospects[i];
+            if (!p || typeof p !== 'object' || _isOppDeletedB6(p)) continue;
+
+            const rawCid = String(p.clientId || p.cliente_id || '').trim();
+            if (!rawCid) continue;
+            const oppCanonicalCid = resolveCanonId(rawCid);
+            if (!canonicalAccountId || oppCanonicalCid !== canonicalAccountId) continue;
+
+            const oppId = String(p.id || `idx_${i}`).trim();
+            if (seenOppIds.has(oppId)) continue;
+            seenOppIds.add(oppId);
+
+            const lifecycle = classifyProposalLifecycle(p);
+            if (proposalCountsByState[lifecycle.state] !== undefined) {
+                proposalCountsByState[lifecycle.state] += 1;
+            }
+            if (lifecycle.countsAsPresented) {
+                propuestasPresentadasCount += 1; // Máximo 1 por oportunidad sin importar v1..vN
+                propuestasPresentadasCents += getProjectSubtotalCents(p);
+                if (lifecycle.deliveryEvidenceType === 'explicit') {
+                    propuestasExplicitaCount += 1;
+                } else if (lifecycle.deliveryEvidenceType === 'inferred') {
+                    propuestasInferidaCount += 1;
+                }
+            }
+
+            const estado = String(p.estado || 'activo').trim().toLowerCase();
+            const subtotalCents = getProjectSubtotalCents(p);
+
+            const lastActStr = p.ultima_interaccion || p.updatedAt || p.fecha_inicio || p.fecha || null;
+            const lastActMs = lastActStr ? new Date(lastActStr).getTime() : NaN;
+            const daysSinceActivity = Number.isFinite(lastActMs)
+                ? Math.max(0, Math.floor((nowMs - lastActMs) / (1000 * 60 * 60 * 24)))
+                : 0;
+
+            const attentionReasons = [];
+            if (estado === 'activo') {
+                activeCount += 1;
+                activePipelineCents += subtotalCents;
+                if (daysSinceActivity >= 7) {
+                    attentionReasons.push(`Sin seguimiento (${daysSinceActivity}d)`);
+                }
+                const estDate = p.fecha_entrega ? String(p.fecha_entrega).slice(0, 10) : '';
+                if (estDate && estDate < nowIso) {
+                    attentionReasons.push(`Entrega vencida (${estDate})`);
+                }
+                if (lifecycle.state === 'oferta_preparada') {
+                    attentionReasons.push('Oferta preparada pendiente de entrega');
+                }
+            } else if (estado === 'ganado') {
+                wonCount += 1;
+                const oppAwardedCents = subtotalCents > 0
+                    ? subtotalCents
+                    : toCents(p.precio_pactado || p.precio_final || p.precio_cotizado || 0);
+                negociosAdjudicadosCents += oppAwardedCents;
+                const invoices = Array.isArray(p.facturas)
+                    ? p.facturas.filter(inv => {
+                        if (!inv || typeof inv !== 'object') return false;
+                        if (isActiveInvoice(inv)) return true;
+                        const st = typeof inv.estado === 'string' ? inv.estado.trim().toLowerCase() : '';
+                        if (st && INVALID_FINANCIAL_STATUSES.includes(st)) return false;
+                        return toCents(inv.montoTotal ?? inv.monto ?? inv.total ?? 0) > 0;
+                    })
+                    : [];
+                let oppBilledCents = 0;
+                let oppPaidCents = 0;
+                if (invoices.length > 0) {
+                    for (const inv of invoices) {
+                        const invTotalCents = toCents(inv.montoTotal ?? inv.monto ?? inv.total ?? 0);
+                        let invPaidCents = toCents(inv.montoPagado ?? inv.pagado ?? 0);
+                        if (invPaidCents <= 0 && Array.isArray(inv.pagos)) {
+                            invPaidCents = inv.pagos
+                                .filter(pay => isActivePaymentRecord(pay))
+                                .reduce((s, pay) => s + toCents(pay.monto ?? pay.monto_aplicado ?? 0), 0);
+                        }
+                        const invBalCents = Math.max(0, invTotalCents - invPaidCents);
+                        oppBilledCents += invTotalCents;
+                        oppPaidCents += invPaidCents;
+                        const aging = classifyInvoiceAging(inv, new Date(nowIso));
+                        if (invBalCents > 0 && aging && aging.esMorosa) {
+                            overdueCents += invBalCents;
+                        }
+                    }
+                } else {
+                    oppBilledCents = toCents(p.precio_final || p.precio_pactado || p.precio_cotizado || 0);
+                    oppPaidCents = p.pago_completado ? oppBilledCents : toCents(p.monto_pagado || 0);
+                }
+                facturacionTotalCents += oppBilledCents;
+                totalCobradoCents += oppPaidCents;
+                saldoPorCobrarCents += Math.max(0, oppBilledCents - oppPaidCents);
+                totalCostWonCents += getProjectCostoCents(p);
+
+                const startD = p.fecha_inicio || p.fecha || null;
+                const endD = resolveOpportunityWonDate(p);
+                if (startD && endD) {
+                    const diffDays = Math.max(1, Math.round((new Date(endD).getTime() - new Date(startD).getTime()) / (1000 * 60 * 60 * 24)));
+                    if (Number.isFinite(diffDays)) {
+                        totalCycleDays += diffDays;
+                        cycleCount += 1;
+                    }
+                }
+            } else if (estado === 'perdido') {
+                lostCount += 1;
+            }
+
+            const enrichedOpp = Object.assign({}, p, {
+                proposalLifecycle: lifecycle,
+                daysSinceActivity,
+                attentionReasons,
+                requiresAttention: attentionReasons.length > 0
+            });
+            opportunities.push(enrichedOpp);
+            if (attentionReasons.length > 0) {
+                opportunitiesNeedingAttention.push(enrichedOpp);
+            }
+        }
+
+        opportunities.sort((a, b) => {
+            if (a.requiresAttention !== b.requiresAttention) return a.requiresAttention ? -1 : 1;
+            if ((a.estado === 'activo') !== (b.estado === 'activo')) return a.estado === 'activo' ? -1 : 1;
+            return (b.daysSinceActivity || 0) - (a.daysSinceActivity || 0);
+        });
+
+        let abonosDisponiblesCents = 0;
+        const seenDepIds = new Set();
+        for (let i = 0; i < bankDeposits.length; i++) {
+            const dep = bankDeposits[i];
+            if (!dep || typeof dep !== 'object') continue;
+            const depId = String(dep.id || `dep_${i}`);
+            if (seenDepIds.has(depId)) continue;
+            const depState = evaluateBankDepositRecord(dep);
+            if (!depState.isActive) continue;
+            const depCanonicalCid = resolveCanonId(depState.clientId);
+            if (depCanonicalCid !== canonicalAccountId) continue;
+            seenDepIds.add(depId);
+            abonosDisponiblesCents += depState.availableCents;
+        }
+
+        const decidedCount = wonCount + lostCount;
+        const winRate = decidedCount > 0 ? round2((wonCount / decidedCount) * 100) : 0;
+        const ticketPromedio = wonCount > 0 ? fromCents(Math.round(facturacionTotalCents / wonCount)) : 0;
+        const ticketPromedioAdjudicado = wonCount > 0 ? fromCents(Math.round(negociosAdjudicadosCents / wonCount)) : 0;
+        const margenRealPct = facturacionTotalCents > 0
+            ? round2(((facturacionTotalCents - totalCostWonCents) / facturacionTotalCents) * 100)
+            : 0;
+        const cicloPromedioDias = cycleCount > 0 ? Math.round(totalCycleDays / cycleCount) : 0;
+
+        return {
+            accountId: canonicalAccountId || targetId,
+            totalOpportunitiesCount: opportunities.length,
+            activeCount,
+            wonCount,
+            lostCount,
+            decidedCount,
+            negociosAdjudicadosCount: wonCount,
+            negociosAdjudicadosMonto: fromCents(negociosAdjudicadosCents),
+            ticketPromedioAdjudicado,
+            facturacionTotal: fromCents(facturacionTotalCents),
+            totalCobrado: fromCents(totalCobradoCents),
+            saldoPorCobrar: fromCents(saldoPorCobrarCents),
+            overdueAmount: fromCents(overdueCents),
+            pipelineActivo: fromCents(activePipelineCents),
+            winRate,
+            winRatePct: winRate,
+            ticketPromedio,
+            margenRealPct,
+            cicloPromedioDias,
+            propuestasPresentadasCount,
+            propuestasPresentadasMonto: fromCents(propuestasPresentadasCents),
+            propuestasExplicitaCount,
+            propuestasInferidaCount,
+            proposalCountsByState,
+            opportunitiesNeedingAttention,
+            opportunities,
+            primaryCommercialKpis: {
+                tasaExitoComercialPct: winRate,
+                pipelineAbiertoMonto: fromCents(activePipelineCents),
+                pipelineAbiertoCount: activeCount,
+                negociosAdjudicadosMonto: fromCents(negociosAdjudicadosCents),
+                negociosAdjudicadosCount: wonCount,
+                propuestasPresentadasCount,
+                propuestasPresentadasMonto: fromCents(propuestasPresentadasCents)
+            },
+            pulsoFinanciero: {
+                facturadoVigente: fromCents(facturacionTotalCents),
+                cobradoTotal: fromCents(totalCobradoCents),
+                cxcPendiente: fromCents(saldoPorCobrarCents),
+                abonosDisponibles: fromCents(abonosDisponiblesCents)
+            }
+        };
+    }
+
     return {
         toCents,
         fromCents,
@@ -1409,6 +1779,8 @@
         isDateInPeriod,
         evaluateBankDepositRecord,
         classifyInvoiceAging,
+        classifyProposalLifecycle,
+        computeAccount360Metrics,
         computeBIMetrics
     };
 });
