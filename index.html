@@ -1128,19 +1128,19 @@
 
                     <div class="side-detail glass-panel">
                         <!-- Control de Seguimiento Comercial (Prioridad 1 en Panel Lateral - Fase 5.2 Bloque 2) -->
-                        <div class="followup-control-box" style="background: rgba(0,0,0,0.18); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--panel-border);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; border-bottom: 1px solid var(--panel-border); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
-                                <h3 style="margin: 0; font-size: 1rem; color: white; display: flex; align-items: center; gap: 6px;">
+                        <div class="followup-control-box">
+                            <div class="followup-header-row">
+                                <h3 class="followup-header-title">
                                     <span>📞</span> Seguimiento Comercial
                                 </h3>
-                                <span id="detail-followup-badge" class="badge bg-neutral" style="font-size: 0.75rem;">Sin estado</span>
+                                <span id="detail-followup-badge" class="badge bg-neutral followup-status-pill">Sin estado</span>
                             </div>
 
-                            <div id="detail-followup-summary" style="font-size: 0.85rem;">
+                            <div id="detail-followup-summary">
                                 <!-- Populated by JS -->
                             </div>
 
-                            <button type="button" class="btn-primary mt-3" style="width: 100%; font-size: 0.88rem; padding: 0.6rem; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;" onclick="openRecordFollowUpModal(currentProspectId)">
+                            <button type="button" class="btn-primary btn-followup-record" onclick="openRecordFollowUpModal(currentProspectId)">
                                 <span>📞 Registrar Gestión de Contacto</span>
                             </button>
                         </div>

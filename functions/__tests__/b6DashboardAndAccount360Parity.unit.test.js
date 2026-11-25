@@ -420,4 +420,24 @@ describe('FASE B6 — Regresión Reutilizable de Paridad Dashboard B5, Cuenta 36
     expect(viewByGestor.contact.correo).toBe('roberto.personal@privado.com');
     expect(viewByGestor.contact.telefono).toBe('7000-9999');
   });
+
+  test('5. Panel de Seguimiento Comercial (Bloque A UX): estructura responsiva de Cadencia/Intentos, insignias sin recorte y contraste WCAG AA', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const repoRoot = path.resolve(__dirname, '../..');
+    const indexHtml = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+    const stylesCss = fs.readFileSync(path.join(repoRoot, 'styles.css'), 'utf8');
+    const oppsUiJs = fs.readFileSync(path.join(repoRoot, 'modules/opportunities/opportunities_ui.js'), 'utf8');
+
+    expect(indexHtml).toContain('class="followup-control-box"');
+    expect(indexHtml).toContain('class="btn-primary btn-followup-record"');
+    expect(stylesCss).toContain('.followup-cadence-grid');
+    expect(stylesCss).toContain('repeat(auto-fit, minmax(135px, 1fr))');
+    expect(stylesCss).toContain('.followup-control-box .followup-badge');
+    expect(stylesCss).toContain('white-space: normal !important');
+    expect(oppsUiJs).toContain('followup-cadence-cell');
+    expect(oppsUiJs).toContain('followup-attempts-cell');
+    expect(oppsUiJs).toContain('followup-fin-card');
+    expect(oppsUiJs).toContain('de 5 fallidos');
+  });
 });
