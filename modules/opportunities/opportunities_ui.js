@@ -2274,24 +2274,24 @@ function renderFollowUpSummary(p) {
 
     const intentos = Number(cad.intentos_fallidos) || 0;
 
-    let ultHtml = '<span style="color:var(--text-muted); font-style:italic;">Sin contactos previos registrados</span>';
+    let ultHtml = '<span class="followup-empty-text">Sin contactos previos registrados</span>';
     if (ult && ult.fecha) {
         const canalLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[ult.canal]) || ult.canal;
         const resLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_RESULT_LABELS[ult.resultado]) || ult.resultado;
-        const resColor = (ult.resultado === 'contacto_positivo' || ult.resultado === 'reunion_agendada') ? 'var(--brand-gold)' : 'var(--text-secondary)';
-        ultHtml = `<div><strong>${escapeHtmlDoc(canalLbl)}</strong> (${formatDate(ult.fecha)})</div><div style="color:${resColor}; font-size:0.8rem; margin-top:2px;">${escapeHtmlDoc(resLbl)}</div>`;
+        const isPos = (ult.resultado === 'contacto_positivo' || ult.resultado === 'reunion_agendada');
+        ultHtml = `<div class="followup-primary-val"><strong>${escapeHtmlDoc(canalLbl)}</strong> (${formatDate(ult.fecha)})</div><div class="followup-sub-val ${isPos ? 'is-positive' : ''}">${escapeHtmlDoc(resLbl)}</div>`;
     }
 
-    let proxHtml = '<span style="color:var(--text-muted); font-style:italic;">Sin próxima acción programada</span>';
+    let proxHtml = '<span class="followup-empty-text">Sin próxima acción programada</span>';
     if (prox && prox.fecha) {
-        proxHtml = `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"><strong style="color:white; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.82rem;">📅 ${prox.fecha}</strong> ${prox.descripcion ? `<span style="color:var(--text-secondary); font-size:0.82rem;">${escapeHtmlDoc(prox.descripcion)}</span>` : ''}</div>`;
+        proxHtml = `<div class="followup-next-action-wrap"><strong class="followup-date-chip">📅 ${prox.fecha}</strong> ${prox.descripcion ? `<span class="followup-sub-val">${escapeHtmlDoc(prox.descripcion)}</span>` : ''}</div>`;
     }
 
     // Historial de gestiones estructuradas
     let histHtml = '';
     if (hist.length > 0) {
-        histHtml = `<div style="margin-top:10px; border-top:1px solid var(--panel-border); padding-top:8px;">
-            <div style="font-size:0.78rem; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">Historial de Gestiones (${hist.length}):</div>`;
+        histHtml = `<div class="followup-history-section">
+            <div class="followup-history-heading">Historial de Gestiones (${hist.length}):</div>`;
         const reversed = hist.slice().reverse().slice(0, 5); // últimas 5
         reversed.forEach(g => {
             const cLbl = (typeof CrmFollowUpCalc !== 'undefined' && CrmFollowUpCalc.FOLLOWUP_CHANNEL_LABELS[g.canal]) || g.canal;
@@ -2299,8 +2299,8 @@ function renderFollowUpSummary(p) {
             histHtml += `
                 <div class="followup-history-item ${!g.es_contacto_valido ? 'no-contact' : ''}">
                     <div><strong>${formatDate(g.fecha)}</strong> — <strong>${escapeHtmlDoc(cLbl)}</strong> por ${escapeHtmlDoc(g.usuarioNombre || 'Comercial')}</div>
-                    <div style="color:var(--brand-gold);">${escapeHtmlDoc(rLbl)}</div>
-                    ${g.detalle ? `<div style="color:var(--text-secondary); margin-top:2px;">${escapeHtmlDoc(g.detalle)}</div>` : ''}
+                    <div class="followup-history-result">${escapeHtmlDoc(rLbl)}</div>
+                    ${g.detalle ? `<div class="followup-history-detail">${escapeHtmlDoc(g.detalle)}</div>` : ''}
                 </div>
             `;
         });
@@ -2312,12 +2312,12 @@ function renderFollowUpSummary(p) {
     let deliveryHtml = '';
     if (deliveryDate) {
         const ymd = (typeof CrmFollowUpCalc !== 'undefined') ? CrmFollowUpCalc.getCommercialYMD(deliveryDate) : String(deliveryDate).slice(0, 10);
-        const deliverer = cad.entregado_por_nombre ? ` <span style="color:var(--text-secondary); font-size:0.75rem;">(por ${escapeHtmlDoc(cad.entregado_por_nombre)})</span>` : '';
+        const deliverer = cad.entregado_por_nombre ? ` <span class="followup-sub-val">(por ${escapeHtmlDoc(cad.entregado_por_nombre)})</span>` : '';
         deliveryHtml = `
             <div class="followup-card-row">
                 <div class="followup-card-row-header"><span>📅 Fecha de Entrega de Oferta</span></div>
                 <div class="followup-card-row-content">
-                    <strong style="color:white;">${ymd}</strong>${deliverer}
+                    <strong class="followup-primary-val">${ymd}</strong>${deliverer}
                 </div>
             </div>`;
     } else if (etapa === 'negociacion' || etapa === 'cierre') {
@@ -2325,7 +2325,7 @@ function renderFollowUpSummary(p) {
             <div class="followup-card-row">
                 <div class="followup-card-row-header"><span>📅 Fecha de Entrega de Oferta</span></div>
                 <div class="followup-card-row-content">
-                    <span class="badge" style="background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.35); font-size:0.75rem; white-space:normal; line-height:1.3;">⚠️ Sin fecha de entrega de oferta registrada (Histórica)</span>
+                    <span class="badge followup-badge followup-badge-warning">⚠️ Sin fecha de entrega de oferta registrada (Histórica)</span>
                 </div>
             </div>`;
     }
@@ -2336,17 +2336,17 @@ function renderFollowUpSummary(p) {
     const canChangeCadence = p.estado === 'activo' && !!currentUser && (currentUser.role === 'manager' || isAssigned);
 
     const cadenceChangeBtn = canChangeCadence
-        ? `<button type="button" class="btn-secondary" onclick="openCadenceModal('${p.id}')" style="padding:2px 8px; font-size:0.7rem; border-radius:4px; cursor:pointer;" title="Configurar cadencia comercial">⚙️ Cambiar</button>`
+        ? `<button type="button" class="btn-secondary followup-btn-change-cadence" onclick="openCadenceModal('${p.id}')" title="Configurar cadencia comercial">⚙️ Cambiar</button>`
         : '';
 
     let cadHistHtml = '';
     const cadHist = Array.isArray(cad.historial_cambios) ? cad.historial_cambios : [];
     if (cadHist.length > 0) {
-        cadHistHtml = `<div style="margin-top:6px; border-top:1px dashed rgba(255,255,255,0.08); padding-top:6px; font-size:0.75rem; color:var(--text-secondary);">
-            <div style="font-weight:700; color:var(--text-muted); margin-bottom:4px;">Historial de Cambios de Cadencia:</div>
+        cadHistHtml = `<div class="followup-cadence-history">
+            <div class="followup-cadence-history-title">Historial de Cambios de Cadencia:</div>
             ${cadHist.map(h => {
                 const fStr = (typeof formatDate === 'function') ? formatDate(h.fecha) : h.fecha;
-                return `<div style="margin-bottom:2px;">• <strong>${fStr}</strong>: ${escapeHtmlDoc(h.cadenciaAnterior)} ➔ <strong>${escapeHtmlDoc(h.cadenciaNueva)}</strong> por ${escapeHtmlDoc(h.usuarioNombre || 'Comercial')}. <span style="color:var(--text-muted); font-style:italic;">"${escapeHtmlDoc(h.motivo || '')}"</span></div>`;
+                return `<div class="followup-cadence-history-item">• <strong>${fStr}</strong>: ${escapeHtmlDoc(h.cadenciaAnterior)} ➔ <strong>${escapeHtmlDoc(h.cadenciaNueva)}</strong> por ${escapeHtmlDoc(h.usuarioNombre || 'Comercial')}. <span class="followup-empty-text">"${escapeHtmlDoc(h.motivo || '')}"</span></div>`;
             }).join('')}
         </div>`;
     }
@@ -2356,31 +2356,35 @@ function renderFollowUpSummary(p) {
         const clientObj = getProspectClient(p.clientId);
         const fm = CrmFollowUpCalc.evaluateFinancialMilestones(p, clientObj);
         const ccfBadge = fm.ccfAnticipoStatus === 'emitido'
-            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Emitido ${fm.ccfAnticipoNumero ? '(' + escapeHtmlDoc(fm.ccfAnticipoNumero) + ')' : ''}</span>`
-            : `<span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.72rem;">⏳ Pendiente</span>`;
+            ? `<span class="badge followup-badge followup-badge-success">✅ Emitido ${fm.ccfAnticipoNumero ? '(' + escapeHtmlDoc(fm.ccfAnticipoNumero) + ')' : ''}</span>`
+            : `<span class="badge followup-badge followup-badge-warning">⏳ Pendiente</span>`;
         const antBadge = fm.anticipoPagoStatus === 'pagado'
-            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Pagado (${formatCurrency(fm.montoConfirmado)})</span>`
+            ? `<span class="badge followup-badge followup-badge-success">✅ Pagado (${formatCurrency(fm.montoConfirmado)})</span>`
             : (fm.anticipoPagoStatus === 'parcialmente_pagado'
-                ? `<span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:0.72rem;">⚠️ Parcialmente pagado (${formatCurrency(fm.montoConfirmado)} / ${formatCurrency(fm.montoExigible)})</span>`
-                : `<span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.72rem;">⏳ Pendiente (Exigible: ${formatCurrency(fm.montoExigible)})</span>`);
+                ? `<span class="badge followup-badge followup-badge-warning">⚠️ Parcialmente pagado (${formatCurrency(fm.montoConfirmado)} / ${formatCurrency(fm.montoExigible)})</span>`
+                : `<span class="badge followup-badge followup-badge-danger">⏳ Pendiente (Exigible: ${formatCurrency(fm.montoExigible)})</span>`);
         const fabBadge = fm.habilitadoFabricacion
-            ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem;">✅ Anticipo confirmado para fabricación</span>`
-            : `<span class="badge" style="background:rgba(239,68,68,0.18); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); font-size:0.72rem;">🔒 Bloqueado fabricación (Faltan ${formatCurrency(fm.saldoPendienteAnticipo)})</span>`;
+            ? `<span class="badge followup-badge followup-badge-success">✅ Anticipo confirmado para fabricación</span>`
+            : `<span class="badge followup-badge followup-badge-danger">🔒 Bloqueado fabricación (Faltan ${formatCurrency(fm.saldoPendienteAnticipo)})</span>`;
         const obligHtml = Array.isArray(fm.obligacionesSeguimiento) && fm.obligacionesSeguimiento.length > 0
-            ? `<div style="margin-top:6px; font-size:0.74rem; color:#fde68a;"><strong>Obligaciones pendientes:</strong><ul style="margin:4px 0 0 16px; padding:0;">${fm.obligacionesSeguimiento.map(ob => `<li>${escapeHtmlDoc(ob)}</li>`).join('')}</ul></div>`
+            ? `<div class="followup-fin-obligations"><strong>Obligaciones pendientes:</strong><ul>${fm.obligacionesSeguimiento.map(ob => `<li>${escapeHtmlDoc(ob)}</li>`).join('')}</ul></div>`
             : '';
         postClosingFinancialHtml = `
-            <div style="margin-top:8px; padding:8px 10px; background:rgba(15,23,42,0.75); border:1px solid ${fm.habilitadoFabricacion ? 'rgba(16,185,129,0.35)' : 'rgba(245,158,11,0.4)'}; border-radius:6px;">
-                <div style="font-size:0.78rem; font-weight:700; color:var(--brand-gold); margin-bottom:6px;">💰 Hitos Financieros Post-Cierre (${escapeHtmlDoc(fm.formaPago || '-')})</div>
-                <div style="display:flex; flex-direction:column; gap:5px; font-size:0.76rem;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>1. CCF de anticipo:</span> ${ccfBadge}</div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>2. Cobro de anticipo:</span> ${antBadge}</div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;"><span>3. Fabricación:</span> ${fabBadge}</div>
+            <div class="followup-fin-card ${fm.habilitadoFabricacion ? 'is-enabled' : 'is-pending'}">
+                <div class="followup-fin-title">💰 Hitos Financieros Post-Cierre (${escapeHtmlDoc(fm.formaPago || '-')})</div>
+                <div class="followup-fin-list">
+                    <div class="followup-fin-item"><span class="followup-fin-label">1. CCF de anticipo:</span> ${ccfBadge}</div>
+                    <div class="followup-fin-item"><span class="followup-fin-label">2. Cobro de anticipo:</span> ${antBadge}</div>
+                    <div class="followup-fin-item"><span class="followup-fin-label">3. Fabricación:</span> ${fabBadge}</div>
                 </div>
                 ${obligHtml}
             </div>
         `;
     }
+
+    const attemptsBadgeMod = intentos >= 5
+        ? 'badge-urgency-escalada followup-badge-danger'
+        : (intentos >= 3 ? 'badge-urgency-decision followup-badge-warning' : 'bg-neutral followup-badge-neutral');
 
     summaryEl.innerHTML = `
         <div class="followup-panel-card">
@@ -2406,24 +2410,24 @@ function renderFollowUpSummary(p) {
             ${deliveryHtml}
 
             <div class="followup-cadence-grid">
-                <div class="followup-card-row">
+                <div class="followup-card-row followup-cadence-cell">
                     <div class="followup-card-row-header">
                         <span>⏱️ Cadencia</span>
+                        ${cadenceChangeBtn}
                     </div>
-                    <div class="followup-card-row-content" style="display:flex; align-items:center; justify-content:space-between; gap:4px; flex-wrap:wrap; margin-top:2px;">
-                        <span class="badge bg-neutral" style="font-size:0.75rem; border:1px solid var(--border-color);" title="${cadConfig.descripcion || ''}">
+                    <div class="followup-card-row-content">
+                        <span class="badge bg-neutral followup-badge followup-badge-neutral" title="${escapeHtmlDoc(cadConfig.descripcion || '')}">
                             ${escapeHtmlDoc(cadConfig.nombre || tipoCadencia)}
                         </span>
-                        ${cadenceChangeBtn}
                     </div>
                 </div>
 
-                <div class="followup-card-row">
+                <div class="followup-card-row followup-attempts-cell">
                     <div class="followup-card-row-header">
                         <span>📞 Intentos</span>
                     </div>
-                    <div class="followup-card-row-content" style="margin-top:2px;">
-                        <span class="badge ${intentos >= 5 ? 'badge-urgency-escalada' : (intentos >= 3 ? 'badge-urgency-decision' : 'bg-neutral')}" style="font-size:0.75rem;">
+                    <div class="followup-card-row-content">
+                        <span class="badge followup-badge ${attemptsBadgeMod}">
                             ${intentos} de 5 fallidos
                         </span>
                     </div>
@@ -2431,14 +2435,14 @@ function renderFollowUpSummary(p) {
             </div>
 
             ${cad.alerta_gerencial ? `
-                <div style="padding:6px 10px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:6px; font-size:0.78rem; color:#fca5a5; display:flex; align-items:center; gap:6px;">
+                <div class="followup-mgr-alert-banner">
                     <span>🚨</span> <strong>Alerta Gerencial Activa</strong> (Límite de 5 intentos alcanzado)
                 </div>
             ` : ''}
 
             ${cad.justificacion_continuidad ? `
-                <div style="font-size:0.75rem; color:var(--text-secondary); padding:6px 10px; background:rgba(0,0,0,0.2); border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
-                    <strong style="color:var(--brand-gold);">Justificación continuidad:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}
+                <div class="followup-continuity-box">
+                    <strong>Justificación continuidad:</strong> ${escapeHtmlDoc(cad.justificacion_continuidad)}
                 </div>
             ` : ''}
 
